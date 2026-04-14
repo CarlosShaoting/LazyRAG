@@ -4,11 +4,13 @@ import functools
 import inspect
 import itertools
 import re
+from urllib.parse import urlparse
 from typing import Any, List, Union
 import lazyllm
-from lazyllm import ModuleBase, LOG
+from lazyllm import ModuleBase, LOG, OnlineChatModule
 from lazyllm.tools.rag import DocNode
 from processor.table_image_map import merge_table_image_maps, normalize_table_image_map, serialize_table_image_map
+from lazyllm.components.formatter import encode_query_with_filepaths
 
 
 class ParagraphType:
@@ -134,6 +136,38 @@ def _match(node: Union[DocNode, str], patterns: List) -> Union[re.Match, bool]:
             return False
 
 
+def _is_url(s: str) -> bool:
+    try:
+        res = urlparse(s)
+        return bool(res.scheme and (res.netloc or res.scheme == 'file'))
+    except Exception as exc:
+        LOG.error(f'_is_url error: {exc}')
+        return False
+
+
+def _resolve_image_path(image_path: str) -> str:
+    if not image_path:
+        return image_path
+    if _is_url(image_path) or image_path.startswith('lazyllm'):
+        return image_path
+    image_prefix = os.getenv('RAG_IMAGE_PATH_PREFIX', '/mnt/lustre/share_data/mineru/images/')
+    return os.path.join(image_prefix, image_path)
+
+
+def _extract_image_path(node: DocNode) -> str:
+    metadata = node.metadata
+    for key in ('image_url', 'image_path', 'img_path', 'image', 'img'):
+        if metadata.get(key):
+            return metadata[key]
+
+    for line in metadata.get('lines', []) or []:
+        if line.get('image_url'):
+            return line['image_url']
+        if line.get('image_path'):
+            return line['image_path']
+    return ''
+
+
 class LayoutNodeParser(ModuleBase):
     """
     通过正则表达式对节点进行分类 -> :
@@ -237,6 +271,68 @@ class TableConverterNode(ModuleBase):
                         [{'content': markdown_table, 'image': table_image}]
                     )
                 node.metadata.pop('table_body', None)
+        return document
+
+
+class ImageConverterNode(ModuleBase):
+    def __init__(self, num_workers: int = 0, return_trace: bool = False, **kwargs):
+        super().__init__(return_trace=return_trace, **kwargs)
+        self._llm = OnlineChatModule(source='sensenova', model='SenseNova-V6-5-Pro')
+
+    def forward(self, document: List[DocNode], **kwargs) -> List[DocNode]:
+        return self._parse_nodes(document)
+
+    @classmethod
+    def class_name(cls) -> str:
+        return 'ImageConverterNode'
+
+    def _describe_image(self, image_url: str, node: DocNode) -> str:
+        prompt = (
+            '请根据给定图片生成一段简洁、可检索的中文描述。'
+            '重点概括图片中的主体、场景、文字信息、图表/结构化信息。'
+            '只返回描述文本，不要输出多余解释。\n'
+            f'已有文本：{(node.text or "").strip()}'
+        )
+        try:
+            result = self._llm(encode_query_with_filepaths(prompt, [image_url]))
+        except Exception as exc:
+            LOG.warning(f'[ImageConverterNode] describe image failed: {exc}')
+            return ''
+        if result is None:
+            return ''
+        if isinstance(result, str):
+            return result.strip()
+        return str(result).strip()
+
+    def _parse_nodes(self, document: List[DocNode], **kwargs) -> List[DocNode]:
+        for node in document:
+            print(node.metadata)
+            image_path = _extract_image_path(node)
+            if not image_path:
+                continue
+
+            image_url = _resolve_image_path(image_path)
+            image_alt = (
+                node.metadata.get('caption')
+                or node.metadata.get('table_caption')
+                or node.metadata.get('title')
+                or ''
+            )
+            image_markdown = f'![{image_alt}]({image_url})'
+            image_desc = self._describe_image(image_url, node)
+
+            node._metadata['image_url'] = image_url
+            node._metadata['image_markdown'] = image_markdown
+            if image_desc:
+                node._metadata['image_description'] = image_desc
+
+            parts = [image_markdown]
+            if (node.text or '').strip():
+                parts.append(node.text.strip())
+            if image_desc:
+                parts.append(image_desc)
+            node._content = '\n'.join(p for p in parts if p).strip()
+
         return document
 
 
@@ -630,6 +726,7 @@ class NodeParser:
         with lazyllm.pipeline() as parser_ppl:
             parser_ppl.clear_parser = NodeTextClear()
             parser_ppl.table_converter = TableConverterNode()
+            parser_ppl.image_converter = ImageConverterNode()
             parser_ppl.layout_parser = LayoutNodeParser()
             parser_ppl.group_nodes = GroupNodeParser()
             parser_ppl.group_filter_nodes = GroupFilterNodeParser()
