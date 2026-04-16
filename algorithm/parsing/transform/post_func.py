@@ -3,7 +3,10 @@ import copy
 import functools
 import inspect
 import itertools
+import hashlib
 import re
+import requests
+from pathlib import Path
 from urllib.parse import urlparse
 from typing import Any, List, Union
 import lazyllm
@@ -275,9 +278,12 @@ class TableConverterNode(ModuleBase):
 
 
 class ImageConverterNode(ModuleBase):
-    def __init__(self, num_workers: int = 0, return_trace: bool = False, **kwargs):
+    def __init__(self, num_workers: int = 0, return_trace: bool = False, llm = None, **kwargs):
         super().__init__(return_trace=return_trace, **kwargs)
-        self._llm = OnlineChatModule(source='sensenova', model='SenseNova-V6-5-Pro')
+        self._llm = llm or OnlineChatModule(source='sensenova', model='SenseNova-V6-5-Pro')
+        self._ocr_server_url = os.getenv('LAZYRAG_OCR_SERVER_URL', '').rstrip('/')
+        self._image_root = os.getenv('RAG_IMAGE_PATH_PREFIX', '/home/mnt/cuishaoting/RAG_IMAGE')
+        os.makedirs(self._image_root, exist_ok=True)
 
     def forward(self, document: List[DocNode], **kwargs) -> List[DocNode]:
         return self._parse_nodes(document)
@@ -286,7 +292,46 @@ class ImageConverterNode(ModuleBase):
     def class_name(cls) -> str:
         return 'ImageConverterNode'
 
-    def _describe_image(self, image_url: str, node: DocNode) -> str:
+    def _is_image_node(self, node: DocNode) -> bool:
+        return str(node.metadata.get('type', '')).lower() in {
+            ParagraphType.Picture, ParagraphType.Figure, 'image', 'img'
+        }
+
+    def _build_download_url(self, image_path: str) -> str:
+        if not image_path:
+            return ''
+        if _is_url(image_path):
+            return image_path
+        if not self._ocr_server_url:
+            return image_path
+        return f'{self._ocr_server_url}/{image_path.lstrip("/")}'
+
+    def _materialize_image(self, image_path: str) -> str:
+        if not image_path:
+            return ''
+
+        if _is_url(image_path):
+            remote_url = image_path
+            parsed = urlparse(image_path)
+            suffix = os.path.splitext(parsed.path)[1] or '.jpg'
+            file_name = hashlib.sha256(image_path.encode('utf-8')).hexdigest() + suffix
+            local_path = os.path.join(self._image_root, file_name)
+        else:
+            relative_path = image_path.lstrip('/').replace('..', '_')
+            local_path = os.path.join(self._image_root, relative_path)
+            remote_url = self._build_download_url(image_path)
+
+        Path(local_path).parent.mkdir(parents=True, exist_ok=True)
+        if os.path.exists(local_path) and os.path.getsize(local_path) > 0:
+            return local_path
+
+        response = requests.get(remote_url, timeout=30)
+        response.raise_for_status()
+        with open(local_path, 'wb') as f:
+            f.write(response.content)
+        return local_path
+
+    def _describe_image(self, local_image_path: str, node: DocNode) -> str:
         prompt = (
             '请根据给定图片生成一段简洁、可检索的中文描述。'
             '重点概括图片中的主体、场景、文字信息、图表/结构化信息。'
@@ -294,44 +339,47 @@ class ImageConverterNode(ModuleBase):
             f'已有文本：{(node.text or "").strip()}'
         )
         try:
-            result = self._llm(encode_query_with_filepaths(prompt, [image_url]))
+            result = self._llm(encode_query_with_filepaths(prompt, [local_image_path]))
         except Exception as exc:
             LOG.warning(f'[ImageConverterNode] describe image failed: {exc}')
             return ''
         if result is None:
             return ''
         if isinstance(result, str):
-            return result.strip()
-        return str(result).strip()
+            result = result.strip()
+        else:
+            result = str(result).strip()
+        return re.sub(r'<think>.*?</think>', '', result, flags=re.S).strip()
 
     def _parse_nodes(self, document: List[DocNode], **kwargs) -> List[DocNode]:
         for node in document:
-            print(node.metadata)
+            if not self._is_image_node(node):
+                continue
+            print(node)
             image_path = _extract_image_path(node)
             if not image_path:
                 continue
 
-            image_url = _resolve_image_path(image_path)
-            image_alt = (
-                node.metadata.get('caption')
-                or node.metadata.get('table_caption')
-                or node.metadata.get('title')
-                or ''
-            )
-            image_markdown = f'![{image_alt}]({image_url})'
-            image_desc = self._describe_image(image_url, node)
+            image_url = self._build_download_url(image_path)
+            local_image_path = self._materialize_image(image_path)
+
+            image_desc = self._describe_image(local_image_path, node)
 
             node._metadata['image_url'] = image_url
-            node._metadata['image_markdown'] = image_markdown
+            node._metadata['image_local_path'] = local_image_path
             if image_desc:
                 node._metadata['image_description'] = image_desc
 
-            parts = [image_markdown]
+            parts = []
             if (node.text or '').strip():
                 parts.append(node.text.strip())
             if image_desc:
                 parts.append(image_desc)
             node._content = '\n'.join(p for p in parts if p).strip()
+            print("Node metadata")
+            print(node._metadata)
+            print("Node _content:")
+            print(node._content)
 
         return document
 
