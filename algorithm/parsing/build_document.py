@@ -117,7 +117,8 @@ def build_document() -> Document:
     docs.add_reader('*.pdf', _build_pdf_reader())
 
     image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif')
-    image_embed_key = settings.embed_keys[0] if settings.embed_keys else None
+    # image_embed_key = settings.embed_keys[0] if settings.embed_keys else None
+    image_embed_key = settings.embed_keys[-1] if settings.embed_keys else None # use the new clip model
     image_reader = ImageReader(
         embed_key=image_embed_key,
         embed_model=embed.get(image_embed_key) if image_embed_key else None,
