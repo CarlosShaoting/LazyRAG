@@ -1,0 +1,108 @@
+import os
+
+import lazyllm
+from lazyllm import bind
+from lazyllm.tools.rag import DocField, DataType
+from lazyllm.tools.rag.readers import MineruPDFReader
+
+from chat.pipelines.builders.get_models import get_automodel
+from chat.utils.load_config import get_retrieval_settings
+from parsing.image_reader import ImageReader
+
+
+DATASET_PATH = "/home/mnt/cuishaoting/LazyRAG/test_doc"
+
+
+def get_cache_path():
+    return os.path.join(lazyllm.config["home"], "rag_for_qa")
+
+
+def get_image_path():
+    return os.path.join(get_cache_path(), "images")
+
+
+class TmpDir:
+    def __init__(self):
+        self.root_dir = os.path.expanduser(os.path.join(lazyllm.config["home"], "rag_for_qa"))
+        os.makedirs(self.root_dir, exist_ok=True)
+        self.rag_dir = DATASET_PATH
+        self.store_file = os.path.join(self.root_dir, "milvus.db")
+        self.image_path = get_image_path()
+        os.makedirs(self.image_path, exist_ok=True)
+
+    def cleanup(self):
+        if os.path.isfile(self.store_file):
+            os.remove(self.store_file)
+        if not os.path.isdir(self.image_path):
+            return
+        for filename in os.listdir(self.image_path):
+            filepath = os.path.join(self.image_path, filename)
+            if os.path.isfile(filepath):
+                os.remove(filepath)
+
+
+tmp_dir = TmpDir()
+
+doc_fields = {
+    "comment": DocField(data_type=DataType.VARCHAR, max_size=65535, default_value=" "),
+    "signature": DocField(data_type=DataType.VARCHAR, max_size=32, default_value=" "),
+}
+
+
+if __name__ == "__main__":
+    settings = get_retrieval_settings()
+    embed_key = settings.embed_keys[-1]
+    embed = {embed_key: get_automodel(embed_key)}
+    rerank_model = get_automodel("reranker")
+    milvus_store_conf = {
+        "type": "milvus",
+        "kwargs": {
+            "uri": tmp_dir.store_file,
+            "index_kwargs": next(ik for ik in settings.index_kwargs if ik["embed_key"] == embed_key),
+        },
+    }
+
+    prompt = (
+        "You will play the role of an AI Q&A assistant and complete a dialogue task."
+        " In this task, you need to provide your answer based on the given context and question."
+        " If an image can better convey the information being expressed, please include the image reference"
+        " in the text in Markdown format. Keep the image path in its original format."
+    )
+
+    documents = lazyllm.Document(
+        dataset_path=tmp_dir.rag_dir,
+        embed=embed,
+        manager=False,
+        store_conf=milvus_store_conf,
+        doc_fields=doc_fields,
+    )
+
+    documents.add_reader("*.pdf", MineruPDFReader(url="http://10.119.23.139:20234"))
+
+    image_reader = ImageReader(
+        embed_key=None,
+        embed_model=None,
+    )
+    for ext in (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff", ".tif"):
+        documents.add_reader(f"*{ext}", image_reader)
+
+    documents.create_node_group(name="block", transform=lambda s: s.split("\n") if s else "")
+    documents.activate_group("block", embed_keys=[embed_key])
+
+    with lazyllm.pipeline() as ppl:
+        ppl.retriever = lazyllm.Retriever(doc=documents, group_name="block", topk=3)
+        ppl.reranker = lazyllm.Reranker(
+            name="ModuleReranker",
+            model=rerank_model,
+            topk=1,
+            output_format="content",
+            join=True,
+        ) | bind(query=ppl.input)
+
+        ppl.formatter = (lambda nodes, query: dict(context_str=nodes, query=query)) | bind(query=ppl.input)
+
+        ppl.llm = lazyllm.OnlineChatModule().prompt(
+            lazyllm.ChatPrompter(instruction=prompt, extra_keys=["context_str"])
+        )
+
+    lazyllm.WebModule(ppl, port=23456, static_paths=get_cache_path()).start().wait()

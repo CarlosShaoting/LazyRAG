@@ -774,7 +774,7 @@ class NodeParser:
         with lazyllm.pipeline() as parser_ppl:
             parser_ppl.clear_parser = NodeTextClear()
             parser_ppl.table_converter = TableConverterNode()
-            parser_ppl.image_converter = ImageConverterNode()
+            # parser_ppl.image_converter = ImageConverterNode()
             parser_ppl.layout_parser = LayoutNodeParser()
             parser_ppl.group_nodes = GroupNodeParser()
             parser_ppl.group_filter_nodes = GroupFilterNodeParser()

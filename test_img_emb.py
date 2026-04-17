@@ -15,6 +15,11 @@ reader = ImageReader(
     embed_model=embed.get(image_embed_key) if image_embed_key else None,
 )
 
+# with open(path, "rb") as f:
+#     b64 = base64.b64encode(f.read()).decode()
+
+# img = f"data:image/jpeg;base64,{b64}"
+
 nodes = reader._load_data(img)
 node = nodes[0]
 
@@ -27,6 +32,12 @@ if image_embed_key in node.embedding:
     print("embedding first3:", node.embedding[image_embed_key][:3])
 print("metadata img_emb keys:", list((node.metadata.get("img_emb") or {}).keys()))
 
-# export PYTHONPATH=/home/mnt/cuishaoting/LazyLLM:/home/mnt/cuishaoting/LazyRAG:/home/mnt/cuishaoting/LazyRAG/algorithm
-# export LAZYRAG_MODEL_CONFIG_PATH=/home/mnt/cuishaoting/LazyRAG/algorithm/chat/runtime_models.inner.yaml
-# python /home/mnt/cuishaoting/LazyRAG/test_img_emb.py
+# import base64
+
+# path = "/home/mnt/cuishaoting/LazyRAG/test_doc/大象.jpg"
+
+# with open(path, "rb") as f:
+#     b64 = base64.b64encode(f.read()).decode()
+
+# data_uri = f"data:image/jpeg;base64,{b64}"
+# print(data_uri)
