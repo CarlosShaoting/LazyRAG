@@ -46,6 +46,9 @@ embeddings:
   #   model: BAAI/bge-large-zh-v1.5
   #   api_key: ${LAZYLLM_SILICONFLOW_API_KEY}
 
+# embed_img_text:
+# add clip model for image embedding, and specify the embed key in retrieval config for image search;
+
 retrieval:
   temp_doc_embed_key: embed_1
   file_search_embed_key: embed_1
