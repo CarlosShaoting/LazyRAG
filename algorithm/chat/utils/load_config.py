@@ -128,6 +128,8 @@ def _build_default_retriever_configs(embed_keys: List[str], topk: int = 20) -> L
         configs.append({'group_name': 'line', 'embed_keys': [ek], 'topk': topk, 'target': 'block'})
     for ek in embed_keys:
         configs.append({'group_name': 'block', 'embed_keys': [ek], 'topk': topk})
+
+    configs.append({'group_name': 'image', 'embed_keys': ['siglip'], 'topk': topk})
     return configs
 
 
