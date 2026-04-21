@@ -55,9 +55,24 @@ embeddings:
       index_type: SPARSE_INVERTED_INDEX
       metric_type: IP
 
+  # Multimodal embedding shared by text and image nodes.
+  # /mnt/lustre/share_data/lazyllm/models/siglip
+  siglip:
+    source: openai
+    type: embed
+    model: siglip
+    url: http://10.119.21.57:31485/embeddings
+    skip_auth: true
+    index_kwargs:
+      index_type: IVF_FLAT
+      metric_type: COSINE
+      params:
+        nlist: 128
+
 retrieval:
   temp_doc_embed_key: bge_m3_dense
   file_search_embed_key: bge_m3_sparse
+  text_doc_embed_key: siglip
 
   # The default behavior already builds:
   # - line -> block for each enabled embed key
