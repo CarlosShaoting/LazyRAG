@@ -117,7 +117,6 @@ def build_document() -> Document:
     docs.add_reader('*.pdf', _build_pdf_reader())
 
     image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif')
-    # image_embed_key = settings.embed_keys[0] if settings.embed_keys else None
     image_embed_key = settings.embed_keys[-1] if settings.embed_keys else None # use the new clip model
     image_reader = ImageReader(
         embed_key=image_embed_key,
@@ -130,7 +129,7 @@ def build_document() -> Document:
                            group_type=NodeGroupType.CHUNK, transform=GeneralParser(max_length=2048, split_by='\n'))
     docs.create_node_group(name='line', display_name='句子切片',
                            group_type=NodeGroupType.CHUNK, transform=LineSplitter, parent='block')
-    docs.activate_group('image', embed_keys=settings.embed_keys)
+    docs.activate_group('image', embed_keys=image_embed_key)
     docs.activate_group('block', embed_keys=settings.embed_keys)
     docs.activate_group('line', embed_keys=settings.embed_keys)
     return docs

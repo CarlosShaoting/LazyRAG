@@ -1,3 +1,5 @@
+name: ${COMPOSE_PROJECT_NAME:-lazyrag-alt}
+
 x-llm-api-keys: &llm-api-keys
   LAZYLLM_OPENAI_API_KEY: ${LAZYLLM_OPENAI_API_KEY:-}
   LAZYLLM_GLM_API_KEY: ${LAZYLLM_GLM_API_KEY:-}
@@ -33,7 +35,7 @@ services:
       - ./kong.yml:/kong/kong.yml
       - ./kong/plugins/rbac-auth:/usr/local/share/lua/5.1/kong/plugins/rbac-auth
     ports:
-      - "8000:8000"
+      - "${LAZYRAG_HOST_KONG_PORT:-18000}:8000"
     depends_on:
       auth-service:
         condition: service_healthy
@@ -142,7 +144,7 @@ services:
       MIGRATIONS_DIR: /migrations
       LAZYRAG_REDIS_URL: redis://test:123456@redis:6379/0
       LAZYRAG_UPLOAD_ROOT: ${LAZYRAG_SHARED_UPLOAD_DIR:-/var/lib/lazyrag/uploads}
-      LAZYRAG_PUBLIC_BASE_URL: http://localhost:8000/api/core
+      LAZYRAG_PUBLIC_BASE_URL: http://localhost:${LAZYRAG_HOST_KONG_PORT:-18000}/api/core
       LAZYRAG_FILE_URL_SIGN_SECRET: changeme-in-production
       LAZYRAG_FILE_URL_EXPIRE_SECONDS: "3600"
       LAZYRAG_OFFICE_CONVERT_URL: http://office-convert-service:8080/v1/office/to-pdf
@@ -183,7 +185,7 @@ services:
       ACL_DB_DSN: "host=db user=root password=123456 dbname=core port=5432 sslmode=disable TimeZone=UTC"
       LAZYRAG_REDIS_URL: redis://test:123456@redis:6379/0
       LAZYRAG_UPLOAD_ROOT: ${LAZYRAG_SHARED_UPLOAD_DIR:-/var/lib/lazyrag/uploads}
-      LAZYRAG_PUBLIC_BASE_URL: http://localhost:8000/api/core
+      LAZYRAG_PUBLIC_BASE_URL: http://localhost:${LAZYRAG_HOST_KONG_PORT:-18000}/api/core
       LAZYRAG_FILE_URL_SIGN_SECRET: changeme-in-production
       LAZYRAG_FILE_URL_EXPIRE_SECONDS: "3600"
       LAZYRAG_OFFICE_CONVERT_URL: http://office-convert-service:8080/v1/office/to-pdf
@@ -201,7 +203,7 @@ services:
     build:
       context: ./frontend
     ports:
-      - "8080:80"
+      - "${LAZYRAG_HOST_FRONTEND_PORT:-18080}:80"
     expose:
       - "80"
     depends_on:
@@ -223,7 +225,7 @@ services:
     expose:
       - "8000"
     ports:
-      - "8848:8000"
+      - "${LAZYRAG_HOST_DOC_SERVER_PORT:-18055}:8000"
     volumes:
       - ${LAZYRAG_UPLOAD_HOST_DIR:-./data/core/uploads}:${LAZYRAG_SHARED_UPLOAD_DIR:-/var/lib/lazyrag/uploads}
     environment:
@@ -430,13 +432,14 @@ services:
       LAZYRAG_DOCUMENT_PROCESSOR_URL: ${LAZYRAG_DOCUMENT_PROCESSOR_URL:-http://processor-server:8000}
       LAZYRAG_ALGO_SERVER_PORT: ${LAZYRAG_ALGO_SERVER_PORT:-8000}
       LAZYRAG_OCR_SERVER_TYPE: ${LAZYRAG_OCR_SERVER_TYPE:-none}
-      LAZYRAG_MODEL_CONFIG_PATH: ${LAZYRAG_MODEL_CONFIG_PATH:-}
+      # LAZYRAG_MODEL_CONFIG_PATH: ${LAZYRAG_MODEL_CONFIG_PATH:-}
+      LAZYRAG_USE_INNER_MODEL: "true"
       # Use neutral default; when mineru/paddleocr, set LAZYRAG_OCR_SERVER_URL (or use Makefile which sets it).
       # Avoid hardcoding mineru URL here to prevent paddleocr misconfiguration.
       LAZYRAG_OCR_SERVER_URL: ${LAZYRAG_OCR_SERVER_URL:-http://localhost:8000}
       LAZYRAG_MINERU_UPLOAD_MODE: ${LAZYRAG_MINERU_UPLOAD_MODE:-}
       LAZYRAG_MILVUS_URI: ${LAZYRAG_MILVUS_URI:-http://milvus:19530}
-      LAZYRAG_OPENSEARCH_URI: ${LAZYRAG_OPENSEARCH_URI:-https://opensearch:9200}
+      LAZYRAG_OPENSEARCH_URI: ${LAZYRAG_OPENSEARCH_URI:-http://opensearch:9200}
       LAZYRAG_OPENSEARCH_USER: ${LAZYRAG_OPENSEARCH_USER:-admin}
       LAZYRAG_OPENSEARCH_PASSWORD: ${LAZYRAG_OPENSEARCH_PASSWORD:-LazyRAG_OpenSearch123!}
       <<: *llm-api-keys
@@ -465,7 +468,7 @@ services:
     volumes:
       - ${LAZYRAG_UPLOAD_HOST_DIR:-./data/core/uploads}:${LAZYRAG_SHARED_UPLOAD_DIR:-/var/lib/lazyrag/uploads}
     ports:
-      - "8046:8046"
+      - "${LAZYRAG_HOST_CHAT_PORT:-18046}:8046"
     healthcheck:
       test: ['CMD-SHELL', 'curl -sf http://localhost:8046/docs || exit 1']
       interval: 10s
@@ -548,7 +551,7 @@ services:
       - milvus-dashboard
     image: zilliz/attu:${ATTU_IMAGE_TAG:-v2.6.3}
     ports:
-      - '127.0.0.1:3000:3000'
+      - '127.0.0.1:${LAZYRAG_HOST_ATTU_PORT:-13000}:3000'
     environment:
       MILVUS_URL: milvus:19530
     depends_on:
@@ -560,7 +563,6 @@ services:
     profiles:
       - opensearch
     image: opensearchproject/opensearch:${OPENSEARCH_IMAGE_TAG:-2.18.0}
-    container_name: opensearch
     environment:
       - cluster.name=opensearch-cluster
       - node.name=opensearch-node1
@@ -591,7 +593,7 @@ services:
       - opensearch-dashboard
     image: opensearchproject/opensearch-dashboards:${OPENSEARCH_IMAGE_TAG:-2.18.0}
     ports:
-      - '127.0.0.1:5601:5601'
+      - '127.0.0.1:${LAZYRAG_HOST_OPENSEARCH_DASHBOARDS_PORT:-15601}:5601'
     expose:
       - '5601'
     environment:

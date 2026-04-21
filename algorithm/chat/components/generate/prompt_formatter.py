@@ -1,6 +1,9 @@
+import os
 from typing import Any
 
 from lazyllm import ModuleBase
+from lazyllm.components.formatter import encode_query_with_filepaths
+from lazyllm.tools.rag.doc_node import ImageDocNode
 
 
 MULTIMODAL_PROMPT_INSTRUCTIONS = """
@@ -66,13 +69,59 @@ class RAGContextFormatter(ModuleBase):
     def __init__(self, return_trace: bool = False, **kwargs) -> None:
         super().__init__(return_trace=return_trace, **kwargs)
 
+    def _is_image_node(self, node: Any) -> bool:
+        metadata = getattr(node, 'metadata', None) or {}
+        file_type = metadata.get('file_type') or ''
+        return (
+            isinstance(node, ImageDocNode)
+            or getattr(node, '_group', None) == 'image'
+            or bool(getattr(node, 'image_path', None))
+            or (isinstance(file_type, str) and file_type.startswith('image'))
+        )
+
+    def _get_file_name(self, node: Any) -> str:
+        metadata = getattr(node, 'metadata', None) or {}
+        global_metadata = getattr(node, 'global_metadata', None) or {}
+        file_name = metadata.get('file_name') or global_metadata.get('file_name')
+        if file_name:
+            return file_name
+        image_path = getattr(node, 'image_path', None)
+        if image_path:
+            return os.path.basename(image_path)
+        return ''
+
+    def _collect_image_paths(self, nodes: list[Any], image_files: list[Any]) -> list[str]:
+        image_paths = []
+        for node in nodes:
+            image_path = getattr(node, 'image_path', None)
+            if self._is_image_node(node) and isinstance(image_path, str) and image_path:
+                image_paths.append(image_path)
+
+        for item in image_files:
+            if isinstance(item, str) and item:
+                image_paths.append(item)
+            elif isinstance(item, dict):
+                path = item.get('path') or item.get('uri')
+                if isinstance(path, str) and path:
+                    image_paths.append(path)
+
+        deduped = []
+        seen = set()
+        for path in image_paths:
+            if path not in seen:
+                seen.add(path)
+                deduped.append(path)
+        return deduped
+
     def _create_context_str(self, nodes: dict) -> str:
         node_str_list = []
         for index, node in enumerate(nodes):
-            file_name = node.metadata.get('file_name')
-            node_str = (
-                f'文档[[{index + 1}]]:\n文档名：{file_name}\n{node.text}\n'
-            )
+            file_name = self._get_file_name(node)
+            if self._is_image_node(node):
+                node_body = '[图片节点] 该参考为图片，已作为附件提供给模型，请结合图片内容回答。'
+            else:
+                node_body = node.text
+            node_str = f'文档[[{index + 1}]]:\n文档名：{file_name}\n{node_body}\n'
             node_str_list.append(node_str)
 
         context_str = '\n'.join(node_str_list)
@@ -82,11 +131,12 @@ class RAGContextFormatter(ModuleBase):
         nodes = input or []
         image_files = kwargs.get('image_files') or []
         query = kwargs.get('query')
+        image_paths = self._collect_image_paths(nodes, image_files)
         if len(nodes):
             context_str = self._create_context_str(nodes)
             res = standard_rag_input_cn.format(instructions=LLM_PROMPT_INSTRUCTIONS, context=context_str, query=query)
-        elif image_files:
+        elif image_paths:
             res = image_rag_input_cn.format(instructions=MULTIMODAL_PROMPT_INSTRUCTIONS, query=query)
         else:
             res = default_rag_input_cn.format(query=query)
-        return res
+        return encode_query_with_filepaths(res, image_paths) if image_paths else res
