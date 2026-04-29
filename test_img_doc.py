@@ -58,6 +58,17 @@ def resolve_image_embed_key(explicit_key: str | None = None) -> str:
 
 def build_image_document(image_files: list[str], image_embed_key: str) -> Document:
     embed_model = get_automodel(image_embed_key)
+    milvus_store_conf = {
+  'type': 'milvus',  # 指定存储后端类型
+  'kwargs': {
+    'uri': 'test.db',  # 存储后端地址，本例子使用的是本地文件 test.db，文件不存则创建新文件
+    'index_kwargs': {  # 存储后端的索引配置
+      'index_type': 'FLAT',  # 索引类型
+      'metric_type': 'COSINE',  # 相似度计算方式
+    }
+  },
+}
+
     documents = Document(
         embed={image_embed_key: embed_model},
         doc_files=image_files,

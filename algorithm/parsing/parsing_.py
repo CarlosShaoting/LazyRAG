@@ -44,7 +44,6 @@ def main() -> None:
     startup_timeout = float(os.getenv('LAZYRAG_STARTUP_TIMEOUT', '0'))
 
     _wait_for_http_ok(f'{processor_url}/health', 'DocumentProcessor', startup_timeout, retry_interval)
-
     docs = build_document()
     docs.start()
 

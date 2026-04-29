@@ -29,6 +29,7 @@ class RetrievalSettings:
     retriever_configs: List[Dict[str, Any]]
     temp_doc_embed_key: str
     file_search_embed_key: str
+    img_search_embed_key: str | None
 
 
 def _expand_env_placeholders(value: Any, config_path: str) -> Any:
@@ -177,6 +178,12 @@ def get_retrieval_settings(config_path: str | None = None) -> RetrievalSettings:
             f'file_search_embed_key `{file_search_embed_key}` not in active embeds: {embed_keys}'
         )
 
+    img_search_embed_key = retrieval.get('img_search_embed_key')
+    if img_search_embed_key is not None and img_search_embed_key not in embed_keys:
+        raise ValueError(
+            f'img_search_embed_key `{img_search_embed_key}` not in active embeds: {embed_keys}'
+        )
+
     retriever_configs = retrieval.get('retriever_configs')
     if retriever_configs is None:
         topk = int(retrieval.get('default_topk', 20))
@@ -188,4 +195,5 @@ def get_retrieval_settings(config_path: str | None = None) -> RetrievalSettings:
         retriever_configs=retriever_configs,
         temp_doc_embed_key=temp_doc_embed_key,
         file_search_embed_key=file_search_embed_key,
+        img_search_embed_key=img_search_embed_key,
     )

@@ -26,9 +26,18 @@ def get_retriever(url: str, retriever_configs: List[dict], *,
                   tmp_block_topk: int = DEFAULT_TMP_BLOCK_TOPK
                   ) -> SearchRetrievalParts:
     document = get_remote_docment(url)
-    kb_retrievers = [Retriever(document, **cfg) for cfg in retriever_configs]
-
     settings = get_retrieval_settings()
+    final_retriever_configs = list(retriever_configs)
+    if settings.img_search_embed_key and not any(cfg.get('group_name') == 'image' for cfg in final_retriever_configs):
+        final_retriever_configs.append({
+            'group_name': 'image',
+            'similarity': 'cosine',
+            'topk': 3,
+            'embed_keys': [settings.img_search_embed_key],
+        })
+
+    kb_retrievers = [Retriever(document, **cfg) for cfg in final_retriever_configs]
+
     ref_docs_retriever = TempDocRetriever(embed=get_automodel(settings.temp_doc_embed_key))
     ref_docs_retriever.add_subretriever('block', topk=tmp_block_topk)
     with pipeline() as tmp_ppl:

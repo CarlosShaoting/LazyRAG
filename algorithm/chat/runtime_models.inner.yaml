@@ -61,18 +61,17 @@ embeddings:
     source: openai
     type: embed
     model: siglip
-    url: http://10.119.18.19:34194/embeddings
+    url: http://10.119.16.108:35907/embeddings
     skip_auth: true
     index_kwargs:
       index_type: IVF_FLAT
       metric_type: COSINE
-      params:
-        nlist: 128
+
 
 retrieval:
   temp_doc_embed_key: bge_m3_dense
   file_search_embed_key: bge_m3_sparse
-  text_doc_embed_key: siglip
+  img_search_embed_key: siglip
 
   # The default behavior already builds:
   # - line -> block for each enabled embed key

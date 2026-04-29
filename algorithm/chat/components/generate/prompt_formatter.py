@@ -66,12 +66,20 @@ class RAGContextFormatter(ModuleBase):
     def __init__(self, return_trace: bool = False, **kwargs) -> None:
         super().__init__(return_trace=return_trace, **kwargs)
 
+    def _format_node_content(self, node, index: int) -> str:
+        if hasattr(node, 'image_path') or node.metadata.get('is_pure_image'):
+            image_path = node.metadata.get('normalized_source_path') or getattr(node, 'image_path', '') or node.text
+            file_name = node.metadata.get('file_name') or f'image_{index + 1}'
+            return f'![{file_name}]({image_path})'
+        return node.text
+
     def _create_context_str(self, nodes: dict) -> str:
         node_str_list = []
         for index, node in enumerate(nodes):
             file_name = node.metadata.get('file_name')
+            node_content = self._format_node_content(node, index)
             node_str = (
-                f'文档[[{index + 1}]]:\n文档名：{file_name}\n{node.text}\n'
+                f'文档[[{index + 1}]]:\n文档名：{file_name}\n{node_content}\n'
             )
             node_str_list.append(node_str)
 

@@ -8,7 +8,9 @@ from lazyllm.tools.rag.readers import PaddleOCRPDFReader
 
 from chat.pipelines.builders.get_models import get_automodel
 from chat.utils.load_config import get_retrieval_settings
-from parsing.image_reader import ImageReader
+from parsing.readers.imageEmbReader import ImageEmbReader
+from parsing.readers.videoAudioReader import VideoAudioReader
+from parsing.readers.videoFrameReader import VideoFrameReader
 from parsing.transform import NodeParser, GeneralParser, LineSplitter
 
 ALGO_ID = 'general_algo'
@@ -117,14 +119,14 @@ def build_document() -> Document:
     docs.add_reader('*.pdf', _build_pdf_reader())
 
     image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif')
-    # image_embed_key = settings.embed_keys[0] if settings.embed_keys else None
-    image_embed_key = settings.embed_keys[-1] if settings.embed_keys else None # use the new clip model
-    image_reader = ImageReader(
-        embed_key=image_embed_key,
-        embed_model=embed.get(image_embed_key) if image_embed_key else None,
-    )
+    image_reader = ImageEmbReader()
+    audio_reader = VideoAudioReader(time_segment=True)
+    video_frame_reader = VideoFrameReader(time=20)
     for ext in image_extensions:
         docs.add_reader(f'*{ext}', image_reader)
+    for ext in ('.mp3'):
+        docs.add_reader(f'*{ext}', audio_reader)
+    docs.add_reader('*.mp4', video_frame_reader)
 
     docs.create_node_group(name='block', display_name='段落切片',
                            group_type=NodeGroupType.CHUNK, transform=GeneralParser(max_length=2048, split_by='\n'))
