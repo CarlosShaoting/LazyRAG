@@ -64,6 +64,13 @@ x-llm-api-keys: &llm-api-keys
 x-upload-paths: &upload-paths
   LAZYMIND_UPLOAD_HOST_DIR: ./data/core/uploads
   LAZYMIND_SHARED_UPLOAD_DIR: /var/lib/lazymind/uploads
+  # MinerU parsed images (shared by mineru + parse-worker/algo for offline disk copy).
+  LAZYMIND_MINERU_IMAGE_SAVE_DIR: /var/lib/lazymind/uploads/.mineru-images
+  # Generic env for lazyllm components (avoid LAZYMIND_* coupling).
+  MINERU_IMAGE_SAVE_DIR: /var/lib/lazymind/uploads/.mineru-images
+
+# Local lazyllm source -> /opt/lazyllm (edit on host, docker compose restart; no image rebuild).
+x-lazyllm-src-mount: &lazyllm-src-mount ./algorithm/lazyllm:/opt/lazyllm
 
 x-runtime-home: &runtime-home
   LAZYMIND_HOME: /tmp/.lazyllm_rag
@@ -425,17 +432,15 @@ services:
     expose:
       - "8000"
     volumes:
-      - rag-uploads:/app/uploads
+      - ./data/core/uploads:/var/lib/lazymind/uploads
       - mineru-model-cache:/root/.cache
       - mineru-cache:/app/.mineru-cache
-      - mineru-images:/app/.mineru-images
     environment:
-      <<: *llm-api-keys
+      <<: [*upload-paths, *llm-api-keys]
       LAZYLLM_EXPECTED_LOG_MODULES: "all"
       LAZYMIND_MINERU_SERVER_PORT: "8000"
       LAZYMIND_MINERU_BACKEND: pipeline
       LAZYMIND_MINERU_CACHE_DIR: /app/.mineru-cache
-      LAZYMIND_MINERU_IMAGE_SAVE_DIR: /app/.mineru-images
     command: ["python", "parsing/mineru.py"]
 
   # PaddleOCR-VL document parsing service (official images).
@@ -509,6 +514,7 @@ services:
     volumes:
       - ./data/core/uploads:/var/lib/lazymind/uploads
       - ./data/traces:/var/lib/lazymind/traces
+      - *lazyllm-src-mount
     environment:
       LAZYMIND_DOCUMENT_PROCESSOR_PORT: "8000"
       <<: [*runtime-home, *db-conn, *upload-paths, *llm-api-keys, *trace-config]
@@ -544,6 +550,7 @@ services:
     volumes:
       - ./data/core/uploads:/var/lib/lazymind/uploads
       - ./data/traces:/var/lib/lazymind/traces
+      - *lazyllm-src-mount
     environment:
       LAZYMIND_DOCUMENT_WORKER_PORT: "8001"
       LAZYMIND_DOCUMENT_WORKER_NUM_WORKERS: "1"
@@ -588,6 +595,7 @@ services:
     volumes:
       - ./data/core/uploads:/var/lib/lazymind/uploads
       - ./data/traces:/var/lib/lazymind/traces
+      - *lazyllm-src-mount
     healthcheck:
       test: ['CMD-SHELL', 'python algorithm/parsing/healthcheck.py']
       interval: 15s
@@ -633,6 +641,7 @@ services:
     volumes:
       - ./data/core/uploads:/var/lib/lazymind/uploads
       - ./data/traces:/var/lib/lazymind/traces
+      - *lazyllm-src-mount
     healthcheck:
       test: ['CMD-SHELL', 'curl -sf http://localhost:8046/docs || exit 1']
       interval: 10s
@@ -837,7 +846,6 @@ volumes:
   rag-uploads:
   mineru-model-cache:
   mineru-cache:
-  mineru-images:
   milvus-etcd:
   milvus-minio:
   milvus-data:

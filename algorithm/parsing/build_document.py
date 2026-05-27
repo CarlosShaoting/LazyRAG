@@ -107,6 +107,7 @@ def _build_pdf_reader():
             patch_applied=patch_applied,
             service_variant=service_variant,
             image_cache_dir=_cfg['image_cache_dir'],
+            mineru_image_dir=_cfg['mineru_image_save_dir'],
         )
     if ocr_type == 'paddleocr':
         return PaddleOCRPDFReader(

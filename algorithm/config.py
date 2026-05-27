@@ -73,7 +73,13 @@ config.add('mineru_upload_mode', str, None, 'MINERU_UPLOAD_MODE', description='M
 config.add('mineru_backend', str, 'pipeline', 'MINERU_BACKEND', description='MinerU processing backend.')
 config.add('mineru_server_port', int, 8000, 'MINERU_SERVER_PORT', description='MinerU server port.')
 config.add('mineru_cache_dir', str, None, 'MINERU_CACHE_DIR', description='MinerU cache directory.')
-config.add('mineru_image_save_dir', str, None, 'MINERU_IMAGE_SAVE_DIR', description='MinerU image save directory.')
+config.add(
+    'mineru_image_save_dir',
+    str,
+    os.path.join(config['shared_upload_dir'], '.mineru-images'),
+    'MINERU_IMAGE_SAVE_DIR',
+    description='MinerU image save directory (under shared uploads).',
+)
 config.add('image_cache_dir', str, os.path.join(config['shared_upload_dir'], '.image_cache'), 'IMAGE_CACHE_DIR',
            description='OCR image cache root (per-document task subdirs).')
 config.add('document_processor_url', str, 'http://localhost:8000', 'DOCUMENT_PROCESSOR_URL', description='Document processor service URL.')
