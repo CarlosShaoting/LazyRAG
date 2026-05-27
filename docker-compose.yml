@@ -435,6 +435,7 @@ services:
       - ./data/core/uploads:/var/lib/lazymind/uploads
       - mineru-model-cache:/root/.cache
       - mineru-cache:/app/.mineru-cache
+      - *lazyllm-src-mount
     environment:
       <<: [*upload-paths, *llm-api-keys]
       LAZYLLM_EXPECTED_LOG_MODULES: "all"
@@ -843,7 +844,6 @@ services:
 volumes:
   pgdata:
   redisdata:
-  rag-uploads:
   mineru-model-cache:
   mineru-cache:
   milvus-etcd:
