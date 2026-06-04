@@ -1,8 +1,6 @@
 import textwrap
 from pathlib import Path
 
-import pytest
-
 from lazymind.chat.service.component.tool_registry import DEFAULT_TOOLS, filter_tools
 from lazymind.model_config import is_model_role_available, load_model_config
 
