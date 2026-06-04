@@ -2,7 +2,7 @@ import os
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, NamedTuple, Optional
+from typing import Any, Dict, List, NamedTuple, Optional, Set
 
 import yaml
 from lazyllm.tools.agent.skill_manager import SkillManager as LazySkillManager
@@ -21,6 +21,8 @@ _TYPE_TO_SLOT: Dict[str, str] = {
     'embed': 'embed',
     'rerank': 'embed',
     'cross_modal_embed': 'embed',
+    'text2image': 'multimodal',
+    'image_editing': 'multimodal',
 }
 
 # Prefix convention for embed-type roles in the flat yaml format.
@@ -74,6 +76,61 @@ def load_model_config(config_path: str | None = None, *, expand_env: bool = Fals
     return raw
 
 
+def _role_config_entry(entries: Any) -> Optional[Dict[str, Any]]:
+    if isinstance(entries, list) and entries:
+        first = entries[0]
+        return first if isinstance(first, dict) else None
+    if isinstance(entries, dict):
+        return entries
+    return None
+
+
+def _role_source(entry: Dict[str, Any]) -> str:
+    return str(entry.get('source') or '').strip().lower()
+
+
+@lru_cache(maxsize=8)
+def get_configured_model_roles(config_path: str) -> frozenset[str]:
+    raw = load_model_config(config_path)
+    roles: Set[str] = set()
+    for role, entries in raw.items():
+        if _role_config_entry(entries) is not None:
+            roles.add(str(role))
+    return frozenset(roles)
+
+
+def is_model_role_available(
+    role: str,
+    *,
+    config_path: Optional[str] = None,
+    request_model_config: Optional[Dict[str, Any]] = None,
+) -> bool:
+    path = str(config_path or get_config_path())
+    role_name = str(role or '').strip()
+    if not role_name or role_name not in get_configured_model_roles(path):
+        return False
+    entry = _role_config_entry(load_model_config(path).get(role_name))
+    if not entry:
+        return False
+    if _role_source(entry) != 'dynamic':
+        return True
+    if isinstance(request_model_config, dict):
+        role_cfg = request_model_config.get(role_name)
+        if isinstance(role_cfg, dict) and role_cfg:
+            return True
+    import lazyllm
+    dyn = lazyllm.globals.config.get('dynamic_model_configs')
+    if isinstance(dyn, dict) and role_name in dyn:
+        buckets = dyn.get(role_name)
+        if isinstance(buckets, dict):
+            for slot_cfg in buckets.values():
+                if isinstance(slot_cfg, dict) and (
+                    slot_cfg.get('source') or slot_cfg.get('model') or slot_cfg.get('url')
+                ):
+                    return True
+    return False
+
+
 def normalize_skill_fs_url(value: Any) -> str:
     raw = str(value or '').strip()
     if not raw:
@@ -116,11 +173,12 @@ def get_dynamic_role_slot_map(config_path: Optional[str] = None) -> Dict[str, st
     raw = load_model_config(config_path or str(_DYNAMIC_CONFIG_PATH))
     result: Dict[str, str] = {}
     for role, cfg in raw.items():
-        if not isinstance(cfg, dict):
+        entry = _role_config_entry(cfg)
+        if not entry:
             continue
-        if (cfg.get('source') or '').lower() != 'dynamic':
+        if (entry.get('source') or '').lower() != 'dynamic':
             continue
-        role_type = (cfg.get('type') or 'llm').lower()
+        role_type = (entry.get('type') or 'llm').lower()
         slot = _TYPE_TO_SLOT.get(role_type, 'chat')
         result[role] = slot
     return result

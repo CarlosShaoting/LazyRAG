@@ -137,6 +137,27 @@ VISION_EXTRACTOR_GUIDANCE = (
     'from kb_search results (filesystem path under /var/lib/lazymind/uploads/). '
     'Do NOT pass `/static-files/` signed URLs to vision_extractor.'
 )
+ATTACHED_IMAGES_GUIDANCE = (
+    '# Attached images — tool order (mandatory)\n'
+    'When the user message lists attached image paths, pick the FIRST matching rule and '
+    'call only that tool (do not chain `describe_attached_images` before edit/generate):\n'
+    '1. **Edit / modify** the attachment (e.g. add a hat, change color, remove object, '
+    'add text, style transfer) → call `image_editor` immediately with `url` = a listed '
+    'path and `prompt` = the edit instruction. Do NOT call `describe_attached_images` first.\n'
+    '2. **New image from text** (no attachment edit) → call `image_generator`.\n'
+    '3. **KB file name / metadata / where stored** → call `kb_search` (not `web_search`); '
+    'attached images are passed through for image-aware retrieval.\n'
+    '4. **Describe or understand** content in text only (what is in the image, OCR, etc.) '
+    '→ call `describe_attached_images`.\n'
+    'If the user both edits and asks a factual KB question, call `image_editor` first, '
+    'then `kb_search` if still needed.'
+)
+IMAGE_GENERATION_GUIDANCE = (
+    'For `image_generator` / `image_editor` output, paste `image_markdown` from the tool '
+    'result verbatim. Follow the Image path formatting rules above. '
+    'For KB result images use `vision_extractor` with `local_path`; for user attachments '
+    'follow the attached-image tool order above.'
+)
 
 SEARCH_GUIDANCE = (
     "# Search Tool Rules (CRITICAL — follow strictly)\n"

@@ -3,21 +3,27 @@ from __future__ import annotations
 from typing import Any, Dict, Tuple
 
 from chat.prompts.agentic import (
+    ATTACHED_IMAGES_GUIDANCE,
     DEFAULT_SYSTEM_PROMPT,
+    IMAGE_GENERATION_GUIDANCE,
     IMAGE_REFERENCE_MARKDOWN_GUIDANCE,
-    VISION_EXTRACTOR_GUIDANCE,
     MEMORY_GUIDANCE,
     SEARCH_GUIDANCE,
     SKILLS_GUIDANCE,
     TOOL_CALL_STATUS_GUIDANCE,
+    VISION_EXTRACTOR_GUIDANCE,
     VOCAB_GUIDANCE,
     _COMBINED_REVIEW_PROMPT,
     _MEMORY_REVIEW_PROMPT,
     _SKILL_REVIEW_PROMPT,
 )
-from chat.utils.load_config import normalize_skill_fs_url
+from chat.utils.load_config import (
+    get_config_path,
+    is_model_role_available,
+    normalize_skill_fs_url,
+)
 
-DEFAULT_TOOLS = [
+BASE_DEFAULT_TOOLS = [
     'kb_search',
     'kb_get_parent_node',
     'kb_get_window_nodes',
@@ -25,10 +31,29 @@ DEFAULT_TOOLS = [
     'web_search',
     'url_fetch',
     'arxiv_search',
-    'vision_extractor',
     'vocab_manage',
     'memory',
     'skill_manage',
+]
+
+TOOL_MODEL_ROLE: dict[str, str] = {
+    'vision_extractor': 'vlm',
+    'describe_attached_images': 'vlm',
+    'image_generator': 'image_generator',
+    'image_editor': 'image_editor',
+}
+
+_MODEL_ROLE_TOOLS: dict[str, list[str]] = {
+    'vlm': ['vision_extractor', 'describe_attached_images'],
+    'image_generator': ['image_generator'],
+    'image_editor': ['image_editor'],
+}
+
+DEFAULT_TOOLS = BASE_DEFAULT_TOOLS + [
+    'vision_extractor',
+    'describe_attached_images',
+    'image_generator',
+    'image_editor',
 ]
 
 BUILTIN_FILE_TOOLS = (
@@ -54,15 +79,48 @@ REVIEW_PROMPTS: dict[str, str] = {
 }
 
 
-def _normalize_available_tools(tools: Any) -> list[str]:
+def get_default_tools(config: dict | None = None) -> list[str]:
+    path = get_config_path()
+    model_config = config.get('model_config') if isinstance(config, dict) else None
+    tools = list(BASE_DEFAULT_TOOLS)
+    for role, bound_tools in _MODEL_ROLE_TOOLS.items():
+        if not is_model_role_available(
+            role,
+            config_path=path,
+            request_model_config=model_config,
+        ):
+            continue
+        for tool_name in bound_tools:
+            if tool_name not in tools:
+                tools.append(tool_name)
+    return tools
+
+
+def _filter_tools_by_model_roles(tools: list[str], config: dict) -> list[str]:
+    path = get_config_path()
+    model_config = config.get('model_config') if isinstance(config, dict) else None
+    filtered: list[str] = []
+    for tool in tools:
+        role = TOOL_MODEL_ROLE.get(tool)
+        if role and not is_model_role_available(
+            role,
+            config_path=path,
+            request_model_config=model_config,
+        ):
+            continue
+        filtered.append(tool)
+    return filtered
+
+
+def _normalize_available_tools(tools: Any, config: dict | None = None) -> list[str]:
     if tools is None:
-        return list(DEFAULT_TOOLS)
+        return get_default_tools(config)
     if isinstance(tools, str):
         tools = [tools]
     if not isinstance(tools, list):
-        return list(DEFAULT_TOOLS)
+        return get_default_tools(config)
     if any(isinstance(t, str) and t.lower() == 'all' for t in tools):
-        return list(DEFAULT_TOOLS)
+        return get_default_tools(config)
     normalized = [t for t in tools if isinstance(t, str) and t]
     if 'vocab_manage' not in normalized and any(t in normalized for t in ('memory', 'skill_manage')):
         normalized.append('vocab_manage')
@@ -166,19 +224,30 @@ def _sync_request_context(config: dict) -> None:
     _normalize_environment_context(config)
 
 
+def _kb_tools_allowed(config: dict) -> bool:
+    kb_url = str(config.get('kb_url') or '').strip()
+    kb_name = str(config.get('kb_name') or '').strip()
+    return bool(kb_url and kb_name)
+
+
 def _filter_tools_for_request(tools: list[str], config: dict) -> list[str]:
+    tools = _filter_tools_by_model_roles(tools, config)
     if not config.get('use_memory', True):
         tools = [t for t in tools if t != 'memory']
 
-    if config.get('kb_id'):
+    if _kb_tools_allowed(config):
         return tools
 
-    has_temp_files = bool(config.get('temp_files'))
+    has_attachments = bool(
+        config.get('files')
+        or config.get('temp_files')
+        or config.get('image_files')
+    )
     filtered = []
     for tool in tools:
         if not tool.startswith('kb_'):
             filtered.append(tool)
-        elif has_temp_files and tool == 'kb_search':
+        elif has_attachments and tool == 'kb_search':
             filtered.append(tool)
     return filtered
 
@@ -240,15 +309,21 @@ def _build_runtime_system_prompt(config: dict, available_tools: list[str]) -> st
         prompt_parts.append(' '.join(tool_guidance))
     if available_tools:
         prompt_parts.append(TOOL_CALL_STATUS_GUIDANCE)
+    if (config.get('image_files') or []) and 'describe_attached_images' in available_tools:
+        prompt_parts.append(ATTACHED_IMAGES_GUIDANCE)
     if any(tool.startswith('kb_') for tool in available_tools):
         prompt_parts.append(SEARCH_GUIDANCE)
     if (
         any(tool.startswith('kb_') for tool in available_tools)
         or (config.get('image_files') or [])
+        or 'image_generator' in available_tools
+        or 'image_editor' in available_tools
     ):
         prompt_parts.append(IMAGE_REFERENCE_MARKDOWN_GUIDANCE)
     if 'vision_extractor' in available_tools:
         prompt_parts.append(VISION_EXTRACTOR_GUIDANCE)
+    if 'image_generator' in available_tools or 'image_editor' in available_tools:
+        prompt_parts.append(IMAGE_GENERATION_GUIDANCE)
 
     return '\n\n'.join(prompt_parts)
 

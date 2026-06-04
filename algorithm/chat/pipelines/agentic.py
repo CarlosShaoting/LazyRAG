@@ -55,37 +55,37 @@ from lazyllm import AutoModel  # noqa: E402
 from chat.utils.load_config import get_config_path  # noqa: E402
 
 
-def _augment_query_with_attached_images(query: str, config: dict[str, Any]) -> str:
-    '''Run VLM once on ``config['image_files']`` and merge summaries into ``query``.
+def _annotate_query_with_attached_images(query: str, config: dict[str, Any]) -> str:
+    '''List attached image paths for the agent; VLM runs via describe_attached_images tool.'''
+    from chat.utils.static_file_url import resolve_local_image_path
 
-    The main chat LLM stays text-only; paths remain in ``config`` for
-    ``vision_extractor`` and image-node retrieval.
-    '''
     raw_paths = config.get('image_files') or []
     if not isinstance(raw_paths, list) or not raw_paths:
         return query
-    clean = [str(p).strip() for p in raw_paths if str(p).strip()]
-    if not clean:
+    resolved: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_paths:
+        path = str(raw).strip()
+        if not path:
+            continue
+        local_path = resolve_local_image_path(path) or path
+        if local_path not in seen:
+            seen.add(local_path)
+            resolved.append(local_path)
+    if not resolved:
         return query
-    try:
-        from chat.components.process.query_image_rewriter import QueryImageRewriter
-
-        payload: dict[str, Any] = {
-            'query': query,
-            'image_files': clean,
-            'priority': int(config.get('priority', 0) or 0),
-        }
-        rewriter = QueryImageRewriter(
-            vlm=AutoModel(model='vlm', config=get_config_path()),
-        )
-        out = rewriter.forward(payload)
-        if isinstance(out, dict):
-            nq = out.get('query')
-            if isinstance(nq, str) and nq.strip():
-                return nq.strip()
-    except Exception as exc:
-        lazyllm.LOG.warning(f'[agentic] attached-image VLM rewrite skipped: {exc}')
-    return query
+    lines = [
+        'The user attached image(s) in this turn (paths below). Tool order:',
+        '1) Edit/modify (e.g. add hat, change color) → `image_editor` with `url` below; '
+        'do NOT call `describe_attached_images` first.',
+        '2) New image from text → `image_generator`.',
+        '3) KB file name / metadata → `kb_search`.',
+        '4) Describe content only → `describe_attached_images`.',
+        'Paths:',
+    ]
+    for index, path in enumerate(resolved, start=1):
+        lines.append(f'{index}. {path}')
+    return f'{query}\n\n' + '\n'.join(lines)
 
 
 class _StreamingFunctionCall(FunctionCall):
@@ -214,7 +214,7 @@ def agentic_forward(
 
     llm = AutoModel(model='llm', config=get_config_path())
     available_tools = _filter_tools_for_request(
-        _normalize_available_tools(config.get('available_tools')),
+        _normalize_available_tools(config.get('available_tools'), config),
         config,
     )
     available_skills = _normalize_available_skills(config.get('available_skills'))
@@ -223,7 +223,7 @@ def agentic_forward(
     config['available_skills'] = available_skills
 
     original_query = query.strip()
-    agent_query = _augment_query_with_attached_images(original_query, config)
+    agent_query = _annotate_query_with_attached_images(original_query, config)
 
     keep_full_turns = config.get('keep_full_turns', 3)
     runtime_prompt = _build_runtime_system_prompt(config, available_tools)
@@ -473,7 +473,8 @@ async def _agentic_forward_stream(
 
 def _ensure_tools_registered() -> None:
     # Trigger @fc_register side effects once so ReactAgent can resolve tool names.
-    from chat.tools import kb, memory, skill_manager, vocab, vision_extractor, web_search  # noqa: F401
+    from chat.tools import image_generation, kb, memory, skill_manager, vocab, vision_extractor, web_search  # noqa: F401
+    from chat.tools.vision_extractor import describe_attached_images  # noqa: F401
 
 
 @lru_cache(maxsize=1)

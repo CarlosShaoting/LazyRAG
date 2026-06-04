@@ -106,7 +106,8 @@ def build_query_params(query: str, history: Optional[List[Dict[str, Any]]],
                        user_preference: Optional[str],
                        use_memory: Optional[bool],
                        environment_context: Optional[Dict[str, Any]] = None,
-                       user_id: Optional[str] = None) -> Dict[str, Any]:
+                       user_id: Optional[str] = None,
+                       model_config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     hist = [
         {
             'role': str(h.get('role', 'assistant')),
@@ -129,6 +130,7 @@ def build_query_params(query: str, history: Optional[List[Dict[str, Any]]],
         'use_memory': use_memory,
         'environment_context': environment_context if isinstance(environment_context, dict) else {},
         'user_id': user_id or '',
+        'model_config': model_config if isinstance(model_config, dict) else None,
     }
 
 
@@ -210,6 +212,7 @@ async def handle_chat(query: str, history: Optional[List[Dict[str, Any]]],
         use_memory=use_memory,
         environment_context=environment_context,
         user_id=user_id,
+        model_config=model_config,
     )
 
     def _init_session():
