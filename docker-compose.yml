@@ -68,7 +68,6 @@ x-upload-paths: &upload-paths
 
 # Local lazyllm source -> /opt/lazyllm (edit on host, docker compose restart; no image rebuild).
 x-lazyllm-src-mount: &lazyllm-src-mount ./algorithm/lazyllm:/opt/lazyllm
-
 x-runtime-home: &runtime-home
   LAZYMIND_HOME: /tmp/.lazyllm_rag
 
@@ -79,10 +78,10 @@ x-core-db-conn: &core-db-conn
   LAZYMIND_CORE_DATABASE_URL: ${LAZYMIND_CORE_DATABASE_URL:-postgresql+psycopg://root:123456@db:5432/core}
 
 x-ocr-env: &ocr-env
-  LAZYMIND_OCR_SERVICE_VARIANT: ${LAZYMIND_OCR_SERVICE_VARIANT:-online}
   LAZYMIND_OCR_SERVER_TYPE: ${LAZYMIND_OCR_SERVER_TYPE:-none}
-  LAZYMIND_MINERU_UPLOAD_MODE: "True"
-  LAZYMIND_OCR_PATCH_APPLIED: ${LAZYMIND_OCR_PATCH_APPLIED:-True}
+  LAZYLLM_MINERU_BACKEND: ${LAZYLLM_MINERU_BACKEND:-pipeline}
+  LAZYLLM_MINERU_UPLOAD_MODE: "True"
+  LAZYLLM_OCR_PATCH_APPLIED: ${LAZYLLM_OCR_PATCH_APPLIED:-True}
   LAZYLLM_MINERU_API_KEY: ${LAZYLLM_MINERU_API_KEY:-}
   LAZYLLM_PADDLE_API_KEY: ${LAZYLLM_PADDLE_API_KEY:-}
   LAZYMIND_OCR_SERVER_URL: ${LAZYMIND_OCR_SERVER_URL:-http://host.docker.internal:8000/api/v1/pdf_parse}
@@ -524,7 +523,7 @@ services:
       - *lazyllm-src-mount
     environment:
       LAZYMIND_DOCUMENT_PROCESSOR_PORT: "8000"
-      <<: [*runtime-home, *db-conn, *upload-paths, *llm-api-keys, *trace-config]
+      <<: [*runtime-home, *db-conn, *upload-paths, *llm-api-keys, *ocr-env, *trace-config]
       LAZYLLM_EXPECTED_LOG_MODULES: "all"
     command: ["python", "-m", "lazymind.processor.service.server"]
     healthcheck:
@@ -558,6 +557,9 @@ services:
       - ./data/core/uploads:/var/lib/lazymind/uploads
       - ./data/traces:/var/lib/lazymind/traces
       - *lazyllm-src-mount
+      - ./algorithm/config.py:/app/algorithm/config.py
+      - ./algorithm/parsing/build_document.py:/app/algorithm/parsing/build_document.py
+      - ./algorithm/parsing/transform/post_func.py:/app/algorithm/parsing/transform/post_func.py
     environment:
       LAZYMIND_DOCUMENT_WORKER_PORT: "8001"
       LAZYMIND_DOCUMENT_WORKER_NUM_WORKERS: "1"
@@ -603,6 +605,9 @@ services:
       - ./data/core/uploads:/var/lib/lazymind/uploads
       - ./data/traces:/var/lib/lazymind/traces
       - *lazyllm-src-mount
+      - ./algorithm/config.py:/app/algorithm/config.py
+      - ./algorithm/parsing/build_document.py:/app/algorithm/parsing/build_document.py
+      - ./algorithm/parsing/transform/post_func.py:/app/algorithm/parsing/transform/post_func.py
     healthcheck:
       test: ['CMD-SHELL', 'python -m lazymind.parsing.service.healthcheck']
       interval: 15s

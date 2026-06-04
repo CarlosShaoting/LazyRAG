@@ -92,8 +92,95 @@ func LoadLLMConfig(ctx context.Context, db *gorm.DB, userID string) (map[string]
 	}
 
 	config := BuildLLMConfig(rows)
+	ocrConfig, err := LoadOCRConfig(ctx, db, userID)
+	if err != nil {
+		return nil, err
+	}
+	if ocrConfig != nil {
+		if config == nil {
+			config = map[string]any{}
+		}
+		config["ocr_config"] = ocrConfig
+	}
 	fmt.Printf("[Core] [LLM_CONFIG_LOADED] [user_id=%s] [%s]\n", strings.TrimSpace(userID), SummarizeLLMConfigForLog(config))
 	return config, nil
+}
+
+func LoadOCRConfig(ctx context.Context, db *gorm.DB, userID string) (map[string]any, error) {
+	row, err := loadSelectedProviderConfig(ctx, db, strings.TrimSpace(userID), "ocr", false)
+	if err != nil {
+		return nil, err
+	}
+	if row == nil {
+		row, err = loadSelectedProviderConfig(ctx, db, "", "ocr", true)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if row == nil {
+		return nil, nil
+	}
+	ocrType := normalizeOCRType(row.ProviderName)
+	if ocrType == "" {
+		return nil, nil
+	}
+	config := map[string]any{
+		"ocr_type": ocrType,
+		"ocr_url":  row.BaseURL,
+	}
+	if strings.TrimSpace(row.APIKey) != "" {
+		config["ocr_auth"] = map[string]any{ocrType: row.APIKey}
+	}
+	return config, nil
+}
+
+type selectedProviderConfig struct {
+	ProviderName string
+	BaseURL      string
+	APIKey       string
+}
+
+func loadSelectedProviderConfig(
+	ctx context.Context,
+	db *gorm.DB,
+	userID string,
+	category string,
+	sharedOnly bool,
+) (*selectedProviderConfig, error) {
+	var row selectedProviderConfig
+	q := db.WithContext(ctx).Table("user_selected_providers usp").
+		Select(
+			"p.name AS provider_name, "+
+				"g.base_url, "+
+				"g.api_key",
+		).
+		Joins("JOIN user_model_provider_groups g ON g.id = usp.user_model_provider_group_id AND g.deleted_at IS NULL").
+		Joins("JOIN user_model_providers p ON p.id = g.user_model_provider_id AND p.deleted_at IS NULL").
+		Where("usp.category = ?", category)
+	if sharedOnly {
+		q = q.Where("usp.share = ?", true)
+	} else {
+		q = q.Where("usp.user_id = ?", userID)
+	}
+	err := q.Order("usp.updated_at DESC").Limit(1).Scan(&row).Error
+	if err != nil {
+		return nil, err
+	}
+	if row.ProviderName == "" && row.BaseURL == "" {
+		return nil, nil
+	}
+	return &row, nil
+}
+
+func normalizeOCRType(providerName string) string {
+	switch strings.ToLower(strings.ReplaceAll(strings.TrimSpace(providerName), " ", "")) {
+	case "mineru":
+		return "mineru"
+	case "paddleocr", "paddle":
+		return "paddleocr"
+	default:
+		return ""
+	}
 }
 
 // LoadAdminEmbedConfig queries the first system-wide default embedding model

@@ -49,7 +49,7 @@ db
 
 | Service | Profile | When enabled | Purpose |
 |---------|---------|--------------|---------|
-| **mineru** | `mineru` | `LAZYMIND_OCR_SERVER_TYPE=mineru` and URL `http://mineru:8000` | MinerU PDF parsing (layout analysis; install variant/backend configurable) |
+| **mineru** | `mineru` | `LAZYMIND_OCR_SERVER_TYPE=mineru` and URL `http://mineru:8000/api/v1/pdf_parse` | MinerU PDF parsing (layout analysis; install variant/backend configurable) |
 | **paddleocr** + **paddleocr-vlm-server** | `paddleocr` | `LAZYMIND_OCR_SERVER_TYPE=paddleocr` and URL `http://paddleocr:8080` | PaddleOCR-VL PDF parsing (GPU required) |
 | **milvus** + **milvus-etcd** + **milvus-minio** | `milvus` | `LAZYMIND_MILVUS_URI=http://milvus:19530` | Vector store for embeddings |
 | **attu** | `milvus-dashboard` | `LAZYMIND_ENABLE_MILVUS_DASHBOARD=1` and `LAZYMIND_MILVUS_URI=http://milvus:19530` | Milvus dashboard for collections, schema, and index troubleshooting |
@@ -77,10 +77,12 @@ If `LAZYMIND_MILVUS_URI` or `LAZYMIND_OPENSEARCH_URI` points to an external serv
 **MinerU configuration layers:**
 
 - Install variant: `LAZYMIND_MINERU_PACKAGE_VARIANT` (e.g. `pipeline` or `all`).
-- Runtime backend: `LAZYMIND_MINERU_BACKEND` (e.g. `pipeline` or `hybrid-auto-engine`).
+- Reader runtime backend: `LAZYLLM_MINERU_BACKEND` (e.g. `pipeline` or `hybrid-auto-engine`).
+- Local MinerU server backend: `LAZYMIND_MINERU_BACKEND`.
 - Compatibility pin: `LAZYMIND_MINERU_NUMPY_VERSION` defaults to `1.26.4`.
 
-For local CPU development on macOS, the default combination is `LAZYMIND_MINERU_PACKAGE_VARIANT=pipeline` plus `LAZYMIND_MINERU_BACKEND=pipeline`.
+For local CPU development on macOS, the default combination is `LAZYMIND_MINERU_PACKAGE_VARIANT=pipeline`
+plus `LAZYLLM_MINERU_BACKEND=pipeline` and `LAZYMIND_MINERU_BACKEND=pipeline`.
 
 ---
 

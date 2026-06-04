@@ -108,10 +108,9 @@ export LAZYMIND_CORE_DATABASE_URL ?= postgresql+psycopg://root:123456@db:5432/co
 # OCR backend selection (none=built-in PDFReader, mineru, paddleocr)
 # Auto-derives LAZYMIND_OCR_SERVER_URL when not set.
 export LAZYMIND_OCR_SERVER_TYPE ?= none
-export LAZYMIND_OCR_SERVICE_VARIANT ?= online
-export LAZYMIND_OCR_SERVER_URL ?= $(if $(filter mineru,$(LAZYMIND_OCR_SERVER_TYPE)),http://mineru:8000,$(if $(filter paddleocr,$(LAZYMIND_OCR_SERVER_TYPE)),http://paddleocr:8080,http://localhost:8000))
-# patch_applied is only meaningful for offline (local patch-server) mode; force False for online API
-export LAZYMIND_OCR_PATCH_APPLIED := $(if $(filter online,$(LAZYMIND_OCR_SERVICE_VARIANT)),False,$(or $(LAZYMIND_OCR_PATCH_APPLIED),False))
+export LAZYMIND_OCR_SERVER_URL ?= $(if $(filter mineru,$(LAZYMIND_OCR_SERVER_TYPE)),http://mineru:8000/api/v1/pdf_parse,$(if $(filter paddleocr,$(LAZYMIND_OCR_SERVER_TYPE)),http://paddleocr:8080,http://localhost:8000/api/v1/pdf_parse))
+# patch_applied: False for official mineru.net API; local deploy defaults to True unless overridden
+export LAZYLLM_OCR_PATCH_APPLIED := $(if $(findstring mineru.net,$(LAZYMIND_OCR_SERVER_URL)),False,$(or $(LAZYLLM_OCR_PATCH_APPLIED),True))
 
 # Vector / segment stores — override to use external services (skips built-in profile)
 export LAZYMIND_MILVUS_URI ?= http://milvus:19530
@@ -225,15 +224,13 @@ test:
 # Only build/start mineru/paddleocr when LAZYMIND_OCR_SERVER_TYPE is mineru/paddleocr
 # AND LAZYMIND_OCR_SERVER_URL points to the internal service (user has not specified external URL).
 # Only mineru has build:; paddleocr/milvus/opensearch use image: only, so only needed for up.
-#  OCR_SERVER_TYPE	OCR_SERVICE_VARIANT	     OCR_SERVER_URL	     _need_mineru      _need_paddleocr
-# mineru/paddleocr         online                Any                 false             false
-# mineru/paddleocr          none                 Any                 false             false
-#      mineru              offline        http://mineru:8000         true              false
-#     paddleocr            offline       http://paddleocr:8000       false             true
-# mineru/paddleocr         offline            external URL           false             false
+#  OCR_SERVER_TYPE          OCR_SERVER_URL                        _need_mineru  _need_paddleocr
+# mineru/paddleocr/none     any (not built-in host)               false         false
+# mineru                    http://mineru:8000/...              true          false
+# paddleocr                 http://paddleocr:8080/...             false         true
 
-_need_mineru := $(and $(filter mineru,$(LAZYMIND_OCR_SERVER_TYPE)),$(findstring mineru:8000,$(LAZYMIND_OCR_SERVER_URL)),$(filter-out online,$(LAZYMIND_OCR_SERVICE_VARIANT)))
-_need_paddleocr := $(and $(filter paddleocr,$(LAZYMIND_OCR_SERVER_TYPE)),$(findstring paddleocr:8080,$(LAZYMIND_OCR_SERVER_URL)),$(filter-out online,$(LAZYMIND_OCR_SERVICE_VARIANT)))
+_need_mineru := $(and $(filter mineru,$(LAZYMIND_OCR_SERVER_TYPE)),$(findstring mineru:8000,$(LAZYMIND_OCR_SERVER_URL)))
+_need_paddleocr := $(and $(filter paddleocr,$(LAZYMIND_OCR_SERVER_TYPE)),$(findstring paddleocr:8080,$(LAZYMIND_OCR_SERVER_URL)))
 # Deploy milvus/opensearch only when URI exactly matches the built-in services; external URIs = no deployment
 _builtin_milvus_uris := http://milvus:19530 http://milvus:19530/
 _builtin_opensearch_uris := https://opensearch:9200 https://opensearch:9200/

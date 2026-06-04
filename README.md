@@ -114,7 +114,7 @@ export LAZYLLM_MINERU_API_KEY=your_mineru_key
 ### Step 2 — Start the stack
 
 ```bash
-make up-build LAZYMIND_OCR_SERVER_TYPE=mineru LAZYMIND_OCR_SERVICE_VARIANT=online
+make up-build LAZYMIND_OCR_SERVER_TYPE=mineru
 ```
 
 After startup:

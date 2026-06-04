@@ -55,14 +55,14 @@ To enable local MinerU:
 
 ```bash
 export LAZYMIND_OCR_SERVER_TYPE=mineru
-# LAZYMIND_OCR_SERVER_URL is auto-derived to http://mineru:8000 when not set
+# LAZYMIND_OCR_SERVER_URL is auto-derived to http://mineru:8000/api/v1/pdf_parse when not set
 ```
 
 To reuse an existing MinerU deployed on ECS / intranet:
 
 ```bash
 export LAZYMIND_OCR_SERVER_TYPE=mineru
-export LAZYMIND_OCR_SERVER_URL=http://your-inner-mineru:port
+export LAZYMIND_OCR_SERVER_URL=http://your-inner-mineru:port/api/v1/pdf_parse
 ```
 
 When `LAZYMIND_OCR_SERVER_URL` points to an external address, `make up` will not start the local `mineru` profile.
@@ -292,7 +292,7 @@ make up-build
 ```bash
 export LAZYMIND_MODEL_CONFIG_PATH=inner
 export LAZYMIND_OCR_SERVER_TYPE=mineru
-export LAZYMIND_OCR_SERVER_URL=http://your-inner-mineru:port
+export LAZYMIND_OCR_SERVER_URL=http://your-inner-mineru:port/api/v1/pdf_parse
 
 make up-build
 ```

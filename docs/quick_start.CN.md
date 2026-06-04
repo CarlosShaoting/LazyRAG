@@ -55,14 +55,14 @@ export LAZYMIND_OCR_SERVER_TYPE=none   # 默认值，可省略
 
 ```bash
 export LAZYMIND_OCR_SERVER_TYPE=mineru
-# 未设置 LAZYMIND_OCR_SERVER_URL 时自动推导为 http://mineru:8000
+# 未设置 LAZYMIND_OCR_SERVER_URL 时自动推导为 http://mineru:8000/api/v1/pdf_parse
 ```
 
 复用已部署在 ECS / 内网的 MinerU：
 
 ```bash
 export LAZYMIND_OCR_SERVER_TYPE=mineru
-export LAZYMIND_OCR_SERVER_URL=http://your-inner-mineru:port
+export LAZYMIND_OCR_SERVER_URL=http://your-inner-mineru:port/api/v1/pdf_parse
 ```
 
 当 `LAZYMIND_OCR_SERVER_URL` 指向外部地址时，`make up` 不会启动本地 `mineru` profile。
@@ -292,7 +292,7 @@ make up-build
 ```bash
 export LAZYMIND_MODEL_CONFIG_PATH=inner
 export LAZYMIND_OCR_SERVER_TYPE=mineru
-export LAZYMIND_OCR_SERVER_URL=http://your-inner-mineru:port
+export LAZYMIND_OCR_SERVER_URL=http://your-inner-mineru:port/api/v1/pdf_parse
 
 make up-build
 ```

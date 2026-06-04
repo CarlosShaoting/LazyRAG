@@ -114,7 +114,7 @@ export LAZYLLM_MINERU_API_KEY=你的mineru_key
 ### 第二步 — 启动服务
 
 ```bash
-make up-build LAZYMIND_OCR_SERVER_TYPE=mineru LAZYMIND_OCR_SERVICE_VARIANT=online
+make up-build LAZYMIND_OCR_SERVER_TYPE=mineru
 ```
 
 启动后访问：
