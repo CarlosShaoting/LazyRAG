@@ -20,13 +20,15 @@ type createGroupRequest struct {
 	Name    string `json:"name"`
 	BaseURL string `json:"base_url"`
 	APIKey  string `json:"api_key"`
+	Verify  bool   `json:"verify"`
 }
 
 type createGroupResponse struct {
-	ID                  string `json:"id"`
-	UserModelProviderID string `json:"user_model_provider_id"`
-	Name                string `json:"name"`
-	BaseURL             string `json:"base_url"`
+	ID                  string                  `json:"id"`
+	UserModelProviderID string                  `json:"user_model_provider_id"`
+	Name                string                  `json:"name"`
+	BaseURL             string                  `json:"base_url"`
+	Check               *CheckModelProviderData `json:"check,omitempty"`
 }
 
 type groupListItem struct {
@@ -102,6 +104,7 @@ type updateGroupRequest struct {
 	Name    string `json:"name"`
 	BaseURL string `json:"base_url"`
 	APIKey  string `json:"api_key,omitempty"`
+	Verify  bool   `json:"verify"`
 }
 
 // CreateGroup creates a connection group under the user's model provider (path model_provider_id = user_model_providers.id).
@@ -150,6 +153,57 @@ func CreateGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Capability: single-group providers only allow one group per user.
+	if !parent.HasCapability("multi_group") {
+		var count int64
+		if err := db.WithContext(r.Context()).Model(&orm.UserModelProviderGroup{}).
+			Where("user_model_provider_id = ? AND create_user_id = ? AND deleted_at IS NULL", parent.ID, userID).
+			Count(&count).Error; err != nil {
+			common.ReplyErr(w, "check existing groups failed", http.StatusInternalServerError)
+			return
+		}
+		if count > 0 {
+			common.ReplyErr(w, "this provider only allows one group per user", http.StatusConflict)
+			return
+		}
+	}
+
+	// When the user's base_url matches the catalog default, api_key is required.
+	if apiKey == "" && isDefaultBaseURL(r.Context(), db, parent.DefaultModelProviderID, baseURL) {
+		common.ReplyErr(w, "api_key is required when using the default base_url", http.StatusBadRequest)
+		return
+	}
+
+	var checkData *CheckModelProviderData
+	if shouldVerifyCloudServiceOnSave(parent.Category, parent.Name) {
+		if apiKey == "" {
+			common.ReplyErrWithData(
+				w,
+				"verification failed: api_key is required",
+				CheckModelProviderData{Success: false, Message: "api_key is required"},
+				http.StatusBadRequest,
+			)
+			return
+		}
+		checkResult, checkErr := doProviderGroupCheck(r.Context(), parent.Category, parent.Name, baseURL, apiKey)
+		if checkErr != nil || checkResult == nil || !checkResult.Success {
+			msg := "verification failed"
+			checkMsg := msg
+			if checkResult != nil && strings.TrimSpace(checkResult.Message) != "" {
+				checkMsg = strings.TrimSpace(checkResult.Message)
+				msg = msg + ": " + checkMsg
+			}
+			common.ReplyErrWithData(
+				w,
+				msg,
+				CheckModelProviderData{Success: false, Message: checkMsg},
+				http.StatusBadGateway,
+			)
+			return
+		}
+		checkData = &CheckModelProviderData{Success: true, Message: checkResult.Message}
+	}
+
 	now := time.Now()
 	row := orm.UserModelProviderGroup{
 		ID:                  common.GenerateID(),
@@ -157,7 +211,7 @@ func CreateGroup(w http.ResponseWriter, r *http.Request) {
 		Name:                name,
 		BaseURL:             baseURL,
 		APIKey:              apiKey,
-		IsVerified:          false,
+		IsVerified:          checkData != nil,
 		BaseModel: orm.BaseModel{
 			CreateUserID:   userID,
 			CreateUserName: userName,
@@ -182,6 +236,7 @@ func CreateGroup(w http.ResponseWriter, r *http.Request) {
 		UserModelProviderID: row.UserModelProviderID,
 		Name:                row.Name,
 		BaseURL:             row.BaseURL,
+		Check:               checkData,
 	})
 }
 
@@ -251,6 +306,20 @@ func UpdateGroup(w http.ResponseWriter, r *http.Request) {
 		"base_url":   baseURL,
 		"updated_at": now,
 	}
+
+	// Capability: providers without custom_base_url must keep the original base_url.
+	if !parent.HasCapability("custom_base_url") {
+		baseURL = row.BaseURL
+		updates["base_url"] = row.BaseURL
+	}
+
+	// When the effective base_url matches the catalog default, api_key must not be empty.
+	effectiveBaseURL := baseURL
+	if apiKey == "" && row.APIKey == "" && isDefaultBaseURL(r.Context(), db, parent.DefaultModelProviderID, effectiveBaseURL) {
+		common.ReplyErr(w, "api_key is required when using the default base_url", http.StatusBadRequest)
+		return
+	}
+
 	if baseURL != row.BaseURL {
 		updates["is_verified"] = false
 	}
@@ -259,6 +328,55 @@ func UpdateGroup(w http.ResponseWriter, r *http.Request) {
 		if apiKey != row.APIKey {
 			updates["is_verified"] = false
 		}
+	}
+
+	var checkData *CheckModelProviderData
+	effectiveAPIKey := apiKey
+	if effectiveAPIKey == "" {
+		effectiveAPIKey = row.APIKey
+	}
+	if shouldVerifyCloudServiceOnSave(parent.Category, parent.Name) {
+		if effectiveAPIKey == "" {
+			common.ReplyErrWithData(
+				w,
+				"verification failed: api_key is required",
+				CheckModelProviderData{Success: false, Message: "api_key is required"},
+				http.StatusBadRequest,
+			)
+			return
+		}
+		checkResult, checkErr := doProviderGroupCheck(r.Context(), parent.Category, parent.Name, baseURL, effectiveAPIKey)
+		if checkErr != nil || checkResult == nil || !checkResult.Success {
+			msg := "verification failed"
+			checkMsg := msg
+			if checkResult != nil && strings.TrimSpace(checkResult.Message) != "" {
+				checkMsg = strings.TrimSpace(checkResult.Message)
+				msg = msg + ": " + checkMsg
+			}
+			common.ReplyErrWithData(
+				w,
+				msg,
+				CheckModelProviderData{Success: false, Message: checkMsg},
+				http.StatusBadGateway,
+			)
+			return
+		}
+		checkData = &CheckModelProviderData{Success: true, Message: checkResult.Message}
+		updates["is_verified"] = true
+	}
+
+	// verify=true: run connectivity check before persisting; on success mark is_verified=true atomically.
+	if req.Verify && checkData == nil {
+		checkResult, checkErr := doCheck(r.Context(), parent.Category, parent.Name, baseURL, effectiveAPIKey)
+		if checkErr != nil || !checkResult.Success {
+			msg := "verification failed"
+			if checkResult != nil {
+				msg = "verification failed: " + checkResult.Message
+			}
+			common.ReplyErr(w, msg, http.StatusBadGateway)
+			return
+		}
+		updates["is_verified"] = true
 	}
 	if err := db.WithContext(r.Context()).Model(&row).Updates(updates).Error; err != nil {
 		common.ReplyErr(w, "update group failed", http.StatusInternalServerError)
@@ -275,6 +393,7 @@ func UpdateGroup(w http.ResponseWriter, r *http.Request) {
 		UserModelProviderID: row.UserModelProviderID,
 		Name:                row.Name,
 		BaseURL:             row.BaseURL,
+		Check:               checkData,
 	})
 }
 
@@ -328,8 +447,33 @@ func DeleteGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Fetch models before deletion to check for embed_image types and
+	// collect IDs for user_selected_models cleanup.
+	var groupModels []orm.UserModelProviderGroupModel
+	if err := db.WithContext(r.Context()).
+		Where("user_model_provider_group_id = ? AND create_user_id = ? AND deleted_at IS NULL", groupID, userID).
+		Find(&groupModels).Error; err != nil {
+		common.ReplyErr(w, "query group models failed", http.StatusInternalServerError)
+		return
+	}
+
+	hasMultimodal := false
+	modelIDs := make([]string, 0, len(groupModels))
+	for i := range groupModels {
+		modelIDs = append(modelIDs, groupModels[i].ID)
+		if isMultimodalEmbeddingModelType(groupModels[i].ModelType) {
+			hasMultimodal = true
+		}
+	}
+
 	now := time.Now().UTC()
 	err = db.WithContext(r.Context()).Transaction(func(tx *gorm.DB) error {
+		if len(modelIDs) > 0 {
+			if err := tx.Where("user_model_provider_group_model_id IN ?", modelIDs).
+				Delete(&orm.UserSelectedModel{}).Error; err != nil {
+				return err
+			}
+		}
 		if err := tx.Model(&orm.UserModelProviderGroupModel{}).
 			Where(
 				"user_model_provider_group_id = ? AND create_user_id = ? AND deleted_at IS NULL",
@@ -353,6 +497,10 @@ func DeleteGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if hasMultimodal {
+		maybeScheduleImageGroupLazyReset(r.Context(), db)
+	}
+
 	common.ReplyOK(w, deleteGroupResponse{ID: groupID})
 }
 
@@ -374,6 +522,11 @@ func seedGroupModelsFromDefaults(
 	requestBaseURL, userID, userName string,
 	now time.Time,
 ) error {
+	// Providers without has_models capability (e.g. OCR, search) have no model list.
+	if !parent.HasCapability("has_models") {
+		return nil
+	}
+
 	var catalog orm.DefaultModelProvider
 	err := tx.WithContext(ctx).
 		Where("id = ? AND deleted_at IS NULL", parent.DefaultModelProviderID).
@@ -405,7 +558,6 @@ func seedGroupModelsFromDefaults(
 			ProviderName:             d.ProviderName,
 			Name:                     d.Name,
 			ModelType:                d.ModelType,
-			BaseURL:                  d.BaseURL,
 			IsDefault:                true,
 			BaseModel: orm.BaseModel{
 				CreateUserID:   userID,
@@ -417,4 +569,19 @@ func seedGroupModelsFromDefaults(
 		}
 	}
 	return tx.WithContext(ctx).CreateInBatches(&batch, 100).Error
+}
+
+// isDefaultBaseURL reports whether the given base_url matches the catalog default for the provider.
+// When true, the user is using the official hosted service and api_key is required.
+func isDefaultBaseURL(ctx context.Context, db *gorm.DB, defaultProviderID, baseURL string) bool {
+	if defaultProviderID == "" {
+		return false
+	}
+	var catalog orm.DefaultModelProvider
+	if err := db.WithContext(ctx).
+		Where("id = ? AND deleted_at IS NULL", defaultProviderID).
+		Take(&catalog).Error; err != nil {
+		return false
+	}
+	return normalizeBaseURLForCompare(baseURL) == normalizeBaseURLForCompare(catalog.BaseURL)
 }

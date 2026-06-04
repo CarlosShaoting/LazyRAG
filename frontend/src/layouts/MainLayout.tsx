@@ -3,7 +3,6 @@ import type { ReactNode } from "react";
 import { Button, Form, Input, Layout, Modal, Popover, message } from "antd";
 import {
   CodeOutlined,
-  CloseOutlined,
   SettingOutlined,
   SearchOutlined,
   AppstoreOutlined,
@@ -47,6 +46,11 @@ const { Content, Sider } = Layout;
 const MAINLAND_CHINA_PHONE_REGEX = /^1[3-9]\d{9}$/;
 const MAIN_MENU_COLLAPSED_STORAGE_KEY = "lazymind:main-menu-collapsed";
 const MAIN_MENU_TRANSITION_MS = 240;
+const PROFILE_NICKNAME_MAX_LENGTH = 50;
+const PROFILE_EMAIL_MAX_LENGTH = 30;
+const PROFILE_PHONE_MAX_LENGTH = 11;
+const PROFILE_DESCRIPTION_MAX_LENGTH = 200;
+const PROFILE_PASSWORD_MAX_LENGTH = 32;
 
 function readStoredMainMenuCollapsed() {
   try {
@@ -106,7 +110,7 @@ export default function MainLayout() {
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileSubmitting, setProfileSubmitting] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [historySearchOpen, setHistorySearchOpen] = useState(false);
+  const [sidebarSearchText, setSidebarSearchText] = useState("");
   const [isMenuCollapsed, setIsMenuCollapsed] = useState(readStoredMainMenuCollapsed);
   const [shouldRenderMenuContent, setShouldRenderMenuContent] = useState(
     () => !readStoredMainMenuCollapsed(),
@@ -144,7 +148,12 @@ export default function MainLayout() {
       icon: <DatabaseOutlined />,
     },
     {
-      key: "/model-providers",
+      key: "/dataset-management",
+      label: t("layout.datasetManagement"),
+      icon: <DatabaseOutlined />,
+    },
+    {
+      key: "/model-providers/models",
       label: t("layout.modelProviderManagement"),
       icon: <ApiOutlined />,
     },
@@ -333,7 +342,6 @@ export default function MainLayout() {
     }
     setCurrentSidebarConversationId(conversationId);
     emitConversationSelection(conversationId);
-    setHistorySearchOpen(false);
     navigate("/agent/chat/home");
   };
 
@@ -615,14 +623,6 @@ export default function MainLayout() {
                 <img src={logoImage} alt="logo" />
               )}
             </button>
-            <Button
-              type="text"
-              className="sider-search-button"
-              icon={<SearchOutlined />}
-              onClick={() => setHistorySearchOpen(true)}
-              aria-label={t("chat.searchConversation")}
-              title={t("chat.searchConversation")}
-            />
             <button
               type="button"
               className="sider-inline-toggle"
@@ -681,6 +681,18 @@ export default function MainLayout() {
                   </button>
                 </Popover>
               </div>
+              <div className="sider-history-search">
+                <Input
+                  className="sider-history-search-input"
+                  type="search"
+                  prefix={<SearchOutlined />}
+                  allowClear
+                  value={sidebarSearchText}
+                  placeholder={t("chat.searchConversation")}
+                  aria-label={t("chat.searchConversation")}
+                  onChange={(event) => setSidebarSearchText(event.target.value)}
+                />
+              </div>
             </>
           ) : null}
           {shouldRenderMenuContent && (
@@ -690,6 +702,7 @@ export default function MainLayout() {
                 hideSearch
                 showBatchActions
                 title={t("chat.recentConversations")}
+                searchText={sidebarSearchText}
                 currentSessionId={currentSidebarConversationId}
                 onSelected={handleSidebarConversationSelected}
                 onRemove={handleSidebarConversationRemoved}
@@ -804,27 +817,6 @@ export default function MainLayout() {
         </Content>
       </Layout>
       <Modal
-        open={historySearchOpen}
-        footer={null}
-        closeIcon={<CloseOutlined />}
-        onCancel={() => setHistorySearchOpen(false)}
-        className="history-search-modal"
-        width={640}
-        centered
-        destroyOnHidden
-      >
-        <div className="history-search-tabs">
-          <button type="button" className="history-search-tab active">
-            {t("chat.chatHistory")}
-          </button>
-        </div>
-        <RecordList
-          currentSessionId={currentSidebarConversationId}
-          onSelected={handleSidebarConversationSelected}
-          onRemove={handleSidebarConversationRemoved}
-        />
-      </Modal>
-      <Modal
         title={t("profile.title")}
         open={profileModalOpen}
         onCancel={handleCloseProfile}
@@ -847,15 +839,40 @@ export default function MainLayout() {
           <Form.Item name="username" label={t("profile.username")}>
             <Input disabled autoComplete="username" />
           </Form.Item>
-          <Form.Item name="displayName" label={t("profile.nickname")}>
-            <Input placeholder={t("profile.pleaseInputNickname")} autoComplete="nickname" />
+          <Form.Item
+            name="displayName"
+            label={t("profile.nickname")}
+            rules={[
+              {
+                max: PROFILE_NICKNAME_MAX_LENGTH,
+                message: t("profile.nicknameMax", { max: PROFILE_NICKNAME_MAX_LENGTH }),
+              },
+            ]}
+          >
+            <Input
+              placeholder={t("profile.pleaseInputNickname")}
+              autoComplete="nickname"
+              maxLength={PROFILE_NICKNAME_MAX_LENGTH}
+              showCount
+            />
           </Form.Item>
           <Form.Item
             name="email"
             label={t("profile.email")}
-            rules={[{ type: "email", message: t("profile.invalidEmail") }]}
+            rules={[
+              { type: "email", message: t("profile.invalidEmail") },
+              {
+                max: PROFILE_EMAIL_MAX_LENGTH,
+                message: t("profile.emailMax", { max: PROFILE_EMAIL_MAX_LENGTH }),
+              },
+            ]}
           >
-            <Input placeholder={t("profile.pleaseInputEmail")} autoComplete="email" />
+            <Input
+              placeholder={t("profile.pleaseInputEmail")}
+              autoComplete="email"
+              maxLength={PROFILE_EMAIL_MAX_LENGTH}
+              showCount
+            />
           </Form.Item>
           <Form.Item
             name="phone"
@@ -866,11 +883,25 @@ export default function MainLayout() {
               placeholder={t("profile.pleaseInputPhone")}
               autoComplete="tel"
               inputMode="numeric"
-              maxLength={11}
+              maxLength={PROFILE_PHONE_MAX_LENGTH}
+              showCount
             />
           </Form.Item>
-          <Form.Item name="remark" label={t("profile.description")}>
-            <Input.TextArea placeholder={t("profile.pleaseInputDescription")} />
+          <Form.Item
+            name="remark"
+            label={t("profile.description")}
+            rules={[
+              {
+                max: PROFILE_DESCRIPTION_MAX_LENGTH,
+                message: t("profile.descriptionMax", { max: PROFILE_DESCRIPTION_MAX_LENGTH }),
+              },
+            ]}
+          >
+            <Input.TextArea
+              placeholder={t("profile.pleaseInputDescription")}
+              maxLength={PROFILE_DESCRIPTION_MAX_LENGTH}
+              showCount
+            />
           </Form.Item>
           <Form.Item name="roleName" label={t("profile.role")}>
             <Input disabled />
@@ -887,6 +918,8 @@ export default function MainLayout() {
               placeholder={t("profile.pleaseInputCurrentPassword")}
               autoComplete="new-password"
               name="profile-current-password"
+              maxLength={PROFILE_PASSWORD_MAX_LENGTH}
+              showCount
             />
           </Form.Item>
           <Form.Item
@@ -899,6 +932,8 @@ export default function MainLayout() {
               placeholder={t("profile.pleaseInputNewPassword")}
               autoComplete="new-password"
               name="profile-new-password"
+              maxLength={PROFILE_PASSWORD_MAX_LENGTH}
+              showCount
             />
           </Form.Item>
           <Form.Item
@@ -911,6 +946,8 @@ export default function MainLayout() {
               placeholder={t("profile.pleaseInputConfirmPassword")}
               autoComplete="new-password"
               name="profile-confirm-password"
+              maxLength={PROFILE_PASSWORD_MAX_LENGTH}
+              showCount
             />
           </Form.Item>
         </Form>

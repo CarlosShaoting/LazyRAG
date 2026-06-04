@@ -140,6 +140,7 @@ import {
   getBaseName,
   getPreferenceSuggestionResourceParam,
   getSkillSuggestionResourceParam,
+  getSkillBodyContentForDisplay,
   inferSkillFileExt,
   initialChangeProposals,
   initialSkills,
@@ -1407,28 +1408,12 @@ export default function MemoryManagement() {
       return "";
     }
 
-    const commonLabels = {
-      protect: t("admin.memoryProtect", { defaultValue: "保护" }),
-      content: t("admin.memoryContent"),
-      yes: t("admin.memoryDiffBoolYes"),
-      no: t("admin.memoryDiffBoolNo"),
-    };
-
     if (activeProposal.tab === "skills") {
-      return serializeStructuredAsset(activeProposal.before, {
-        name: t("admin.memoryName"),
-        description: t("admin.memoryDescription"),
-        category: t("admin.memoryCategory"),
-        tags: t("admin.memoryTagSet"),
-        ...commonLabels,
-      });
+      return getSkillBodyContentForDisplay(activeProposal.before.content);
     }
 
-    return serializeExperienceAsset(activeProposal.before, {
-      title: t("admin.memoryTitle"),
-      ...commonLabels,
-    });
-  }, [activeProposal, t]);
+    return activeProposal.before.content;
+  }, [activeProposal]);
   const backendDraftDiffLines = useMemo(
     () => buildUnifiedDiffLines(backendDraftPreview?.diff || ""),
     [backendDraftPreview?.diff],
@@ -3758,6 +3743,15 @@ export default function MemoryManagement() {
         return;
       }
 
+      if (normalizedAliases.includes(normalizedTerm)) {
+        message.warning(
+          t("admin.memoryGlossaryTermAliasExactDuplicate", {
+            word: normalizedTerm,
+          }),
+        );
+        return;
+      }
+
       const payload: GlossaryAsset = {
         id: draft.id || createId("glossary"),
         term: normalizedTerm,
@@ -3775,6 +3769,21 @@ export default function MemoryManagement() {
 
       try {
         let savedGlossary: GlossaryAsset | null = null;
+        const shouldCheckExistingWords = !hasPendingMerge;
+
+        if (shouldCheckExistingWords) {
+          const existingWords = await checkGlossaryWordsExist(
+            payload.term,
+            payload.aliases,
+          );
+          if (existingWords.existing.length) {
+            message.warning(
+              t("admin.memoryGlossaryWordsAlreadyExist", {
+                words: existingWords.existing.join("、"),
+              }),
+            );
+          }
+        }
 
         if (hasPendingMerge) {
           const merged = await mergeGlossaryAssets([
@@ -3803,18 +3812,6 @@ export default function MemoryManagement() {
             previous.filter((proposal) => proposal.targetId !== payload.id),
           );
         } else {
-          const existingWords = await checkGlossaryWordsExist(
-            payload.term,
-            payload.aliases,
-          );
-          if (existingWords.existing.length) {
-            message.warning(
-              t("admin.memoryGlossaryWordsAlreadyExist", {
-                words: existingWords.existing.join("、"),
-              }),
-            );
-            return;
-          }
           savedGlossary = await createGlossaryAsset(payload);
         }
 
@@ -4575,6 +4572,10 @@ export default function MemoryManagement() {
       key: "autoEvo",
       width: 90,
       render: (_value, record) => {
+        if (activeTab === "skills" && record.parentId) {
+          return "-";
+        }
+
         const disabledByRemoveSuggestion =
           activeTab === "skills" && Boolean(record.hasPendingRemoveSuggestion);
         const switchNode = (
@@ -4624,6 +4625,7 @@ export default function MemoryManagement() {
       width: 250,
       fixed: "right",
       render: (_value, record) => {
+        const isChildSkill = activeTab === "skills" && Boolean(record.parentId);
         const pendingProposal =
           activeTab === "skills" ? getPendingProposal("skills", record.id) : undefined;
         const hasBackendReviewableSuggestions =
@@ -4657,17 +4659,19 @@ export default function MemoryManagement() {
             ) : null}
             {activeTab !== "tools" ? (
               <>
-                <Tooltip title={reviewTooltip}>
-                  <Button
-                    type="text"
-                    icon={<HistoryOutlined />}
-                    loading={reviewSuggestionLoadingId === record.id}
-                    disabled={!canReviewChange}
-                    onClick={() =>
-                      void openChangeReview("skills", record.id, record.updateStatus)
-                    }
-                  />
-                </Tooltip>
+                {!isChildSkill ? (
+                  <Tooltip title={reviewTooltip}>
+                    <Button
+                      type="text"
+                      icon={<HistoryOutlined />}
+                      loading={reviewSuggestionLoadingId === record.id}
+                      disabled={!canReviewChange}
+                      onClick={() =>
+                        void openChangeReview("skills", record.id, record.updateStatus)
+                      }
+                    />
+                  </Tooltip>
+                ) : null}
                 <Tooltip title={t("admin.memoryEditItem")}>
                   <Button
                     type="text"

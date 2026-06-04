@@ -459,13 +459,16 @@ type listWordGroupsQueryParams struct {
 }
 
 type listUserModelProvidersQueryParams struct {
-	Keyword string `query:"keyword"`
+	Category        string `query:"category"`
+	ExcludeCategory string `query:"exclude_category"`
+	Keyword         string `query:"keyword"`
 }
 
 type checkModelProviderOpenAPIRequest struct {
 	ProviderName string `json:"provider_name"`
 	BaseURL      string `json:"base_url"`
 	APIKey       string `json:"api_key"`
+	DryRun       bool   `json:"dry_run"`
 }
 
 type modelProviderGroupPathParams struct {
@@ -481,19 +484,22 @@ type updateModelProviderGroupOpenAPIRequest struct {
 	Name    string `json:"name"`
 	BaseURL string `json:"base_url"`
 	APIKey  string `json:"api_key,omitempty"`
+	Verify  bool   `json:"verify"`
 }
 
 type createModelProviderGroupOpenAPIRequest struct {
 	Name    string `json:"name"`
 	BaseURL string `json:"base_url"`
 	APIKey  string `json:"api_key,omitempty"`
+	Verify  bool   `json:"verify"`
 }
 
 type createModelProviderGroupOpenAPIResponse struct {
-	ID                  string `json:"id"`
-	UserModelProviderID string `json:"user_model_provider_id"`
-	Name                string `json:"name"`
-	BaseURL             string `json:"base_url"`
+	ID                  string                                `json:"id"`
+	UserModelProviderID string                                `json:"user_model_provider_id"`
+	Name                string                                `json:"name"`
+	BaseURL             string                                `json:"base_url"`
+	Check               *modelprovider.CheckModelProviderData `json:"check,omitempty"`
 }
 
 type deleteModelProviderGroupOpenAPIResponse struct {
@@ -538,7 +544,7 @@ type listUserModelsByModelTypeQueryParams struct {
 }
 
 type selectedModelOpenAPIItem struct {
-	ModelType                string `json:"model_type"`
+	ModelKey                 string `json:"model_key"`
 	ModelID                  string `json:"model_id"`
 	UserModelProviderID      string `json:"user_model_provider_id"`
 	UserModelProviderGroupID string `json:"user_model_provider_group_id"`
@@ -553,8 +559,8 @@ type listSelectedModelsOpenAPIResponse struct {
 }
 
 type setSelectedModelOpenAPIItem struct {
-	ModelType string `json:"model_type"`
-	ModelID   string `json:"model_id"`
+	ModelKey string `json:"model_key"`
+	ModelID  string `json:"model_id"`
 }
 
 type setSelectedModelsOpenAPIRequest struct {
@@ -571,12 +577,69 @@ type deleteModelProviderGroupModelOpenAPIResponse struct {
 	ID string `json:"id"`
 }
 
+type verifiedProviderQueryParams struct {
+	Category string `query:"category"`
+}
+
+type verifiedProviderGroupOpenAPIItem struct {
+	GroupID             string `json:"group_id"`
+	UserModelProviderID string `json:"user_model_provider_id"`
+	ProviderName        string `json:"provider_name"`
+	GroupName           string `json:"group_name"`
+	BaseURL             string `json:"base_url"`
+	Category            string `json:"category"`
+}
+
+type verifiedProviderOpenAPIResponse struct {
+	Ready        bool   `json:"ready"`
+	Source       string `json:"source,omitempty"`
+	SharedByName string `json:"shared_by_name,omitempty"`
+	SharedByID   string `json:"shared_by_id,omitempty"`
+	ProviderName string `json:"provider_name,omitempty"`
+	GroupName    string `json:"group_name,omitempty"`
+}
+
+type verifiedProviderGroupsOpenAPIResponse struct {
+	Groups []verifiedProviderGroupOpenAPIItem `json:"groups"`
+}
+
+type setSelectedProviderOpenAPIRequest struct {
+	Selections []setSelectedProviderOpenAPIItem `json:"selections"`
+}
+
+type setSelectedProviderOpenAPIItem struct {
+	Category string `json:"category"`
+	GroupID  string `json:"group_id"`
+}
+
+type selectedProviderOpenAPIItem struct {
+	Category            string `json:"category"`
+	GroupID             string `json:"group_id"`
+	UserModelProviderID string `json:"user_model_provider_id"`
+	ProviderName        string `json:"provider_name"`
+	GroupName           string `json:"group_name"`
+	BaseURL             string `json:"base_url"`
+	Share               bool   `json:"share"`
+}
+
+type selectedProvidersOpenAPIResponse struct {
+	Selections []selectedProviderOpenAPIItem `json:"selections"`
+}
+
+type setSharedProviderOpenAPIRequest struct {
+	GroupID string `json:"group_id"`
+	Share   bool   `json:"share"`
+}
+
 type userModelProviderOpenAPIItem struct {
-	ID                     string `json:"id"`
-	DefaultModelProviderID string `json:"default_model_provider_id"`
-	Name                   string `json:"name"`
-	Description            string `json:"description"`
-	BaseURL                string `json:"base_url"`
+	ID                     string   `json:"id"`
+	DefaultModelProviderID string   `json:"default_model_provider_id"`
+	Name                   string   `json:"name"`
+	Description            string   `json:"description"`
+	BaseURL                string   `json:"base_url"`
+	Category               string   `json:"category"`
+	IsConfigured           bool     `json:"is_configured"`
+	Capabilities           []string `json:"capabilities"`
 }
 
 type listUserModelProvidersOpenAPIResponse struct {
@@ -1529,7 +1592,7 @@ func registeredCoreOperations() []openAPIOperation {
 			Method:      "GET",
 			Path:        "/model_providers",
 			Summary:     "List user model providers",
-			Description: "Per-user model provider list. On first request for a user, rows are copied from the built-in default_model_providers table. The current user identity is injected by the auth gateway from the token. Query parameter keyword filters by provider name (SQL LIKE).",
+			Description: "Per-user model provider list. Missing catalog rows are synced from default_model_providers on each request. Query parameter category filters by provider category (default model when category and exclude_category are both omitted). Query parameter exclude_category excludes a category (e.g. exclude_category=model returns ocr and search providers). Query parameter keyword filters by provider name (SQL LIKE).",
 			Tags:        []string{"model_providers"},
 			QueryParams: listUserModelProvidersQueryParams{},
 			Responses:   map[int]openAPIResponse{200: resp("User model provider list", listUserModelProvidersOpenAPIResponse{})},
@@ -1546,10 +1609,18 @@ func registeredCoreOperations() []openAPIOperation {
 			Method:      "POST",
 			Path:        "/model_providers/{model_provider_id}/groups/{group_id}:check",
 			Summary:     "Check model provider connectivity",
-			Description: "Validates credentials by proxying to the algorithm POST /api/model/check (LAZYMIND_ALGO_SERVICE_URL). Maps provider_name→source, base_url→url, api_key→api_key. The current user identity is injected by the auth gateway from the token. Response data is the algorithm JSON payload.",
+			Description: "Validates credentials. Model providers are proxied to the algorithm check endpoint; OCR cloud services use the same provider API/key request shape as the OCR readers. The current user identity is injected by the auth gateway from the token.",
 			Tags:        []string{"model_providers"},
 			RequestBody: jsonBodyOf(checkModelProviderOpenAPIRequest{}, true),
-			Responses:   map[int]openAPIResponse{200: resp("data: success and message from algorithm /api/model/check", modelprovider.CheckModelProviderData{})},
+			Responses:   map[int]openAPIResponse{200: resp("data: success and message from provider check", modelprovider.CheckModelProviderData{})},
+		},
+		{
+			Method:      "GET",
+			Path:        "/model_providers/features",
+			Summary:     "Get model feature flags",
+			Description: "Returns feature flags derived from the algorithm service runtime_models.yaml. Result is permanently cached after the first successful fetch. image_embed_enabled is true when a cross_modal_embed role is configured.",
+			Tags:        []string{"model_providers"},
+			Responses:   map[int]openAPIResponse{200: resp("Feature flags", modelprovider.ModelFeaturesResponse{})},
 		},
 		{
 			Method:      "GET",
@@ -1590,7 +1661,7 @@ func registeredCoreOperations() []openAPIOperation {
 			Method:      "POST",
 			Path:        "/model_providers/{model_provider_id}/groups",
 			Summary:     "Create model provider connection group",
-			Description: "Creates a group (name, base_url, optional api_key) under the given user model provider. model_provider_id is the id from GET /model_providers. The api_key is not returned in the response body.",
+			Description: "Creates a group (name, base_url, optional api_key) under the given user model provider. OCR cloud services validate the submitted API key against the provider API before saving. The api_key is not returned in the response body.",
 			Tags:        []string{"model_providers"},
 			PathParams:  modelProviderGroupPathParams{},
 			RequestBody: jsonBodyOf(createModelProviderGroupOpenAPIRequest{}, true),
@@ -1600,7 +1671,7 @@ func registeredCoreOperations() []openAPIOperation {
 			Method:      "PATCH",
 			Path:        "/model_providers/{model_provider_id}/groups/{group_id}",
 			Summary:     "Update model provider connection group",
-			Description: "Updates name, base_url, and optionally api_key for a group. The group is selected by path group_id. Omit api_key or send an empty string to keep the existing API key (e.g. when the UI shows a mask). The api_key is not returned in the response body.",
+			Description: "Updates name, base_url, and optionally api_key for a group. OCR cloud services validate the effective API key against the provider API before saving. Omit api_key or send an empty string to keep the existing API key. The api_key is not returned in the response body.",
 			Tags:        []string{"model_providers"},
 			PathParams:  modelProviderGroupByIDPathParams{},
 			RequestBody: jsonBodyOf(updateModelProviderGroupOpenAPIRequest{}, true),
@@ -1932,6 +2003,50 @@ func registeredCoreOperations() []openAPIOperation {
 			Responses: map[int]openAPIResponse{
 				200: resp("Per-item apply results", wordgroup.ApplyWordGroupActionBatchResponse{}),
 			},
+		},
+		{
+			Method:      "GET",
+			Path:        "/model_providers/verified",
+			Summary:     "Check whether a provider category is ready",
+			Description: "Checks the current user's selected provider for the given category first, then falls back to a shared provider selection. This endpoint does not return selectable group details.",
+			Tags:        []string{"model_providers"},
+			QueryParams: verifiedProviderQueryParams{},
+			Responses:   map[int]openAPIResponse{200: resp("Provider ready state", verifiedProviderOpenAPIResponse{})},
+		},
+		{
+			Method:      "GET",
+			Path:        "/model_providers/provider_groups",
+			Summary:     "List verified provider groups for the current user",
+			Description: "Lists verified provider groups owned by the current user for the given non-model category (for example ocr or search). Shared provider groups are intentionally excluded from this selectable list.",
+			Tags:        []string{"model_providers"},
+			QueryParams: verifiedProviderQueryParams{},
+			Responses:   map[int]openAPIResponse{200: resp("Current user's verified provider groups", verifiedProviderGroupsOpenAPIResponse{})},
+		},
+		{
+			Method:      "GET",
+			Path:        "/model_providers/selected_providers",
+			Summary:     "Get selected provider groups (OCR, search, etc.)",
+			Description: "Returns the current user's selected provider group for each non-model category.",
+			Tags:        []string{"model_providers"},
+			Responses:   map[int]openAPIResponse{200: resp("Selected providers", selectedProvidersOpenAPIResponse{})},
+		},
+		{
+			Method:      "PUT",
+			Path:        "/model_providers/selected_providers",
+			Summary:     "Set selected provider group for a category",
+			Description: "Upserts selected provider groups by category. Request shape mirrors selected_models: selections contains category and group_id. Send an empty group_id to clear a category selection.",
+			Tags:        []string{"model_providers"},
+			RequestBody: jsonBodyOf(setSelectedProviderOpenAPIRequest{}, true),
+			Responses:   map[int]openAPIResponse{200: resp("Saved selected providers", selectedProvidersOpenAPIResponse{})},
+		},
+		{
+			Method:      "PUT",
+			Path:        "/model_providers/selected_providers/share",
+			Summary:     "Set shared provider group for a category",
+			Description: "Sets or clears the share flag for a selected provider row. Only one share=true row is allowed per category. Protected by document.write permission.",
+			Tags:        []string{"model_providers"},
+			RequestBody: jsonBodyOf(setSharedProviderOpenAPIRequest{}, true),
+			Responses:   map[int]openAPIResponse{200: refResp("Updated share flag", "EmptyObject")},
 		},
 	}
 }

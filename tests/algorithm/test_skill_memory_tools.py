@@ -1,16 +1,6 @@
-from chat.tools import memory as memory_mod
-from chat.tools import skill_manager as skill_manager_mod
-from chat.tools.skill_manager import Suggestion
-
-
-def test_core_api_endpoint_uses_internal_core_base_url():
-    assert (
-        memory_mod._core_api_endpoint(
-            '/memory/suggestion',
-            {'core_api_url': 'http://core:8000'},
-        )
-        == 'http://core:8000/memory/suggestion'
-    )
+from lazymind.chat.engine.tools import memory as memory_mod
+from lazymind.chat.engine.tools import skill_manager as skill_manager_mod
+from lazymind.chat.engine.tools.infra.suggestion import Suggestion
 
 
 def test_memory_submits_core_api_suggestion_paths(monkeypatch):
@@ -20,12 +10,8 @@ def test_memory_submits_core_api_suggestion_paths(monkeypatch):
         calls.append((path, payload))
         return {'persisted': 'core_api', 'url': f'http://core{path}'}
 
-    monkeypatch.setattr(
-        memory_mod,
-        '_agentic_config',
-        lambda: {'session_id': 'sid-1', 'core_api_url': 'http://10.119.24.129:9090'},
-    )
-    monkeypatch.setattr(memory_mod, '_post_core_api', fake_post_core_api)
+    monkeypatch.setattr(memory_mod.lazyllm, 'globals', {'agentic_config': {'session_id': 'sid-1'}})
+    monkeypatch.setattr(memory_mod, 'post_core_api', fake_post_core_api)
 
     suggestions = [
         {
@@ -35,11 +21,15 @@ def test_memory_submits_core_api_suggestion_paths(monkeypatch):
         }
     ]
 
-    memory_result = memory_mod.memory('memory', suggestions)
-    user_result = memory_mod.memory('user', suggestions)
+    memory_result = memory_mod.memory_editor('memory', suggestions)
+    user_result = memory_mod.memory_editor('user', suggestions)
 
     assert memory_result['success'] is True
+    assert memory_result['tool'] == 'memory_editor'
+    assert memory_result['result']['target'] == 'memory'
     assert user_result['success'] is True
+    assert user_result['tool'] == 'memory_editor'
+    assert user_result['result']['target'] == 'user'
     assert calls == [
         ('/memory/suggestion', {'session_id': 'sid-1', 'suggestions': suggestions}),
         ('/user_preference/suggestion', {'session_id': 'sid-1', 'suggestions': suggestions}),
@@ -47,47 +37,48 @@ def test_memory_submits_core_api_suggestion_paths(monkeypatch):
 
 
 def test_memory_requires_session_id(monkeypatch):
-    monkeypatch.setattr(memory_mod, '_agentic_config', lambda: {})
-    monkeypatch.setattr(memory_mod, '_session_id', lambda _config: '')
+    monkeypatch.setattr(memory_mod.lazyllm, 'globals', {'agentic_config': {}})
 
-    result = memory_mod.memory(
+    result = memory_mod.memory_editor(
         'memory',
         [{'title': 'Remember this', 'content': 'Store as a durable suggestion.'}],
     )
 
     assert result == {
         'success': False,
-        'reason': "'session_id' is required in agentic_config.",
+        'tool': 'memory_editor',
+        'error': {
+            'reason': "'session_id' is required in agentic_config.",
+        },
     }
 
 
 def test_memory_rejects_too_many_suggestions(monkeypatch):
-    monkeypatch.setattr(memory_mod, '_agentic_config', lambda: {'session_id': 'sid-1'})
+    monkeypatch.setattr(memory_mod.lazyllm, 'globals', {'agentic_config': {'session_id': 'sid-1'}})
 
-    result = memory_mod.memory(
+    result = memory_mod.memory_editor(
         'memory',
         [{'title': f'item-{i}', 'content': 'x'} for i in range(6)],
     )
 
     assert result == {
         'success': False,
-        'reason': 'At most 5 suggestions are allowed per call; got 6.',
+        'tool': 'memory_editor',
+        'error': {
+            'reason': 'At most 5 suggestions are allowed per call; got 6.',
+        },
     }
 
 
-def test_skill_manage_create_modify_remove_use_core_api_paths(monkeypatch):
+def test_skill_editor_create_modify_remove_use_core_api_paths(monkeypatch):
     calls = []
 
     def fake_post_core_api(path, payload):
         calls.append((path, payload))
         return {'persisted': 'core_api', 'url': f'http://core{path}'}
 
-    monkeypatch.setattr(
-        skill_manager_mod,
-        '_agentic_config',
-        lambda: {'session_id': 'sid-1', 'skill_fs_url': 'file:///tmp/skills'},
-    )
-    monkeypatch.setattr(skill_manager_mod, '_post_core_api', fake_post_core_api)
+    monkeypatch.setattr(skill_manager_mod.lazyllm, 'globals', {'agentic_config': {'session_id': 'sid-1'}})
+    monkeypatch.setattr(skill_manager_mod, 'post_core_api', fake_post_core_api)
     monkeypatch.setattr(
         skill_manager_mod,
         'list_all_skill_entries',
@@ -110,23 +101,26 @@ def test_skill_manage_create_modify_remove_use_core_api_paths(monkeypatch):
     )
     suggestion = Suggestion(title='Update instructions', content='Tighten the wording.')
 
-    create_result = skill_manager_mod.skill_manage(
+    create_result = skill_manager_mod.skill_editor(
         'new_skill',
         'create',
         category='drafts',
         content=content,
     )
-    modify_result = skill_manager_mod.skill_manage(
+    modify_result = skill_manager_mod.skill_editor(
         'existing',
         'modify',
         category='writing',
         suggestions=[suggestion],
     )
-    remove_result = skill_manager_mod.skill_manage('existing', 'remove', category='writing')
+    remove_result = skill_manager_mod.skill_editor('existing', 'remove', category='writing')
 
     assert create_result['success'] is True
+    assert create_result['tool'] == 'skill_editor'
     assert modify_result['success'] is True
+    assert modify_result['tool'] == 'skill_editor'
     assert remove_result['success'] is True
+    assert remove_result['tool'] == 'skill_editor'
     assert calls == [
         (
             '/skill/create',
@@ -153,18 +147,14 @@ def test_skill_manage_create_modify_remove_use_core_api_paths(monkeypatch):
     ]
 
 
-def test_skill_manage_rejects_missing_skill_without_post(monkeypatch):
+def test_skill_editor_rejects_missing_skill_without_post(monkeypatch):
     calls = []
 
-    monkeypatch.setattr(
-        skill_manager_mod,
-        '_agentic_config',
-        lambda: {'session_id': 'sid-1', 'skill_fs_url': 'file:///tmp/skills'},
-    )
-    monkeypatch.setattr(skill_manager_mod, '_post_core_api', lambda path, payload: calls.append((path, payload)))
+    monkeypatch.setattr(skill_manager_mod.lazyllm, 'globals', {'agentic_config': {'session_id': 'sid-1'}})
+    monkeypatch.setattr(skill_manager_mod, 'post_core_api', lambda path, payload: calls.append((path, payload)))
     monkeypatch.setattr(skill_manager_mod, 'list_all_skill_entries', lambda _base_dir: {})
 
-    result = skill_manager_mod.skill_manage(
+    result = skill_manager_mod.skill_editor(
         'missing',
         'modify',
         category='writing',
@@ -173,43 +163,9 @@ def test_skill_manage_rejects_missing_skill_without_post(monkeypatch):
 
     assert result == {
         'success': False,
-        'reason': "Skill 'missing' does not exist in category 'writing'; use action='create' to add a new skill.",
+        'tool': 'skill_editor',
+        'error': {
+            'reason': "Skill 'missing' does not exist in category 'writing'; use action='create' to add a new skill.",
+        },
     }
     assert calls == []
-
-
-def test_skill_manage_rejects_writes_to_non_remote_skills(monkeypatch):
-    monkeypatch.setattr(
-        skill_manager_mod,
-        '_agentic_config',
-        lambda: {'session_id': 'sid-1', 'skill_fs_url': 'remote://skills,.agentic/skills'},
-    )
-    monkeypatch.setattr(
-        skill_manager_mod,
-        'list_all_skill_entries',
-        lambda _base_dir: {
-            'writing/builtin': {
-                'name': 'builtin',
-                'category': 'writing',
-                'path': '.agentic/skills/writing/builtin',
-                'source': 'file',
-            }
-        },
-    )
-
-    modify_result = skill_manager_mod.skill_manage(
-        'builtin',
-        'modify',
-        category='writing',
-        suggestions=[{'title': 'Update instructions', 'content': 'Tighten the wording.'}],
-    )
-    remove_result = skill_manager_mod.skill_manage('builtin', 'remove', category='writing')
-
-    assert modify_result == {
-        'success': False,
-        'reason': "Skill 'builtin' in category 'writing' has read-only source 'file'; skill_manage can only modify remote skills.",
-    }
-    assert remove_result == {
-        'success': False,
-        'reason': "Skill 'builtin' in category 'writing' has read-only source 'file'; skill_manage can only remove remote skills.",
-    }

@@ -1,4 +1,5 @@
 import {
+  Alert,
   message,
   Button,
   Badge,
@@ -8,8 +9,15 @@ import {
   Tag,
   Space,
 } from "antd";
+import { axiosInstance, BASE_URL } from "@/components/request";
+import { AgentAppsAuth } from "@/components/auth";
+import {
+  fetchModelFeatures,
+  isImageEmbedRequired,
+  MODEL_FEATURES_CHANGED_EVENT,
+} from "@/hooks/useModelFeatures";
 import type { MenuProps } from "antd";
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, MouseEvent } from "react";
 import { useParams } from "react-router-dom";
 import {
   EditOutlined,
@@ -77,6 +85,10 @@ const Detail = () => {
   const [detail, setDetail] = useState<Dataset>();
   const [importingTotal, setImportingTotal] = useState(0);
   const [developerActive, setDeveloperActive] = useState(isDeveloperModeActive);
+  const [embeddingReady, setEmbeddingReady] = useState<boolean | null>(null);
+  const [multimodalEmbeddingReady, setMultimodalEmbeddingReady] = useState<boolean | null>(null);
+  const [parsingNoticeVisible, setParsingNoticeVisible] = useState(false);
+  const isAdmin = AgentAppsAuth.getUserInfo()?.role === 'system-admin';
 
   const { id = "" } = useParams();
 
@@ -89,8 +101,9 @@ const Detail = () => {
     KnowledgeBaseServiceApi()
       .datasetServiceGetDataset({ dataset: id })
       .then((res) => {
-        setDetail(res.data);
-        setCurrentDataset(res.data);
+        const dataset = res.data as unknown as Dataset;
+        setDetail(dataset);
+        setCurrentDataset(dataset);
       });
   }, [id, setCurrentDataset]);
 
@@ -98,8 +111,51 @@ const Detail = () => {
     console.log("searchParams", searchParams);
     getDetail();
     getImportingTotal();
+    const unwrap = (resp: { data: { data?: { ready: boolean } } | { ready: boolean } } | null): boolean | null => {
+      if (!resp) return null;
+      const body = resp.data;
+      const d = body && typeof body === "object" && "data" in body
+        ? (body as { data?: { ready: boolean } }).data
+        : (body as { ready: boolean });
+      return d?.ready ?? null;
+    };
+    const loadEmbeddingReady = () => {
+      fetchModelFeatures(true).then((features) => {
+        const imageEmbedRequired = isImageEmbedRequired(features);
+        return Promise.all([
+          axiosInstance
+            .get<{ data?: { ready: boolean } } | { ready: boolean }>(
+              `${BASE_URL}/api/core/model_providers/models/ready?model_type=embed_main`
+            )
+            .catch(() => null),
+          imageEmbedRequired
+            ? axiosInstance
+                .get<{ data?: { ready: boolean } } | { ready: boolean }>(
+                  `${BASE_URL}/api/core/model_providers/models/ready?model_type=embed_image`
+                )
+                .catch(() => null)
+            : Promise.resolve(null),
+        ]).then(([embResp, multiResp]) => {
+          setEmbeddingReady(unwrap(embResp));
+          setMultimodalEmbeddingReady(imageEmbedRequired ? unwrap(multiResp) : null);
+        });
+      }).catch(() => {
+        setEmbeddingReady(null);
+        setMultimodalEmbeddingReady(null);
+      });
+    };
+    loadEmbeddingReady();
+    window.addEventListener(MODEL_FEATURES_CHANGED_EVENT, loadEmbeddingReady);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        loadEmbeddingReady();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
+      window.removeEventListener(MODEL_FEATURES_CHANGED_EVENT, loadEmbeddingReady);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       pollingRef.current.cancel();
       clearDataset();
     };
@@ -143,6 +199,7 @@ const Detail = () => {
         }
         compareTaskChange(newTaskList, importingTaskListRef.current);
         setImportingTotal(newTaskList.length);
+        setParsingNoticeVisible(newTaskList.length > 0);
         importingTaskListRef.current = newTaskList;
       },
     });
@@ -370,6 +427,14 @@ const Detail = () => {
           }
         }}
       />
+      {parsingNoticeVisible && (
+        <Alert
+          className="knowledge-parsing-notice"
+          message={t("knowledge.documentParsingKeepTabOpen")}
+          type="warning"
+          showIcon
+        />
+      )}
       <div className="toolbar my-4 mt-6 w-full">
         <Search
           className="search-input"
@@ -426,26 +491,55 @@ const Detail = () => {
             )}
             <Badge count={importingTotal} size="small" style={{ zIndex: 2 }}>
               <Space.Compact>
-                <Button
-                  type="primary"
-                  onClick={() => openImportModal({ importMode: "file" })}
-                >
-                  {t("knowledge.importFile")}
-                </Button>
+                <Tooltip title={
+                  (embeddingReady === false || multimodalEmbeddingReady === false)
+                    ? (
+                      isAdmin ? (
+                        <span>
+                          {embeddingReady === false
+                            ? t("knowledge.embeddingNotReadyBannerAdmin")
+                            : t("knowledge.multimodalEmbeddingNotReadyBannerAdmin")}
+                          <a
+                            href="/model-providers"
+                            style={{ marginLeft: 8, color: '#fff', textDecoration: 'underline' }}
+                            onClick={(e: MouseEvent<HTMLAnchorElement>) => { e.preventDefault(); navigate('/model-providers'); }}
+                          >
+                            {t("knowledge.goToConfig")}
+                          </a>
+                        </span>
+                      ) : (
+                        embeddingReady === false
+                          ? t("knowledge.embeddingNotReadyBanner")
+                          : t("knowledge.multimodalEmbeddingNotReadyBanner")
+                      )
+                    )
+                    : undefined
+                }>
+                  <Button
+                    type="primary"
+                    disabled={embeddingReady === false || multimodalEmbeddingReady === false}
+                    onClick={() => openImportModal({ importMode: "file" })}
+                  >
+                    {t("knowledge.importFile")}
+                  </Button>
+                </Tooltip>
                 <Dropdown
                   menu={{
                     items: [
                       {
                         key: "importFile",
                         label: t("knowledge.importFile"),
+                        disabled: embeddingReady === false || multimodalEmbeddingReady === false,
                       },
                       {
                         key: "importFolder",
                         label: t("knowledge.importFolder"),
+                        disabled: embeddingReady === false || multimodalEmbeddingReady === false,
                       },
                       {
                         key: "importZip",
                         label: t("knowledge.importZip"),
+                        disabled: embeddingReady === false || multimodalEmbeddingReady === false,
                       },
                       {
                         key: "taskManage",
@@ -577,6 +671,8 @@ const Detail = () => {
 
       <ImportKnowledgeModal
         ref={importKnowledgeRef}
+        onParsingStart={() => setParsingNoticeVisible(true)}
+        onParsingSettled={() => setParsingNoticeVisible(false)}
         onOk={({ pId } = {}) => {
           importingTaskListRef.current = [];
           getImportingTotal();

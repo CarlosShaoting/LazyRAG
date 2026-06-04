@@ -1,6 +1,7 @@
 package doc
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -25,17 +26,19 @@ type addFileItem struct {
 }
 
 type addRequest struct {
-	Items          []addFileItem `json:"items"`
-	KbID           string        `json:"kb_id,omitempty"`
-	SourceType     string        `json:"source_type,omitempty"`
-	IdempotencyKey string        `json:"idempotency_key,omitempty"`
+	Items          []addFileItem  `json:"items"`
+	KbID           string         `json:"kb_id,omitempty"`
+	SourceType     string         `json:"source_type,omitempty"`
+	IdempotencyKey string         `json:"idempotency_key,omitempty"`
+	ModelConfig    map[string]any `json:"llm_config,omitempty"`
 }
 
 type reparseRequest struct {
-	DocIDs         []string `json:"doc_ids"`
-	KbID           string   `json:"kb_id,omitempty"`
-	NgNames        []string `json:"ng_names,omitempty"`
-	IdempotencyKey string   `json:"idempotency_key,omitempty"`
+	DocIDs         []string       `json:"doc_ids"`
+	KbID           string         `json:"kb_id,omitempty"`
+	NgNames        []string       `json:"ng_names,omitempty"`
+	IdempotencyKey string         `json:"idempotency_key,omitempty"`
+	ModelConfig    map[string]any `json:"llm_config,omitempty"`
 }
 
 // transferItem no longer carries source/target algo IDs after the node-group
@@ -159,6 +162,14 @@ func callExternalSuspendJob(r *http.Request, req ExternalCancelTaskRequest) erro
 	url := common.JoinURL(parsingServiceEndpoint(), "/v1/tasks/cancel")
 	var resp map[string]any
 	return common.ApiPost(r.Context(), url, req, nil, &resp, 15*time.Second)
+}
+
+func callExternalSetNodeGroupLazyMode(ctx context.Context, groupName string, lazyMode *string) error {
+	url := common.JoinURL(common.AlgoServiceEndpoint(), "/v1/ng/"+groupName+"/lazy_mode")
+	if lazyMode != nil {
+		url += "?lazy_mode=" + *lazyMode
+	}
+	return common.ApiPost(ctx, url, nil, nil, nil, 15*time.Second)
 }
 
 func parseAddResponse(resp any, req addRequest) []addResultItem {

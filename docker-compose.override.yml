@@ -1,0 +1,41 @@
+# Local development overrides (not used by default in CI/production).
+#
+# Setup:
+#   cp docker-compose.override.example.yml docker-compose.override.yml
+#   git submodule update --init algorithm/lazyllm
+#   # lazyllm must include main (Config alias) + cst/dynamic_reader (DynamicPDFReader).
+#   # In algorithm/lazyllm: git checkout 7f18037b  # or merge main into cst/dynamic_reader locally
+#
+# Then start without rebuilding images after code edits:
+#   docker compose up -d --force-recreate
+#
+# Mounts host LazyLLM + lazymind sources into registry images (works even when
+# the image predates the algorithm/lazymind package layout).
+
+x-algorithm-dev-volumes: &algorithm-dev-volumes
+  - ./algorithm/lazyllm:/opt/lazyllm
+  - ./algorithm/lazymind:/app/algorithm/lazymind
+
+# Override main compose defaults (LAZYMIND_*:-dynamic) for local inner deployment.
+x-algorithm-dev-env: &algorithm-dev-env
+  LAZYMIND_MODEL_CONFIG_PATH: inner
+
+services:
+  mineru:
+    volumes: *algorithm-dev-volumes
+
+  lazyllm-parse-server:
+    volumes: *algorithm-dev-volumes
+    environment: *algorithm-dev-env
+
+  lazyllm-parse-worker:
+    volumes: *algorithm-dev-volumes
+    environment: *algorithm-dev-env
+
+  lazyllm-algo:
+    volumes: *algorithm-dev-volumes
+    environment: *algorithm-dev-env
+
+  chat:
+    volumes: *algorithm-dev-volumes
+    environment: *algorithm-dev-env

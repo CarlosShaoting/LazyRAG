@@ -1,5 +1,18 @@
+import asyncio
+import json
 import sys
 from types import ModuleType, SimpleNamespace
+
+from lazymind.chat.service import chat_service
+
+
+async def _collect_streaming_response(response):
+    chunks = []
+    async for chunk in response.body_iterator:
+        if isinstance(chunk, bytes):
+            chunk = chunk.decode('utf-8')
+        chunks.append(chunk)
+    return ''.join(chunks)
 
 
 def _import_agentic_module(monkeypatch):
@@ -39,6 +52,17 @@ def _import_agentic_module(monkeypatch):
     fake_lazyllm_tools_fs = ModuleType('lazyllm.tools.fs')
     fake_lazyllm_tools_fs_client = ModuleType('lazyllm.tools.fs.client')
     fake_lazyllm_tools_fs_client.FS = object
+    fake_lazyllm_tools_fs_supplier = ModuleType('lazyllm.tools.fs.supplier')
+    fake_lazyllm_tools_fs_supplier_feishu = ModuleType('lazyllm.tools.fs.supplier.feishu')
+
+    class _FakeFeishuFS:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    fake_lazyllm_tools_fs_supplier_feishu.FeishuFS = _FakeFeishuFS
+    fake_lazyllm_tracing = ModuleType('lazyllm.tracing')
+    fake_lazyllm_tracing.set_trace_context = lambda *a, **kw: None
+
     fake_lazyllm_tools_sandbox = ModuleType('lazyllm.tools.sandbox')
     fake_lazyllm_tools_sandbox_base = ModuleType('lazyllm.tools.sandbox.sandbox_base')
     fake_lazyllm_tools_sandbox_base.create_sandbox = lambda *a, **kw: None
@@ -59,20 +83,16 @@ def _import_agentic_module(monkeypatch):
     # Symbols used by chat.components.agentic.config
     fake_prompts.CITATION_GUIDANCE = ''
     fake_prompts.DEFAULT_SYSTEM_PROMPT = ''
+    fake_prompts.IMAGE_REFERENCE_MARKDOWN_GUIDANCE = ''
+    fake_prompts.VISION_EXTRACTOR_GUIDANCE = ''
     fake_prompts.MEMORY_GUIDANCE = ''
     fake_prompts.SEARCH_GUIDANCE = ''
     fake_prompts.SKILLS_GUIDANCE = ''
     fake_prompts.TOOL_CALL_STATUS_GUIDANCE = ''
+    fake_prompts.VOCAB_GUIDANCE = ''
     fake_prompts._COMBINED_REVIEW_PROMPT = ''
     fake_prompts._MEMORY_REVIEW_PROMPT = ''
     fake_prompts._SKILL_REVIEW_PROMPT = ''
-    fake_prompts.VOCAB_GUIDANCE = ''
-    fake_prompts._MEMORY_FLUSH_MESSAGES = []
-
-    fake_tool_registry = ModuleType('chat.components.tmp.tool_registry')
-    fake_tool_registry.get_all_tool_schemas = lambda: {}
-    fake_tool_registry.get_tool_instance = lambda name: None
-    fake_tool_registry.get_tool_schema = lambda name: {}
 
     # Fake deep dependency modules to avoid import chain issues
     fake_review = ModuleType('chat.components.agentic.review')
@@ -81,62 +101,6 @@ def _import_agentic_module(monkeypatch):
 
     fake_skill_manager = ModuleType('chat.tools.skill_manager')
     fake_skill_manager.list_all_skills_with_category = lambda *a, **kw: []
-
-    fake_output_parser = ModuleType('chat.components.generate.output_parser')
-
-    class _FakeOutputParser:
-        def forward(self, value, aggregate=None, stream=False):
-            if stream:
-                return {'stream': True, 'aggregate': aggregate}
-            return {'parsed': value, 'aggregate': aggregate, 'stream': stream}
-
-    fake_output_parser.CustomOutputParser = _FakeOutputParser
-
-    fake_helpers = ModuleType('chat.utils.helpers')
-    fake_helpers.tool_schema_to_string = lambda schema, include_params=True: 'tool-schema'
-
-    fake_stream_scanner = ModuleType('chat.utils.stream_scanner')
-    fake_stream_scanner.BasePlugin = object
-    fake_stream_scanner.IncrementalScanner = object
-
-    fake_utils_pkg = ModuleType('chat.utils')
-    fake_utils_pkg.__path__ = []
-    fake_load_config = ModuleType('chat.utils.load_config')
-    fake_load_config.get_config_path = lambda: 'runtime_models.yaml'
-    fake_load_config.normalize_skill_fs_url = lambda url: url
-
-    fake_schema = ModuleType('chat.utils.schema')
-
-    class PlanStep:
-        def __init__(self, step_id, goal, tool):
-            self.step_id = step_id
-            self.goal = goal
-            self.tool = tool
-            self.status = 'pending'
-            self.raw_results = []
-            self.formatted_results = []
-            self.extracted_results = []
-            self.inference = ''
-
-    class TaskContext:
-        def __init__(self):
-            self.query = ''
-            self.global_params = {}
-            self.tool_params = {}
-            self.pending_steps = []
-            self.executed_steps = []
-            self.middle_results = SimpleNamespace(
-                evaluation_result={},
-                raw_results=[],
-                formatted_results=[],
-                agg_results={},
-            )
-            self.inferences = []
-            self.reasoning_process_stream = []
-            self.answer = ''
-
-    fake_schema.PlanStep = PlanStep
-    fake_schema.TaskContext = TaskContext
 
     # Clear cached module so it gets re-imported with our fakes
     for name in list(sys.modules.keys()):
@@ -150,6 +114,9 @@ def _import_agentic_module(monkeypatch):
         'memory_review_interval': 1,
         'skill_review_interval': 5,
         'model_config_path': 'dynamic',
+        'skill_fs_url': 'remote://skills',
+        'agentic_keep_full_turns': 3,
+        'agentic_workspace': './workspace',
     }
 
     # Fake chat.pipelines package for isolated agentic import
@@ -160,17 +127,15 @@ def _import_agentic_module(monkeypatch):
         fake_pipelines_pkg.__path__ = list(real_pipelines_spec.submodule_search_locations)
     fake_pipelines_pkg.__package__ = 'chat.pipelines'
 
-    # Fake chat.pipelines.builders to avoid deep import chain
-    fake_builders_pkg = ModuleType('chat.pipelines.builders')
-    fake_builders_pkg.get_ppl_search = lambda *a, **kw: None
-    fake_builders_pkg.get_ppl_generate = lambda *a, **kw: None
-    fake_builders_pkg.get_retriever = lambda *a, **kw: None
-    fake_builders_pkg.get_remote_docment = lambda *a, **kw: None
-    fake_builders_pkg.get_automodel = lambda role: f'model:{role}'
+    # Fake chat.pipelines.get_ppl_search to avoid deep import chain
+    fake_get_ppl_search_mod = ModuleType('chat.pipelines.get_ppl_search')
+    fake_get_ppl_search_mod.get_ppl_search = lambda *a, **kw: None
+    fake_get_ppl_search_mod.get_retriever = lambda *a, **kw: None
+    fake_get_ppl_search_mod.get_remote_document = lambda *a, **kw: None
 
     monkeypatch.setitem(sys.modules, 'config', fake_config_mod)
     monkeypatch.setitem(sys.modules, 'chat.pipelines', fake_pipelines_pkg)
-    monkeypatch.setitem(sys.modules, 'chat.pipelines.builders', fake_builders_pkg)
+    monkeypatch.setitem(sys.modules, 'chat.pipelines.get_ppl_search', fake_get_ppl_search_mod)
     monkeypatch.setitem(sys.modules, 'lazyllm', fake_lazyllm)
     monkeypatch.setitem(sys.modules, 'lazyllm.tools', fake_lazyllm_tools)
     monkeypatch.setitem(sys.modules, 'lazyllm.tools.agent', fake_lazyllm_tools_agent)
@@ -179,19 +144,15 @@ def _import_agentic_module(monkeypatch):
     monkeypatch.setitem(sys.modules, 'lazyllm.tools.agent.functionCall', fake_lazyllm_tools_agent_fc)
     monkeypatch.setitem(sys.modules, 'lazyllm.tools.fs', fake_lazyllm_tools_fs)
     monkeypatch.setitem(sys.modules, 'lazyllm.tools.fs.client', fake_lazyllm_tools_fs_client)
+    monkeypatch.setitem(sys.modules, 'lazyllm.tools.fs.supplier', fake_lazyllm_tools_fs_supplier)
+    monkeypatch.setitem(sys.modules, 'lazyllm.tools.fs.supplier.feishu', fake_lazyllm_tools_fs_supplier_feishu)
+    monkeypatch.setitem(sys.modules, 'lazyllm.tracing', fake_lazyllm_tracing)
     monkeypatch.setitem(sys.modules, 'lazyllm.tools.sandbox', fake_lazyllm_tools_sandbox)
     monkeypatch.setitem(sys.modules, 'lazyllm.tools.sandbox.sandbox_base', fake_lazyllm_tools_sandbox_base)
     monkeypatch.setitem(sys.modules, 'tenacity', fake_tenacity)
     monkeypatch.setitem(sys.modules, 'chat.prompts.agentic', fake_prompts)
-    monkeypatch.setitem(sys.modules, 'chat.components.tmp.tool_registry', fake_tool_registry)
     monkeypatch.setitem(sys.modules, 'chat.components.agentic.review', fake_review)
     monkeypatch.setitem(sys.modules, 'chat.tools.skill_manager', fake_skill_manager)
-    monkeypatch.setitem(sys.modules, 'chat.components.generate.output_parser', fake_output_parser)
-    monkeypatch.setitem(sys.modules, 'chat.utils', fake_utils_pkg)
-    monkeypatch.setitem(sys.modules, 'chat.utils.load_config', fake_load_config)
-    monkeypatch.setitem(sys.modules, 'chat.utils.helpers', fake_helpers)
-    monkeypatch.setitem(sys.modules, 'chat.utils.stream_scanner', fake_stream_scanner)
-    monkeypatch.setitem(sys.modules, 'chat.utils.schema', fake_schema)
 
     return importlib.import_module('chat.pipelines.agentic')
 
@@ -252,7 +213,7 @@ def test_lazyllm_queue_db_path_is_path_like(monkeypatch):
 
 
 def test_agentic_forward_uses_automodel(monkeypatch):
-    # Verify agentic_forward calls AutoModel(model='llm', config=get_config_path()).
+    # Verify agentic_forward calls AutoModel(model='llm').
     # We use the fake-lazyllm module to isolate the test.
     module = _import_agentic_module(monkeypatch)
 
@@ -294,3 +255,49 @@ def test_agentic_forward_uses_automodel(monkeypatch):
     module.agentic_forward(query='hello', history=[])
 
     assert automodel_calls == ['model:llm']
+
+
+def test_handle_chat_constructs_react_agent_from_runtime_context(monkeypatch):
+    agent_calls = []
+
+    class FakeAgent:
+        def __init__(self, llm, tools, **kwargs):
+            agent_calls.append({'llm': llm, 'tools': tools, 'kwargs': kwargs})
+
+        def forward(self, query, llm_chat_history=None):
+            chat_service.lazyllm.FileSystemQueue().enqueue(json.dumps({'tag': 'text', 'delta': f'answer:{query}'}))
+            return {'text': f'final:{query}'}
+
+    monkeypatch.setattr(chat_service, 'AutoModel', lambda model, config: f'{model}:{config}')
+    monkeypatch.setattr(chat_service.lazyllm.tools.agent, 'ReactAgent', FakeAgent)
+
+    async def drive():
+        response = await chat_service.handle_chat(
+            query='hello',
+            history=[],
+            session_id='sid-1',
+            filters={},
+            files=None,
+            debug=False,
+            reasoning=False,
+            databases=None,
+            dataset='default',
+            priority=None,
+            available_tools=['calculator'],
+            available_skills=['skill-a'],
+            memory=None,
+            user_preference=None,
+            use_memory=True,
+            model_config={},
+        )
+        return await _collect_streaming_response(response)
+
+    body = asyncio.run(drive())
+
+    assert agent_calls
+    assert agent_calls[0]['llm'].startswith('llm:')
+    assert agent_calls[0]['tools']
+    assert agent_calls[0]['kwargs']['skills'] == ['skill-a']
+    assert agent_calls[0]['kwargs']['stream'] is True
+    assert 'answer:hello' in body
+    assert '"status": "FINISHED"' in body
