@@ -62,8 +62,8 @@ x-llm-api-keys: &llm-api-keys
 
 
 x-upload-paths: &upload-paths
-  LAZYMIND_UPLOAD_HOST_DIR: ./data/core/uploads
   LAZYMIND_SHARED_UPLOAD_DIR: /var/lib/lazymind/uploads
+  LAZYLLM_TEMP_DIR: /var/lib/lazymind/uploads/.lazyllm_temp
   LAZYMIND_OCR_CACHE_DIR: /var/lib/lazymind/uploads/.image_cache
 
 x-runtime-home: &runtime-home
@@ -77,9 +77,8 @@ x-core-db-conn: &core-db-conn
 
 x-ocr-env: &ocr-env
   LAZYMIND_OCR_SERVER_TYPE: ${LAZYMIND_OCR_SERVER_TYPE:-none}
-  LAZYLLM_MINERU_BACKEND: ${LAZYLLM_MINERU_BACKEND:-pipeline}
-  LAZYLLM_MINERU_UPLOAD_MODE: "True"
-  LAZYLLM_OCR_PATCH_APPLIED: ${LAZYLLM_OCR_PATCH_APPLIED:-True}
+  LAZYMIND_MINERU_BACKEND: ${LAZYMIND_MINERU_BACKEND:-pipeline}
+  LAZYLLM_MINERU_BACKEND: ${LAZYMIND_MINERU_BACKEND:-pipeline}
   LAZYLLM_MINERU_API_KEY: ${LAZYLLM_MINERU_API_KEY:-}
   LAZYLLM_PADDLE_API_KEY: ${LAZYLLM_PADDLE_API_KEY:-}
   LAZYMIND_OCR_SERVER_URL: ${LAZYMIND_OCR_SERVER_URL:-http://host.docker.internal:8000/api/v1/pdf_parse}
@@ -147,6 +146,8 @@ services:
     restart: "no"
 
   scan-control-plane:
+    profiles:
+      - scan
     image: ${LAZYMIND_IMAGE_MIRROR:-registry.cn-hangzhou.aliyuncs.com}/lazyllm/lazymind-scan-control-plane:${LAZYMIND_IMAGE_TAG:-latest}
     build:
       network: host
@@ -186,6 +187,8 @@ services:
     restart: unless-stopped
 
   file-watcher:
+    profiles:
+      - scan
     image: ${LAZYMIND_IMAGE_MIRROR:-registry.cn-hangzhou.aliyuncs.com}/lazyllm/lazymind-file-watcher:${LAZYMIND_IMAGE_TAG:-latest}
     build:
       network: host
@@ -690,7 +693,7 @@ services:
     environment:
       LAZYMIND_EVO_API_PORT: "8047"
       LAZYMIND_EVO_BASE_DIR: /var/lib/lazymind/evo
-      LAZYMIND_EVO_CHAT_SOURCE: /app/algorithm/chat
+      LAZYMIND_EVO_CHAT_SOURCE: /app/algorithm/lazymind/chat
       LAZYMIND_EVO_CODE_MAP: /app/evo/code_map.json
       LAZYMIND_EVO_CODE_BINARY: /usr/local/bin/opencode
       LAZYMIND_EVO_CODE_PROVIDER: ${LAZYMIND_EVO_CODE_PROVIDER:-qwen}

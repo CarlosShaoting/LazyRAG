@@ -109,9 +109,6 @@ export LAZYMIND_CORE_DATABASE_URL ?= postgresql+psycopg://root:123456@db:5432/co
 # Auto-derives LAZYMIND_OCR_SERVER_URL when not set.
 export LAZYMIND_OCR_SERVER_TYPE ?= none
 export LAZYMIND_OCR_SERVER_URL ?= $(if $(filter mineru,$(LAZYMIND_OCR_SERVER_TYPE)),http://mineru:8000/api/v1/pdf_parse,$(if $(filter paddleocr,$(LAZYMIND_OCR_SERVER_TYPE)),http://paddleocr:8080,http://localhost:8000/api/v1/pdf_parse))
-# patch_applied: False for official mineru.net API; local deploy defaults to True unless overridden
-export LAZYLLM_OCR_PATCH_APPLIED := $(if $(findstring mineru.net,$(LAZYMIND_OCR_SERVER_URL)),False,$(or $(LAZYLLM_OCR_PATCH_APPLIED),True))
-
 # Vector / segment stores — override to use external services (skips built-in profile)
 export LAZYMIND_MILVUS_URI ?= http://milvus:19530
 export LAZYMIND_OPENSEARCH_URI ?= https://opensearch:9200
@@ -149,7 +146,7 @@ export BASE_LAZYMIND_IMAGE ?= base_code
 # export BASE_LAZYMIND_IMAGE ?= registry.cn-sh-01.sensecore.cn/ai-expert-service/lazymind-base:2026.05.15.beta
 
 # model config path
-export LAZYMIND_MODEL_CONFIG_PATH ?= dynamic
+export LAZYMIND_MODEL_CONFIG_PATH ?= inner
 
 # Frontend port (default 8090; override if the port is occupied, e.g. by Cursor)
 export LAZYMIND_FRONTEND_PORT ?= 8090
@@ -163,8 +160,8 @@ GO_DIRS := backend/core
 help:
 	@echo "LazyMind Make targets:"
 	@echo "  make up         - Start services in background (with derived profiles)"
-	@echo "                    file-watcher runs in compose by default"
-	@echo "                    Use LAZYMIND_FILE_WATCHER_MODE=host for host-process debugging"
+	@echo "                    scan-control-plane/file-watcher off unless LAZYMIND_ENABLE_SCAN=1"
+	@echo "                    Use LAZYMIND_FILE_WATCHER_MODE=host for host-process scan debugging"
 	@echo "                    Use SERVICES=svc1,svc2 to start specific services only"
 	@echo "  make up-build   - Build images and start services"
 	@echo "                    Use SERVICES=svc1,svc2 to target specific services"
@@ -243,7 +240,9 @@ _need_opensearch_dashboard := $(and $(_need_opensearch),$(_enable_opensearch_das
 
 # Shared compose profile flags for up/down/up-build
 _COMPOSE_PROFILES := $(strip $(if $(_need_mineru),--profile mineru) $(if $(_need_paddleocr),--profile paddleocr) $(if $(_need_milvus),--profile milvus) $(if $(_need_opensearch),--profile opensearch) $(if $(_need_milvus_dashboard),--profile milvus-dashboard) $(if $(_need_opensearch_dashboard),--profile opensearch-dashboard))
+# scan-control-plane + file-watcher use compose profile "scan" (off by default).
 _COMPOSE_FILE_WATCHER_SCALE := $(if $(filter container,$(LAZYMIND_FILE_WATCHER_MODE)),,--scale file-watcher=0)
+_COMPOSE_SCAN_PROFILE := $(if $(filter 1 true TRUE yes YES on ON,$(LAZYMIND_ENABLE_SCAN)),--profile scan,)
 
 # Only init submodules when not yet cloned; if already present (even with different commit), do nothing. Never recursive.
 _SUBMODULE_INIT = @git submodule status | grep -q '^-' && git submodule update --init || true
@@ -308,19 +307,23 @@ file-watcher-start: file-watcher-build
 	@$(MAKE) --no-print-directory file-watcher-run
 
 up:
-	@if [ "$(LAZYMIND_FILE_WATCHER_MODE)" = "container" ]; then \
-		$(MAKE) --no-print-directory file-watcher-stop; \
-		$(MAKE) --no-print-directory file-watcher-dirs; \
-	else \
-		$(MAKE) --no-print-directory file-watcher-build; \
+	@if [ "$(LAZYMIND_ENABLE_SCAN)" = "1" ]; then \
+		if [ "$(LAZYMIND_FILE_WATCHER_MODE)" = "container" ]; then \
+			$(MAKE) --no-print-directory file-watcher-stop; \
+			$(MAKE) --no-print-directory file-watcher-dirs; \
+		else \
+			$(MAKE) --no-print-directory file-watcher-build; \
+		fi; \
 	fi
 	$(_SUBMODULE_INIT)
-	@$(_COMPOSE) $(_COMPOSE_PROFILES) up $(_COMPOSE_FILE_WATCHER_SCALE) -d \
+	@$(_COMPOSE) $(_COMPOSE_PROFILES) $(_COMPOSE_SCAN_PROFILE) up $(_COMPOSE_FILE_WATCHER_SCALE) -d \
 		$(if $(SERVICES),$(subst $(comma), ,$(SERVICES)),)
-	@if [ "$(LAZYMIND_FILE_WATCHER_MODE)" != "container" ]; then \
-		$(MAKE) --no-print-directory file-watcher-run; \
-	else \
-		echo "✅ file-watcher container enabled"; \
+	@if [ "$(LAZYMIND_ENABLE_SCAN)" = "1" ]; then \
+		if [ "$(LAZYMIND_FILE_WATCHER_MODE)" != "container" ]; then \
+			$(MAKE) --no-print-directory file-watcher-run; \
+		else \
+			echo "✅ scan stack enabled (profile scan)"; \
+		fi; \
 	fi
 
 down:
@@ -331,19 +334,23 @@ down:
 		$(if $(SERVICES),$(subst $(comma), ,$(SERVICES)),)
 
 up-build:
-	@if [ "$(LAZYMIND_FILE_WATCHER_MODE)" = "container" ]; then \
-		$(MAKE) --no-print-directory file-watcher-stop; \
-		$(MAKE) --no-print-directory file-watcher-dirs; \
-	else \
-		$(MAKE) --no-print-directory file-watcher-build; \
+	@if [ "$(LAZYMIND_ENABLE_SCAN)" = "1" ]; then \
+		if [ "$(LAZYMIND_FILE_WATCHER_MODE)" = "container" ]; then \
+			$(MAKE) --no-print-directory file-watcher-stop; \
+			$(MAKE) --no-print-directory file-watcher-dirs; \
+		else \
+			$(MAKE) --no-print-directory file-watcher-build; \
+		fi; \
 	fi
 	$(_SUBMODULE_INIT)
-	@$(_COMPOSE) $(_COMPOSE_PROFILES) up $(_COMPOSE_FILE_WATCHER_SCALE) --build -d \
+	@$(_COMPOSE) $(_COMPOSE_PROFILES) $(_COMPOSE_SCAN_PROFILE) up $(_COMPOSE_FILE_WATCHER_SCALE) --build -d \
 		$(if $(SERVICES),$(subst $(comma), ,$(SERVICES)),)
-	@if [ "$(LAZYMIND_FILE_WATCHER_MODE)" != "container" ]; then \
-		$(MAKE) --no-print-directory file-watcher-run; \
-	else \
-		echo "✅ file-watcher container enabled"; \
+	@if [ "$(LAZYMIND_ENABLE_SCAN)" = "1" ]; then \
+		if [ "$(LAZYMIND_FILE_WATCHER_MODE)" != "container" ]; then \
+			$(MAKE) --no-print-directory file-watcher-run; \
+		else \
+			echo "✅ scan stack enabled (profile scan)"; \
+		fi; \
 	fi
 
 clear:

@@ -92,16 +92,6 @@ func LoadLLMConfig(ctx context.Context, db *gorm.DB, userID string) (map[string]
 	}
 
 	config := BuildLLMConfig(rows)
-	ocrConfig, err := LoadOCRConfig(ctx, db, userID)
-	if err != nil {
-		return nil, err
-	}
-	if ocrConfig != nil {
-		if config == nil {
-			config = map[string]any{}
-		}
-		config["ocr_config"] = ocrConfig
-	}
 	fmt.Printf("[Core] [LLM_CONFIG_LOADED] [user_id=%s] [%s]\n", strings.TrimSpace(userID), SummarizeLLMConfigForLog(config))
 	return config, nil
 }
