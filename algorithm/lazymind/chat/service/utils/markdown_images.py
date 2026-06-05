@@ -4,11 +4,54 @@ from typing import Any, Dict
 from .static_file_url import static_file_url_from_any, basename_from_path as _basename
 
 _IMAGE_MD_RE = re.compile(r'!\[([^\]]*)\]\(([^)]+)\)')
+_STATIC_FILES_MARKER = '/static-files/'
 _UPLOAD_ROOT_MARKER = '/var/lib/lazymind/uploads/'
 _BLOCKED_HOST_MARKERS = (
     'ext.lazymind.ai',
     'agent-cdn.minimax.io',
 )
+
+
+def _extract_static_files_ref(url: str) -> str:
+    trimmed = (url or '').strip()
+    idx = trimmed.find(_STATIC_FILES_MARKER)
+    if idx < 0:
+        return ''
+    return trimmed[idx:]
+
+
+def register_generated_image_urls(config: Dict[str, Any], payload: Dict[str, Any]) -> None:
+    if not isinstance(config, dict) or not isinstance(payload, dict):
+        return
+    registry = config.setdefault('_image_url_registry', {})
+    candidates: list[str] = []
+    for key in ('image_url', 'image_markdown', 'local_path'):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            candidates.append(value.strip())
+    images = payload.get('images')
+    if isinstance(images, list):
+        for item in images:
+            if not isinstance(item, dict):
+                continue
+            for key in ('image_url', 'image_markdown', 'local_path'):
+                value = item.get(key)
+                if isinstance(value, str) and value.strip():
+                    candidates.append(value.strip())
+    for raw in candidates:
+        signed = static_file_url_from_any(raw)
+        if not signed:
+            static_ref = _extract_static_files_ref(raw)
+            signed = static_file_url_from_any(static_ref) if static_ref else ''
+        if not signed:
+            continue
+        registry[signed] = signed
+        base = _basename(signed)
+        if base:
+            registry[base] = signed
+        static_ref = _extract_static_files_ref(signed) or _extract_static_files_ref(raw)
+        if static_ref:
+            registry[static_ref] = signed
 
 
 def _is_blocked_external_url(url: str) -> bool:

@@ -16,7 +16,32 @@ _TYPE_TO_SLOT: Dict[str, str] = {
     'embed': 'embed',
     'rerank': 'embed',
     'cross_modal_embed': 'embed',
+    'text2image': 'multimodal',
+    'image_editing': 'multimodal',
 }
+
+
+def _role_entry(entries: Any) -> Optional[Dict[str, Any]]:
+    '''Normalize a role block from runtime_models yaml (dict or single-item list).'''
+    if isinstance(entries, list):
+        return entries[0] if entries else None
+    return entries if isinstance(entries, dict) else None
+
+
+def is_model_role_available(role: str, *, config_path: Optional[str] = None) -> bool:
+    '''Return whether a model role is configured and injectable for the current request.
+
+    Static roles (source != dynamic) are available when declared in runtime_models.
+    Dynamic roles additionally require inject_model_config to have supplied that role.
+    '''
+    entry = _role_entry(load_model_config(config_path or get_config_path()).get(role))
+    if not entry:
+        return False
+    if (entry.get('source') or '').lower() != 'dynamic':
+        return True
+    import lazyllm
+    buckets = (lazyllm.globals.config.get('dynamic_model_configs') or {}).get(role, {})
+    return any(v.get('source') or v.get('model') or v.get('url') for v in buckets.values())
 
 
 def get_config_path() -> str:
@@ -80,12 +105,11 @@ def get_dynamic_role_slot_map(config_path: Optional[str] = None) -> Dict[str, st
     '''
     raw = load_model_config(config_path or get_config_path())
     result: Dict[str, str] = {}
-    for role, cfg in raw.items():
-        if not isinstance(cfg, dict):
+    for role, entries in raw.items():
+        entry = _role_entry(entries)
+        if not entry or (entry.get('source') or '').lower() != 'dynamic':
             continue
-        if (cfg.get('source') or '').lower() != 'dynamic':
-            continue
-        role_type = (cfg.get('type') or 'llm').lower()
+        role_type = (entry.get('type') or 'llm').lower()
         slot = _TYPE_TO_SLOT.get(role_type, 'chat')
         result[role] = slot
     return result

@@ -19,12 +19,16 @@ from lazymind.chat.engine.tools import (
     KBToolGroup,
     TempKBToolGroup,
     calculator,
+    describe_attached_images,
+    image_editor,
+    image_generator,
     memory_editor,
     skill_editor,
     url_fetch,
     vision_extractor,
     vocab_learn,
 )
+from lazymind.model_config import is_model_role_available
 
 
 @dataclass
@@ -33,6 +37,7 @@ class ToolGroupConfig:
     label: str
     description: str
     instance: Any
+    model_role: str | None = None
 
 
 SKILL_TOOL_GROUP = ToolGroupConfig(
@@ -109,6 +114,28 @@ DEFAULT_TOOLS: list[ToolGroupConfig] = [
         label='多模态识别',
         description='从图片中提取文字描述',
         instance=vision_extractor,
+        model_role='vlm',
+    ),
+    ToolGroupConfig(
+        name='describe_attached',
+        label='附件图片描述',
+        description='描述用户在本轮上传的图片内容',
+        instance=describe_attached_images,
+        model_role='vlm',
+    ),
+    ToolGroupConfig(
+        name='image_generator',
+        label='文生图',
+        description='根据文字描述生成图片',
+        instance=image_generator,
+        model_role='image_generator',
+    ),
+    ToolGroupConfig(
+        name='image_editor',
+        label='图编辑',
+        description='根据文字指令编辑参考图片',
+        instance=image_editor,
+        model_role='image_editor',
     ),
     ToolGroupConfig(
         name='vocab_learn',
@@ -204,6 +231,8 @@ def get_all_tool_groups() -> list[dict]:
 
 
 def group_is_active(cfg: ToolGroupConfig) -> bool:
+    if cfg.model_role and not is_model_role_available(cfg.model_role):
+        return False
     key_source = getattr(cfg.instance, '__key_source__', None)
     if key_source is None:
         return True
