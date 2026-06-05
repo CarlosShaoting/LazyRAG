@@ -66,6 +66,10 @@ x-upload-paths: &upload-paths
   LAZYLLM_TEMP_DIR: /var/lib/lazymind/uploads/.lazyllm_temp
   LAZYMIND_OCR_CACHE_DIR: /var/lib/lazymind/uploads/.image_cache
 
+# Single source for the local_fs visible root. Makefile exports the normal
+# per-OS default; ECS_01 should override this to /tmp/test_watch.
+x-file-watcher-watch-host-dir: &file-watcher-watch-host-dir ${LAZYMIND_FILE_WATCHER_WATCH_HOST_DIR:-${HOME}}
+
 x-runtime-home: &runtime-home
   LAZYMIND_HOME: /tmp/.lazyllm_rag
 
@@ -161,10 +165,10 @@ services:
       LAZYMIND_SCAN_CONTROL_PLANE_AGENT_BASE_URL: "http://file-watcher:19090"
       LAZYMIND_SCAN_CONTROL_PLANE_AGENT_TOKEN: "my-secret-token"
       LAZYMIND_SCAN_CONTROL_PLANE_LOCAL_FS_DEFAULT_AGENT_ID: "file-watcher-local-001"
-      LAZYMIND_SCAN_CONTROL_PLANE_LOCAL_FS_PUBLIC_ROOT: "/data/ragscan"
+      LAZYMIND_SCAN_CONTROL_PLANE_LOCAL_FS_PUBLIC_ROOT: *file-watcher-watch-host-dir
       LAZYMIND_SCAN_CONTROL_PLANE_FEISHU_BASE_URL: "https://open.feishu.cn"
       LAZYMIND_SCAN_CONTROL_PLANE_AUTH_SERVICE_BASE_URL: "http://auth-service:8000"
-      LAZYMIND_SCAN_CONTROL_PLANE_TEMP_DIR: "/data/staging"
+      LAZYMIND_SCAN_CONTROL_PLANE_TEMP_DIR: "/tmp/scan-control-plane/sourceengine"
       LAZYMIND_AUTH_SERVICE_INTERNAL_TOKEN: ${LAZYMIND_AUTH_SERVICE_INTERNAL_TOKEN:-dev-internal-service-token}
     volumes:
       - ${LAZYMIND_FILE_WATCHER_BASE_ROOT:-./data/scan}:/data/ragscan
@@ -199,12 +203,14 @@ services:
       LAZYMIND_FILE_WATCHER_CONTROL_PLANE_BASE_URL: "http://scan-control-plane:18080"
       LAZYMIND_FILE_WATCHER_BASE_ROOT: /data/ragscan
       LAZYMIND_FILE_WATCHER_HOST_PATH_STYLE: ${LAZYMIND_FILE_WATCHER_HOST_PATH_STYLE:-posix}
-      LAZYMIND_FILE_WATCHER_WATCH_HOST_DIR: ${LAZYMIND_FILE_WATCHER_WATCH_HOST_DIR:-/Users}
+      LAZYMIND_FILE_WATCHER_WATCH_HOST_DIR: *file-watcher-watch-host-dir
       LAZYMIND_FILE_WATCHER_WATCH_CONTAINER_DIR: /watch/docs
     volumes:
       - ./backend/file-watcher/configs/agent.yaml:/app/configs/agent.yaml:ro
       - ${LAZYMIND_FILE_WATCHER_BASE_ROOT:-./data/scan}:/data/ragscan
-      - ${LAZYMIND_FILE_WATCHER_WATCH_HOST_DIR:-/Users}:/watch/docs
+      - type: bind
+        source: *file-watcher-watch-host-dir
+        target: /watch/docs
     expose:
       - "19090"
     depends_on:
@@ -248,6 +254,7 @@ services:
       LAZYMIND_BOOTSTRAP_ADMIN_USERNAME: ${LAZYMIND_BOOTSTRAP_ADMIN_USERNAME:-admin}
       LAZYMIND_BOOTSTRAP_ADMIN_PASSWORD: ${LAZYMIND_BOOTSTRAP_ADMIN_PASSWORD:-admin}
       LAZYMIND_MODEL_CONFIG_PATH: ${LAZYMIND_MODEL_CONFIG_PATH:-dynamic}
+      LAZYMIND_CHAT_UNLIKE_SWITCH: ${LAZYMIND_CHAT_UNLIKE_SWITCH:-false}
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/authservice/auth/health')\" || exit 1"]
       interval: 10s
@@ -295,6 +302,7 @@ services:
       - ./api/backend:/openapi-export
       - ./data/evo:/var/lib/lazymind/evo
       - ./data/core/uploads:/var/lib/lazymind/uploads
+      - ./skills:/skills:ro
     expose:
       - "8000"
     environment:
@@ -334,6 +342,7 @@ services:
     volumes:
       - ./backend/core:/app
       - ./data/core/uploads:/var/lib/lazymind/uploads
+      - ./skills:/skills:ro
     environment:
       <<: *core-env
     depends_on:
@@ -668,8 +677,16 @@ services:
       LAZYMIND_MODEL_CONFIG_PATH: ${LAZYMIND_MODEL_CONFIG_PATH:-dynamic}
       LAZYMIND_CORE_SERVICE_URL: http://core:8000
       LAZYMIND_WORD_GROUP_APPLY_URL: ""
+      # Router mode: set LAZYMIND_ENABLE_ROUTER=true to enable multi-algorithm AB routing.
+      # Defaults to false for full backward compatibility with the original chat service.
+      LAZYMIND_ENABLE_ROUTER: ${LAZYMIND_ENABLE_ROUTER:-false}
+      LAZYMIND_ROUTER_PORT_POOL_START: 18000
+      LAZYMIND_ROUTER_PORT_POOL_END: 18999
+      LAZYMIND_ROUTER_PORTS_PER_INSTANCE: 100
+      LAZYMIND_ROUTER_DEFAULT_ALGO_PATH: /opt/lazymind/chat
+      LAZYMIND_ROUTER_DEFAULT_INSTANCE_COUNT: 1
       <<: [*runtime-home, *trace-config, *proxy-env, *db-conn, *core-db-conn, *llm-api-keys, *upload-paths]
-    command: ["python", "-m", "lazymind.chat.app", "--port", "8046"]
+    command: ["python", "-m", "lazymind.router.app", "--port", "8046"]
     depends_on:
       lazyllm-algo:
         condition: service_healthy
