@@ -91,7 +91,7 @@ ENV PYTHONPATH=/opt/lazyllm:/app/algorithm \
   LAZYMIND_USE_INNER_MODEL=true \
   LAZYMIND_MODEL_CONFIG_PATH=dynamic
 WORKDIR /app/algorithm
-CMD ["python", "-m", "lazymind.parsing.app"]
+CMD ["python", "parsing/parsing.py"]
 
 
 # Stage: doc - algorithm + doc server code.
@@ -191,4 +191,4 @@ COPY algorithm/ /app/algorithm/
 RUN rm -rf /app/algorithm/lazyllm
 ENV PYTHONPATH=/opt/lazyllm:/app/algorithm
 WORKDIR /app/algorithm
-CMD ["python", "-m", "lazymind.parsing.service.mineru"]
+CMD ["python", "parsing/mineru.py"]
