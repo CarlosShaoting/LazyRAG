@@ -28,7 +28,6 @@ save_ckpt/
 wget-log
 
 # dev tools
-docker-compose.override.yml
 .vscode
 .claude
 .cursor

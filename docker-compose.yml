@@ -146,8 +146,6 @@ services:
     restart: "no"
 
   scan-control-plane:
-    profiles:
-      - scan
     image: ${LAZYMIND_IMAGE_MIRROR:-registry.cn-hangzhou.aliyuncs.com}/lazyllm/lazymind-scan-control-plane:${LAZYMIND_IMAGE_TAG:-latest}
     build:
       network: host
@@ -187,8 +185,6 @@ services:
     restart: unless-stopped
 
   file-watcher:
-    profiles:
-      - scan
     image: ${LAZYMIND_IMAGE_MIRROR:-registry.cn-hangzhou.aliyuncs.com}/lazyllm/lazymind-file-watcher:${LAZYMIND_IMAGE_TAG:-latest}
     build:
       network: host
