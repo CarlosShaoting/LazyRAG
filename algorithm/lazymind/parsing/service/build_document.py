@@ -1,7 +1,7 @@
 import lazyllm
 from lazyllm.tracing import set_trace_context
 from lazyllm import AutoModel
-from lazyllm.tools.rag import Document
+from lazyllm.tools.rag import Document, LLMParser
 from lazyllm.tools.rag.doc_impl import NodeGroupType
 from lazyllm.tools.rag.parsing_service import DocumentProcessor
 from lazyllm.tools.rag.readers.ocrReader import DynamicPDFReader
