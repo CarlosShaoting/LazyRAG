@@ -4,7 +4,19 @@ from lazyllm import AutoModel
 from lazyllm.tools.rag import Document, LLMParser
 from lazyllm.tools.rag.doc_impl import NodeGroupType
 from lazyllm.tools.rag.parsing_service import DocumentProcessor
+from lazyllm.tools.rag.readers import (
+    DocxReader,
+    EpubReader,
+    HWPReader,
+    IPYNBReader,
+    MarkdownReader,
+    MboxReader,
+    PandasCSVReader,
+    PandasExcelReader,
+    PPTXReader,
+)
 from lazyllm.tools.rag.readers.ocrReader import DynamicPDFReader
+from lazyllm.tools.rag.readers.readerBase import TxtReader
 
 from lazymind.model_config import get_dynamic_role_slot_map
 from lazymind.config import EMBED_IMAGE, EMBED_INDEX_KWARGS, EMBED_KEYS, EMBED_MAIN, config as _cfg
@@ -65,6 +77,32 @@ def _build_pdf_reader():
         post_func=NodeParser(),
         timeout=3600,
     )
+
+
+def _register_document_readers(docs: Document) -> None:
+    docs.add_reader('*.pdf', _build_pdf_reader())
+    docs.add_reader('*.docx', DocxReader())
+    docs.add_reader('*.hwp', HWPReader())
+
+    # pip install python-pptx>=1.0.2,<2.0.0, torch>=2.1.2, Pillow, transformers==4.57.1
+    pptx_reader = PPTXReader()
+    docs.add_reader('*.pptx', pptx_reader)
+    docs.add_reader('*.ppt', pptx_reader)
+    docs.add_reader('*.pptm', pptx_reader)
+
+    docs.add_reader('*.ipynb', IPYNBReader())
+    docs.add_reader('*.epub', EpubReader())
+    docs.add_reader('*.md', MarkdownReader())
+    docs.add_reader('*.mbox', MboxReader())
+    docs.add_reader('*.csv', PandasCSVReader())
+
+    excel_reader = PandasExcelReader()
+    docs.add_reader('*.xls', excel_reader)
+    docs.add_reader('*.xlsx', excel_reader)
+
+    txt_reader = TxtReader()
+    docs.add_reader('*.txt', txt_reader)
+    docs.add_reader('*.xml', txt_reader)
 
 
 def reset_stores() -> None:
@@ -180,7 +218,7 @@ def build_document() -> Document:
         doc_fields=[],
     )
 
-    docs.add_reader('*.pdf', _build_pdf_reader())
+    _register_document_readers(docs)
 
     image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif')
     image_reader = ImageEmbReader()
