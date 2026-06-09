@@ -118,10 +118,37 @@ func LoadOCRConfig(ctx context.Context, db *gorm.DB, userID string) (map[string]
 		"ocr_type": ocrType,
 		"ocr_url":  row.BaseURL,
 	}
-	if strings.TrimSpace(row.APIKey) != "" {
-		config["ocr_auth"] = map[string]any{ocrType: row.APIKey}
+	if authValue := normalizeOCRAuthValue(row.APIKey); authValue != nil {
+		config["ocr_auth"] = map[string]any{ocrType: authValue}
 	}
 	return config, nil
+}
+
+func normalizeOCRAuthValue(raw string) any {
+	keys := splitOCRAuthKeys(raw)
+	if len(keys) == 0 {
+		return nil
+	}
+	if len(keys) == 1 {
+		return keys[0]
+	}
+	return keys
+}
+
+func splitOCRAuthKeys(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, "\n")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 type selectedProviderConfig struct {

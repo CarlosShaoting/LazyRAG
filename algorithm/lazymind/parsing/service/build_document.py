@@ -61,8 +61,6 @@ def _build_store_config(index_kwargs):
 
 def _build_pdf_reader():
     return DynamicPDFReader(
-        ocr_type=_cfg['ocr_server_type'],
-        ocr_url=_cfg['ocr_server_url'],
         image_cache_dir=_cfg['ocr_cache_dir'],
         post_func=NodeParser(),
         timeout=3600,

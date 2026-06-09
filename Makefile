@@ -106,10 +106,13 @@ export LAZYLLM_ALGO_REGISTER_POLICY ?= none
 # Core database
 export LAZYMIND_CORE_DATABASE_URL ?= postgresql+psycopg://root:123456@db:5432/core
 
-# OCR backend selection (none=built-in PDFReader, mineru, paddleocr)
-# Auto-derives LAZYMIND_OCR_SERVER_URL when not set.
-export LAZYMIND_OCR_SERVER_TYPE ?= none
-export LAZYMIND_OCR_SERVER_URL ?= $(if $(filter mineru,$(LAZYMIND_OCR_SERVER_TYPE)),http://mineru:8000/api/v1/pdf_parse,$(if $(filter paddleocr,$(LAZYMIND_OCR_SERVER_TYPE)),http://paddleocr:8080,http://localhost:8000/api/v1/pdf_parse))
+# OCR routing is selected per-request via the model provider UI (DynamicPDFReader).
+# Use LAZYMIND_ENABLE_MINERU / LAZYMIND_ENABLE_PADDLEOCR to start built-in OCR profiles.
+export LAZYMIND_OCR_SERVER_URL ?= http://localhost:8000/api/v1/pdf_parse
+export LAZYMIND_ENABLE_MINERU ?= 0
+export LAZYMIND_ENABLE_PADDLEOCR ?= 0
+export LAZYMIND_OCR_SERVICE_VARIANT ?= online
+export LAZYMIND_OCR_PATCH_APPLIED := $(if $(filter online,$(LAZYMIND_OCR_SERVICE_VARIANT)),False,$(or $(LAZYMIND_OCR_PATCH_APPLIED),False))
 # Vector / segment stores — override to use external services (skips built-in profile)
 export LAZYMIND_MILVUS_URI ?= http://milvus:19530
 export LAZYMIND_OPENSEARCH_URI ?= https://opensearch:9200
@@ -220,16 +223,9 @@ lint: lint-python lint-go
 test:
 	@./tests/run-all.sh
 
-# Only build/start mineru/paddleocr when LAZYMIND_OCR_SERVER_TYPE is mineru/paddleocr
-# AND LAZYMIND_OCR_SERVER_URL points to the internal service (user has not specified external URL).
 # Only mineru has build:; paddleocr/milvus/opensearch use image: only, so only needed for up.
-#  OCR_SERVER_TYPE          OCR_SERVER_URL                        _need_mineru  _need_paddleocr
-# mineru/paddleocr/none     any (not built-in host)               false         false
-# mineru                    http://mineru:8000/...              true          false
-# paddleocr                 http://paddleocr:8080/...             false         true
-
-_need_mineru := $(and $(filter mineru,$(LAZYMIND_OCR_SERVER_TYPE)),$(findstring mineru:8000,$(LAZYMIND_OCR_SERVER_URL)))
-_need_paddleocr := $(and $(filter paddleocr,$(LAZYMIND_OCR_SERVER_TYPE)),$(findstring paddleocr:8080,$(LAZYMIND_OCR_SERVER_URL)))
+_need_mineru := $(filter 1 true TRUE yes YES on ON,$(LAZYMIND_ENABLE_MINERU))
+_need_paddleocr := $(filter 1 true TRUE yes YES on ON,$(LAZYMIND_ENABLE_PADDLEOCR))
 # Deploy milvus/opensearch only when URI exactly matches the built-in services; external URIs = no deployment
 _builtin_milvus_uris := http://milvus:19530 http://milvus:19530/
 _builtin_opensearch_uris := https://opensearch:9200 https://opensearch:9200/

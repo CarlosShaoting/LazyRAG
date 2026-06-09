@@ -105,11 +105,6 @@ config.add('review_debug', bool, False, 'REVIEW_DEBUG', description='Enable revi
 # Parsing
 # ---------------------------------------------------------------------------
 config.add('milvus_uri', str, None, 'MILVUS_URI', description='Milvus vector store URI (required).')
-config.add('ocr_server_type', str, 'none', 'OCR_SERVER_TYPE', description='OCR server type (none/mineru/paddleocr).')
-config.add(
-    'ocr_server_url', str, 'http://localhost:8000/api/v1/pdf_parse', 'OCR_SERVER_URL',
-    description='Full OCR API URL.',
-)
 config.add('mineru_backend', str, 'pipeline', 'MINERU_BACKEND', description='MinerU processing backend.')
 config.add('mineru_server_port', int, 8000, 'MINERU_SERVER_PORT', description='MinerU server port.')
 config.add('ocr_cache_dir', str, os.path.join(config['shared_upload_dir'], '.image_cache'), 'OCR_CACHE_DIR',

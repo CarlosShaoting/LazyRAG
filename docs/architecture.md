@@ -49,8 +49,8 @@ db
 
 | Service | Profile | When enabled | Purpose |
 |---------|---------|--------------|---------|
-| **mineru** | `mineru` | `LAZYMIND_OCR_SERVER_TYPE=mineru` and URL `http://mineru:8000/api/v1/pdf_parse` | MinerU PDF parsing (layout analysis; install variant/backend configurable) |
-| **paddleocr** + **paddleocr-vlm-server** | `paddleocr` | `LAZYMIND_OCR_SERVER_TYPE=paddleocr` and URL `http://paddleocr:8080` | PaddleOCR-VL PDF parsing (GPU required) |
+| **mineru** | `mineru` | `LAZYMIND_ENABLE_MINERU=1` | MinerU PDF parsing (layout analysis; install variant/backend configurable) |
+| **paddleocr** + **paddleocr-vlm-server** | `paddleocr` | `LAZYMIND_ENABLE_PADDLEOCR=1` | PaddleOCR-VL PDF parsing (GPU required) |
 | **milvus** + **milvus-etcd** + **milvus-minio** | `milvus` | `LAZYMIND_MILVUS_URI=http://milvus:19530` | Vector store for embeddings |
 | **attu** | `milvus-dashboard` | `LAZYMIND_ENABLE_MILVUS_DASHBOARD=1` and `LAZYMIND_MILVUS_URI=http://milvus:19530` | Milvus dashboard for collections, schema, and index troubleshooting |
 | **opensearch** | `opensearch` | `LAZYMIND_OPENSEARCH_URI=https://opensearch:9200` | Segment store for document chunks |
@@ -62,9 +62,9 @@ Milvus + OpenSearch are always required. If `LAZYMIND_MILVUS_URI` / `LAZYMIND_OP
 
 **OCR modes for parsing:**
 
-- **none** (default): Built-in PDFReader.
-- **mineru**: MinerU service (profile `mineru`).
-- **paddleocr**: PaddleOCR-VL service (profile `paddleocr`, GPU required).
+- OCR provider and endpoint are selected per request via the model provider UI (`DynamicPDFReader`).
+- **mineru**: optional local MinerU service (profile `mineru`, enable with `LAZYMIND_ENABLE_MINERU=1`).
+- **paddleocr**: optional PaddleOCR-VL service (profile `paddleocr`, enable with `LAZYMIND_ENABLE_PADDLEOCR=1`, GPU required).
 
 Built-in store dashboards are disabled by default. When enabled, they bind only to `127.0.0.1`:
 
@@ -140,7 +140,7 @@ Frontend
 | auth-service | `JWT_SECRET`, `JWT_TTL_MINUTES`, `JWT_REFRESH_TTL_DAYS` | Token config |
 | auth-service | `BOOTSTRAP_ADMIN_*` | Initial admin user |
 | processor-* | `DOC_TASK_DATABASE_URL` | Same DB for doc tasks |
-| parsing | `LAZYMIND_OCR_SERVER_TYPE` | `none` \| `mineru` \| `paddleocr` |
+| parsing | `LAZYMIND_ENABLE_MINERU`, `LAZYMIND_ENABLE_PADDLEOCR` | Start built-in OCR profiles (`0` by default) |
 | parsing | `LAZYMIND_MILVUS_URI`, `LAZYMIND_OPENSEARCH_URI`, `LAZYMIND_OPENSEARCH_USER`, `LAZYMIND_OPENSEARCH_PASSWORD` | Vector/segment stores (required) |
 | opensearch (profile) | `LAZYMIND_OPENSEARCH_PASSWORD` | Override for production |
 | milvus-minio (profile) | `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY` | Override for production |

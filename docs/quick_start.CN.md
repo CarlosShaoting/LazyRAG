@@ -45,33 +45,14 @@ export LAZYMIND_MODEL_CONFIG_PATH=inner
 
 ### 2. OCR
 
-OCR 默认关闭（使用内置 PDFReader）：
+OCR 路由由前端模型提供商 UI 按请求选择。启动内置 OCR 服务：
 
 ```bash
-export LAZYMIND_OCR_SERVER_TYPE=none   # 默认值，可省略
-```
+# 启动本地 MinerU profile
+export LAZYMIND_ENABLE_MINERU=1
 
-启用本地 MinerU：
-
-```bash
-export LAZYMIND_OCR_SERVER_TYPE=mineru
-# 未设置 LAZYMIND_OCR_SERVER_URL 时自动推导为 http://mineru:8000/api/v1/pdf_parse
-```
-
-复用已部署在 ECS / 内网的 MinerU：
-
-```bash
-export LAZYMIND_OCR_SERVER_TYPE=mineru
-export LAZYMIND_OCR_SERVER_URL=http://your-inner-mineru:port/api/v1/pdf_parse
-```
-
-当 `LAZYMIND_OCR_SERVER_URL` 指向外部地址时，`make up` 不会启动本地 `mineru` profile。
-
-启用 PaddleOCR（需要 GPU）：
-
-```bash
-export LAZYMIND_OCR_SERVER_TYPE=paddleocr
-# 未设置 LAZYMIND_OCR_SERVER_URL 时自动推导为 http://paddleocr:8080
+# 启动本地 PaddleOCR profile（需要 GPU）
+export LAZYMIND_ENABLE_PADDLEOCR=1
 ```
 
 ### 3. 向量 / 分段存储
@@ -113,7 +94,6 @@ export LAZYMIND_BOOTSTRAP_ADMIN_PASSWORD=your-password
 # .env
 LAZYMIND_MODEL_CONFIG_PATH=online
 LAZYLLM_SILICONFLOW_API_KEY=your-key
-LAZYMIND_OCR_SERVER_TYPE=none
 LAZYMIND_FRONTEND_PORT=8090
 ```
 
@@ -146,14 +126,14 @@ make up SERVICES=chat,core
 ### 启用 MinerU OCR
 
 ```bash
-export LAZYMIND_OCR_SERVER_TYPE=mineru
+export LAZYMIND_ENABLE_MINERU=1
 make up
 ```
 
 ### 启用 PaddleOCR（GPU）
 
 ```bash
-export LAZYMIND_OCR_SERVER_TYPE=paddleocr
+export LAZYMIND_ENABLE_PADDLEOCR=1
 make up
 ```
 
@@ -273,7 +253,6 @@ make up-build
 ```bash
 export LAZYLLM_SILICONFLOW_API_KEY=your-key
 export LAZYMIND_MODEL_CONFIG_PATH=online
-export LAZYMIND_OCR_SERVER_TYPE=none
 
 make up-build
 ```
@@ -282,17 +261,17 @@ make up-build
 
 ```bash
 export LAZYMIND_MODEL_CONFIG_PATH=inner
-export LAZYMIND_OCR_SERVER_TYPE=mineru
+export LAZYMIND_ENABLE_MINERU=1
 
 make up-build
 ```
 
 ### 内网模型 + 外部 MinerU
 
+在前端模型设置中配置 MinerU 提供商，无需启动本地 profile：
+
 ```bash
 export LAZYMIND_MODEL_CONFIG_PATH=inner
-export LAZYMIND_OCR_SERVER_TYPE=mineru
-export LAZYMIND_OCR_SERVER_URL=http://your-inner-mineru:port/api/v1/pdf_parse
 
 make up-build
 ```

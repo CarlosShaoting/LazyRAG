@@ -45,33 +45,14 @@ export LAZYMIND_MODEL_CONFIG_PATH=inner
 
 ### 2. OCR
 
-OCR is disabled by default (built-in PDFReader is used):
+OCR routing is selected per request in the model provider UI. To start built-in OCR services:
 
 ```bash
-export LAZYMIND_OCR_SERVER_TYPE=none   # default, can be omitted
-```
+# Start local MinerU profile
+export LAZYMIND_ENABLE_MINERU=1
 
-To enable local MinerU:
-
-```bash
-export LAZYMIND_OCR_SERVER_TYPE=mineru
-# LAZYMIND_OCR_SERVER_URL is auto-derived to http://mineru:8000/api/v1/pdf_parse when not set
-```
-
-To reuse an existing MinerU deployed on ECS / intranet:
-
-```bash
-export LAZYMIND_OCR_SERVER_TYPE=mineru
-export LAZYMIND_OCR_SERVER_URL=http://your-inner-mineru:port/api/v1/pdf_parse
-```
-
-When `LAZYMIND_OCR_SERVER_URL` points to an external address, `make up` will not start the local `mineru` profile.
-
-To enable PaddleOCR (GPU required):
-
-```bash
-export LAZYMIND_OCR_SERVER_TYPE=paddleocr
-# LAZYMIND_OCR_SERVER_URL is auto-derived to http://paddleocr:8080 when not set
+# Start local PaddleOCR profile (GPU required)
+export LAZYMIND_ENABLE_PADDLEOCR=1
 ```
 
 ### 3. Vector / segment stores
@@ -113,7 +94,6 @@ All variables above can be placed in a `.env` file at the repository root. The M
 # .env
 LAZYMIND_MODEL_CONFIG_PATH=online
 LAZYLLM_SILICONFLOW_API_KEY=your-key
-LAZYMIND_OCR_SERVER_TYPE=none
 LAZYMIND_FRONTEND_PORT=8090
 ```
 
@@ -146,14 +126,14 @@ make up SERVICES=chat,core
 ### Start with MinerU OCR
 
 ```bash
-export LAZYMIND_OCR_SERVER_TYPE=mineru
+export LAZYMIND_ENABLE_MINERU=1
 make up
 ```
 
 ### Start with PaddleOCR (GPU)
 
 ```bash
-export LAZYMIND_OCR_SERVER_TYPE=paddleocr
+export LAZYMIND_ENABLE_PADDLEOCR=1
 make up
 ```
 
@@ -273,7 +253,6 @@ make up-build
 ```bash
 export LAZYLLM_SILICONFLOW_API_KEY=your-key
 export LAZYMIND_MODEL_CONFIG_PATH=online
-export LAZYMIND_OCR_SERVER_TYPE=none
 
 make up-build
 ```
@@ -282,17 +261,17 @@ make up-build
 
 ```bash
 export LAZYMIND_MODEL_CONFIG_PATH=inner
-export LAZYMIND_OCR_SERVER_TYPE=mineru
+export LAZYMIND_ENABLE_MINERU=1
 
 make up-build
 ```
 
 ### On-premises model + external MinerU
 
+Configure the MinerU provider in the frontend model settings, then start without the local profile:
+
 ```bash
 export LAZYMIND_MODEL_CONFIG_PATH=inner
-export LAZYMIND_OCR_SERVER_TYPE=mineru
-export LAZYMIND_OCR_SERVER_URL=http://your-inner-mineru:port/api/v1/pdf_parse
 
 make up-build
 ```

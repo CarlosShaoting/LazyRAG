@@ -38,23 +38,7 @@ def test_build_store_config_raises_for_missing_milvus_uri(monkeypatch):
         build_document._build_store_config({})
 
 
-def test_build_pdf_reader_selects_plain_pdf_reader(monkeypatch):
-    class FakePDFReader:
-        pass
-
-    class FakeDynamicPDFReader:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-    monkeypatch.setattr(build_document, 'DynamicPDFReader', FakeDynamicPDFReader)
-    monkeypatch.setitem(build_document._cfg._impl, 'ocr_server_type', 'none')
-
-    reader = build_document._build_pdf_reader()
-    assert isinstance(reader, FakeDynamicPDFReader)
-    assert reader.kwargs['ocr_type'] == 'none'
-
-
-def test_build_pdf_reader_selects_mineru(monkeypatch):
+def test_build_pdf_reader_uses_dynamic_reader_without_static_ocr_route(monkeypatch):
     seen = {}
 
     class FakeDynamicPDFReader:
@@ -62,44 +46,15 @@ def test_build_pdf_reader_selects_mineru(monkeypatch):
             seen.update(kwargs)
 
     monkeypatch.setattr(build_document, 'DynamicPDFReader', FakeDynamicPDFReader)
-    monkeypatch.setitem(build_document._cfg._impl, 'ocr_server_type', 'mineru')
-    monkeypatch.setitem(build_document._cfg._impl, 'ocr_server_url', 'http://mineru:8000/')
     monkeypatch.setitem(build_document._cfg._impl, 'ocr_cache_dir', '/app/uploads/.image_cache')
 
     reader = build_document._build_pdf_reader()
 
     assert isinstance(reader, FakeDynamicPDFReader)
-    assert seen['ocr_type'] == 'mineru'
-    assert seen['ocr_url'] == 'http://mineru:8000/'
+    assert 'ocr_type' not in seen
+    assert 'ocr_url' not in seen
     assert seen['timeout'] == 3600
     assert seen['image_cache_dir'] == '/app/uploads/.image_cache'
-
-
-def test_build_pdf_reader_selects_paddleocr(monkeypatch):
-    seen = {}
-
-    class FakeDynamicPDFReader:
-        def __init__(self, **kwargs):
-            seen.update(kwargs)
-
-    monkeypatch.setattr(build_document, 'DynamicPDFReader', FakeDynamicPDFReader)
-    monkeypatch.setitem(build_document._cfg._impl, 'ocr_server_type', 'paddleocr')
-    monkeypatch.setitem(build_document._cfg._impl, 'ocr_server_url', 'http://paddle.test/')
-    monkeypatch.setitem(build_document._cfg._impl, 'ocr_cache_dir', '/app/uploads/.image_cache')
-
-    reader = build_document._build_pdf_reader()
-    assert isinstance(reader, FakeDynamicPDFReader)
-    assert seen['ocr_type'] == 'paddleocr'
-    assert seen['ocr_url'] == 'http://paddle.test/'
-    assert seen['image_cache_dir'] == '/app/uploads/.image_cache'
-
-
-def test_build_pdf_reader_rejects_unknown_ocr_type(monkeypatch):
-    monkeypatch.setitem(build_document._cfg._impl, 'ocr_server_type', 'unknown')
-
-    reader = build_document._build_pdf_reader()
-    with pytest.raises(ValueError, match='Unsupported OCR server type'):
-        reader._load_data(__file__)
 
 
 def test_build_document_wires_readers_groups_and_embeddings(monkeypatch):
