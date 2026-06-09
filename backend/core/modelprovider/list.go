@@ -320,7 +320,7 @@ func buildBaseURLPresets(row orm.UserModelProvider) []baseURLPresetItem {
 }
 
 func configuredLocalMinerUBaseURL() string {
-	if !isEnvEnabled("LAZYMIND_ENABLE_MINERU") {
+	if !isEnvEnabled("LAZYMIND_DEPLOY_MINERU") {
 		return ""
 	}
 	return "http://mineru:8000/api/v1/pdf_parse"

@@ -80,6 +80,7 @@ x-core-db-conn: &core-db-conn
   LAZYMIND_CORE_DATABASE_URL: ${LAZYMIND_CORE_DATABASE_URL:-postgresql+psycopg://root:123456@db:5432/core}
 
 x-ocr-env: &ocr-env
+  LAZYMIND_OCR_SERVER_URL: http://mineru:8000
   LAZYMIND_MINERU_BACKEND: ${LAZYMIND_MINERU_BACKEND:-pipeline}
   LAZYLLM_MINERU_BACKEND: ${LAZYMIND_MINERU_BACKEND:-pipeline}
   LAZYLLM_MINERU_API_KEY: ${LAZYLLM_MINERU_API_KEY:-}
@@ -450,7 +451,7 @@ services:
       LAZYMIND_MINERU_BACKEND: pipeline
     command: ["python", "-m", "lazymind.parsing.service.mineru"]
 
-  # PaddleOCR-VL document parsing service (official images).
+  # PaddleOCR-VL document parsing service (official images). — needs GPU.
   # See: https://www.paddleocr.ai/main/version3.x/pipeline_usage/PaddleOCR-VL.html Section 4
   paddleocr-vlm-server:
     profiles:

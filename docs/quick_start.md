@@ -45,15 +45,9 @@ export LAZYMIND_MODEL_CONFIG_PATH=inner
 
 ### 2. OCR
 
-OCR routing is selected per request in the model provider UI. To start built-in OCR services:
+OCR routing is selected per request in the model provider UI. The default quick start uses the MinerU online API (see README); no local OCR service is required.
 
-```bash
-# Start local MinerU profile
-export LAZYMIND_ENABLE_MINERU=1
-
-# Start local PaddleOCR profile (GPU required)
-export LAZYMIND_ENABLE_PADDLEOCR=1
-```
+For on-prem MinerU / PaddleOCR deployment, see the sections below.
 
 ### 3. Vector / segment stores
 
@@ -123,17 +117,17 @@ Use this on first run or after changing Dockerfiles / dependencies.
 make up SERVICES=chat,core
 ```
 
-### Start with MinerU OCR
+### Deploy MinerU OCR (on-prem)
 
 ```bash
-export LAZYMIND_ENABLE_MINERU=1
+export LAZYMIND_DEPLOY_MINERU=1
 make up
 ```
 
-### Start with PaddleOCR (GPU)
+### Deploy PaddleOCR (on-prem, GPU)
 
 ```bash
-export LAZYMIND_ENABLE_PADDLEOCR=1
+export LAZYMIND_DEPLOY_PADDLEOCR=1
 make up
 ```
 
@@ -261,7 +255,7 @@ make up-build
 
 ```bash
 export LAZYMIND_MODEL_CONFIG_PATH=inner
-export LAZYMIND_ENABLE_MINERU=1
+export LAZYMIND_DEPLOY_MINERU=1
 
 make up-build
 ```
