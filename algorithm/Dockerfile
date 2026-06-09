@@ -211,4 +211,4 @@ COPY algorithm/ /app/algorithm/
 RUN rm -rf /app/algorithm/lazyllm
 ENV PYTHONPATH=/opt/lazyllm:/app/algorithm
 WORKDIR /app/algorithm
-CMD ["python", "parsing/mineru.py"]
+CMD ["python", "-m", "lazymind.parsing.service.mineru"]
