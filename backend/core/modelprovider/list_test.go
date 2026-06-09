@@ -199,7 +199,6 @@ func TestBuildListItemsAllowsVerifiedCustomBaseURLWithoutAPIKey(t *testing.T) {
 func TestBuildListItemsAddsMinerULocalPresetWhenConfigured(t *testing.T) {
 	t.Setenv("LAZYMIND_ENABLE_MINERU", "1")
 	_ = os.Unsetenv("LAZYMIND_OCR_SERVER_TYPE")
-	_ = os.Unsetenv("LAZYMIND_OCR_SERVER_URL")
 
 	items := buildListItems(t.Context(), nil, []orm.UserModelProvider{
 		{
@@ -226,7 +225,6 @@ func TestBuildListItemsAddsMinerULocalPresetWhenConfigured(t *testing.T) {
 func TestBuildListItemsOmitsMinerULocalPresetWithoutConfiguredURL(t *testing.T) {
 	_ = os.Unsetenv("LAZYMIND_ENABLE_MINERU")
 	_ = os.Unsetenv("LAZYMIND_OCR_SERVER_TYPE")
-	_ = os.Unsetenv("LAZYMIND_OCR_SERVER_URL")
 
 	items := buildListItems(t.Context(), nil, []orm.UserModelProvider{
 		{
