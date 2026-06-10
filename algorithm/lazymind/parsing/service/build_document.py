@@ -13,7 +13,7 @@ from lazyllm.tools.rag.readers import (
     MboxReader,
     PandasCSVReader,
     PandasExcelReader,
-    PPTXReader,
+    # PPTXReader,
 )
 from lazyllm.tools.rag.readers.ocrReader import DynamicPDFReader
 from lazyllm.tools.rag.readers.readerBase import TxtReader
@@ -84,11 +84,12 @@ def _register_document_readers(docs: Document) -> None:
     docs.add_reader('*.docx', DocxReader())
     docs.add_reader('*.hwp', HWPReader())
 
+    # PPT support disabled until torch/transformers deps are available in the image.
     # pip install python-pptx>=1.0.2,<2.0.0, torch>=2.1.2, Pillow, transformers==4.57.1
-    pptx_reader = PPTXReader()
-    docs.add_reader('*.pptx', pptx_reader)
-    docs.add_reader('*.ppt', pptx_reader)
-    docs.add_reader('*.pptm', pptx_reader)
+    # pptx_reader = PPTXReader()
+    # docs.add_reader('*.pptx', pptx_reader)
+    # docs.add_reader('*.ppt', pptx_reader)
+    # docs.add_reader('*.pptm', pptx_reader)
 
     docs.add_reader('*.ipynb', IPYNBReader())
     docs.add_reader('*.epub', EpubReader())
