@@ -44,3 +44,9 @@ vlm:
     name: lazyllm
     url: http://10.119.21.178:36517/v1/
     skip_auth: true
+
+speech_to_text:
+  - source: siliconflow
+    type: stt
+    name: FunAudioLLM/SenseVoiceSmall
+    api_key: ${LAZYLLM_SILICONFLOW_API_KEY}

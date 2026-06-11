@@ -32,3 +32,9 @@ vlm:
   source: dynamic
   dynamic_auth: true
   type: vlm
+
+speech_to_text:
+  - source: siliconflow
+    type: stt
+    name: FunAudioLLM/SenseVoiceSmall
+    api_key: ${LAZYLLM_SILICONFLOW_API_KEY}
