@@ -22,7 +22,6 @@ import (
 	"lazymind/core/migrate"
 	"lazymind/core/modelprovider"
 	"lazymind/core/store"
-	"lazymind/core/wordgroup"
 )
 
 //go:embed docs.html
@@ -216,8 +215,6 @@ func main() {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write(swaggerUIHTML)
 	}).Methods(http.MethodGet)
-
-	go wordgroup.StartPeriodicVocabExtract(context.Background())
 
 	log.Logger.Info().Msg("Core listening on :8000")
 	if err := http.ListenAndServe(":8000", r); err != nil {
