@@ -90,7 +90,7 @@ func isOfficeDocument(storedPath, contentType, originalFilename string) bool {
 	}
 	ext := strings.ToLower(filepath.Ext(name))
 	switch ext {
-	case ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx":
+	case ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".pptm":
 		return true
 	}
 	ct := strings.ToLower(strings.TrimSpace(contentType))
@@ -104,6 +104,57 @@ func isOfficeDocument(storedPath, contentType, originalFilename string) bool {
 		return true
 	}
 	return false
+}
+
+func isPresentationDocument(storedPath, contentType, originalFilename string) bool {
+	name := originalFilename
+	if name == "" {
+		name = filepath.Base(storedPath)
+	}
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".ppt", ".pptx", ".pptm":
+		return true
+	}
+	ct := strings.ToLower(strings.TrimSpace(contentType))
+	return strings.Contains(ct, "presentationml") || strings.Contains(ct, "powerpoint")
+}
+
+func ocrTypeFromConfig(ocrConfig map[string]any) string {
+	if ocrConfig == nil {
+		return ""
+	}
+	raw, _ := ocrConfig["ocr_type"].(string)
+	return strings.ToLower(strings.TrimSpace(raw))
+}
+
+// needsOfficeConvertBeforeParse decides whether office-convert-service runs before parsing.
+// PPT/PPTX/PPTM skip conversion when MinerU is the active OCR provider so DynamicPDFReader
+// can route them to MineruPPTReader.
+func needsOfficeConvertBeforeParse(d documentExt, ocrConfig map[string]any) bool {
+	if !d.ConvertRequired {
+		return false
+	}
+	src := strings.TrimSpace(d.StoredPath)
+	if !isOfficeDocument(src, d.ContentType, d.OriginalFilename) {
+		return false
+	}
+	if isPresentationDocument(src, d.ContentType, d.OriginalFilename) && ocrTypeFromConfig(ocrConfig) == "mineru" {
+		return false
+	}
+	return true
+}
+
+// parsePathForIngestion returns the file path passed to the parsing service.
+func parsePathForIngestion(d documentExt, ocrConfig map[string]any) string {
+	if needsOfficeConvertBeforeParse(d, ocrConfig) {
+		return parsePathForAdd(d)
+	}
+	if isOfficeDocument(d.StoredPath, d.ContentType, d.OriginalFilename) {
+		if src := strings.TrimSpace(d.StoredPath); src != "" {
+			return src
+		}
+	}
+	return parsePathForAdd(d)
 }
 
 // expectedParseOutputPath text：stem.pdf
