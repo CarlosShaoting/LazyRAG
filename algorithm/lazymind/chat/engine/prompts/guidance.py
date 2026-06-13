@@ -50,9 +50,13 @@ SKILLS_GUIDANCE = (
 )
 IMAGE_REFERENCE_MARKDOWN_GUIDANCE = (
     '# Image path formatting (mandatory)\n'
-    'When showing knowledge-base images, you MUST copy the `image_markdown` field from '
-    '`KBToolGroup` tool results verbatim. If `image_markdown` is absent, copy the '
-    '`image_url` or signed `text` field that starts with `/static-files/` exactly.\n'
+    'When showing images in your answer, you MUST copy the `image_markdown` field from '
+    'tool results verbatim:\n'
+    '- Knowledge-base images: from `KBToolGroup` results.\n'
+    '- Generated images: from `image_generator` results.\n'
+    '- Edited images: from `image_editor` results.\n'
+    'If `image_markdown` is absent, copy the `image_url` or signed `text` field that '
+    'starts with `/static-files/` exactly.\n'
     'Rules:\n'
     '- Use Markdown image syntax only: `![alt](/static-files/...?expires=...&sig=...)`.\n'
     '- NEVER invent hosts or prefixes (`https://ext.lazymind.ai`, `agent-cdn.minimax.io`, '
