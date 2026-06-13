@@ -47,6 +47,7 @@ import {
   confirmSkillDraft,
   createSkillAsset,
   discardSkillDraft,
+  enableBuiltinSkill,
   generateSkillDraft,
   getSkillAssetDetail,
   listIncomingSkillShares,
@@ -88,8 +89,8 @@ import {
   createGlossaryGroupFromConflict,
   createGlossaryAsset,
   getGlossaryAssetDetail,
-  listGlossaryConflicts,
   listGlossaryAssetsPage,
+  listGlossaryConflicts,
   mergeGlossaryAssets,
   mergeGlossaryConflictAndAddWord,
   removeGlossaryConflict,
@@ -144,7 +145,6 @@ import {
   inferSkillFileExt,
   initialChangeProposals,
   initialSkills,
-  initialTools,
   isMarkdownSkillFile,
   isSkillShareActionable,
   isSkillUpdatePending,
@@ -161,6 +161,11 @@ import {
   SKILL_TAG_MAX_COUNT,
   skillUploadAccept,
 } from "./shared";
+import {
+  disableTool,
+  enableTool,
+  listToolAssets,
+} from "./toolApi";
 
 import "./index.scss";
 
@@ -252,10 +257,13 @@ export default function MemoryManagement() {
   })();
   const [activeTab, setActiveTab] = useState<MemoryTab>(routeMemoryTab);
   const [developerActive, setDeveloperActive] = useState(isDeveloperModeActive);
-  const [toolAssets] = useState<StructuredAsset[]>(initialTools);
+  const [toolAssets, setToolAssets] = useState<StructuredAsset[]>([]);
+  const [toolLoading, setToolLoading] = useState(false);
+  const [toolActionLoading, setToolActionLoading] = useState<Set<string>>(new Set());
   const [skillAssets, setSkillAssets] = useState<StructuredAsset[]>(initialSkills);
   const [skillLoading, setSkillLoading] = useState(false);
   const [skillAutoEvoLoading, setSkillAutoEvoLoading] = useState<Set<string>>(new Set());
+  const [builtinSkillEnableLoading, setBuiltinSkillEnableLoading] = useState<Set<string>>(new Set());
   const [skillsInitialized, setSkillsInitialized] = useState(false);
   const skillListRequestIdRef = useRef(0);
   const skillListRouteLocationKeyRef = useRef("");
@@ -438,7 +446,7 @@ export default function MemoryManagement() {
   const parentSkillOptions = useMemo(
     () =>
       topLevelSkills
-        .filter((item) => item.id !== draft.id)
+        .filter((item) => item.id !== draft.id && !item.isBuiltinTemplate)
         .map((item) => ({
           label: item.name,
           value: item.id,
@@ -675,6 +683,11 @@ export default function MemoryManagement() {
           suggestionStatus: item.suggestionStatus,
           nodeType: item.nodeType,
           updateStatus: item.updateStatus,
+          builtinSkillUid: item.builtinSkillUid,
+          originBuiltinSkillUid: item.originBuiltinSkillUid,
+          isBuiltinTemplate: item.isBuiltinTemplate,
+          activationStatus: item.activationStatus,
+          readonly: item.readonly,
         })),
       );
       if (!options.preserveChangeProposals) {
@@ -694,6 +707,53 @@ export default function MemoryManagement() {
       }
     }
   }, [category, skillKeyword, skillListPage, skillListPageSize, tag]);
+
+  const refreshToolAssets = useCallback(async () => {
+    setToolLoading(true);
+
+    try {
+      const records = await listToolAssets();
+      setToolAssets(records);
+    } catch (error) {
+      console.error("Load tool assets failed:", error);
+    } finally {
+      setToolLoading(false);
+    }
+  }, []);
+
+  const handleToggleTool = useCallback(
+    async (record: StructuredAsset, checked: boolean) => {
+      const toolName = record.id;
+      if (!toolName || record.readonly) {
+        return;
+      }
+
+      setToolActionLoading((previous) => new Set(previous).add(toolName));
+
+      try {
+        if (checked) {
+          await enableTool(toolName);
+        } else {
+          await disableTool(toolName);
+        }
+        await refreshToolAssets();
+        message.success(
+          checked
+            ? t("admin.memoryToolEnableSuccess")
+            : t("admin.memoryToolDisableSuccess"),
+        );
+      } catch (error) {
+        console.error("Toggle tool failed:", error);
+      } finally {
+        setToolActionLoading((previous) => {
+          const next = new Set(previous);
+          next.delete(toolName);
+          return next;
+        });
+      }
+    },
+    [refreshToolAssets, t],
+  );
 
   const refreshGlossaryAssets = useCallback(
     async (options?: {
@@ -1033,6 +1093,14 @@ export default function MemoryManagement() {
     skillRouteItemId,
     tag,
   ]);
+
+  useEffect(() => {
+    if (routeMemoryTab !== "tools") {
+      return;
+    }
+
+    void refreshToolAssets();
+  }, [refreshToolAssets, routeMemoryTab]);
 
   useEffect(() => {
     const shouldRefreshExperience =
@@ -3605,6 +3673,37 @@ export default function MemoryManagement() {
     });
   };
 
+  const handleEnableBuiltinSkill = useCallback(
+    async (item: StructuredAsset) => {
+      const builtinSkillUid = item.builtinSkillUid?.trim();
+      if (!builtinSkillUid) {
+        message.warning(t("admin.memoryBuiltinSkillMissing"));
+        return;
+      }
+
+      setBuiltinSkillEnableLoading((previous) => new Set(previous).add(builtinSkillUid));
+      try {
+        await enableBuiltinSkill(builtinSkillUid);
+        setSkillListPage(1);
+        await refreshSkillAssets({ page: 1 });
+        message.success(t("admin.memoryBuiltinSkillEnableSuccess"));
+      } catch (error) {
+        console.error("Enable builtin skill failed:", error);
+        message.error(
+          getLocalizedErrorMessage(error, t("admin.memoryBuiltinSkillEnableFailed")) ||
+            t("admin.memoryBuiltinSkillEnableFailed"),
+        );
+      } finally {
+        setBuiltinSkillEnableLoading((previous) => {
+          const next = new Set(previous);
+          next.delete(builtinSkillUid);
+          return next;
+        });
+      }
+    },
+    [refreshSkillAssets, t],
+  );
+
   const handleBatchDeleteGlossary = () => {
     if (!selectedGlossaryAssets.length) {
       message.info(t("admin.memoryGlossaryBatchSelectFirst"));
@@ -4485,9 +4584,13 @@ export default function MemoryManagement() {
             : null;
 
         return (
-          <div className="memory-table-main">
+          <div
+            className={`memory-table-main ${
+              record.isBuiltinTemplate ? "is-builtin-template" : ""
+            }`}
+          >
             <div className="memory-table-main-title">
-              {activeTab === "skills" ? (
+              {activeTab === "skills" && !record.isBuiltinTemplate ? (
                 <button
                   type="button"
                   className="memory-term-link"
@@ -4495,9 +4598,16 @@ export default function MemoryManagement() {
                 >
                   {record.name}
                 </button>
+              ) : activeTab === "skills" ? (
+                <span className="memory-term-link is-disabled">{record.name}</span>
               ) : (
                 <span>{record.name}</span>
               )}
+              {activeTab === "skills" && record.isBuiltinTemplate ? (
+                <Tag color="default">{t("admin.memoryBuiltinSkillTemplateTag")}</Tag>
+              ) : record.originBuiltinSkillUid ? (
+                <Tag color="blue">{t("admin.memoryBuiltinSkillEnabledTag")}</Tag>
+              ) : null}
               {autoEvoStatusMeta ? (
                 <Tag color={autoEvoStatusMeta.color}>{autoEvoStatusMeta.text}</Tag>
               ) : null}
@@ -4574,6 +4684,9 @@ export default function MemoryManagement() {
         if (activeTab === "skills" && record.parentId) {
           return "-";
         }
+        if (activeTab === "skills" && record.isBuiltinTemplate) {
+          return "-";
+        }
 
         const disabledByRemoveSuggestion =
           activeTab === "skills" && Boolean(record.hasPendingRemoveSuggestion);
@@ -4625,6 +4738,7 @@ export default function MemoryManagement() {
       fixed: "right",
       render: (_value, record) => {
         const isChildSkill = activeTab === "skills" && Boolean(record.parentId);
+        const isBuiltinTemplate = activeTab === "skills" && Boolean(record.isBuiltinTemplate);
         const pendingProposal =
           activeTab === "skills" ? getPendingProposal("skills", record.id) : undefined;
         const hasBackendReviewableSuggestions =
@@ -4647,6 +4761,20 @@ export default function MemoryManagement() {
 
         return (
           <Space size={4}>
+            {isBuiltinTemplate && !record.parentId ? (
+              <Button
+                type="primary"
+                size="small"
+                loading={
+                  record.builtinSkillUid
+                    ? builtinSkillEnableLoading.has(record.builtinSkillUid)
+                    : false
+                }
+                onClick={() => void handleEnableBuiltinSkill(record)}
+              >
+                {t("admin.memoryBuiltinSkillEnable")}
+              </Button>
+            ) : null}
             {activeTab !== "skills" ? (
               <Tooltip title={t("admin.memoryViewItem")}>
                 <Button
@@ -4656,7 +4784,7 @@ export default function MemoryManagement() {
                 />
               </Tooltip>
             ) : null}
-            {activeTab !== "tools" ? (
+            {activeTab !== "tools" && !isBuiltinTemplate ? (
               <>
                 {!isChildSkill ? (
                   <Tooltip title={reviewTooltip}>
@@ -4703,6 +4831,24 @@ export default function MemoryManagement() {
     },
   ];
 
+  const renderToolTwoLineText = (value?: string) =>
+    value ? (
+      <Tooltip
+        title={<div className="memory-text-popover-content">{value}</div>}
+        overlayClassName="memory-text-popover"
+        placement="topLeft"
+        trigger="hover"
+      >
+        <div className="memory-tool-two-line-text" title={value}>
+          {value}
+        </div>
+      </Tooltip>
+    ) : (
+      <div className="memory-tool-two-line-text" title={value}>
+        {value}
+      </div>
+    );
+
   const toolColumns: ColumnsType<StructuredAsset> = [
     {
       title: t("admin.memoryToolName"),
@@ -4717,13 +4863,69 @@ export default function MemoryManagement() {
       title: t("admin.memoryDescription"),
       dataIndex: "description",
       key: "description",
-      render: (value: string) => value,
+      render: (value: string) => renderToolTwoLineText(value),
     },
     {
       title: t("admin.memoryTypicalUsage"),
       dataIndex: "content",
       key: "content",
-      render: (value: string) => value,
+      render: (value: string) => renderToolTwoLineText(value),
+    },
+    {
+      title: t("admin.memoryToolStatus"),
+      dataIndex: "isEnabled",
+      key: "status",
+      width: 120,
+      render: (value: boolean) => (
+        <Tag color={value ? "success" : "default"}>
+          {value ? t("common.enabled") : t("common.disabled")}
+        </Tag>
+      ),
+    },
+    {
+      title: t("common.actions"),
+      key: "actions",
+      width: 140,
+      render: (_value, record) => (
+        <Switch
+          checked={Boolean(record.isEnabled)}
+          checkedChildren={t("common.enabled")}
+          disabled={Boolean(record.readonly)}
+          loading={toolActionLoading.has(record.id)}
+          unCheckedChildren={t("common.disabled")}
+          onChange={(checked) => {
+            void handleToggleTool(record, checked);
+          }}
+        />
+      ),
+    },
+    {
+      title: t("admin.memoryToolStatus"),
+      dataIndex: "isEnabled",
+      key: "status",
+      width: 120,
+      render: (value: boolean) => (
+        <Tag color={value ? "success" : "default"}>
+          {value ? t("common.enabled") : t("common.disabled")}
+        </Tag>
+      ),
+    },
+    {
+      title: t("common.actions"),
+      key: "actions",
+      width: 140,
+      render: (_value, record) => (
+        <Switch
+          checked={Boolean(record.isEnabled)}
+          checkedChildren={t("common.enabled")}
+          disabled={Boolean(record.readonly)}
+          loading={toolActionLoading.has(record.id)}
+          unCheckedChildren={t("common.disabled")}
+          onChange={(checked) => {
+            void handleToggleTool(record, checked);
+          }}
+        />
+      ),
     },
   ];
 
@@ -5076,6 +5278,7 @@ export default function MemoryManagement() {
     filteredStructuredItems,
     genericColumns,
     toolColumns,
+    toolLoading,
     isReviewRouteRequested,
     isGlossaryRouteRequested,
     reviewRouteTab,

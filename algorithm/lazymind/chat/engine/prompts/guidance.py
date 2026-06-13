@@ -62,8 +62,9 @@ IMAGE_REFERENCE_MARKDOWN_GUIDANCE = (
     '- Do not paste bare filesystem paths (`/var/lib/lazymind/uploads/...`) in answers.'
 )
 VISION_EXTRACTOR_GUIDANCE = (
-    'When calling vision_extractor on knowledge-base images, pass the `local_path` field '
-    'from KBToolGroup results (filesystem path under /var/lib/lazymind/uploads/). '
+    'When calling vision_extractor on knowledge-base or attached images, pass the '
+    'short filename shown in tool results or under Attached Files, or the '
+    '`local_path` field from KBToolGroup results. '
     'Do NOT pass `/static-files/` signed URLs to vision_extractor.'
 )
 VISION_EXTRACT_DEFAULT_INSTRUCTION = (
@@ -74,7 +75,8 @@ ATTACHED_FILES_GUIDANCE = (
     '# Attached file rules\n'
     'The user may provide attached files in this conversation. Treat the attached file '
     'paths in the system prompt as available evidence, and choose tools by file type:\n'
-    '- If an attached file is an image, call `vision_extractor` with that local file path '
+    '- If an attached file is an image, call `vision_extractor` with its short filename '
+    'shown under Attached Files (or the local path when no short ref is available) '
     'before answering questions that depend on its visual content.\n'
     '- If an attached file is a text/document/data file, call `kb_tmp_search` or another '
     '`kb_*` tool with the attached file scope before answering questions that depend on '

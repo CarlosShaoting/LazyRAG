@@ -88,7 +88,7 @@ def build_system_prompt(
         prompt_parts.append(SEARCH_GUIDANCE)
     if files:
         prompt_parts.append(IMAGE_REFERENCE_MARKDOWN_GUIDANCE)
-    if 'multimodal' in active_groups:
+    if 'multimodal' in active_groups and files:
         prompt_parts.append(VISION_EXTRACTOR_GUIDANCE)
 
     return '\n\n'.join(prompt_parts)

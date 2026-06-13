@@ -65,6 +65,7 @@ config.add('model_config_path', str, 'dynamic', 'MODEL_CONFIG_PATH',
                'dynamic': str(_COMMON_DIR / 'runtime_models.yaml'),
            },
            post_action=_model_config_path_post_action)
+config.add('algo_id', str, 'general_algo', 'ALGO_ID', description='LazyMind algorithm ID.')
 
 # ---------------------------------------------------------------------------
 # Tracing / observability
@@ -84,9 +85,14 @@ config.add('core_api_timeout', int, 30, 'CORE_API_TIMEOUT', description='Core AP
 config.add('agentic_kb_name', str, 'general_algo', 'AGENTIC_KB_NAME',
            description='Default knowledge base name for agentic.')
 config.add('skill_fs_url', str, 'remote://skills', 'SKILL_FS_URL', description='Skill filesystem URL.')
-config.add('opensearch_uri', str, None, 'OPENSEARCH_URI', description='OpenSearch/Elasticsearch URI.')
-config.add('opensearch_user', str, 'admin', 'OPENSEARCH_USER', description='OpenSearch username.')
-config.add('opensearch_password', str, '', 'OPENSEARCH_PASSWORD', description='OpenSearch password.')
+config.add('segment_store_type', str, 'opensearch', 'SEGMENT_STORE_TYPE',
+           description='Segment store type: opensearch, elasticsearch, or SQLiteStore.')
+config.add('segment_store_uri_or_path', str, 'https://opensearch:9200', 'SEGMENT_STORE_URI_OR_PATH',
+           description='Segment store URI (OpenSearch/Elasticsearch) or file path (SQLite).')
+config.add('segment_store_user', str, 'admin', 'SEGMENT_STORE_USER',
+           description='Segment store username (OpenSearch/Elasticsearch only).')
+config.add('segment_store_password', str, 'LazyRAG_OpenSearch123!', 'SEGMENT_STORE_PASSWORD',
+           description='Segment store password (OpenSearch/Elasticsearch only).')
 config.add('web_search_timeout', int, 10, 'WEB_SEARCH_TIMEOUT', description='Web search request timeout in seconds.')
 config.add('url_fetch_max_length', int, 4000, 'URL_FETCH_MAX_LENGTH',
            description='Maximum readable text length returned by url_fetch.')
@@ -105,10 +111,6 @@ config.add('review_debug', bool, False, 'REVIEW_DEBUG', description='Enable revi
 # Parsing
 # ---------------------------------------------------------------------------
 config.add('milvus_uri', str, None, 'MILVUS_URI', description='Milvus vector store URI (required).')
-config.add('ocr_server_type', str, 'none', 'OCR_SERVER_TYPE', description='OCR server type (none/mineru/paddleocr).')
-config.add('ocr_server_url', str, 'http://localhost:8000', 'OCR_SERVER_URL', description='OCR server URL.')
-config.add('mineru_upload_mode', str, None, 'MINERU_UPLOAD_MODE',
-           description='MinerU upload mode override (auto-detected if unset).')
 config.add('mineru_backend', str, 'pipeline', 'MINERU_BACKEND', description='MinerU processing backend.')
 config.add('mineru_server_port', int, 8000, 'MINERU_SERVER_PORT', description='MinerU server port.')
 config.add('ocr_cache_dir', str, os.path.join(config['shared_upload_dir'], '.image_cache'), 'OCR_CACHE_DIR',
@@ -126,10 +128,6 @@ config.add('reset_algo_on_startup', bool, False, 'RESET_ALGO_ON_STARTUP',
            description='Drop all vector/segment data and algorithm registration on startup, then rebuild from scratch.')
 config.add('rag_image_path_prefix', str, '/mnt/lustre/share_data/mineru/images/', 'RAG_IMAGE_PATH_PREFIX',
            description='Image path prefix for RAG documents.')
-config.add('ocr_patch_applied', bool, False, 'OCR_PATCH_APPLIED',
-           description='Whether the OCR service patch has been applied.')
-config.add('ocr_service_variant', str, 'online', 'OCR_SERVICE_VARIANT',
-           description='OCR service variant (online/offline).')
 
 # ---------------------------------------------------------------------------
 # Processor

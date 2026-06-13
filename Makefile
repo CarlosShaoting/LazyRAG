@@ -1,5 +1,5 @@
 # Code style: Python (flake8) + Go (gofmt). Mirrors algorithm/lazyllm Makefile pattern.
-.PHONY: help lint install-flake8 lint-python lint-go test build up up-build down clear reset-kb reset-all fresh-start file-watcher-dirs file-watcher-build file-watcher-run file-watcher-start file-watcher-stop
+.PHONY: help lint install-flake8 lint-python lint-go test test-hermetic test-hermetic-setup test-hermetic-check build up up-build down clear reset-kb reset-all fresh-start file-watcher-dirs file-watcher-build file-watcher-run file-watcher-start file-watcher-stop
 .DEFAULT_GOAL := help
 
 # Use legacy Docker builder by default to avoid pulling moby/buildkit:buildx-stable-1 from Docker Hub
@@ -81,6 +81,7 @@ endif
 _LAZYMIND_FW_WATCH_HOST_DIR_RAW := $(LAZYMIND_FILE_WATCHER_WATCH_HOST_DIR)
 _LAZYMIND_FW_WATCH_HOST_DIR_ABS := $(abspath $(_LAZYMIND_FW_WATCH_HOST_DIR_RAW))
 override LAZYMIND_FILE_WATCHER_WATCH_HOST_DIR := $(if $(filter windows,$(LAZYMIND_FILE_WATCHER_HOST_PATH_STYLE)),$(_LAZYMIND_FW_WATCH_HOST_DIR_RAW),$(_LAZYMIND_FW_WATCH_HOST_DIR_ABS))
+export SCAN_CONTROL_PLANE_LOCAL_FS_PUBLIC_ROOT := $(LAZYMIND_FILE_WATCHER_WATCH_HOST_DIR)
 LAZYMIND_FILE_WATCHER_DIR := backend/file-watcher
 LAZYMIND_FILE_WATCHER_BIN := $(LAZYMIND_FILE_WATCHER_DIR)/file_watcher
 LAZYMIND_FILE_WATCHER_CONFIG := $(LAZYMIND_FILE_WATCHER_DIR)/configs/agent.yaml
@@ -105,14 +106,11 @@ export LAZYLLM_ALGO_REGISTER_POLICY ?= none
 # Core database
 export LAZYMIND_CORE_DATABASE_URL ?= postgresql+psycopg://root:123456@db:5432/core
 
-# OCR backend selection (none=built-in PDFReader, mineru, paddleocr)
-# Auto-derives LAZYMIND_OCR_SERVER_URL when not set.
-export LAZYMIND_OCR_SERVER_TYPE ?= none
-export LAZYMIND_OCR_SERVICE_VARIANT ?= online
-export LAZYMIND_OCR_SERVER_URL ?= $(if $(filter mineru,$(LAZYMIND_OCR_SERVER_TYPE)),http://mineru:8000,$(if $(filter paddleocr,$(LAZYMIND_OCR_SERVER_TYPE)),http://paddleocr:8080,http://localhost:8000))
-# patch_applied is only meaningful for offline (local patch-server) mode; force False for online API
-export LAZYMIND_OCR_PATCH_APPLIED := $(if $(filter online,$(LAZYMIND_OCR_SERVICE_VARIANT)),False,$(or $(LAZYMIND_OCR_PATCH_APPLIED),False))
-
+# OCR routing is selected per-request via the model provider UI (DynamicPDFReader).
+# Use LAZYMIND_DEPLOY_MINERU to deploy built-in MinerU profile.
+# PaddleOCR compose profile is temporarily disabled (needs GPU).
+export LAZYMIND_DEPLOY_MINERU ?= 0
+# export LAZYMIND_DEPLOY_PADDLEOCR ?= 0
 # Vector / segment stores — override to use external services (skips built-in profile)
 export LAZYMIND_MILVUS_URI ?= http://milvus:19530
 export LAZYMIND_OPENSEARCH_URI ?= https://opensearch:9200
@@ -127,7 +125,7 @@ export LAZYMIND_ENABLE_OPENSEARCH_DASHBOARD ?= $(LAZYMIND_ENABLE_STORE_DASHBOARD
 # Chat tuning
 export LAZYMIND_MAX_CONCURRENCY ?= 10
 export LAZYMIND_LLM_PRIORITY ?= 0
-export LAZYMIND_ENABLE_ROUTER ?= false
+export LAZYMIND_ENABLE_ROUTER ?= true
 
 # Tracing (set LAZYLLM_TRACE_ENABLED=0 to disable; requires LANGFUSE_* keys when enabled)
 export LAZYLLM_TRACE_ENABLED ?= 1
@@ -179,6 +177,9 @@ help:
 	@echo "  make file-watcher-stop  - Stop host file-watcher started by Makefile"
 	@echo "  make lint       - Run Python flake8 and Go gofmt checks"
 	@echo "  make test       - Run project test script"
+	@echo "  make test-hermetic - Prepare an isolated host test env and run the same scope as make test"
+	@echo "  make test-hermetic-setup - Prepare the uv-managed Python test env and check Node/Go"
+	@echo "  make test-hermetic-check - Check uv, fnm/nvm, Node 20, Go 1.24.0, and the test venv"
 	@echo "  make clear      - Stop services, remove volumes, clear Python cache"
 	@echo "  make reset-kb   - Stop services, wipe KB data (Milvus, OpenSearch, uploads, lazyllm DB tables)"
 	@echo "                    Set LAZYMIND_RESET_ALGO_ON_STARTUP=true to also clear algo state on next startup"
@@ -223,18 +224,18 @@ lint: lint-python lint-go
 test:
 	@./tests/run-all.sh
 
-# Only build/start mineru/paddleocr when LAZYMIND_OCR_SERVER_TYPE is mineru/paddleocr
-# AND LAZYMIND_OCR_SERVER_URL points to the internal service (user has not specified external URL).
-# Only mineru has build:; paddleocr/milvus/opensearch use image: only, so only needed for up.
-#  OCR_SERVER_TYPE	OCR_SERVICE_VARIANT	     OCR_SERVER_URL	     _need_mineru      _need_paddleocr
-# mineru/paddleocr         online                Any                 false             false
-# mineru/paddleocr          none                 Any                 false             false
-#      mineru              offline        http://mineru:8000         true              false
-#     paddleocr            offline       http://paddleocr:8000       false             true
-# mineru/paddleocr         offline            external URL           false             false
+test-hermetic-setup:
+	@./scripts/test-hermetic-env.sh setup
 
-_need_mineru := $(and $(filter mineru,$(LAZYMIND_OCR_SERVER_TYPE)),$(findstring mineru:8000,$(LAZYMIND_OCR_SERVER_URL)),$(filter-out online,$(LAZYMIND_OCR_SERVICE_VARIANT)))
-_need_paddleocr := $(and $(filter paddleocr,$(LAZYMIND_OCR_SERVER_TYPE)),$(findstring paddleocr:8080,$(LAZYMIND_OCR_SERVER_URL)),$(filter-out online,$(LAZYMIND_OCR_SERVICE_VARIANT)))
+test-hermetic-check:
+	@./scripts/test-hermetic-env.sh check
+
+test-hermetic:
+	@./scripts/test-hermetic-run.sh
+
+# Only mineru has build:; paddleocr/milvus/opensearch use image: only, so only needed for up.
+_need_mineru := $(filter 1 true TRUE yes YES on ON,$(LAZYMIND_DEPLOY_MINERU))
+# _need_paddleocr := $(filter 1 true TRUE yes YES on ON,$(LAZYMIND_DEPLOY_PADDLEOCR))  # needs GPU
 # Deploy milvus/opensearch only when URI exactly matches the built-in services; external URIs = no deployment
 _builtin_milvus_uris := http://milvus:19530 http://milvus:19530/
 _builtin_opensearch_uris := https://opensearch:9200 https://opensearch:9200/
@@ -246,7 +247,7 @@ _need_milvus_dashboard := $(and $(_need_milvus),$(_enable_milvus_dashboard))
 _need_opensearch_dashboard := $(and $(_need_opensearch),$(_enable_opensearch_dashboard))
 
 # Shared compose profile flags for up/down/up-build
-_COMPOSE_PROFILES := $(strip $(if $(_need_mineru),--profile mineru) $(if $(_need_paddleocr),--profile paddleocr) $(if $(_need_milvus),--profile milvus) $(if $(_need_opensearch),--profile opensearch) $(if $(_need_milvus_dashboard),--profile milvus-dashboard) $(if $(_need_opensearch_dashboard),--profile opensearch-dashboard))
+_COMPOSE_PROFILES := $(strip $(if $(_need_mineru),--profile mineru) $(if $(_need_milvus),--profile milvus) $(if $(_need_opensearch),--profile opensearch) $(if $(_need_milvus_dashboard),--profile milvus-dashboard) $(if $(_need_opensearch_dashboard),--profile opensearch-dashboard))
 _COMPOSE_FILE_WATCHER_SCALE := $(if $(filter container,$(LAZYMIND_FILE_WATCHER_MODE)),,--scale file-watcher=0)
 
 # Only init submodules when not yet cloned; if already present (even with different commit), do nothing. Never recursive.

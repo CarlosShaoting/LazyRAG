@@ -10,10 +10,11 @@ import {
   type ReactNode,
 } from "react";
 import { RcFile } from "antd/es/upload";
-import { Button, Input, message, Tooltip } from "antd";
+import { Button, Input, message, Spin, Tooltip } from "antd";
 import {
   CloseOutlined,
   CommentOutlined,
+  EditOutlined,
   SettingOutlined,
 } from "@ant-design/icons";
 import { debounce } from "lodash";
@@ -43,10 +44,39 @@ import { formatFileSize } from "@/modules/chat/utils";
 import { useChatThinkStore } from "@/modules/chat/store/chatThink";
 import { useChatNewMessageStore } from "@/modules/chat/store/chatNewMessage";
 import { useTranslation } from "react-i18next";
+import { getLocalizedErrorMessage } from "@/components/request";
+import { PromptServiceApi } from "@/modules/chat/utils/request";
 
 const { TextArea } = Input;
 
 const MAX_UPLOAD_FILES = 3;
+
+const PROMPT_SUGGESTIONS = [
+  {
+    key: "persuasive",
+    labelKey: "chat.promptSuggestionPersuasive",
+    descriptionKey: "chat.promptSuggestionPersuasiveDesc",
+    templateKey: "chat.promptSuggestionPersuasiveTemplate",
+  },
+  {
+    key: "structure",
+    labelKey: "chat.promptSuggestionStructure",
+    descriptionKey: "chat.promptSuggestionStructureDesc",
+    templateKey: "chat.promptSuggestionStructureTemplate",
+  },
+  {
+    key: "tone",
+    labelKey: "chat.promptSuggestionTone",
+    descriptionKey: "chat.promptSuggestionToneDesc",
+    templateKey: "chat.promptSuggestionToneTemplate",
+  },
+  {
+    key: "polish",
+    labelKey: "chat.promptSuggestionPolish",
+    descriptionKey: "chat.promptSuggestionPolishDesc",
+    templateKey: "chat.promptSuggestionPolishTemplate",
+  },
+];
 
 function getSuffix(f: { name: string }) {
   return f.name.substring(f.name.lastIndexOf(".")).toLowerCase();
@@ -128,6 +158,7 @@ interface ChatInputProps {
   isChatContent: boolean;
   showHistoryList?: boolean;
   showHistoryButton?: boolean;
+  showPromptSuggestions?: boolean;
   setIsChatContent?: (isChatContent: boolean) => void;
   onHeightChange?: () => void;
   chatConfig?: ChatConfig;
@@ -160,6 +191,7 @@ export interface ChatFileList {
 export interface ChatInputImperativeProps {
   clearFiles: () => void;
   element: HTMLDivElement | null;
+  focus: () => void;
   uploadFiles: (files: File[]) => void;
 }
 
@@ -196,6 +228,7 @@ const ChatInput = forwardRef<ChatInputImperativeProps, ChatInputProps>(
       isChatContent,
       showHistoryList,
       showHistoryButton = true,
+      showPromptSuggestions = true,
       onHeightChange,
       setIsChatContent,
       chatConfig,
@@ -220,8 +253,10 @@ const ChatInput = forwardRef<ChatInputImperativeProps, ChatInputProps>(
     const promptRef = useRef<PromptImperativeProps>(null);
     const batchChatRef = useRef<BatchChatImperativeProps | null>(null);
     const innerRef = useRef<HTMLDivElement>(null);
+    const textAreaRef = useRef<any>(null);
     const isComposingRef = useRef(false);
     const [isUploading, setIsUploading] = useState(false);
+    const [polishingSuggestionKey, setPolishingSuggestionKey] = useState<string | null>(null);
     const { setThink } = useChatThinkStore();
     const { setNewMessage } = useChatNewMessageStore();
     const { t } = useTranslation();
@@ -261,6 +296,9 @@ const ChatInput = forwardRef<ChatInputImperativeProps, ChatInputProps>(
           clearPendingMessage();
         },
         element: innerRef.current,
+        focus: () => {
+          textAreaRef.current?.focus?.();
+        },
         uploadFiles: (files: File[]) => {
           if (disabled) {
             if (disabledReason) {
@@ -421,8 +459,15 @@ const ChatInput = forwardRef<ChatInputImperativeProps, ChatInputProps>(
       const normalizedCiteMessage = citeMessage?.trim();
       return normalizedCiteMessage ? [normalizedCiteMessage] : [];
     }, [citeMessage, citeMessages]);
+    const isPromptPolishing = Boolean(polishingSuggestionKey);
     const isSendDisabled =
-      disabled || !value?.trim() || isUploading || isStreaming;
+      disabled || isPromptPolishing || !value?.trim() || isUploading || isStreaming;
+    const shouldShowPromptSuggestions =
+      showPromptSuggestions && !disabled && !isStreaming && value.trim().length > 0;
+
+    useEffect(() => {
+      setTimeout(() => onHeightChange?.(), 0);
+    }, [onHeightChange, shouldShowPromptSuggestions]);
 
     const handleSend = () => {
       if (disabled) {
@@ -470,6 +515,42 @@ const ChatInput = forwardRef<ChatInputImperativeProps, ChatInputProps>(
       setText(text);
       if (sessionId !== undefined) {
         debouncedSaveInput(sessionId, text);
+      }
+    };
+
+    const handleApplyPromptSuggestion = async (
+      suggestion: (typeof PROMPT_SUGGESTIONS)[number],
+    ) => {
+      const normalizedPrompt = value.trim();
+      if (!normalizedPrompt || polishingSuggestionKey) {
+        return;
+      }
+
+      setPolishingSuggestionKey(suggestion.key);
+      try {
+        const response = await PromptServiceApi().promptServicePolishPrompt({
+          promptPolishRequest: {
+            content: normalizedPrompt,
+            user_instruct: t(suggestion.templateKey, { prompt: "" }).trim(),
+          },
+        });
+        const nextPrompt = response.data.content?.trim();
+        if (!nextPrompt) {
+          return;
+        }
+        onChange(nextPrompt);
+        setText(nextPrompt);
+        if (sessionId !== undefined) {
+          debouncedSaveInput(sessionId, nextPrompt);
+        }
+        setTimeout(() => onHeightChange?.(), 0);
+      } catch (error) {
+        message.error(
+          getLocalizedErrorMessage(error, t("common.requestFailed")) ||
+            t("common.requestFailed"),
+        );
+      } finally {
+        setPolishingSuggestionKey(null);
       }
     };
 
@@ -546,7 +627,7 @@ const ChatInput = forwardRef<ChatInputImperativeProps, ChatInputProps>(
     );
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      if (e.key !== "Enter" || e.shiftKey || isUploading || disabled) {
+      if (e.key !== "Enter" || e.shiftKey || isUploading || disabled || isPromptPolishing) {
         return;
       }
 
@@ -649,6 +730,7 @@ const ChatInput = forwardRef<ChatInputImperativeProps, ChatInputProps>(
                 </div>
               )}
               <TextArea
+                ref={textAreaRef}
                 autoSize={{ minRows: 2, maxRows: 5 }}
                 className="message-input"
                 placeholder={
@@ -664,7 +746,7 @@ const ChatInput = forwardRef<ChatInputImperativeProps, ChatInputProps>(
                   isComposingRef.current = false;
                 }}
                 onKeyDown={handleKeyDown}
-                disabled={disabled}
+                disabled={disabled || isPromptPolishing}
                 aria-describedby={
                   disabled && (disabledReason || disabledDescription)
                     ? disabledNoticeId
@@ -676,8 +758,12 @@ const ChatInput = forwardRef<ChatInputImperativeProps, ChatInputProps>(
                 <div className="input-bottom-actions-left">
                   {isChatContent && (
                     <div
-                      className="input-bottom-actions-left-item"
+                      className={`input-bottom-actions-left-item${isPromptPolishing ? " is-disabled" : ""}`}
+                      aria-disabled={isPromptPolishing}
                       onClick={() => {
+                        if (isPromptPolishing) {
+                          return;
+                        }
                         setThink(false);
                         clearMultiData();
                         clearPendingMessage();
@@ -707,9 +793,12 @@ const ChatInput = forwardRef<ChatInputImperativeProps, ChatInputProps>(
                     </div>
                   )}
                   <div
-                    className={`input-bottom-actions-left-item${disabled ? " is-disabled" : ""}`}
-                    aria-disabled={disabled}
+                    className={`input-bottom-actions-left-item${disabled || isPromptPolishing ? " is-disabled" : ""}`}
+                    aria-disabled={disabled || isPromptPolishing}
                     onClick={() => {
+                      if (isPromptPolishing) {
+                        return;
+                      }
                       if (disabled) {
                         if (disabledReason) {
                           message.warning(disabledReason);
@@ -733,14 +822,16 @@ const ChatInput = forwardRef<ChatInputImperativeProps, ChatInputProps>(
                       types={allowedUploadTypes}
                       max={MAX_UPLOAD_FILES}
                       onBeforeAddFiles={onBeforeAddFiles}
-                      disabled={disabled}
-                      disabledReason={disabledReason}
+                      disabled={disabled || isPromptPolishing}
+                      disabledReason={
+                        isPromptPolishing ? t("chat.promptPolishing") : disabledReason
+                      }
                       icon={
                         <Button
                           aria-label={t("chat.upload")}
                           icon={<AttachmentIcon />}
                           type="text"
-                          disabled={disabled}
+                          disabled={disabled || isPromptPolishing}
                         />
                       }
                     />
@@ -756,6 +847,43 @@ const ChatInput = forwardRef<ChatInputImperativeProps, ChatInputProps>(
               </div>
             </div>
           </div>
+          {shouldShowPromptSuggestions ? (
+            <div
+              className="prompt-suggestion-panel"
+              aria-label={t("chat.promptSuggestionsAria")}
+            >
+              {PROMPT_SUGGESTIONS.map((suggestion) => (
+                <button
+                  type="button"
+                  className={`prompt-suggestion-item${
+                    polishingSuggestionKey === suggestion.key ? " is-loading" : ""
+                  }`}
+                  key={suggestion.key}
+                  disabled={isPromptPolishing}
+                  onClick={() => handleApplyPromptSuggestion(suggestion)}
+                  aria-busy={polishingSuggestionKey === suggestion.key}
+                >
+                  <span className="prompt-suggestion-icon" aria-hidden="true">
+                    {polishingSuggestionKey === suggestion.key ? (
+                      <Spin size="small" />
+                    ) : (
+                      <EditOutlined />
+                    )}
+                  </span>
+                  <span className="prompt-suggestion-copy">
+                    <span className="prompt-suggestion-title">
+                      {polishingSuggestionKey === suggestion.key
+                        ? t("chat.promptPolishing")
+                        : t(suggestion.labelKey)}
+                    </span>
+                    <span className="prompt-suggestion-description">
+                      {t(suggestion.descriptionKey)}
+                    </span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
         <PromptModal
           ref={promptRef}

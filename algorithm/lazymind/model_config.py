@@ -155,13 +155,51 @@ def summarize_model_config_for_log(model_config: Optional[Dict[str, Any]]) -> st
     return f'roles={sorted(str(k) for k in model_config.keys())} ' + '; '.join(parts)
 
 
+# Maps frontend model_key values to runtime_models.yaml role names.
+_MODEL_CONFIG_ROLE_ALIASES: Dict[str, str] = {
+    'text2image': 'image_generator',
+    'image_editing': 'image_editor',
+}
+
+
+def _normalize_model_config(model_config: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not model_config:
+        return model_config
+    normalized: Dict[str, Any] = {}
+    for role, role_cfg in model_config.items():
+        target = _MODEL_CONFIG_ROLE_ALIASES.get(role, role)
+        if target in normalized:
+            continue
+        normalized[target] = role_cfg
+    return normalized
+
+
+def _enrich_role_types(model_config: Dict[str, Any]) -> Dict[str, Any]:
+    yaml_cfg = load_model_config()
+    enriched: Dict[str, Any] = {}
+    for role, role_cfg in model_config.items():
+        if not isinstance(role_cfg, dict):
+            enriched[role] = role_cfg
+            continue
+        merged = dict(role_cfg)
+        if not merged.get('type'):
+            entry = _role_entry(yaml_cfg.get(role))
+            if entry:
+                merged['type'] = entry.get('type')
+        enriched[role] = merged
+    return enriched
+
+
 def inject_model_config(model_config: Optional[Dict[str, Any]]) -> None:
     '''Inject per-request model configuration into lazyllm globals.
 
     Delegates to lazyllm.inject_model_config. Kept here for backward compatibility.
     '''
     import lazyllm
-    lazyllm.inject_model_config(model_config)
+    normalized = _normalize_model_config(model_config)
+    if isinstance(normalized, dict):
+        normalized = _enrich_role_types(normalized)
+    lazyllm.inject_model_config(normalized)
 
 
 def _expand_env(value: str) -> str:

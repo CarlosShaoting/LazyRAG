@@ -322,7 +322,6 @@ export interface ConversationChatStatusResponse {
 }
 export interface ConversationDetailResponse {
     'conversation'?: ConversationItem;
-    'history'?: Array<ConversationHistoryItem>;
 }
 export interface ConversationFeedbackRequest {
     'expected_answer'?: string;
@@ -420,9 +419,11 @@ export interface CreateModelProviderGroupOpenAPIRequest {
     'api_key'?: string;
     'base_url': string;
     'name': string;
+    'verify': boolean;
 }
 export interface CreateModelProviderGroupOpenAPIResponse {
     'base_url': string;
+    'check'?: CheckModelProviderData;
     'id': string;
     'name': string;
     'user_model_provider_id': string;
@@ -629,8 +630,10 @@ export interface EvalSetItemResponse {
     'question': string;
     'question_type': string;
     'reference_chunk_ids': string;
+    'reference_chunk_selected': boolean;
     'reference_context': string;
     'reference_doc': string;
+    'reference_doc_from_knowledge_base': boolean;
     'reference_doc_ids': string;
     'shard_id': string;
     'source': string;
@@ -852,6 +855,7 @@ export interface ManagedStateListOpenAPIResponse {
     'items'?: Array<ManagedStateOpenAPIResponse>;
 }
 export interface ManagedStateOpenAPIResponse {
+    'agent_persona'?: string;
     'auto_evo': boolean;
     'auto_evo_apply_status': string;
     'auto_evo_error': string;
@@ -861,12 +865,21 @@ export interface ManagedStateOpenAPIResponse {
     'has_pending_review_suggestions': boolean;
     'resource_id': string;
     'resource_type': string;
+    'response_style'?: string;
     'suggestion_status': string;
     'title': string;
+    'user_address'?: string;
 }
 export interface ManagedStateUpsertOpenAPIRequest {
     'auto_evo'?: boolean;
     'content': string;
+}
+export interface MemoryUpsertOpenAPIRequest {
+    'agent_persona'?: string;
+    'auto_evo'?: boolean;
+    'content'?: string;
+    'response_style'?: string;
+    'user_address'?: string;
 }
 export interface MergeAndAddWordRequest {
     'group_ids'?: Array<string>;
@@ -924,6 +937,13 @@ export interface PromptListResponse {
 export interface PromptPatchRequest {
     'content'?: string;
     'display_name'?: string;
+}
+export interface PromptPolishRequest {
+    'content': string;
+    'user_instruct': string;
+}
+export interface PromptPolishResponse {
+    'content'?: string;
 }
 export interface PromptRequest {
     'content': string;
@@ -1018,8 +1038,12 @@ export interface SetSelectedModelOpenAPIItem {
 export interface SetSelectedModelsOpenAPIRequest {
     'selections'?: Array<SetSelectedModelOpenAPIItem>;
 }
-export interface SetSelectedProviderOpenAPIRequest {
+export interface SetSelectedProviderOpenAPIItem {
+    'category': string;
     'group_id': string;
+}
+export interface SetSelectedProviderOpenAPIRequest {
+    'selections'?: Array<SetSelectedProviderOpenAPIItem>;
 }
 export interface SetSharedProviderOpenAPIRequest {
     'group_id': string;
@@ -1108,7 +1132,6 @@ export interface SkillDraftPreviewOpenAPIResponse {
     'skill_id': string;
 }
 export interface SkillGenerateOpenAPIRequest {
-    'suggestion_ids'?: Array<string>;
     'user_instruct': string;
 }
 export interface SkillGenerateOpenAPIResponse {
@@ -1336,7 +1359,6 @@ export interface SystemGenerateOpenAPIResponse {
     'draft_content': string;
     'draft_source_version': number;
     'draft_status': string;
-    'suggestion_ids'?: Array<string>;
 }
 export interface SystemSuggestionOpenAPIRequest {
     'session_id': string;
@@ -1377,6 +1399,7 @@ export interface TaskPayload {
     'files'?: Array<TaskFile>;
     'relative_path'?: string;
     'reparse_groups'?: Array<string>;
+    'reparse_mode'?: string;
     'target_dataset_id'?: string;
     'target_path'?: string;
     'target_pid'?: string;
@@ -1405,6 +1428,46 @@ export interface TaskResponse {
     'task_info'?: TaskInfo;
     'task_state': string;
     'task_type'?: string;
+}
+export interface ToolGroup {
+    'active'?: boolean;
+    'can_disable'?: boolean;
+    'description'?: string;
+    'disabled'?: boolean;
+    'label'?: string;
+    'methods'?: Array<ToolMethod>;
+    'name'?: string;
+}
+export interface ToolGroupOpenAPIResponse {
+    'active': boolean;
+    'can_disable': boolean;
+    'description'?: string;
+    'disabled': boolean;
+    'label'?: string;
+    'methods'?: Array<ToolMethodOpenAPIResponse>;
+    'name': string;
+}
+export interface ToolListOpenAPIResponse {
+    'tool_groups'?: Array<ToolGroupOpenAPIResponse>;
+}
+export interface ToolListResponse {
+    'tool_groups'?: Array<ToolGroup>;
+}
+export interface ToolMethod {
+    'name'?: string;
+    'summary'?: string;
+}
+export interface ToolMethodOpenAPIResponse {
+    'name': string;
+    'summary'?: string;
+}
+export interface ToolStateOpenAPIResponse {
+    'disabled': boolean;
+    'name': string;
+}
+export interface ToolStateResponse {
+    'disabled'?: boolean;
+    'name'?: string;
 }
 export interface TransferBinding {
     'display_name'?: string;
@@ -1502,6 +1565,7 @@ export interface UserModelProviderOpenAPIItem {
     'default_model_provider_id': string;
     'description': string;
     'id': string;
+    'is_configured': boolean;
     'name': string;
 }
 export interface VerifiedProviderGroupOpenAPIItem {
@@ -1510,14 +1574,18 @@ export interface VerifiedProviderGroupOpenAPIItem {
     'group_id': string;
     'group_name': string;
     'provider_name': string;
+    'user_model_provider_id': string;
+}
+export interface VerifiedProviderGroupsOpenAPIResponse {
+    'groups'?: Array<VerifiedProviderGroupOpenAPIItem>;
+}
+export interface VerifiedProviderOpenAPIResponse {
+    'group_name'?: string;
+    'provider_name'?: string;
+    'ready': boolean;
     'shared_by_id'?: string;
     'shared_by_name'?: string;
     'source'?: string;
-    'user_model_provider_id': string;
-}
-export interface VerifiedProviderOpenAPIResponse {
-    'group'?: VerifiedProviderGroupOpenAPIItem;
-    'ready': boolean;
 }
 export interface WordGroupConflictResponse {
     'created_at': string;
@@ -3240,6 +3308,39 @@ export const DefaultApiAxiosParamCreator = function (configuration?: Configurati
         },
         /**
          * 
+         * @summary POST /builtin-skills/{builtin_skill_uid}:enable
+         * @param {string} builtinSkillUid 
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreBuiltinSkillsBuiltinSkillUidEnablePost: async (builtinSkillUid: string, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+            // verify required parameter 'builtinSkillUid' is not null or undefined
+            assertParamExists('apiCoreBuiltinSkillsBuiltinSkillUidEnablePost', 'builtinSkillUid', builtinSkillUid)
+            const localVarPath = `/api/core/builtin-skills/{builtin_skill_uid}:enable`
+                .replace(`{${"builtin_skill_uid"}}`, encodeURIComponent(String(builtinSkillUid)));
+            // use dummy base URL string because the URL constructor only accepts absolute URLs.
+            const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+            let baseOptions;
+            if (configuration) {
+                baseOptions = configuration.baseOptions;
+            }
+
+            const localVarRequestOptions = { method: 'POST', ...baseOptions, ...options};
+            const localVarHeaderParameter = {} as any;
+            const localVarQueryParameter = {} as any;
+
+
+            setSearchParams(localVarUrlObj, localVarQueryParameter);
+            let headersFromBaseOptions = baseOptions && baseOptions.headers ? baseOptions.headers : {};
+            localVarRequestOptions.headers = {...localVarHeaderParameter, ...headersFromBaseOptions, ...options.headers};
+
+            return {
+                url: toPathString(localVarUrlObj),
+                options: localVarRequestOptions,
+            };
+        },
+        /**
+         * 
          * @summary Chat with knowledge base
          * @param {ApiCoreChatPostRequest} [apiCoreChatPostRequest] 
          * @param {*} [options] Override http request option.
@@ -4246,11 +4347,12 @@ export const DefaultApiAxiosParamCreator = function (configuration?: Configurati
          * 
          * @summary Search dataset members
          * @param {string} dataset 
+         * @param {string} [namePrefix] 
          * @param {SearchDatasetMemberRequest} [searchDatasetMemberRequest] 
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
          */
-        apiCoreDatasetsDatasetMembersSearchPost: async (dataset: string, searchDatasetMemberRequest?: SearchDatasetMemberRequest, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+        apiCoreDatasetsDatasetMembersSearchPost: async (dataset: string, namePrefix?: string, searchDatasetMemberRequest?: SearchDatasetMemberRequest, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
             // verify required parameter 'dataset' is not null or undefined
             assertParamExists('apiCoreDatasetsDatasetMembersSearchPost', 'dataset', dataset)
             const localVarPath = `/api/core/datasets/{dataset}/members:search`
@@ -4265,6 +4367,10 @@ export const DefaultApiAxiosParamCreator = function (configuration?: Configurati
             const localVarRequestOptions = { method: 'POST', ...baseOptions, ...options};
             const localVarHeaderParameter = {} as any;
             const localVarQueryParameter = {} as any;
+
+            if (namePrefix !== undefined) {
+                localVarQueryParameter['name_prefix'] = namePrefix;
+            }
 
             localVarHeaderParameter['Content-Type'] = 'application/json';
             localVarHeaderParameter['Accept'] = 'application/json';
@@ -4864,10 +4970,11 @@ export const DefaultApiAxiosParamCreator = function (configuration?: Configurati
          * 
          * @summary ACL list
          * @param {string} kbId 
+         * @param {string} [granteeType] 
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
          */
-        apiCoreKbKbIdAclGet: async (kbId: string, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+        apiCoreKbKbIdAclGet: async (kbId: string, granteeType?: string, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
             // verify required parameter 'kbId' is not null or undefined
             assertParamExists('apiCoreKbKbIdAclGet', 'kbId', kbId)
             const localVarPath = `/api/core/kb/{kb_id}/acl`
@@ -4882,6 +4989,10 @@ export const DefaultApiAxiosParamCreator = function (configuration?: Configurati
             const localVarRequestOptions = { method: 'GET', ...baseOptions, ...options};
             const localVarHeaderParameter = {} as any;
             const localVarQueryParameter = {} as any;
+
+            if (granteeType !== undefined) {
+                localVarQueryParameter['grantee_type'] = granteeType;
+            }
 
             localVarHeaderParameter['Accept'] = 'application/json';
 
@@ -5009,11 +5120,14 @@ export const DefaultApiAxiosParamCreator = function (configuration?: Configurati
         /**
          * 
          * @summary Check knowledge base operation permission
+         * @param {string} action 
          * @param {string} kbId 
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
          */
-        apiCoreKbKbIdCanGet: async (kbId: string, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+        apiCoreKbKbIdCanGet: async (action: string, kbId: string, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+            // verify required parameter 'action' is not null or undefined
+            assertParamExists('apiCoreKbKbIdCanGet', 'action', action)
             // verify required parameter 'kbId' is not null or undefined
             assertParamExists('apiCoreKbKbIdCanGet', 'kbId', kbId)
             const localVarPath = `/api/core/kb/{kb_id}/can`
@@ -5028,6 +5142,10 @@ export const DefaultApiAxiosParamCreator = function (configuration?: Configurati
             const localVarRequestOptions = { method: 'GET', ...baseOptions, ...options};
             const localVarHeaderParameter = {} as any;
             const localVarQueryParameter = {} as any;
+
+            if (action !== undefined) {
+                localVarQueryParameter['action'] = action;
+            }
 
             localVarHeaderParameter['Accept'] = 'application/json';
 
@@ -5263,6 +5381,80 @@ export const DefaultApiAxiosParamCreator = function (configuration?: Configurati
             }
 
             const localVarRequestOptions = { method: 'GET', ...baseOptions, ...options};
+            const localVarHeaderParameter = {} as any;
+            const localVarQueryParameter = {} as any;
+
+
+            setSearchParams(localVarUrlObj, localVarQueryParameter);
+            let headersFromBaseOptions = baseOptions && baseOptions.headers ? baseOptions.headers : {};
+            localVarRequestOptions.headers = {...localVarHeaderParameter, ...headersFromBaseOptions, ...options.headers};
+
+            return {
+                url: toPathString(localVarUrlObj),
+                options: localVarRequestOptions,
+            };
+        },
+        /**
+         * 
+         * @summary DELETE /model_providers/{model_provider_id}/groups/{group_id}/keys
+         * @param {string} modelProviderId 
+         * @param {string} groupId 
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreModelProvidersModelProviderIdGroupsGroupIdKeysDelete: async (modelProviderId: string, groupId: string, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+            // verify required parameter 'modelProviderId' is not null or undefined
+            assertParamExists('apiCoreModelProvidersModelProviderIdGroupsGroupIdKeysDelete', 'modelProviderId', modelProviderId)
+            // verify required parameter 'groupId' is not null or undefined
+            assertParamExists('apiCoreModelProvidersModelProviderIdGroupsGroupIdKeysDelete', 'groupId', groupId)
+            const localVarPath = `/api/core/model_providers/{model_provider_id}/groups/{group_id}/keys`
+                .replace(`{${"model_provider_id"}}`, encodeURIComponent(String(modelProviderId)))
+                .replace(`{${"group_id"}}`, encodeURIComponent(String(groupId)));
+            // use dummy base URL string because the URL constructor only accepts absolute URLs.
+            const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+            let baseOptions;
+            if (configuration) {
+                baseOptions = configuration.baseOptions;
+            }
+
+            const localVarRequestOptions = { method: 'DELETE', ...baseOptions, ...options};
+            const localVarHeaderParameter = {} as any;
+            const localVarQueryParameter = {} as any;
+
+
+            setSearchParams(localVarUrlObj, localVarQueryParameter);
+            let headersFromBaseOptions = baseOptions && baseOptions.headers ? baseOptions.headers : {};
+            localVarRequestOptions.headers = {...localVarHeaderParameter, ...headersFromBaseOptions, ...options.headers};
+
+            return {
+                url: toPathString(localVarUrlObj),
+                options: localVarRequestOptions,
+            };
+        },
+        /**
+         * 
+         * @summary POST /model_providers/{model_provider_id}/groups/{group_id}/keys
+         * @param {string} modelProviderId 
+         * @param {string} groupId 
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreModelProvidersModelProviderIdGroupsGroupIdKeysPost: async (modelProviderId: string, groupId: string, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+            // verify required parameter 'modelProviderId' is not null or undefined
+            assertParamExists('apiCoreModelProvidersModelProviderIdGroupsGroupIdKeysPost', 'modelProviderId', modelProviderId)
+            // verify required parameter 'groupId' is not null or undefined
+            assertParamExists('apiCoreModelProvidersModelProviderIdGroupsGroupIdKeysPost', 'groupId', groupId)
+            const localVarPath = `/api/core/model_providers/{model_provider_id}/groups/{group_id}/keys`
+                .replace(`{${"model_provider_id"}}`, encodeURIComponent(String(modelProviderId)))
+                .replace(`{${"group_id"}}`, encodeURIComponent(String(groupId)));
+            // use dummy base URL string because the URL constructor only accepts absolute URLs.
+            const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+            let baseOptions;
+            if (configuration) {
+                baseOptions = configuration.baseOptions;
+            }
+
+            const localVarRequestOptions = { method: 'POST', ...baseOptions, ...options};
             const localVarHeaderParameter = {} as any;
             const localVarQueryParameter = {} as any;
 
@@ -5543,6 +5735,41 @@ export const DefaultApiAxiosParamCreator = function (configuration?: Configurati
             setSearchParams(localVarUrlObj, localVarQueryParameter);
             let headersFromBaseOptions = baseOptions && baseOptions.headers ? baseOptions.headers : {};
             localVarRequestOptions.headers = {...localVarHeaderParameter, ...headersFromBaseOptions, ...options.headers};
+
+            return {
+                url: toPathString(localVarUrlObj),
+                options: localVarRequestOptions,
+            };
+        },
+        /**
+         * 
+         * @summary Polish prompt
+         * @param {PromptPolishRequest} promptPolishRequest 
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCorePromptsPolishPost: async (promptPolishRequest: PromptPolishRequest, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+            // verify required parameter 'promptPolishRequest' is not null or undefined
+            assertParamExists('apiCorePromptsPolishPost', 'promptPolishRequest', promptPolishRequest)
+            const localVarPath = `/api/core/prompts:polish`;
+            // use dummy base URL string because the URL constructor only accepts absolute URLs.
+            const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+            let baseOptions;
+            if (configuration) {
+                baseOptions = configuration.baseOptions;
+            }
+
+            const localVarRequestOptions = { method: 'POST', ...baseOptions, ...options};
+            const localVarHeaderParameter = {} as any;
+            const localVarQueryParameter = {} as any;
+
+            localVarHeaderParameter['Content-Type'] = 'application/json';
+            localVarHeaderParameter['Accept'] = 'application/json';
+
+            setSearchParams(localVarUrlObj, localVarQueryParameter);
+            let headersFromBaseOptions = baseOptions && baseOptions.headers ? baseOptions.headers : {};
+            localVarRequestOptions.headers = {...localVarHeaderParameter, ...headersFromBaseOptions, ...options.headers};
+            localVarRequestOptions.data = serializeDataIfNeeded(promptPolishRequest, localVarRequestOptions, configuration)
 
             return {
                 url: toPathString(localVarUrlObj),
@@ -6141,6 +6368,19 @@ export const DefaultApiFp = function(configuration?: Configuration) {
         },
         /**
          * 
+         * @summary POST /builtin-skills/{builtin_skill_uid}:enable
+         * @param {string} builtinSkillUid 
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        async apiCoreBuiltinSkillsBuiltinSkillUidEnablePost(builtinSkillUid: string, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<void>> {
+            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreBuiltinSkillsBuiltinSkillUidEnablePost(builtinSkillUid, options);
+            const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+            const localVarOperationServerBasePath = operationServerMap['DefaultApi.apiCoreBuiltinSkillsBuiltinSkillUidEnablePost']?.[localVarOperationServerIndex]?.url;
+            return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
+        },
+        /**
+         * 
          * @summary Chat with knowledge base
          * @param {ApiCoreChatPostRequest} [apiCoreChatPostRequest] 
          * @param {*} [options] Override http request option.
@@ -6519,12 +6759,13 @@ export const DefaultApiFp = function(configuration?: Configuration) {
          * 
          * @summary Search dataset members
          * @param {string} dataset 
+         * @param {string} [namePrefix] 
          * @param {SearchDatasetMemberRequest} [searchDatasetMemberRequest] 
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
          */
-        async apiCoreDatasetsDatasetMembersSearchPost(dataset: string, searchDatasetMemberRequest?: SearchDatasetMemberRequest, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<ListDatasetMembersResponse>> {
-            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreDatasetsDatasetMembersSearchPost(dataset, searchDatasetMemberRequest, options);
+        async apiCoreDatasetsDatasetMembersSearchPost(dataset: string, namePrefix?: string, searchDatasetMemberRequest?: SearchDatasetMemberRequest, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<ListDatasetMembersResponse>> {
+            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreDatasetsDatasetMembersSearchPost(dataset, namePrefix, searchDatasetMemberRequest, options);
             const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
             const localVarOperationServerBasePath = operationServerMap['DefaultApi.apiCoreDatasetsDatasetMembersSearchPost']?.[localVarOperationServerIndex]?.url;
             return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
@@ -6741,11 +6982,12 @@ export const DefaultApiFp = function(configuration?: Configuration) {
          * 
          * @summary ACL list
          * @param {string} kbId 
+         * @param {string} [granteeType] 
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
          */
-        async apiCoreKbKbIdAclGet(kbId: string, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<ApiCoreKbKbIdAclGet200Response>> {
-            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreKbKbIdAclGet(kbId, options);
+        async apiCoreKbKbIdAclGet(kbId: string, granteeType?: string, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<ApiCoreKbKbIdAclGet200Response>> {
+            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreKbKbIdAclGet(kbId, granteeType, options);
             const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
             const localVarOperationServerBasePath = operationServerMap['DefaultApi.apiCoreKbKbIdAclGet']?.[localVarOperationServerIndex]?.url;
             return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
@@ -6794,12 +7036,13 @@ export const DefaultApiFp = function(configuration?: Configuration) {
         /**
          * 
          * @summary Check knowledge base operation permission
+         * @param {string} action 
          * @param {string} kbId 
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
          */
-        async apiCoreKbKbIdCanGet(kbId: string, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<ApiCoreKbKbIdCanGet200Response>> {
-            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreKbKbIdCanGet(kbId, options);
+        async apiCoreKbKbIdCanGet(action: string, kbId: string, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<ApiCoreKbKbIdCanGet200Response>> {
+            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreKbKbIdCanGet(action, kbId, options);
             const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
             const localVarOperationServerBasePath = operationServerMap['DefaultApi.apiCoreKbKbIdCanGet']?.[localVarOperationServerIndex]?.url;
             return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
@@ -6886,6 +7129,34 @@ export const DefaultApiFp = function(configuration?: Configuration) {
             const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreListKbGroupsGet(options);
             const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
             const localVarOperationServerBasePath = operationServerMap['DefaultApi.apiCoreListKbGroupsGet']?.[localVarOperationServerIndex]?.url;
+            return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
+        },
+        /**
+         * 
+         * @summary DELETE /model_providers/{model_provider_id}/groups/{group_id}/keys
+         * @param {string} modelProviderId 
+         * @param {string} groupId 
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        async apiCoreModelProvidersModelProviderIdGroupsGroupIdKeysDelete(modelProviderId: string, groupId: string, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<void>> {
+            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreModelProvidersModelProviderIdGroupsGroupIdKeysDelete(modelProviderId, groupId, options);
+            const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+            const localVarOperationServerBasePath = operationServerMap['DefaultApi.apiCoreModelProvidersModelProviderIdGroupsGroupIdKeysDelete']?.[localVarOperationServerIndex]?.url;
+            return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
+        },
+        /**
+         * 
+         * @summary POST /model_providers/{model_provider_id}/groups/{group_id}/keys
+         * @param {string} modelProviderId 
+         * @param {string} groupId 
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        async apiCoreModelProvidersModelProviderIdGroupsGroupIdKeysPost(modelProviderId: string, groupId: string, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<void>> {
+            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreModelProvidersModelProviderIdGroupsGroupIdKeysPost(modelProviderId, groupId, options);
+            const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+            const localVarOperationServerBasePath = operationServerMap['DefaultApi.apiCoreModelProvidersModelProviderIdGroupsGroupIdKeysPost']?.[localVarOperationServerIndex]?.url;
             return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
         },
         /**
@@ -6990,6 +7261,19 @@ export const DefaultApiFp = function(configuration?: Configuration) {
             const localVarAxiosArgs = await localVarAxiosParamCreator.apiCorePromptsNameUnsetDefaultPost(name, options);
             const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
             const localVarOperationServerBasePath = operationServerMap['DefaultApi.apiCorePromptsNameUnsetDefaultPost']?.[localVarOperationServerIndex]?.url;
+            return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
+        },
+        /**
+         * 
+         * @summary Polish prompt
+         * @param {PromptPolishRequest} promptPolishRequest 
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        async apiCorePromptsPolishPost(promptPolishRequest: PromptPolishRequest, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<PromptPolishResponse>> {
+            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCorePromptsPolishPost(promptPolishRequest, options);
+            const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+            const localVarOperationServerBasePath = operationServerMap['DefaultApi.apiCorePromptsPolishPost']?.[localVarOperationServerIndex]?.url;
             return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
         },
         /**
@@ -7326,6 +7610,16 @@ export const DefaultApiFactory = function (configuration?: Configuration, basePa
         },
         /**
          * 
+         * @summary POST /builtin-skills/{builtin_skill_uid}:enable
+         * @param {DefaultApiApiCoreBuiltinSkillsBuiltinSkillUidEnablePostRequest} requestParameters Request parameters.
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreBuiltinSkillsBuiltinSkillUidEnablePost(requestParameters: DefaultApiApiCoreBuiltinSkillsBuiltinSkillUidEnablePostRequest, options?: RawAxiosRequestConfig): AxiosPromise<void> {
+            return localVarFp.apiCoreBuiltinSkillsBuiltinSkillUidEnablePost(requestParameters.builtinSkillUid, options).then((request) => request(axios, basePath));
+        },
+        /**
+         * 
          * @summary Chat with knowledge base
          * @param {DefaultApiApiCoreChatPostRequest} requestParameters Request parameters.
          * @param {*} [options] Override http request option.
@@ -7610,7 +7904,7 @@ export const DefaultApiFactory = function (configuration?: Configuration, basePa
          * @throws {RequiredError}
          */
         apiCoreDatasetsDatasetMembersSearchPost(requestParameters: DefaultApiApiCoreDatasetsDatasetMembersSearchPostRequest, options?: RawAxiosRequestConfig): AxiosPromise<ListDatasetMembersResponse> {
-            return localVarFp.apiCoreDatasetsDatasetMembersSearchPost(requestParameters.dataset, requestParameters.searchDatasetMemberRequest, options).then((request) => request(axios, basePath));
+            return localVarFp.apiCoreDatasetsDatasetMembersSearchPost(requestParameters.dataset, requestParameters.namePrefix, requestParameters.searchDatasetMemberRequest, options).then((request) => request(axios, basePath));
         },
         /**
          * 
@@ -7765,7 +8059,7 @@ export const DefaultApiFactory = function (configuration?: Configuration, basePa
          * @throws {RequiredError}
          */
         apiCoreKbKbIdAclGet(requestParameters: DefaultApiApiCoreKbKbIdAclGetRequest, options?: RawAxiosRequestConfig): AxiosPromise<ApiCoreKbKbIdAclGet200Response> {
-            return localVarFp.apiCoreKbKbIdAclGet(requestParameters.kbId, options).then((request) => request(axios, basePath));
+            return localVarFp.apiCoreKbKbIdAclGet(requestParameters.kbId, requestParameters.granteeType, options).then((request) => request(axios, basePath));
         },
         /**
          * 
@@ -7805,7 +8099,7 @@ export const DefaultApiFactory = function (configuration?: Configuration, basePa
          * @throws {RequiredError}
          */
         apiCoreKbKbIdCanGet(requestParameters: DefaultApiApiCoreKbKbIdCanGetRequest, options?: RawAxiosRequestConfig): AxiosPromise<ApiCoreKbKbIdCanGet200Response> {
-            return localVarFp.apiCoreKbKbIdCanGet(requestParameters.kbId, options).then((request) => request(axios, basePath));
+            return localVarFp.apiCoreKbKbIdCanGet(requestParameters.action, requestParameters.kbId, options).then((request) => request(axios, basePath));
         },
         /**
          * 
@@ -7865,6 +8159,26 @@ export const DefaultApiFactory = function (configuration?: Configuration, basePa
          */
         apiCoreListKbGroupsGet(options?: RawAxiosRequestConfig): AxiosPromise<void> {
             return localVarFp.apiCoreListKbGroupsGet(options).then((request) => request(axios, basePath));
+        },
+        /**
+         * 
+         * @summary DELETE /model_providers/{model_provider_id}/groups/{group_id}/keys
+         * @param {DefaultApiApiCoreModelProvidersModelProviderIdGroupsGroupIdKeysDeleteRequest} requestParameters Request parameters.
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreModelProvidersModelProviderIdGroupsGroupIdKeysDelete(requestParameters: DefaultApiApiCoreModelProvidersModelProviderIdGroupsGroupIdKeysDeleteRequest, options?: RawAxiosRequestConfig): AxiosPromise<void> {
+            return localVarFp.apiCoreModelProvidersModelProviderIdGroupsGroupIdKeysDelete(requestParameters.modelProviderId, requestParameters.groupId, options).then((request) => request(axios, basePath));
+        },
+        /**
+         * 
+         * @summary POST /model_providers/{model_provider_id}/groups/{group_id}/keys
+         * @param {DefaultApiApiCoreModelProvidersModelProviderIdGroupsGroupIdKeysPostRequest} requestParameters Request parameters.
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreModelProvidersModelProviderIdGroupsGroupIdKeysPost(requestParameters: DefaultApiApiCoreModelProvidersModelProviderIdGroupsGroupIdKeysPostRequest, options?: RawAxiosRequestConfig): AxiosPromise<void> {
+            return localVarFp.apiCoreModelProvidersModelProviderIdGroupsGroupIdKeysPost(requestParameters.modelProviderId, requestParameters.groupId, options).then((request) => request(axios, basePath));
         },
         /**
          * 
@@ -7943,6 +8257,16 @@ export const DefaultApiFactory = function (configuration?: Configuration, basePa
          */
         apiCorePromptsNameUnsetDefaultPost(requestParameters: DefaultApiApiCorePromptsNameUnsetDefaultPostRequest, options?: RawAxiosRequestConfig): AxiosPromise<object> {
             return localVarFp.apiCorePromptsNameUnsetDefaultPost(requestParameters.name, options).then((request) => request(axios, basePath));
+        },
+        /**
+         * 
+         * @summary Polish prompt
+         * @param {DefaultApiApiCorePromptsPolishPostRequest} requestParameters Request parameters.
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCorePromptsPolishPost(requestParameters: DefaultApiApiCorePromptsPolishPostRequest, options?: RawAxiosRequestConfig): AxiosPromise<PromptPolishResponse> {
+            return localVarFp.apiCorePromptsPolishPost(requestParameters.promptPolishRequest, options).then((request) => request(axios, basePath));
         },
         /**
          * 
@@ -8172,6 +8496,13 @@ export interface DefaultApiApiCoreAgentThreadsThreadIdStartPostRequest {
 }
 
 /**
+ * Request parameters for apiCoreBuiltinSkillsBuiltinSkillUidEnablePost operation in DefaultApi.
+ */
+export interface DefaultApiApiCoreBuiltinSkillsBuiltinSkillUidEnablePostRequest {
+    readonly builtinSkillUid: string
+}
+
+/**
  * Request parameters for apiCoreChatPost operation in DefaultApi.
  */
 export interface DefaultApiApiCoreChatPostRequest {
@@ -8387,6 +8718,8 @@ export interface DefaultApiApiCoreDatasetsDatasetMembersGroupsGroupIdPatchReques
 export interface DefaultApiApiCoreDatasetsDatasetMembersSearchPostRequest {
     readonly dataset: string
 
+    readonly namePrefix?: string
+
     readonly searchDatasetMemberRequest?: SearchDatasetMemberRequest
 }
 
@@ -8501,6 +8834,8 @@ export interface DefaultApiApiCoreKbKbIdAclBatchPostRequest {
  */
 export interface DefaultApiApiCoreKbKbIdAclGetRequest {
     readonly kbId: string
+
+    readonly granteeType?: string
 }
 
 /**
@@ -8532,6 +8867,8 @@ export interface DefaultApiApiCoreKbKbIdAuthorizationPostRequest {
  * Request parameters for apiCoreKbKbIdCanGet operation in DefaultApi.
  */
 export interface DefaultApiApiCoreKbKbIdCanGetRequest {
+    readonly action: string
+
     readonly kbId: string
 }
 
@@ -8585,6 +8922,24 @@ export interface DefaultApiApiCoreListFilesInGroupGetRequest {
 }
 
 /**
+ * Request parameters for apiCoreModelProvidersModelProviderIdGroupsGroupIdKeysDelete operation in DefaultApi.
+ */
+export interface DefaultApiApiCoreModelProvidersModelProviderIdGroupsGroupIdKeysDeleteRequest {
+    readonly modelProviderId: string
+
+    readonly groupId: string
+}
+
+/**
+ * Request parameters for apiCoreModelProvidersModelProviderIdGroupsGroupIdKeysPost operation in DefaultApi.
+ */
+export interface DefaultApiApiCoreModelProvidersModelProviderIdGroupsGroupIdKeysPostRequest {
+    readonly modelProviderId: string
+
+    readonly groupId: string
+}
+
+/**
  * Request parameters for apiCorePromptsGet operation in DefaultApi.
  */
 export interface DefaultApiApiCorePromptsGetRequest {
@@ -8628,6 +8983,13 @@ export interface DefaultApiApiCorePromptsNameSetDefaultPostRequest {
  */
 export interface DefaultApiApiCorePromptsNameUnsetDefaultPostRequest {
     readonly name: string
+}
+
+/**
+ * Request parameters for apiCorePromptsPolishPost operation in DefaultApi.
+ */
+export interface DefaultApiApiCorePromptsPolishPostRequest {
+    readonly promptPolishRequest: PromptPolishRequest
 }
 
 /**
@@ -8895,6 +9257,17 @@ export class DefaultApi extends BaseAPI {
      */
     public apiCoreAgentThreadsThreadIdStartPost(requestParameters: DefaultApiApiCoreAgentThreadsThreadIdStartPostRequest, options?: RawAxiosRequestConfig) {
         return DefaultApiFp(this.configuration).apiCoreAgentThreadsThreadIdStartPost(requestParameters.threadId, options).then((request) => request(this.axios, this.basePath));
+    }
+
+    /**
+     * 
+     * @summary POST /builtin-skills/{builtin_skill_uid}:enable
+     * @param {DefaultApiApiCoreBuiltinSkillsBuiltinSkillUidEnablePostRequest} requestParameters Request parameters.
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    public apiCoreBuiltinSkillsBuiltinSkillUidEnablePost(requestParameters: DefaultApiApiCoreBuiltinSkillsBuiltinSkillUidEnablePostRequest, options?: RawAxiosRequestConfig) {
+        return DefaultApiFp(this.configuration).apiCoreBuiltinSkillsBuiltinSkillUidEnablePost(requestParameters.builtinSkillUid, options).then((request) => request(this.axios, this.basePath));
     }
 
     /**
@@ -9211,7 +9584,7 @@ export class DefaultApi extends BaseAPI {
      * @throws {RequiredError}
      */
     public apiCoreDatasetsDatasetMembersSearchPost(requestParameters: DefaultApiApiCoreDatasetsDatasetMembersSearchPostRequest, options?: RawAxiosRequestConfig) {
-        return DefaultApiFp(this.configuration).apiCoreDatasetsDatasetMembersSearchPost(requestParameters.dataset, requestParameters.searchDatasetMemberRequest, options).then((request) => request(this.axios, this.basePath));
+        return DefaultApiFp(this.configuration).apiCoreDatasetsDatasetMembersSearchPost(requestParameters.dataset, requestParameters.namePrefix, requestParameters.searchDatasetMemberRequest, options).then((request) => request(this.axios, this.basePath));
     }
 
     /**
@@ -9382,7 +9755,7 @@ export class DefaultApi extends BaseAPI {
      * @throws {RequiredError}
      */
     public apiCoreKbKbIdAclGet(requestParameters: DefaultApiApiCoreKbKbIdAclGetRequest, options?: RawAxiosRequestConfig) {
-        return DefaultApiFp(this.configuration).apiCoreKbKbIdAclGet(requestParameters.kbId, options).then((request) => request(this.axios, this.basePath));
+        return DefaultApiFp(this.configuration).apiCoreKbKbIdAclGet(requestParameters.kbId, requestParameters.granteeType, options).then((request) => request(this.axios, this.basePath));
     }
 
     /**
@@ -9426,7 +9799,7 @@ export class DefaultApi extends BaseAPI {
      * @throws {RequiredError}
      */
     public apiCoreKbKbIdCanGet(requestParameters: DefaultApiApiCoreKbKbIdCanGetRequest, options?: RawAxiosRequestConfig) {
-        return DefaultApiFp(this.configuration).apiCoreKbKbIdCanGet(requestParameters.kbId, options).then((request) => request(this.axios, this.basePath));
+        return DefaultApiFp(this.configuration).apiCoreKbKbIdCanGet(requestParameters.action, requestParameters.kbId, options).then((request) => request(this.axios, this.basePath));
     }
 
     /**
@@ -9492,6 +9865,28 @@ export class DefaultApi extends BaseAPI {
      */
     public apiCoreListKbGroupsGet(options?: RawAxiosRequestConfig) {
         return DefaultApiFp(this.configuration).apiCoreListKbGroupsGet(options).then((request) => request(this.axios, this.basePath));
+    }
+
+    /**
+     * 
+     * @summary DELETE /model_providers/{model_provider_id}/groups/{group_id}/keys
+     * @param {DefaultApiApiCoreModelProvidersModelProviderIdGroupsGroupIdKeysDeleteRequest} requestParameters Request parameters.
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    public apiCoreModelProvidersModelProviderIdGroupsGroupIdKeysDelete(requestParameters: DefaultApiApiCoreModelProvidersModelProviderIdGroupsGroupIdKeysDeleteRequest, options?: RawAxiosRequestConfig) {
+        return DefaultApiFp(this.configuration).apiCoreModelProvidersModelProviderIdGroupsGroupIdKeysDelete(requestParameters.modelProviderId, requestParameters.groupId, options).then((request) => request(this.axios, this.basePath));
+    }
+
+    /**
+     * 
+     * @summary POST /model_providers/{model_provider_id}/groups/{group_id}/keys
+     * @param {DefaultApiApiCoreModelProvidersModelProviderIdGroupsGroupIdKeysPostRequest} requestParameters Request parameters.
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    public apiCoreModelProvidersModelProviderIdGroupsGroupIdKeysPost(requestParameters: DefaultApiApiCoreModelProvidersModelProviderIdGroupsGroupIdKeysPostRequest, options?: RawAxiosRequestConfig) {
+        return DefaultApiFp(this.configuration).apiCoreModelProvidersModelProviderIdGroupsGroupIdKeysPost(requestParameters.modelProviderId, requestParameters.groupId, options).then((request) => request(this.axios, this.basePath));
     }
 
     /**
@@ -9578,6 +9973,17 @@ export class DefaultApi extends BaseAPI {
      */
     public apiCorePromptsNameUnsetDefaultPost(requestParameters: DefaultApiApiCorePromptsNameUnsetDefaultPostRequest, options?: RawAxiosRequestConfig) {
         return DefaultApiFp(this.configuration).apiCorePromptsNameUnsetDefaultPost(requestParameters.name, options).then((request) => request(this.axios, this.basePath));
+    }
+
+    /**
+     * 
+     * @summary Polish prompt
+     * @param {DefaultApiApiCorePromptsPolishPostRequest} requestParameters Request parameters.
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    public apiCorePromptsPolishPost(requestParameters: DefaultApiApiCorePromptsPolishPostRequest, options?: RawAxiosRequestConfig) {
+        return DefaultApiFp(this.configuration).apiCorePromptsPolishPost(requestParameters.promptPolishRequest, options).then((request) => request(this.axios, this.basePath));
     }
 
     /**
@@ -12596,13 +13002,13 @@ export const MemoryApiAxiosParamCreator = function (configuration?: Configuratio
         /**
          * 
          * @summary Upsert managed memory
-         * @param {ManagedStateUpsertOpenAPIRequest} managedStateUpsertOpenAPIRequest 
+         * @param {MemoryUpsertOpenAPIRequest} memoryUpsertOpenAPIRequest 
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
          */
-        apiCoreMemoryPut: async (managedStateUpsertOpenAPIRequest: ManagedStateUpsertOpenAPIRequest, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
-            // verify required parameter 'managedStateUpsertOpenAPIRequest' is not null or undefined
-            assertParamExists('apiCoreMemoryPut', 'managedStateUpsertOpenAPIRequest', managedStateUpsertOpenAPIRequest)
+        apiCoreMemoryPut: async (memoryUpsertOpenAPIRequest: MemoryUpsertOpenAPIRequest, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+            // verify required parameter 'memoryUpsertOpenAPIRequest' is not null or undefined
+            assertParamExists('apiCoreMemoryPut', 'memoryUpsertOpenAPIRequest', memoryUpsertOpenAPIRequest)
             const localVarPath = `/api/core/memory`;
             // use dummy base URL string because the URL constructor only accepts absolute URLs.
             const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
@@ -12621,7 +13027,7 @@ export const MemoryApiAxiosParamCreator = function (configuration?: Configuratio
             setSearchParams(localVarUrlObj, localVarQueryParameter);
             let headersFromBaseOptions = baseOptions && baseOptions.headers ? baseOptions.headers : {};
             localVarRequestOptions.headers = {...localVarHeaderParameter, ...headersFromBaseOptions, ...options.headers};
-            localVarRequestOptions.data = serializeDataIfNeeded(managedStateUpsertOpenAPIRequest, localVarRequestOptions, configuration)
+            localVarRequestOptions.data = serializeDataIfNeeded(memoryUpsertOpenAPIRequest, localVarRequestOptions, configuration)
 
             return {
                 url: toPathString(localVarUrlObj),
@@ -12724,12 +13130,12 @@ export const MemoryApiFp = function(configuration?: Configuration) {
         /**
          * 
          * @summary Upsert managed memory
-         * @param {ManagedStateUpsertOpenAPIRequest} managedStateUpsertOpenAPIRequest 
+         * @param {MemoryUpsertOpenAPIRequest} memoryUpsertOpenAPIRequest 
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
          */
-        async apiCoreMemoryPut(managedStateUpsertOpenAPIRequest: ManagedStateUpsertOpenAPIRequest, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<ManagedStateOpenAPIResponse>> {
-            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreMemoryPut(managedStateUpsertOpenAPIRequest, options);
+        async apiCoreMemoryPut(memoryUpsertOpenAPIRequest: MemoryUpsertOpenAPIRequest, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<ManagedStateOpenAPIResponse>> {
+            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreMemoryPut(memoryUpsertOpenAPIRequest, options);
             const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
             const localVarOperationServerBasePath = operationServerMap['MemoryApi.apiCoreMemoryPut']?.[localVarOperationServerIndex]?.url;
             return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
@@ -12801,7 +13207,7 @@ export const MemoryApiFactory = function (configuration?: Configuration, basePat
          * @throws {RequiredError}
          */
         apiCoreMemoryPut(requestParameters: MemoryApiApiCoreMemoryPutRequest, options?: RawAxiosRequestConfig): AxiosPromise<ManagedStateOpenAPIResponse> {
-            return localVarFp.apiCoreMemoryPut(requestParameters.managedStateUpsertOpenAPIRequest, options).then((request) => request(axios, basePath));
+            return localVarFp.apiCoreMemoryPut(requestParameters.memoryUpsertOpenAPIRequest, options).then((request) => request(axios, basePath));
         },
         /**
          * 
@@ -12827,7 +13233,7 @@ export interface MemoryApiApiCoreMemoryGeneratePostRequest {
  * Request parameters for apiCoreMemoryPut operation in MemoryApi.
  */
 export interface MemoryApiApiCoreMemoryPutRequest {
-    readonly managedStateUpsertOpenAPIRequest: ManagedStateUpsertOpenAPIRequest
+    readonly memoryUpsertOpenAPIRequest: MemoryUpsertOpenAPIRequest
 }
 
 /**
@@ -12890,7 +13296,7 @@ export class MemoryApi extends BaseAPI {
      * @throws {RequiredError}
      */
     public apiCoreMemoryPut(requestParameters: MemoryApiApiCoreMemoryPutRequest, options?: RawAxiosRequestConfig) {
-        return MemoryApiFp(this.configuration).apiCoreMemoryPut(requestParameters.managedStateUpsertOpenAPIRequest, options).then((request) => request(this.axios, this.basePath));
+        return MemoryApiFp(this.configuration).apiCoreMemoryPut(requestParameters.memoryUpsertOpenAPIRequest, options).then((request) => request(this.axios, this.basePath));
     }
 
     /**
@@ -13022,7 +13428,7 @@ export const ModelProvidersApiAxiosParamCreator = function (configuration?: Conf
             };
         },
         /**
-         * Validates credentials by proxying to the algorithm POST /api/model/check (LAZYRAG_ALGO_SERVICE_URL). Maps provider_name→source, base_url→url, api_key→api_key. The current user identity is injected by the auth gateway from the token. Response data is the algorithm JSON payload.
+         * Validates credentials. Model providers are proxied to the algorithm check endpoint; OCR cloud services use the same provider API/key request shape as the OCR readers. The current user identity is injected by the auth gateway from the token.
          * @summary Check model provider connectivity
          * @param {string} modelProviderId 
          * @param {string} groupId 
@@ -13226,7 +13632,7 @@ export const ModelProvidersApiAxiosParamCreator = function (configuration?: Conf
             };
         },
         /**
-         * Updates name, base_url, and optionally api_key for a group. The group is selected by path group_id. Omit api_key or send an empty string to keep the existing API key (e.g. when the UI shows a mask). The api_key is not returned in the response body.
+         * Updates name, base_url, and optionally api_key for a group. OCR cloud services validate the effective API key against the provider API before saving. Omit api_key or send an empty string to keep the existing API key. The api_key is not returned in the response body.
          * @summary Update model provider connection group
          * @param {string} modelProviderId 
          * @param {string} groupId 
@@ -13269,7 +13675,7 @@ export const ModelProvidersApiAxiosParamCreator = function (configuration?: Conf
             };
         },
         /**
-         * Creates a group (name, base_url, optional api_key) under the given user model provider. model_provider_id is the id from GET /model_providers. The api_key is not returned in the response body.
+         * Creates a group (name, base_url, optional api_key) under the given user model provider. OCR cloud services validate the submitted API key against the provider API before saving. The api_key is not returned in the response body.
          * @summary Create model provider connection group
          * @param {string} modelProviderId 
          * @param {CreateModelProviderGroupOpenAPIRequest} createModelProviderGroupOpenAPIRequest 
@@ -13329,6 +13735,41 @@ export const ModelProvidersApiAxiosParamCreator = function (configuration?: Conf
 
             if (modelType !== undefined) {
                 localVarQueryParameter['model_type'] = modelType;
+            }
+
+            localVarHeaderParameter['Accept'] = 'application/json';
+
+            setSearchParams(localVarUrlObj, localVarQueryParameter);
+            let headersFromBaseOptions = baseOptions && baseOptions.headers ? baseOptions.headers : {};
+            localVarRequestOptions.headers = {...localVarHeaderParameter, ...headersFromBaseOptions, ...options.headers};
+
+            return {
+                url: toPathString(localVarUrlObj),
+                options: localVarRequestOptions,
+            };
+        },
+        /**
+         * Lists verified provider groups owned by the current user for the given non-model category (for example ocr or search). Shared provider groups are intentionally excluded from this selectable list.
+         * @summary List verified provider groups for the current user
+         * @param {string} [category] 
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreModelProvidersProviderGroupsGet: async (category?: string, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+            const localVarPath = `/api/core/model_providers/provider_groups`;
+            // use dummy base URL string because the URL constructor only accepts absolute URLs.
+            const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+            let baseOptions;
+            if (configuration) {
+                baseOptions = configuration.baseOptions;
+            }
+
+            const localVarRequestOptions = { method: 'GET', ...baseOptions, ...options};
+            const localVarHeaderParameter = {} as any;
+            const localVarQueryParameter = {} as any;
+
+            if (category !== undefined) {
+                localVarQueryParameter['category'] = category;
             }
 
             localVarHeaderParameter['Accept'] = 'application/json';
@@ -13438,7 +13879,7 @@ export const ModelProvidersApiAxiosParamCreator = function (configuration?: Conf
             };
         },
         /**
-         * Upserts the selected provider group for the category derived from the group\'s parent provider. group_id must belong to the current user.
+         * Upserts selected provider groups by category. Request shape mirrors selected_models: selections contains category and group_id. Send an empty group_id to clear a category selection.
          * @summary Set selected provider group for a category
          * @param {SetSelectedProviderOpenAPIRequest} setSelectedProviderOpenAPIRequest 
          * @param {*} [options] Override http request option.
@@ -13508,8 +13949,8 @@ export const ModelProvidersApiAxiosParamCreator = function (configuration?: Conf
             };
         },
         /**
-         * Returns the verified provider group the current user has selected for the given category (e.g. ocr, search). Falls back to any share=true row when the user has no own selection. Response includes source: \'own\' or \'shared\'.
-         * @summary Get verified provider group for a category
+         * Checks the current user\'s selected provider for the given category first, then falls back to a shared provider selection. This endpoint does not return selectable group details.
+         * @summary Check whether a provider category is ready
          * @param {string} [category] 
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
@@ -13622,7 +14063,7 @@ export const ModelProvidersApiFp = function(configuration?: Configuration) {
             return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
         },
         /**
-         * Validates credentials by proxying to the algorithm POST /api/model/check (LAZYRAG_ALGO_SERVICE_URL). Maps provider_name→source, base_url→url, api_key→api_key. The current user identity is injected by the auth gateway from the token. Response data is the algorithm JSON payload.
+         * Validates credentials. Model providers are proxied to the algorithm check endpoint; OCR cloud services use the same provider API/key request shape as the OCR readers. The current user identity is injected by the auth gateway from the token.
          * @summary Check model provider connectivity
          * @param {string} modelProviderId 
          * @param {string} groupId 
@@ -13695,7 +14136,7 @@ export const ModelProvidersApiFp = function(configuration?: Configuration) {
             return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
         },
         /**
-         * Updates name, base_url, and optionally api_key for a group. The group is selected by path group_id. Omit api_key or send an empty string to keep the existing API key (e.g. when the UI shows a mask). The api_key is not returned in the response body.
+         * Updates name, base_url, and optionally api_key for a group. OCR cloud services validate the effective API key against the provider API before saving. Omit api_key or send an empty string to keep the existing API key. The api_key is not returned in the response body.
          * @summary Update model provider connection group
          * @param {string} modelProviderId 
          * @param {string} groupId 
@@ -13710,7 +14151,7 @@ export const ModelProvidersApiFp = function(configuration?: Configuration) {
             return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
         },
         /**
-         * Creates a group (name, base_url, optional api_key) under the given user model provider. model_provider_id is the id from GET /model_providers. The api_key is not returned in the response body.
+         * Creates a group (name, base_url, optional api_key) under the given user model provider. OCR cloud services validate the submitted API key against the provider API before saving. The api_key is not returned in the response body.
          * @summary Create model provider connection group
          * @param {string} modelProviderId 
          * @param {CreateModelProviderGroupOpenAPIRequest} createModelProviderGroupOpenAPIRequest 
@@ -13734,6 +14175,19 @@ export const ModelProvidersApiFp = function(configuration?: Configuration) {
             const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreModelProvidersModelsGet(modelType, options);
             const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
             const localVarOperationServerBasePath = operationServerMap['ModelProvidersApi.apiCoreModelProvidersModelsGet']?.[localVarOperationServerIndex]?.url;
+            return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
+        },
+        /**
+         * Lists verified provider groups owned by the current user for the given non-model category (for example ocr or search). Shared provider groups are intentionally excluded from this selectable list.
+         * @summary List verified provider groups for the current user
+         * @param {string} [category] 
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        async apiCoreModelProvidersProviderGroupsGet(category?: string, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<VerifiedProviderGroupsOpenAPIResponse>> {
+            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreModelProvidersProviderGroupsGet(category, options);
+            const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+            const localVarOperationServerBasePath = operationServerMap['ModelProvidersApi.apiCoreModelProvidersProviderGroupsGet']?.[localVarOperationServerIndex]?.url;
             return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
         },
         /**
@@ -13774,7 +14228,7 @@ export const ModelProvidersApiFp = function(configuration?: Configuration) {
             return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
         },
         /**
-         * Upserts the selected provider group for the category derived from the group\'s parent provider. group_id must belong to the current user.
+         * Upserts selected provider groups by category. Request shape mirrors selected_models: selections contains category and group_id. Send an empty group_id to clear a category selection.
          * @summary Set selected provider group for a category
          * @param {SetSelectedProviderOpenAPIRequest} setSelectedProviderOpenAPIRequest 
          * @param {*} [options] Override http request option.
@@ -13800,8 +14254,8 @@ export const ModelProvidersApiFp = function(configuration?: Configuration) {
             return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
         },
         /**
-         * Returns the verified provider group the current user has selected for the given category (e.g. ocr, search). Falls back to any share=true row when the user has no own selection. Response includes source: \'own\' or \'shared\'.
-         * @summary Get verified provider group for a category
+         * Checks the current user\'s selected provider for the given category first, then falls back to a shared provider selection. This endpoint does not return selectable group details.
+         * @summary Check whether a provider category is ready
          * @param {string} [category] 
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
@@ -13863,7 +14317,7 @@ export const ModelProvidersApiFactory = function (configuration?: Configuration,
             return localVarFp.apiCoreModelProvidersModelProviderIdGroupsGet(requestParameters.modelProviderId, options).then((request) => request(axios, basePath));
         },
         /**
-         * Validates credentials by proxying to the algorithm POST /api/model/check (LAZYRAG_ALGO_SERVICE_URL). Maps provider_name→source, base_url→url, api_key→api_key. The current user identity is injected by the auth gateway from the token. Response data is the algorithm JSON payload.
+         * Validates credentials. Model providers are proxied to the algorithm check endpoint; OCR cloud services use the same provider API/key request shape as the OCR readers. The current user identity is injected by the auth gateway from the token.
          * @summary Check model provider connectivity
          * @param {ModelProvidersApiApiCoreModelProvidersModelProviderIdGroupsGroupIdCheckPostRequest} requestParameters Request parameters.
          * @param {*} [options] Override http request option.
@@ -13913,7 +14367,7 @@ export const ModelProvidersApiFactory = function (configuration?: Configuration,
             return localVarFp.apiCoreModelProvidersModelProviderIdGroupsGroupIdModelsPost(requestParameters.modelProviderId, requestParameters.groupId, requestParameters.addModelProviderGroupModelOpenAPIRequest, options).then((request) => request(axios, basePath));
         },
         /**
-         * Updates name, base_url, and optionally api_key for a group. The group is selected by path group_id. Omit api_key or send an empty string to keep the existing API key (e.g. when the UI shows a mask). The api_key is not returned in the response body.
+         * Updates name, base_url, and optionally api_key for a group. OCR cloud services validate the effective API key against the provider API before saving. Omit api_key or send an empty string to keep the existing API key. The api_key is not returned in the response body.
          * @summary Update model provider connection group
          * @param {ModelProvidersApiApiCoreModelProvidersModelProviderIdGroupsGroupIdPatchRequest} requestParameters Request parameters.
          * @param {*} [options] Override http request option.
@@ -13923,7 +14377,7 @@ export const ModelProvidersApiFactory = function (configuration?: Configuration,
             return localVarFp.apiCoreModelProvidersModelProviderIdGroupsGroupIdPatch(requestParameters.modelProviderId, requestParameters.groupId, requestParameters.updateModelProviderGroupOpenAPIRequest, options).then((request) => request(axios, basePath));
         },
         /**
-         * Creates a group (name, base_url, optional api_key) under the given user model provider. model_provider_id is the id from GET /model_providers. The api_key is not returned in the response body.
+         * Creates a group (name, base_url, optional api_key) under the given user model provider. OCR cloud services validate the submitted API key against the provider API before saving. The api_key is not returned in the response body.
          * @summary Create model provider connection group
          * @param {ModelProvidersApiApiCoreModelProvidersModelProviderIdGroupsPostRequest} requestParameters Request parameters.
          * @param {*} [options] Override http request option.
@@ -13941,6 +14395,16 @@ export const ModelProvidersApiFactory = function (configuration?: Configuration,
          */
         apiCoreModelProvidersModelsGet(requestParameters: ModelProvidersApiApiCoreModelProvidersModelsGetRequest = {}, options?: RawAxiosRequestConfig): AxiosPromise<ListModelProviderGroupModelsOpenAPIResponse> {
             return localVarFp.apiCoreModelProvidersModelsGet(requestParameters.modelType, options).then((request) => request(axios, basePath));
+        },
+        /**
+         * Lists verified provider groups owned by the current user for the given non-model category (for example ocr or search). Shared provider groups are intentionally excluded from this selectable list.
+         * @summary List verified provider groups for the current user
+         * @param {ModelProvidersApiApiCoreModelProvidersProviderGroupsGetRequest} requestParameters Request parameters.
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreModelProvidersProviderGroupsGet(requestParameters: ModelProvidersApiApiCoreModelProvidersProviderGroupsGetRequest = {}, options?: RawAxiosRequestConfig): AxiosPromise<VerifiedProviderGroupsOpenAPIResponse> {
+            return localVarFp.apiCoreModelProvidersProviderGroupsGet(requestParameters.category, options).then((request) => request(axios, basePath));
         },
         /**
          * Returns the current user\'s selected model for each model_type.
@@ -13971,7 +14435,7 @@ export const ModelProvidersApiFactory = function (configuration?: Configuration,
             return localVarFp.apiCoreModelProvidersSelectedProvidersGet(options).then((request) => request(axios, basePath));
         },
         /**
-         * Upserts the selected provider group for the category derived from the group\'s parent provider. group_id must belong to the current user.
+         * Upserts selected provider groups by category. Request shape mirrors selected_models: selections contains category and group_id. Send an empty group_id to clear a category selection.
          * @summary Set selected provider group for a category
          * @param {ModelProvidersApiApiCoreModelProvidersSelectedProvidersPutRequest} requestParameters Request parameters.
          * @param {*} [options] Override http request option.
@@ -13991,8 +14455,8 @@ export const ModelProvidersApiFactory = function (configuration?: Configuration,
             return localVarFp.apiCoreModelProvidersSelectedProvidersSharePut(requestParameters.setSharedProviderOpenAPIRequest, options).then((request) => request(axios, basePath));
         },
         /**
-         * Returns the verified provider group the current user has selected for the given category (e.g. ocr, search). Falls back to any share=true row when the user has no own selection. Response includes source: \'own\' or \'shared\'.
-         * @summary Get verified provider group for a category
+         * Checks the current user\'s selected provider for the given category first, then falls back to a shared provider selection. This endpoint does not return selectable group details.
+         * @summary Check whether a provider category is ready
          * @param {ModelProvidersApiApiCoreModelProvidersVerifiedGetRequest} requestParameters Request parameters.
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
@@ -14109,6 +14573,13 @@ export interface ModelProvidersApiApiCoreModelProvidersModelsGetRequest {
 }
 
 /**
+ * Request parameters for apiCoreModelProvidersProviderGroupsGet operation in ModelProvidersApi.
+ */
+export interface ModelProvidersApiApiCoreModelProvidersProviderGroupsGetRequest {
+    readonly category?: string
+}
+
+/**
  * Request parameters for apiCoreModelProvidersSelectedModelsPut operation in ModelProvidersApi.
  */
 export interface ModelProvidersApiApiCoreModelProvidersSelectedModelsPutRequest {
@@ -14173,7 +14644,7 @@ export class ModelProvidersApi extends BaseAPI {
     }
 
     /**
-     * Validates credentials by proxying to the algorithm POST /api/model/check (LAZYRAG_ALGO_SERVICE_URL). Maps provider_name→source, base_url→url, api_key→api_key. The current user identity is injected by the auth gateway from the token. Response data is the algorithm JSON payload.
+     * Validates credentials. Model providers are proxied to the algorithm check endpoint; OCR cloud services use the same provider API/key request shape as the OCR readers. The current user identity is injected by the auth gateway from the token.
      * @summary Check model provider connectivity
      * @param {ModelProvidersApiApiCoreModelProvidersModelProviderIdGroupsGroupIdCheckPostRequest} requestParameters Request parameters.
      * @param {*} [options] Override http request option.
@@ -14228,7 +14699,7 @@ export class ModelProvidersApi extends BaseAPI {
     }
 
     /**
-     * Updates name, base_url, and optionally api_key for a group. The group is selected by path group_id. Omit api_key or send an empty string to keep the existing API key (e.g. when the UI shows a mask). The api_key is not returned in the response body.
+     * Updates name, base_url, and optionally api_key for a group. OCR cloud services validate the effective API key against the provider API before saving. Omit api_key or send an empty string to keep the existing API key. The api_key is not returned in the response body.
      * @summary Update model provider connection group
      * @param {ModelProvidersApiApiCoreModelProvidersModelProviderIdGroupsGroupIdPatchRequest} requestParameters Request parameters.
      * @param {*} [options] Override http request option.
@@ -14239,7 +14710,7 @@ export class ModelProvidersApi extends BaseAPI {
     }
 
     /**
-     * Creates a group (name, base_url, optional api_key) under the given user model provider. model_provider_id is the id from GET /model_providers. The api_key is not returned in the response body.
+     * Creates a group (name, base_url, optional api_key) under the given user model provider. OCR cloud services validate the submitted API key against the provider API before saving. The api_key is not returned in the response body.
      * @summary Create model provider connection group
      * @param {ModelProvidersApiApiCoreModelProvidersModelProviderIdGroupsPostRequest} requestParameters Request parameters.
      * @param {*} [options] Override http request option.
@@ -14258,6 +14729,17 @@ export class ModelProvidersApi extends BaseAPI {
      */
     public apiCoreModelProvidersModelsGet(requestParameters: ModelProvidersApiApiCoreModelProvidersModelsGetRequest = {}, options?: RawAxiosRequestConfig) {
         return ModelProvidersApiFp(this.configuration).apiCoreModelProvidersModelsGet(requestParameters.modelType, options).then((request) => request(this.axios, this.basePath));
+    }
+
+    /**
+     * Lists verified provider groups owned by the current user for the given non-model category (for example ocr or search). Shared provider groups are intentionally excluded from this selectable list.
+     * @summary List verified provider groups for the current user
+     * @param {ModelProvidersApiApiCoreModelProvidersProviderGroupsGetRequest} requestParameters Request parameters.
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    public apiCoreModelProvidersProviderGroupsGet(requestParameters: ModelProvidersApiApiCoreModelProvidersProviderGroupsGetRequest = {}, options?: RawAxiosRequestConfig) {
+        return ModelProvidersApiFp(this.configuration).apiCoreModelProvidersProviderGroupsGet(requestParameters.category, options).then((request) => request(this.axios, this.basePath));
     }
 
     /**
@@ -14292,7 +14774,7 @@ export class ModelProvidersApi extends BaseAPI {
     }
 
     /**
-     * Upserts the selected provider group for the category derived from the group\'s parent provider. group_id must belong to the current user.
+     * Upserts selected provider groups by category. Request shape mirrors selected_models: selections contains category and group_id. Send an empty group_id to clear a category selection.
      * @summary Set selected provider group for a category
      * @param {ModelProvidersApiApiCoreModelProvidersSelectedProvidersPutRequest} requestParameters Request parameters.
      * @param {*} [options] Override http request option.
@@ -14314,8 +14796,8 @@ export class ModelProvidersApi extends BaseAPI {
     }
 
     /**
-     * Returns the verified provider group the current user has selected for the given category (e.g. ocr, search). Falls back to any share=true row when the user has no own selection. Response includes source: \'own\' or \'shared\'.
-     * @summary Get verified provider group for a category
+     * Checks the current user\'s selected provider for the given category first, then falls back to a shared provider selection. This endpoint does not return selectable group details.
+     * @summary Check whether a provider category is ready
      * @param {ModelProvidersApiApiCoreModelProvidersVerifiedGetRequest} requestParameters Request parameters.
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
@@ -17753,6 +18235,250 @@ export class TasksApi extends BaseAPI {
      */
     public apiCoreDatasetsDatasetUploadsUploadIdPartsPartNumberPut(requestParameters: TasksApiApiCoreDatasetsDatasetUploadsUploadIdPartsPartNumberPutRequest, options?: RawAxiosRequestConfig) {
         return TasksApiFp(this.configuration).apiCoreDatasetsDatasetUploadsUploadIdPartsPartNumberPut(requestParameters.dataset, requestParameters.uploadId, requestParameters.partNumber, requestParameters.body, options).then((request) => request(this.axios, this.basePath));
+    }
+}
+
+
+
+/**
+ * ToolsApi - axios parameter creator
+ */
+export const ToolsApiAxiosParamCreator = function (configuration?: Configuration) {
+    return {
+        /**
+         * 
+         * @summary Tool list
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreToolsGet: async (options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+            const localVarPath = `/api/core/tools`;
+            // use dummy base URL string because the URL constructor only accepts absolute URLs.
+            const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+            let baseOptions;
+            if (configuration) {
+                baseOptions = configuration.baseOptions;
+            }
+
+            const localVarRequestOptions = { method: 'GET', ...baseOptions, ...options};
+            const localVarHeaderParameter = {} as any;
+            const localVarQueryParameter = {} as any;
+
+            localVarHeaderParameter['Accept'] = 'application/json';
+
+            setSearchParams(localVarUrlObj, localVarQueryParameter);
+            let headersFromBaseOptions = baseOptions && baseOptions.headers ? baseOptions.headers : {};
+            localVarRequestOptions.headers = {...localVarHeaderParameter, ...headersFromBaseOptions, ...options.headers};
+
+            return {
+                url: toPathString(localVarUrlObj),
+                options: localVarRequestOptions,
+            };
+        },
+        /**
+         * 
+         * @summary Disable tool
+         * @param {string} toolName 
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreToolsToolNameDisablePost: async (toolName: string, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+            // verify required parameter 'toolName' is not null or undefined
+            assertParamExists('apiCoreToolsToolNameDisablePost', 'toolName', toolName)
+            const localVarPath = `/api/core/tools/{tool_name}:disable`
+                .replace(`{${"tool_name"}}`, encodeURIComponent(String(toolName)));
+            // use dummy base URL string because the URL constructor only accepts absolute URLs.
+            const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+            let baseOptions;
+            if (configuration) {
+                baseOptions = configuration.baseOptions;
+            }
+
+            const localVarRequestOptions = { method: 'POST', ...baseOptions, ...options};
+            const localVarHeaderParameter = {} as any;
+            const localVarQueryParameter = {} as any;
+
+            localVarHeaderParameter['Accept'] = 'application/json';
+
+            setSearchParams(localVarUrlObj, localVarQueryParameter);
+            let headersFromBaseOptions = baseOptions && baseOptions.headers ? baseOptions.headers : {};
+            localVarRequestOptions.headers = {...localVarHeaderParameter, ...headersFromBaseOptions, ...options.headers};
+
+            return {
+                url: toPathString(localVarUrlObj),
+                options: localVarRequestOptions,
+            };
+        },
+        /**
+         * 
+         * @summary Enable tool
+         * @param {string} toolName 
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreToolsToolNameEnablePost: async (toolName: string, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+            // verify required parameter 'toolName' is not null or undefined
+            assertParamExists('apiCoreToolsToolNameEnablePost', 'toolName', toolName)
+            const localVarPath = `/api/core/tools/{tool_name}:enable`
+                .replace(`{${"tool_name"}}`, encodeURIComponent(String(toolName)));
+            // use dummy base URL string because the URL constructor only accepts absolute URLs.
+            const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+            let baseOptions;
+            if (configuration) {
+                baseOptions = configuration.baseOptions;
+            }
+
+            const localVarRequestOptions = { method: 'POST', ...baseOptions, ...options};
+            const localVarHeaderParameter = {} as any;
+            const localVarQueryParameter = {} as any;
+
+            localVarHeaderParameter['Accept'] = 'application/json';
+
+            setSearchParams(localVarUrlObj, localVarQueryParameter);
+            let headersFromBaseOptions = baseOptions && baseOptions.headers ? baseOptions.headers : {};
+            localVarRequestOptions.headers = {...localVarHeaderParameter, ...headersFromBaseOptions, ...options.headers};
+
+            return {
+                url: toPathString(localVarUrlObj),
+                options: localVarRequestOptions,
+            };
+        },
+    }
+};
+
+/**
+ * ToolsApi - functional programming interface
+ */
+export const ToolsApiFp = function(configuration?: Configuration) {
+    const localVarAxiosParamCreator = ToolsApiAxiosParamCreator(configuration)
+    return {
+        /**
+         * 
+         * @summary Tool list
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        async apiCoreToolsGet(options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<ToolListOpenAPIResponse>> {
+            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreToolsGet(options);
+            const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+            const localVarOperationServerBasePath = operationServerMap['ToolsApi.apiCoreToolsGet']?.[localVarOperationServerIndex]?.url;
+            return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
+        },
+        /**
+         * 
+         * @summary Disable tool
+         * @param {string} toolName 
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        async apiCoreToolsToolNameDisablePost(toolName: string, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<ToolStateOpenAPIResponse>> {
+            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreToolsToolNameDisablePost(toolName, options);
+            const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+            const localVarOperationServerBasePath = operationServerMap['ToolsApi.apiCoreToolsToolNameDisablePost']?.[localVarOperationServerIndex]?.url;
+            return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
+        },
+        /**
+         * 
+         * @summary Enable tool
+         * @param {string} toolName 
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        async apiCoreToolsToolNameEnablePost(toolName: string, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<ToolStateOpenAPIResponse>> {
+            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreToolsToolNameEnablePost(toolName, options);
+            const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+            const localVarOperationServerBasePath = operationServerMap['ToolsApi.apiCoreToolsToolNameEnablePost']?.[localVarOperationServerIndex]?.url;
+            return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
+        },
+    }
+};
+
+/**
+ * ToolsApi - factory interface
+ */
+export const ToolsApiFactory = function (configuration?: Configuration, basePath?: string, axios?: AxiosInstance) {
+    const localVarFp = ToolsApiFp(configuration)
+    return {
+        /**
+         * 
+         * @summary Tool list
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreToolsGet(options?: RawAxiosRequestConfig): AxiosPromise<ToolListOpenAPIResponse> {
+            return localVarFp.apiCoreToolsGet(options).then((request) => request(axios, basePath));
+        },
+        /**
+         * 
+         * @summary Disable tool
+         * @param {ToolsApiApiCoreToolsToolNameDisablePostRequest} requestParameters Request parameters.
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreToolsToolNameDisablePost(requestParameters: ToolsApiApiCoreToolsToolNameDisablePostRequest, options?: RawAxiosRequestConfig): AxiosPromise<ToolStateOpenAPIResponse> {
+            return localVarFp.apiCoreToolsToolNameDisablePost(requestParameters.toolName, options).then((request) => request(axios, basePath));
+        },
+        /**
+         * 
+         * @summary Enable tool
+         * @param {ToolsApiApiCoreToolsToolNameEnablePostRequest} requestParameters Request parameters.
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreToolsToolNameEnablePost(requestParameters: ToolsApiApiCoreToolsToolNameEnablePostRequest, options?: RawAxiosRequestConfig): AxiosPromise<ToolStateOpenAPIResponse> {
+            return localVarFp.apiCoreToolsToolNameEnablePost(requestParameters.toolName, options).then((request) => request(axios, basePath));
+        },
+    };
+};
+
+/**
+ * Request parameters for apiCoreToolsToolNameDisablePost operation in ToolsApi.
+ */
+export interface ToolsApiApiCoreToolsToolNameDisablePostRequest {
+    readonly toolName: string
+}
+
+/**
+ * Request parameters for apiCoreToolsToolNameEnablePost operation in ToolsApi.
+ */
+export interface ToolsApiApiCoreToolsToolNameEnablePostRequest {
+    readonly toolName: string
+}
+
+/**
+ * ToolsApi - object-oriented interface
+ */
+export class ToolsApi extends BaseAPI {
+    /**
+     * 
+     * @summary Tool list
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    public apiCoreToolsGet(options?: RawAxiosRequestConfig) {
+        return ToolsApiFp(this.configuration).apiCoreToolsGet(options).then((request) => request(this.axios, this.basePath));
+    }
+
+    /**
+     * 
+     * @summary Disable tool
+     * @param {ToolsApiApiCoreToolsToolNameDisablePostRequest} requestParameters Request parameters.
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    public apiCoreToolsToolNameDisablePost(requestParameters: ToolsApiApiCoreToolsToolNameDisablePostRequest, options?: RawAxiosRequestConfig) {
+        return ToolsApiFp(this.configuration).apiCoreToolsToolNameDisablePost(requestParameters.toolName, options).then((request) => request(this.axios, this.basePath));
+    }
+
+    /**
+     * 
+     * @summary Enable tool
+     * @param {ToolsApiApiCoreToolsToolNameEnablePostRequest} requestParameters Request parameters.
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    public apiCoreToolsToolNameEnablePost(requestParameters: ToolsApiApiCoreToolsToolNameEnablePostRequest, options?: RawAxiosRequestConfig) {
+        return ToolsApiFp(this.configuration).apiCoreToolsToolNameEnablePost(requestParameters.toolName, options).then((request) => request(this.axios, this.basePath));
     }
 }
 

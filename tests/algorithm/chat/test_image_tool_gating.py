@@ -37,8 +37,8 @@ def test_dynamic_image_tools_require_model_config(tmp_path, monkeypatch):
     assert 'image_editor' not in names
 
     mc = {
-        'image_generator': {'source': 'qwen', 'model': 'wanx', 'api_key': 'k1'},
-        'image_editor': {'source': 'qwen', 'model': 'wanx-edit', 'api_key': 'k2'},
+        'text2image': {'source': 'qwen', 'model': 'wanx', 'api_key': 'k1'},
+        'image_editing': {'source': 'qwen', 'model': 'wanx-edit', 'api_key': 'k2'},
     }
     import lazyllm
     from lazymind.model_config import inject_model_config
@@ -50,16 +50,40 @@ def test_dynamic_image_tools_require_model_config(tmp_path, monkeypatch):
     lazyllm.inject_model_config(None)
 
 
-def test_static_inner_roles_always_available(tmp_path, monkeypatch):
+def test_static_inner_roles_require_injected_config(tmp_path, monkeypatch):
     config_path = write_yaml(tmp_path, """
         image_generator:
-          - source: siliconflow
-            type: text2image
-            name: test-model
+          source: dynamic
+          type: text2image
+          name: test-model
     """)
     monkeypatch.setenv('LAZYMIND_MODEL_CONFIG_PATH', str(config_path))
+    assert not is_model_role_available('image_generator')
+    assert 'image_generator' not in _active_tool_names()
+
+
+def test_frontend_model_keys_map_to_image_roles(tmp_path, monkeypatch):
+    config_path = write_yaml(tmp_path, """
+        image_generator:
+          source: dynamic
+          type: text2image
+        image_editor:
+          source: dynamic
+          type: image_editing
+    """)
+    monkeypatch.setenv('LAZYMIND_MODEL_CONFIG_PATH', str(config_path))
+    import lazyllm
+    from lazymind.model_config import inject_model_config
+
+    inject_model_config({
+        'text2image': {'source': 'qwen', 'model': 'wanx', 'api_key': 'k1'},
+        'image_editing': {'source': 'qwen', 'model': 'wanx-edit', 'api_key': 'k2'},
+    })
     assert is_model_role_available('image_generator')
+    assert is_model_role_available('image_editor')
     assert 'image_generator' in _active_tool_names()
+    assert 'image_editor' in _active_tool_names()
+    lazyllm.inject_model_config(None)
 
 
 def test_runtime_models_declares_image_roles(tmp_path, monkeypatch):

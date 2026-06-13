@@ -12,6 +12,7 @@ from lazyllm.tools.tools.search import (
     BochaSearch,
     GoogleSearch,
     SciverseSearch,
+    TavilySearch,
     WikipediaSearch,
 )
 
@@ -19,7 +20,6 @@ from lazymind.chat.engine.tools import (
     KBToolGroup,
     TempKBToolGroup,
     calculator,
-    describe_attached_images,
     image_editor,
     image_generator,
     memory_editor,
@@ -40,13 +40,29 @@ class ToolGroupConfig:
     model_role: str | None = None
 
 
+_WEB_SEARCH_ENGINE_INSTANCES: list = [
+    GoogleSearch(),
+    BingSearch(),
+    BochaSearch(),
+    TavilySearch(),
+]
+
+_ACADEMIC_SEARCH_ENGINE_INSTANCES: list = [
+    SciverseSearch(),
+    ArxivSearch(skip_auth=True),
+]
+
+_PICK_FIRST_VALID_GROUPS = {
+    'web_search': ('Search the web for current information', _WEB_SEARCH_ENGINE_INSTANCES),
+    'academic_search': ('Search academic papers and scientific literature', _ACADEMIC_SEARCH_ENGINE_INSTANCES),
+}
+
 SKILL_TOOL_GROUP = ToolGroupConfig(
     name='skill',
     label='技能工具',
     description='利用已安装的技能进行查询、读文件、执行脚本',
     instance=None,
 )
-
 
 DEFAULT_TOOLS: list[ToolGroupConfig] = [
     ToolGroupConfig(
@@ -74,34 +90,16 @@ DEFAULT_TOOLS: list[ToolGroupConfig] = [
         instance=WikipediaSearch(skip_auth=True),
     ),
     ToolGroupConfig(
-        name='arxiv',
-        label='Arxiv 论文搜索',
-        description='从 Arxiv 搜索学术论文',
-        instance=ArxivSearch(skip_auth=True),
+        name='web_search',
+        label='网页搜索',
+        description='使用搜索引擎检索互联网内容，自动选择可用的搜索服务',
+        instance=None,
     ),
     ToolGroupConfig(
-        name='sciverse',
-        label='Sciverse 论文搜索',
-        description='从 Sciverse 搜索科研论文、元数据和文献片段',
-        instance=SciverseSearch(),
-    ),
-    ToolGroupConfig(
-        name='google',
-        label='Google 搜索',
-        description='使用 Google 搜索引擎检索互联网内容',
-        instance=GoogleSearch(),
-    ),
-    ToolGroupConfig(
-        name='bing',
-        label='Bing 搜索',
-        description='使用 Bing 搜索引擎检索互联网内容',
-        instance=BingSearch(),
-    ),
-    ToolGroupConfig(
-        name='bocha',
-        label='Bocha 搜索',
-        description='使用 Bocha 搜索引擎检索互联网内容',
-        instance=BochaSearch(),
+        name='academic_search',
+        label='学术搜索',
+        description='搜索学术论文和科学文献，自动选择可用的学术搜索服务',
+        instance=None,
     ),
     ToolGroupConfig(
         name='url_fetch',
@@ -114,13 +112,6 @@ DEFAULT_TOOLS: list[ToolGroupConfig] = [
         label='多模态识别',
         description='从图片中提取文字描述',
         instance=vision_extractor,
-        model_role='vlm',
-    ),
-    ToolGroupConfig(
-        name='describe_attached',
-        label='附件图片描述',
-        description='描述用户在本轮上传的图片内容',
-        instance=describe_attached_images,
         model_role='vlm',
     ),
     ToolGroupConfig(
@@ -200,6 +191,23 @@ def _extract_methods(instance: Any) -> list[dict]:
     return []
 
 
+def _extract_group_methods(instances: list) -> list[dict]:
+    methods = []
+    for inst in instances:
+        name = inst.__class__.__name__
+        try:
+            doc = inspect.getdoc(inst)
+            summary = docstring_parser.parse(doc).short_description if doc else ''
+        except Exception:
+            summary = ''
+        methods.append({
+            'name': name,
+            'summary': summary,
+            'active': _instance_is_active(inst),
+        })
+    return methods
+
+
 _SKILL_METHODS = [
     {'name': 'get_skill', 'summary': 'Get the full usage for a skill (SKILL.md).'},
     {'name': 'read_reference', 'summary': 'Read a reference file within a skill directory.'},
@@ -207,10 +215,33 @@ _SKILL_METHODS = [
 ]
 
 
+def _instance_is_active(instance: Any) -> bool:
+    key_source = getattr(instance, '__key_source__', None)
+    if key_source is None:
+        return True
+    try:
+        return bool(key_source())
+    except Exception:
+        return False
+
+
+def group_is_active(cfg: ToolGroupConfig) -> bool:
+    if cfg.model_role and not is_model_role_available(cfg.model_role):
+        return False
+    if cfg.instance is None:
+        return True
+    return _instance_is_active(cfg.instance)
+
+
 def get_all_tool_groups() -> list[dict]:
     result = []
     for cfg in DEFAULT_TOOLS:
-        methods = _extract_methods(cfg.instance)
+        if cfg.name == 'web_search':
+            methods = _extract_group_methods(_WEB_SEARCH_ENGINE_INSTANCES)
+        elif cfg.name == 'academic_search':
+            methods = _extract_group_methods(_ACADEMIC_SEARCH_ENGINE_INSTANCES)
+        else:
+            methods = _extract_methods(cfg.instance)
         result.append({
             'name': cfg.name,
             'label': cfg.label,
@@ -230,18 +261,6 @@ def get_all_tool_groups() -> list[dict]:
     return result
 
 
-def group_is_active(cfg: ToolGroupConfig) -> bool:
-    if cfg.model_role and not is_model_role_available(cfg.model_role):
-        return False
-    key_source = getattr(cfg.instance, '__key_source__', None)
-    if key_source is None:
-        return True
-    try:
-        return bool(key_source())
-    except Exception:
-        return False
-
-
 def filter_tools(
     configs: list[ToolGroupConfig],
     available_tools: list[str] | None = None,
@@ -253,4 +272,20 @@ def filter_tools(
         if not group_is_active(cfg):
             continue
         result.append(cfg)
+    return result
+
+
+def build_agent_tools(configs: list[ToolGroupConfig]) -> list:
+    result = []
+    for cfg in configs:
+        if cfg.name in _PICK_FIRST_VALID_GROUPS:
+            desc, instances = _PICK_FIRST_VALID_GROUPS[cfg.name]
+            result.append(dict(
+                name=cfg.name,
+                desc=desc,
+                pick_first_valid=True,
+                tools=list(instances),
+            ))
+        else:
+            result.append(cfg.instance)
     return result

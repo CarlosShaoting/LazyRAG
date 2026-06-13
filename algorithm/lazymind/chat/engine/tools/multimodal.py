@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from typing import Any, Dict, List, Optional
 
 import lazyllm
@@ -9,7 +8,13 @@ from lazyllm.components.formatter import encode_query_with_filepaths
 
 from lazymind.chat.engine.prompts import VISION_EXTRACT_DEFAULT_INSTRUCTION
 from lazymind.chat.engine.tools.infra import handle_tool_errors, tool_success
-from lazymind.chat.service.utils import resolve_local_image_path
+from lazymind.chat.engine.tools.infra.image_generation_support import (
+    _DEFAULT_BATCH_SIZE,
+    _DEFAULT_IMAGE_SIZE,
+    _resolve_source_image_paths,
+    resolve_tool_image_path,
+    run_image_model,
+)
 
 
 @handle_tool_errors
@@ -20,8 +25,8 @@ def vision_extractor(url: str, instruction: Optional[str] = None) -> Dict[str, A
     with LazyLLM multimodal file-path encoding.
 
     Args:
-        url: Local filesystem path under the upload root, or a ``/static-files/``
-            signed path from kb results (resolved to the local file automatically).
+        url: Short image ref (filename), local filesystem path, or a
+            ``/static-files/`` signed path from kb results.
         instruction: Optional focus for what to extract; defaults to a general
             description prompt.
 
@@ -33,16 +38,16 @@ def vision_extractor(url: str, instruction: Optional[str] = None) -> Dict[str, A
     if not raw:
         raise ValueError('url is required')
 
-    local_path = resolve_local_image_path(raw)
-    if not local_path or not os.path.isfile(local_path):
-        raise ValueError(f'image file not found: {local_path or raw}')
+    local_path = resolve_tool_image_path(raw)
+    if not local_path:
+        raise ValueError(f'image file not found: {raw}')
 
     prompt_instruction = (
         str(instruction).strip() if instruction else VISION_EXTRACT_DEFAULT_INSTRUCTION
     )
     encoded_query = encode_query_with_filepaths(prompt_instruction, [local_path])
 
-    agentic_config = lazyllm.globals['agentic_config']
+    agentic_config = lazyllm.globals.get('agentic_config') or {}
     priority = int(agentic_config.get('priority', 0) or 0)
 
     vlm = AutoModel(model='vlm')
@@ -57,68 +62,66 @@ def vision_extractor(url: str, instruction: Optional[str] = None) -> Dict[str, A
     return tool_success('vision_extractor', {'description': text, 'url': local_path})
 
 
-def _resolve_attached_image_paths(urls: Optional[List[str]] = None) -> List[str]:
-    agentic_config = lazyllm.globals.get('agentic_config') or {}
-    candidates: List[str] = []
-    if urls:
-        candidates.extend(str(item).strip() for item in urls if str(item).strip())
-    else:
-        raw = agentic_config.get('image_files') or []
-        if isinstance(raw, list):
-            candidates.extend(str(item).strip() for item in raw if str(item).strip())
-    resolved: List[str] = []
-    seen: set[str] = set()
-    for raw in candidates:
-        local_path = resolve_local_image_path(raw)
-        if not local_path or not os.path.isfile(local_path):
-            raise ValueError(f'attached image file not found: {local_path or raw}')
-        if local_path not in seen:
-            seen.add(local_path)
-            resolved.append(local_path)
-    if not resolved:
-        raise ValueError('no attached images found for this session')
-    return resolved
+@fc_register('tool', execute_in_sandbox=False)
+@handle_tool_errors
+def image_generator(
+    prompt: str,
+    image_size: str = _DEFAULT_IMAGE_SIZE,
+    batch_size: int = _DEFAULT_BATCH_SIZE,
+) -> Dict[str, Any]:
+    """Generate an image from a text prompt (text-to-image).
+
+    Uses the configured ``image_generator`` role in runtime_models (type
+    ``text2image``). Model files are written under lazyllm temp first, then
+    moved into ``shared_upload_dir/ai_generated/`` for signed static URLs.
+
+    Args:
+        prompt: Natural-language description of the image to generate.
+        image_size: Output resolution, e.g. ``1024x1024``.
+        batch_size: Number of images to generate (default 1).
+
+    Returns:
+        On success: ``success``, ``prompt``, ``local_path``, optional
+        ``image_url`` / ``image_markdown``, and ``images`` (list per file).
+    """
+    return run_image_model(
+        'image_generator',
+        prompt,
+        image_size=image_size,
+        batch_size=batch_size,
+    )
 
 
 @fc_register('tool', execute_in_sandbox=False)
 @handle_tool_errors
-def describe_attached_images(
-    query: str = '',
-    urls: Optional[List[str]] = None,
+def image_editor(
+    prompt: str,
+    urls: List[str],
+    image_size: str = _DEFAULT_IMAGE_SIZE,
+    batch_size: int = _DEFAULT_BATCH_SIZE,
 ) -> Dict[str, Any]:
-    """Describe user-attached image(s) with VLM, focused on the current question.
+    """Edit reference image(s) according to a text instruction (image-to-image).
 
-    Call this when the user uploaded images in the current turn and you need
-    textual understanding before answering or searching. For image generation
-    use ``image_generator``; for editing an attached image use ``image_editor``.
+    Uses the configured ``image_editor`` role in runtime_models (type
+    ``image_editing``). Pass short refs, ``local_path`` from kb results, or
+    filesystem paths; ``/static-files/`` signed URLs are resolved automatically.
+    The first entry in ``urls`` is the primary reference; additional entries are
+    extra references when the model supports them.
 
     Args:
-        query: The user's question; optional when only describing attachments.
-        urls: Optional image paths or signed ``/static-files/`` URLs. When
-            omitted, uses ``agentic_config['image_files']`` for this request.
+        prompt: Edit instruction, e.g. change colors or add text.
+        urls: One or more reference image paths or signed static URLs.
+        image_size: Output resolution, e.g. ``1024x1024``.
+        batch_size: Number of variants to generate (default 1).
 
     Returns:
-        On success: ``description``, ``paths``, and ``query`` echo in ``result``.
+        Same shape as ``image_generator``.
     """
-    image_paths = _resolve_attached_image_paths(urls)
-    focus_query = str(query or '').strip() or 'Describe the attached image(s).'
-    encoded_query = encode_query_with_filepaths(focus_query, image_paths)
-
-    agentic_config = lazyllm.globals.get('agentic_config') or {}
-    priority = int(agentic_config.get('priority', 0) or 0)
-
-    vlm = AutoModel(model='vlm')
-    out = vlm(
-        encoded_query,
-        stream_output=False,
-        llm_chat_history=[],
-        lazyllm_files=None,
-        priority=priority,
-    )
-    description = str(out).strip()
-    if not description:
-        raise ValueError('VLM returned an empty image description')
-    return tool_success(
-        'describe_attached_images',
-        {'description': description, 'paths': image_paths, 'query': focus_query},
+    source_files = _resolve_source_image_paths(urls)
+    return run_image_model(
+        'image_editor',
+        prompt,
+        files=source_files,
+        image_size=image_size,
+        batch_size=batch_size,
     )

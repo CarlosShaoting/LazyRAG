@@ -7,6 +7,7 @@ import lazyllm
 from lazyllm import LOG, set_trace_context
 from fastapi.responses import StreamingResponse
 from lazymind.chat.config import (
+    IMAGE_EXTENSIONS,
     LAZYMIND_LLM_PRIORITY,
     MAX_CONCURRENCY,
     RAG_MODE,
@@ -17,12 +18,15 @@ from lazymind.chat.engine.prompts import build_system_prompt
 from lazymind.chat.service.component import (
     AgentEventFrameTranslator,
     DEFAULT_TOOLS,
+    build_agent_tools,
     filter_tools,
     normalize_history_for_agent,
 )
 from lazymind.chat.service.utils import (
     SensitiveFilter,
+    basename_from_path,
     log_and_emit_frame,
+    register_image_url,
     response_payload,
     single_event_stream_response,
     sse_line,
@@ -32,6 +36,7 @@ from lazyllm.tools.fs.client import FS
 from lazymind.model_config import inject_model_config, summarize_model_config_for_log
 from lazyllm.tools.tool_config_inject import inject_tool_config
 from lazyllm import AutoModel
+from lazyllm.tools.mcp.client import MCPClient
 from lazymind.config import config as _cfg
 
 rag_sem = asyncio.Semaphore(MAX_CONCURRENCY)
@@ -56,17 +61,48 @@ def check_sensitive_content(
     return sensitive_word if has_sensitive else None
 
 
+def _build_mcp_tools(mcp_config: List[Dict[str, Any]]) -> list:
+    """Build MCP tool list from mcp_config. Skip individual servers on failure with a warning."""
+    tools = []
+    for server in mcp_config:
+        url = server.get('url')
+        if not url:
+            LOG.warning(
+                f"[MCP] skipped server {server.get('name')}: missing 'url' field"
+            )
+            continue
+        try:
+            client = MCPClient(
+                command_or_url=url,
+                headers=server.get('headers'),
+                timeout=server.get('timeout', 5),
+                transport=server.get('transport', 'auto'),
+            )
+            allowed = server.get('allowed_tools') or None
+            mcp_tools = client.get_tools(allowed_tools=allowed)
+            tools.extend(mcp_tools)
+            LOG.info(
+                f"[MCP] loaded {len(mcp_tools)} tools from {server.get('name')}"
+            )
+        except Exception as e:
+            LOG.warning(
+                f"[MCP] failed to connect {server.get('name')}: {e}"
+            )
+    return tools
+
+
 async def handle_chat(query: str, history: Optional[List[Dict[str, Any]]],
                       session_id: str, filters: Optional[Dict[str, Any]],
                       files: Optional[List[str]],
                       databases: Optional[List[Dict[str, Any]]],
-                      priority: Optional[int], available_tools: Optional[List[str]],
+                      priority: Optional[int], disabled_tools: Optional[List[str]],
                       available_skills: Optional[List[str]], memory: Optional[str],
                       user_preference: Optional[str], use_memory: Optional[bool],
                       environment_context: Optional[Dict[str, Any]] = None,
                       user_id: Optional[str] = None,
                       model_config: Optional[Dict[str, Any]] = None,
                       tool_config: Optional[Dict[str, Union[str, List[str]]]] = None,
+                      mcp_config: Optional[List[Dict[str, Any]]] = None,
                       trace: Optional[bool] = False,
                       ) -> Union[Dict[str, Any], StreamingResponse]:
     LOG.info(
@@ -91,7 +127,7 @@ async def handle_chat(query: str, history: Optional[List[Dict[str, Any]]],
                 'sources': [],
             },
             cost,
-        ))
+        ), final_data={'tool_call_turns': 0})
 
     filters = dict(filters or {})
     resolved_files = validate_and_resolve_files(files)
@@ -111,12 +147,25 @@ async def handle_chat(query: str, history: Optional[List[Dict[str, Any]]],
         'use_memory': resolved_use_memory,
         'citation_state': translator.citation_state,
     }
+    display_files: list[str] = []
+    for path in resolved_files:
+        if path.lower().endswith(IMAGE_EXTENSIONS):
+            register_image_url(translator.citation_state, path)
+            display_files.append(basename_from_path(path) or path)
+        else:
+            display_files.append(path)
     lazyllm.globals._init_sid(sid=session_id)
     lazyllm.locals._init_sid(sid=session_id)
     inject_model_config(model_config)
     inject_tool_config(tool_config)
     lazyllm.globals['agentic_config'] = agentic_config
-    active_configs = filter_tools(DEFAULT_TOOLS, available_tools)
+    disabled = set(disabled_tools or [])
+    active_configs = filter_tools(
+        [cfg for cfg in DEFAULT_TOOLS if cfg.name not in disabled],
+    )
+    agent_tools = build_agent_tools(active_configs)
+    mcp_tools = _build_mcp_tools(mcp_config) if mcp_config else []
+    all_tools = agent_tools + mcp_tools
     set_trace_context({
         'enabled': bool(trace),
         'trace_id': session_id if trace else None,
@@ -131,14 +180,14 @@ async def handle_chat(query: str, history: Optional[List[Dict[str, Any]]],
         use_memory=resolved_use_memory,
         user_preference=user_preference,
         memory=memory,
-        files=resolved_files,
+        files=display_files,
     )
 
     llm = AutoModel(model='llm')
 
     react_agent = lazyllm.tools.agent.ReactAgent(
         llm=llm,
-        tools=[cfg.instance for cfg in active_configs],
+        tools=all_tools,
         max_retries=_cfg['max_retries'],
         stream=True,
         prompt=runtime_prompt,
@@ -178,10 +227,18 @@ async def handle_chat(query: str, history: Optional[List[Dict[str, Any]]],
         except Exception as exc:
             LOG.exception(exc)
             final_resp = response_payload(
-                500, f'chat service failed: {exc}', {'status': 'FAILED'}, 0.0
+                500,
+                f'chat service failed: {exc}',
+                {'status': 'FAILED', 'tool_call_turns': translator.tool_call_turns},
+                0.0,
             )
         else:
-            final_resp = response_payload(200, 'success', {'status': 'FINISHED'}, 0.0)
+            final_resp = response_payload(
+                200,
+                'success',
+                {'status': 'FINISHED', 'tool_call_turns': translator.tool_call_turns},
+                0.0,
+            )
 
         cost = round(time.time() - start_time, 3)
         final_resp['cost'] = cost
