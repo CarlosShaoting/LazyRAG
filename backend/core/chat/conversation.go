@@ -22,6 +22,7 @@ import (
 	"lazymind/core/evolution"
 	"lazymind/core/modelconfig"
 	"lazymind/core/store"
+	"lazymind/core/subagent"
 )
 
 func writeConversationJSON(w http.ResponseWriter, status int, v any) {
@@ -213,11 +214,15 @@ func ChatConversations(w http.ResponseWriter, r *http.Request) {
 		resourceContext.DisabledTools = mergeDisabledToolNames(resourceContext.DisabledTools, dbDisabledTools)
 	}
 	reqBody := buildChatRequestBody(convID, sessionID, query, upstreamHistories, raw, resourceContext, userID)
+	if cnt, err := subagent.CountByConversation(r.Context(), db, convID); err == nil && cnt > 0 {
+		reqBody["has_subagents"] = true
+	}
 	historyExt := buildChatHistoryExt(raw, query)
 	if err := applyChatRuntimeConfigs(r.Context(), db, userID, reqBody); err != nil {
 		common.ReplyErr(w, fmt.Sprintf("%s: %v", "load chat runtime config failed", err), http.StatusInternalServerError)
 		return
 	}
+	applyMCPRuntimeConfig(r.Context(), db, userID, reqBody)
 	baseURL := chatServiceURL()
 	reqCtx := r.Context()
 	rdb := store.Redis()
@@ -1095,6 +1100,7 @@ func SetChatHistory(w http.ResponseWriter, r *http.Request) {
 			RetrievalResult: selected.RetrievalResult,
 			Content:         selected.Content,
 			Result:          selected.Result,
+			ToolCallTurns:   nonNegativeToolCallTurns(int64(selected.ToolCallTurns)),
 			FeedBack:        selected.FeedBack,
 			Reason:          selected.Reason,
 			Ext:             selected.Ext,
@@ -1105,6 +1111,7 @@ func SetChatHistory(w http.ResponseWriter, r *http.Request) {
 			common.ReplyErr(w, fmt.Sprintf("%s: %v", "set history failed", err), http.StatusInternalServerError)
 			return
 		}
+		recordConversationIdleAfterPersist(context.Background(), db, store.Redis(), selected.ConversationID, userID, selected.ID, now, selected.RawContent, stripToolTags(selected.Result))
 	}
 
 	_ = db.Where("id IN ?", []string{body.SetHistoryID, body.DeletedHistoryID}).Delete(&orm.MultiAnswersChatHistory{}).Error

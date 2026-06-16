@@ -35,9 +35,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import {
   type CloudConnectionResponse,
 } from "@/api/generated/auth-client";
-import {
-  type Dataset as CoreDataset,
-} from "@/api/generated/core-client";
+import { AgentAppsAuth } from "@/components/auth";
 import { getLocalizedErrorMessage } from "@/components/request";
 import {
   dataSourceCloudOauthApi,
@@ -198,10 +196,6 @@ function buildSchedulePolicy(scheduleWeekdays?: string[], scheduleTime?: string)
   };
 }
 
-function normalizeKnowledgeBaseName(value?: string) {
-  return `${value || ""}`.trim().toLowerCase();
-}
-
 function resolveSourceTypeFromValues(
   fallbackType: SourceType | null,
   values: SourceFormValues,
@@ -215,14 +209,6 @@ function resolveSourceTypeFromValues(
     return "feishu";
   }
   return fallbackType;
-}
-
-function getDatasetDisplayName(dataset: CoreDataset) {
-  return `${dataset.display_name || dataset.name || ""}`.trim();
-}
-
-function isDataSourceManagedDataset(dataset: CoreDataset) {
-  return Boolean(dataset.scan_managed || dataset.scan_source_type);
 }
 
 function loadLocalScanChatEnabled() {
@@ -267,6 +253,16 @@ const datasourceConnectors: Array<{ key: string; name: string; icon: ReactNode; 
 
 function normalizeProviderName(value: string) {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function isAdminRole(role?: string) {
+  const normalizedRole = (role || "").trim().toLowerCase();
+  return (
+    normalizedRole === "admin" ||
+    normalizedRole === "system-admin" ||
+    normalizedRole === "system_admin" ||
+    normalizedRole.endsWith(".admin")
+  );
 }
 
 function normalizeFeishuAccountStatus(status?: string): FeishuConnectionStatus {
@@ -350,32 +346,6 @@ function mapCloudConnectionToFeishuAccount(
     updatedAt: connection.updated_at || undefined,
     lastAuthorizedAt: connection.last_used_at || connection.updated_at || undefined,
   };
-}
-
-async function listKnowledgeBaseNames(client = dataSourceDatasetsApi) {
-  const names: string[] = [];
-  let pageToken: string | undefined;
-
-  for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
-    const response = await client.apiCoreDatasetsGet({
-      pageToken,
-      pageSize: 200,
-    });
-    names.push(
-      ...(response.data.datasets || [])
-        .filter((dataset) => !isDataSourceManagedDataset(dataset))
-        .map(getDatasetDisplayName)
-        .filter(Boolean),
-    );
-
-    const nextPageToken = response.data.next_page_token || "";
-    if (!nextPageToken || nextPageToken === pageToken) {
-      break;
-    }
-    pageToken = nextPageToken;
-  }
-
-  return names;
 }
 
 async function listDefaultKnowledgeBaseIds(client = dataSourceDatasetsApi) {
@@ -833,8 +803,11 @@ export default function DataSourceManagement() {
   const [manualOauthCallbackValue, setManualOauthCallbackValue] = useState("");
   const [manualOauthSubmitting, setManualOauthSubmitting] = useState(false);
   const oauthAttemptRef = useRef<PendingOAuthAttempt | null>(null);
+  const canCreateLocalSource = isAdminRole(AgentAppsAuth.getUserInfo()?.role);
+  const creatableSourceTypeOptions = sourceTypeOptions.filter(
+    (item) => !item.adminOnly || canCreateLocalSource,
+  );
   const scanAgents: ScanV2AgentHint[] = [];
-  const [knowledgeBaseNames, setKnowledgeBaseNames] = useState<string[]>([]);
   const [defaultDatasetIds, setDefaultDatasetIds] = useState<string[]>([]);
   const [localScanChatEnabled, setLocalScanChatEnabled] = useState(
     loadLocalScanChatEnabled,
@@ -843,6 +816,7 @@ export default function DataSourceManagement() {
   const [scanLoading, setScanLoading] = useState(false);
   const [validatedAgentId, setValidatedAgentId] = useState<string | null>(null);
   const [wizardSaving, setWizardSaving] = useState(false);
+  const [wizardSavingMode, setWizardSavingMode] = useState<DataSourceSaveMode | null>(null);
   const [localPathOptions, setLocalPathOptions] = useState<LocalPathTreeNode[]>([]);
   const [localPathLoading, setLocalPathLoading] = useState(false);
   const localPathRequestSeqRef = useRef(0);
@@ -1769,14 +1743,6 @@ export default function DataSourceManagement() {
     }
   };
 
-  const refreshKnowledgeBaseNames = async () => {
-    try {
-      setKnowledgeBaseNames(await listKnowledgeBaseNames());
-    } catch (error) {
-      console.error("Failed to refresh knowledge base names", error);
-    }
-  };
-
   const refreshFeishuAuthAccounts = async () => {
     try {
       const response =
@@ -2005,7 +1971,6 @@ export default function DataSourceManagement() {
 
   useEffect(() => {
     void refreshSources(false);
-    void refreshKnowledgeBaseNames();
     void refreshFeishuAuthAccounts();
   }, []);
 
@@ -2046,13 +2011,6 @@ export default function DataSourceManagement() {
     },
     [],
   );
-
-  const getKnownKnowledgeBaseNames = () => [
-    ...knowledgeBaseNames,
-    ...sources
-      .filter((item) => item.status === "active")
-      .map((item) => item.knowledgeBase),
-  ];
 
   const resetWizard = () => {
     form.resetFields();
@@ -2399,6 +2357,10 @@ export default function DataSourceManagement() {
   };
 
   const handleSelectType = (type: SourceType) => {
+    if (type === "local" && !canCreateLocalSource) {
+      message.error(t("admin.dataSourceAdminOnly"));
+      return;
+    }
     if (type === "feishu" && !isFeishuSetupReady) {
       openFeishuSetupModal("create");
       return;
@@ -2410,6 +2372,10 @@ export default function DataSourceManagement() {
     type: SourceType,
     options?: { connection?: FeishuDataSourceConnection | null },
   ) => {
+    if (type === "local" && !canCreateLocalSource) {
+      message.error(t("admin.dataSourceAdminOnly"));
+      return;
+    }
     const reusableConnection =
       type === "feishu"
         ? options?.connection || oauthConnection
@@ -2716,7 +2682,6 @@ export default function DataSourceManagement() {
               : sourceListPage;
           await Promise.all([
             refreshSources(false, { page: nextPage }),
-            refreshKnowledgeBaseNames(),
           ]);
         } catch (error) {
           message.error(
@@ -2727,39 +2692,6 @@ export default function DataSourceManagement() {
         }
       },
     });
-  };
-
-  const ensureKnowledgeBaseNameUnique = async (value?: string) => {
-    if (wizardMode === "edit") {
-      return true;
-    }
-
-    const normalizedValue = normalizeKnowledgeBaseName(value);
-    if (!normalizedValue) {
-      return false;
-    }
-
-    const duplicateMessage = t("admin.dataSourceKnowledgeBaseNameDuplicated");
-    const knownNameSet = new Set(
-      getKnownKnowledgeBaseNames().map(normalizeKnowledgeBaseName).filter(Boolean),
-    );
-    if (knownNameSet.has(normalizedValue)) {
-      form.setFields([{ name: "knowledgeBase", errors: [duplicateMessage] }]);
-      return false;
-    }
-
-    try {
-      const latestNames = await listKnowledgeBaseNames();
-      setKnowledgeBaseNames(latestNames);
-      if (latestNames.map(normalizeKnowledgeBaseName).includes(normalizedValue)) {
-        form.setFields([{ name: "knowledgeBase", errors: [duplicateMessage] }]);
-        return false;
-      }
-    } catch (error) {
-      console.error("Failed to validate knowledge base name", error);
-    }
-
-    return true;
   };
 
   const handleNextStep = () => {
@@ -3027,6 +2959,7 @@ export default function DataSourceManagement() {
     }
 
     setWizardSaving(true);
+    setWizardSavingMode(saveMode);
     try {
       const syncStrategyFields =
         form.getFieldValue("syncMode") === "scheduled"
@@ -3046,11 +2979,8 @@ export default function DataSourceManagement() {
         message.warning(t("admin.dataSourceSelectTypeFirst"));
         return;
       }
-
-      if (
-        wizardMode !== "edit" &&
-        !(await ensureKnowledgeBaseNameUnique(values.knowledgeBase))
-      ) {
+      if (effectiveSourceType === "local" && !canCreateLocalSource) {
+        message.error(t("admin.dataSourceAdminOnly"));
         return;
       }
 
@@ -3061,6 +2991,7 @@ export default function DataSourceManagement() {
       await handleSaveFeishuSource(values, saveMode);
     } finally {
       setWizardSaving(false);
+      setWizardSavingMode(null);
     }
   };
 
@@ -3461,7 +3392,7 @@ export default function DataSourceManagement() {
           {t("admin.dataSourceCreateProviderIntro")}
         </Paragraph>
         <div className="data-source-create-provider-grid">
-          {sourceTypeOptions.map((item) => {
+          {creatableSourceTypeOptions.map((item) => {
             const isFeishu = item.type === "feishu";
             const isFeishuLocked = isFeishu && !isFeishuAuthValid;
             const authStatusText = isFeishuAuthValid
@@ -3685,12 +3616,12 @@ export default function DataSourceManagement() {
         wizardOpen={wizardOpen}
         wizardStep={wizardStep}
         form={form}
-        existingKnowledgeBaseNames={getKnownKnowledgeBaseNames()}
         selectedType={selectedType}
         isFeishuSetupReady={isFeishuSetupReady}
         connectionVerified={connectionVerified}
         syncMode={syncMode}
         saving={wizardSaving}
+        savingMode={wizardSavingMode || undefined}
         localPathOptions={localPathOptions}
         localPathLoading={localPathLoading}
         feishuTargetLoading={feishuTargetLoading}
