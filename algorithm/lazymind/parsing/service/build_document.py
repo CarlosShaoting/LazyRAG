@@ -1,7 +1,7 @@
 import lazyllm
 from lazyllm.tracing import set_trace_context
 from lazyllm import AutoModel
-from lazyllm.tools.rag import CodeSplitter, Document, LLMParser, TransformArgs
+from lazyllm.tools.rag import AdaptiveTransform, CodeSplitter, Document, LLMParser, TransformArgs
 from lazyllm.tools.rag.doc_impl import NodeGroupType
 from lazyllm.tools.rag.parsing_service import DocumentProcessor
 from lazyllm.tools.rag.readers import (
@@ -22,6 +22,17 @@ from lazymind.parsing.engine.transform import GeneralParser, LineSplitter, NodeP
 ALGO_ID = 'general_algo'
 _CODE_CHUNK_SIZE = 512
 _CODE_OVERLAP = 0
+_CODE_FILE_PATTERNS = (
+    ('*.json', 'json'),
+    ('*.jsonl', 'jsonl'),
+    ('*.yaml', 'yaml'),
+    ('*.yml', 'yml'),
+    ('*.xml', 'xml'),
+    ('*.html', 'html'),
+    ('*.htm', 'htm'),
+    ('*.py', 'python'),
+    ('*.ipynb', 'python'),
+)
 
 
 def _quiet_trace(kbs):
@@ -82,21 +93,21 @@ def _build_store_config(index_kwargs):
 
 def _build_code_transform():
     code_kwargs = dict(chunk_size=_CODE_CHUNK_SIZE, overlap=_CODE_OVERLAP)
-    patterns = (
-        ('*.json', 'json'),
-        ('*.jsonl', 'jsonl'),
-        ('*.yaml', 'yaml'),
-        ('*.yml', 'yml'),
-        ('*.xml', 'xml'),
-        ('*.html', 'html'),
-        ('*.htm', 'htm'),
-        ('*.py', 'python'),
-        ('*.ipynb', 'python'),
-    )
-    return [
+    return AdaptiveTransform([
         TransformArgs(f=CodeSplitter, pattern=pattern, kwargs={**code_kwargs, 'filetype': filetype})
-        for pattern, filetype in patterns
-    ]
+        for pattern, filetype in _CODE_FILE_PATTERNS
+    ] + [TransformArgs(f=lambda _: [], name='skip_non_code_files')])
+
+
+def _build_block_transform():
+    return AdaptiveTransform(TransformArgs(f=GeneralParser, kwargs={'max_length': 2048, 'split_by': '\n'}))
+
+
+def _build_line_transform():
+    return AdaptiveTransform([
+        TransformArgs(f=lambda _: [], pattern=pattern, name='skip_line_for_code_files')
+        for pattern, _ in _CODE_FILE_PATTERNS
+    ] + [TransformArgs(f=LineSplitter)])
 
 
 def _build_pdf_reader():
@@ -260,9 +271,9 @@ def build_document(algo_id: str = ALGO_ID, *, serve: bool = True) -> Document:
     docs.add_reader('*.mp4', media_reader)
 
     docs.create_node_group(name='block', display_name='paragraph slice',
-                           group_type=NodeGroupType.CHUNK, transform=GeneralParser(max_length=2048, split_by='\n'))
+                           group_type=NodeGroupType.CHUNK, transform=_build_block_transform())
     docs.create_node_group(name='line', display_name='sentence slice',
-                           group_type=NodeGroupType.CHUNK, transform=LineSplitter, parent='block')
+                           group_type=NodeGroupType.CHUNK, transform=_build_line_transform(), parent='block')
     docs.create_node_group(name='code', display_name='code slice',
                            group_type=NodeGroupType.CODE, transform=_build_code_transform())
     docs.create_node_group(
