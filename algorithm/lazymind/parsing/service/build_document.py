@@ -113,7 +113,6 @@ def _build_pdf_reader():
 def _register_document_readers(docs: Document) -> None:
     pdf_reader = _build_pdf_reader()
     docs.add_reader('*.pdf', pdf_reader)
-    docs.add_reader('*.docx', DocxReader())
     docs.add_reader('*.hwp', HWPReader())
 
     # mineru ppt reader.
@@ -123,7 +122,6 @@ def _register_document_readers(docs: Document) -> None:
 
     docs.add_reader('*.ipynb', IPYNBReader())
     docs.add_reader('*.epub', EpubReader())
-    docs.add_reader('*.md', MarkdownReader())
     docs.add_reader('*.mbox', MboxReader())
     docs.add_reader('*.csv', PandasCSVReader())
 
@@ -131,9 +129,6 @@ def _register_document_readers(docs: Document) -> None:
     docs.add_reader('*.xls', excel_reader)
     docs.add_reader('*.xlsx', excel_reader)
 
-    txt_reader = TxtReader()
-    docs.add_reader('*.txt', txt_reader)
-    docs.add_reader('*.xml', txt_reader)
 
 
 def reset_stores() -> None:
