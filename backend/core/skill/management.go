@@ -147,6 +147,42 @@ func List(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func ListTags(w http.ResponseWriter, r *http.Request) {
+	db := store.DB()
+	if db == nil {
+		common.ReplyErr(w, "store not initialized", http.StatusInternalServerError)
+		return
+	}
+	userID := strings.TrimSpace(store.UserID(r))
+	if userID == "" {
+		common.ReplyErr(w, "missing X-User-Id", http.StatusBadRequest)
+		return
+	}
+
+	var rows []orm.SkillResource
+	if err := db.WithContext(r.Context()).
+		Select("tags").
+		Where("owner_user_id = ?", userID).
+		Find(&rows).Error; err != nil {
+		common.ReplyErr(w, "query skills failed", http.StatusInternalServerError)
+		return
+	}
+
+	tagSet := make(map[string]struct{})
+	for _, row := range rows {
+		for _, tag := range parseTags(row.Tags) {
+			tagSet[tag] = struct{}{}
+		}
+	}
+
+	tags := make([]string, 0, len(tagSet))
+	for tag := range tagSet {
+		tags = append(tags, tag)
+	}
+	sort.Strings(tags)
+	common.ReplyOK(w, map[string]any{"tags": tags})
+}
+
 func Get(w http.ResponseWriter, r *http.Request) {
 	db := store.DB()
 	if db == nil {
@@ -818,7 +854,7 @@ func buildDraftPreviewResponse(ctx context.Context, db *gorm.DB, userID, skillID
 }
 
 func createParentSkill(ctx context.Context, db *gorm.DB, userID, userName string, req createSkillRequest) error {
-	fullContent, description, err := buildParentSkillContent(req.Name, req.Description, req.Content)
+	fullContent, description, err := buildParentSkillContent(req.Name, req.Category, req.Description, req.Content)
 	if err != nil {
 		return err
 	}
@@ -832,7 +868,7 @@ func createParentSkillWithContent(ctx context.Context, db *gorm.DB, userID, user
 	var count int64
 	if err := db.WithContext(ctx).
 		Model(&orm.SkillResource{}).
-		Where("owner_user_id = ? AND node_type = ? AND skill_name = ?", userID, evolution.SkillNodeTypeParent, req.Name).
+		Where("owner_user_id = ? AND category = ? AND node_type = ? AND skill_name = ?", userID, req.Category, evolution.SkillNodeTypeParent, req.Name).
 		Count(&count).Error; err != nil {
 		return err
 	}
@@ -1237,7 +1273,7 @@ func updateParentSkill(ctx context.Context, db *gorm.DB, userID, userName string
 	if req.Description != nil {
 		newDescription = strings.TrimSpace(*req.Description)
 	}
-	newContent, resolvedDescription, err := buildParentSkillContent(newName, newDescription, newBody)
+	newContent, resolvedDescription, err := buildParentSkillContent(newName, newCategory, newDescription, newBody)
 	if err != nil {
 		return err
 	}
@@ -1248,7 +1284,7 @@ func updateParentSkill(ctx context.Context, db *gorm.DB, userID, userName string
 		if oldName != newName {
 			if err := db.WithContext(ctx).
 				Model(&orm.SkillResource{}).
-				Where("owner_user_id = ? AND node_type = ? AND skill_name = ? AND id <> ?", userID, evolution.SkillNodeTypeParent, newName, row.ID).
+				Where("owner_user_id = ? AND category = ? AND node_type = ? AND skill_name = ? AND id <> ?", userID, newCategory, evolution.SkillNodeTypeParent, newName, row.ID).
 				Count(&count).Error; err != nil {
 				return err
 			}

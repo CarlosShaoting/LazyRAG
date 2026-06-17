@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -72,6 +73,14 @@ type listSkillsAPITestResponse struct {
 		Page     int `json:"page"`
 		PageSize int `json:"page_size"`
 		Total    int `json:"total"`
+	} `json:"data"`
+}
+
+type listSkillTagsAPITestResponse struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Data    struct {
+		Tags []string `json:"tags"`
 	} `json:"data"`
 }
 
@@ -207,6 +216,98 @@ func TestInternalCreateCreatesSkillDirectly(t *testing.T) {
 	}
 	if row.ContentSize != int64(len([]byte(content))) {
 		t.Fatalf("expected content_size %d, got %d", len([]byte(content)), row.ContentSize)
+	}
+}
+
+func TestRemoteFSWriteConflictAndDeleteSkill(t *testing.T) {
+	db := newSkillTestDB(t)
+	store.Init(db.DB, nil, nil)
+	t.Cleanup(func() { store.Init(nil, nil, nil) })
+
+	now := time.Now()
+	conversation := orm.Conversation{
+		ID:        "conv-remote",
+		ChannelID: "default",
+		BaseModel: orm.BaseModel{
+			CreateUserID:   "u1",
+			CreateUserName: "User 1",
+			CreatedAt:      now,
+			UpdatedAt:      now,
+		},
+	}
+	if err := db.Create(&conversation).Error; err != nil {
+		t.Fatalf("create conversation: %v", err)
+	}
+
+	oversizedReq := httptest.NewRequest(
+		http.MethodPut,
+		"/remote-fs/content?path=skills/coding/oversized/SKILL.md&session_id=conv-remote_1",
+		strings.NewReader(strings.Repeat("x", remoteFSMaxWriteBytes+1)),
+	)
+	oversizedRec := httptest.NewRecorder()
+	RemoteFSWrite(oversizedRec, oversizedReq)
+	if oversizedRec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected oversized write status 413, got %d body=%s", oversizedRec.Code, oversizedRec.Body.String())
+	}
+
+	content := "---\nname: remote-skill\ncategory: coding\ndescription: Remote skill.\n---\n# Remote Skill\n\nUse this remotely.\n"
+	req := httptest.NewRequest(
+		http.MethodPut,
+		"/remote-fs/content?path=skills/coding/remote-skill/SKILL.md&session_id=conv-remote_1",
+		strings.NewReader(content),
+	)
+	rec := httptest.NewRecorder()
+	RemoteFSWrite(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected write status 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var parent orm.SkillResource
+	if err := db.Where("owner_user_id = ? AND relative_path = ?", "u1", evolution.ParentSkillRelativePath("coding", "remote-skill")).Take(&parent).Error; err != nil {
+		t.Fatalf("query remote skill: %v", err)
+	}
+	if parent.Content != content {
+		t.Fatalf("expected remote skill content to be preserved, got %q", parent.Content)
+	}
+
+	dupReq := httptest.NewRequest(
+		http.MethodPut,
+		"/remote-fs/content?path=skills/coding/remote-skill/SKILL.md&session_id=conv-remote_1",
+		strings.NewReader(content),
+	)
+	dupRec := httptest.NewRecorder()
+	RemoteFSWrite(dupRec, dupReq)
+	if dupRec.Code != http.StatusConflict {
+		t.Fatalf("expected duplicate write status 409, got %d body=%s", dupRec.Code, dupRec.Body.String())
+	}
+
+	if _, err := createChildSkill(context.Background(), db.DB, "u1", "User 1", createSkillRequest{
+		Name:            "rules",
+		Description:     "Rules",
+		Category:        "coding",
+		ParentSkillName: "remote-skill",
+		Content:         "Child rules",
+	}); err != nil {
+		t.Fatalf("create child skill: %v", err)
+	}
+
+	deleteReq := httptest.NewRequest(
+		http.MethodDelete,
+		"/remote-fs/path?path=skills/coding/remote-skill&recursive=true&session_id=conv-remote_1",
+		nil,
+	)
+	deleteRec := httptest.NewRecorder()
+	RemoteFSDelete(deleteRec, deleteReq)
+	if deleteRec.Code != http.StatusOK {
+		t.Fatalf("expected delete status 200, got %d body=%s", deleteRec.Code, deleteRec.Body.String())
+	}
+
+	var remaining int64
+	if err := db.Model(&orm.SkillResource{}).Where("owner_user_id = ? AND category = ?", "u1", "coding").Count(&remaining).Error; err != nil {
+		t.Fatalf("count remaining skills: %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("expected parent and child to be deleted, got %d rows", remaining)
 	}
 }
 
@@ -1725,6 +1826,126 @@ func TestListPaginatesAndCountsParentSkills(t *testing.T) {
 	}
 }
 
+func TestListTagsReturnsAllSkillTagsForCurrentUser(t *testing.T) {
+	db := newSkillTestDB(t)
+	store.Init(db.DB, nil, nil)
+	t.Cleanup(func() { store.Init(nil, nil, nil) })
+
+	now := time.Now()
+	rows := []orm.SkillResource{
+		{
+			ID:              "skill-parent-one",
+			OwnerUserID:     "u1",
+			OwnerUserName:   "User 1",
+			Category:        "coding",
+			ParentSkillName: "workflow",
+			SkillName:       "workflow",
+			NodeType:        evolution.SkillNodeTypeParent,
+			Tags:            tagsJSON([]string{"UI", " 产品设计 ", "UI", ""}),
+			FileExt:         "md",
+			RelativePath:    evolution.ParentSkillRelativePath("coding", "workflow"),
+			ContentHash:     evolution.HashContent("content-1"),
+			Version:         1,
+			IsEnabled:       true,
+			UpdateStatus:    evolution.UpdateStatusUpToDate,
+			CreateUserID:    "u1",
+			CreateUserName:  "User 1",
+			CreatedAt:       now,
+			UpdatedAt:       now,
+		},
+		{
+			ID:              "skill-child-one",
+			OwnerUserID:     "u1",
+			OwnerUserName:   "User 1",
+			Category:        "coding",
+			ParentSkillName: "workflow",
+			SkillName:       "rules",
+			NodeType:        evolution.SkillNodeTypeChild,
+			Tags:            tagsJSON([]string{"规则", "UI"}),
+			FileExt:         "md",
+			RelativePath:    "coding/workflow/rules.md",
+			ContentHash:     evolution.HashContent("child-content"),
+			Version:         1,
+			IsEnabled:       true,
+			UpdateStatus:    evolution.UpdateStatusUpToDate,
+			CreateUserID:    "u1",
+			CreateUserName:  "User 1",
+			CreatedAt:       now,
+			UpdatedAt:       now,
+		},
+		{
+			ID:              "skill-other-user",
+			OwnerUserID:     "u2",
+			OwnerUserName:   "User 2",
+			Category:        "coding",
+			ParentSkillName: "other",
+			SkillName:       "other",
+			NodeType:        evolution.SkillNodeTypeParent,
+			Tags:            tagsJSON([]string{"其他用户"}),
+			FileExt:         "md",
+			RelativePath:    evolution.ParentSkillRelativePath("coding", "other"),
+			ContentHash:     evolution.HashContent("content-2"),
+			Version:         1,
+			IsEnabled:       true,
+			UpdateStatus:    evolution.UpdateStatusUpToDate,
+			CreateUserID:    "u2",
+			CreateUserName:  "User 2",
+			CreatedAt:       now,
+			UpdatedAt:       now,
+		},
+	}
+	if err := db.Create(&rows).Error; err != nil {
+		t.Fatalf("create skills: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/core/skills/tags", nil)
+	req.Header.Set("X-User-Id", "u1")
+	rec := httptest.NewRecorder()
+
+	ListTags(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp listSkillTagsAPITestResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Code != 0 {
+		t.Fatalf("expected code 0, got %d message=%s", resp.Code, resp.Message)
+	}
+	want := []string{"UI", "产品设计", "规则"}
+	if !reflect.DeepEqual(resp.Data.Tags, want) {
+		t.Fatalf("expected tags %#v, got %#v", want, resp.Data.Tags)
+	}
+}
+
+func TestListTagsReturnsEmptyArray(t *testing.T) {
+	db := newSkillTestDB(t)
+	store.Init(db.DB, nil, nil)
+	t.Cleanup(func() { store.Init(nil, nil, nil) })
+
+	req := httptest.NewRequest(http.MethodGet, "/api/core/skills/tags", nil)
+	req.Header.Set("X-User-Id", "u1")
+	rec := httptest.NewRecorder()
+
+	ListTags(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp listSkillTagsAPITestResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Data.Tags == nil {
+		t.Fatalf("expected empty tags array, got nil")
+	}
+	if len(resp.Data.Tags) != 0 {
+		t.Fatalf("expected no tags, got %#v", resp.Data.Tags)
+	}
+}
+
 func TestListNormalizesPendingConfirmUpdateStatus(t *testing.T) {
 	db := newSkillTestDB(t)
 	store.Init(db.DB, nil, nil)
@@ -2359,7 +2580,7 @@ func TestCreateParentSkillBuildsFrontmatterFromBodyOnlyContent(t *testing.T) {
 		t.Fatalf("query parent skill: %v", err)
 	}
 
-	expectedContent := "---\nname: git-workflow\ndescription: Git workflow for postman test\n---\n# Git Workflow\n\nKeep commit history clean and easy to review."
+	expectedContent := "---\nname: git-workflow\ncategory: coding\ndescription: Git workflow for postman test\n---\n# Git Workflow\n\nKeep commit history clean and easy to review."
 	if row.SkillName != "git-workflow" {
 		t.Fatalf("expected skill name git-workflow, got %q", row.SkillName)
 	}
@@ -2522,7 +2743,7 @@ func TestCreateChildSkillPersistsDescription(t *testing.T) {
 	}
 }
 
-func TestCreateParentSkillRejectsDuplicateParentNameAcrossCategories(t *testing.T) {
+func TestCreateParentSkillAllowsDuplicateParentNameAcrossCategories(t *testing.T) {
 	db := newSkillTestDB(t)
 
 	req := createSkillRequest{
@@ -2539,18 +2760,18 @@ func TestCreateParentSkillRejectsDuplicateParentNameAcrossCategories(t *testing.
 		Name:        "git-workflow",
 		Description: "Same name in another category",
 		Category:    "ops",
-		Content:     "# Git Workflow\n\nDuplicate name should be rejected.",
+		Content:     "# Git Workflow\n\nSame name in another category should be allowed.",
 	}
-	if err := createParentSkill(context.Background(), db.DB, "u1", "User 1", duplicateReq); !errors.Is(err, gorm.ErrDuplicatedKey) {
-		t.Fatalf("expected duplicate parent skill name error, got %v", err)
+	if err := createParentSkill(context.Background(), db.DB, "u1", "User 1", duplicateReq); err != nil {
+		t.Fatalf("create parent skill with same name in another category: %v", err)
 	}
 
 	var count int64
 	if err := db.Model(&orm.SkillResource{}).Where("owner_user_id = ? AND node_type = ? AND skill_name = ?", "u1", evolution.SkillNodeTypeParent, "git-workflow").Count(&count).Error; err != nil {
 		t.Fatalf("count parent skills: %v", err)
 	}
-	if count != 1 {
-		t.Fatalf("expected exactly one parent skill named git-workflow, got %d", count)
+	if count != 2 {
+		t.Fatalf("expected two parent skills named git-workflow, got %d", count)
 	}
 }
 
@@ -2585,7 +2806,7 @@ func TestUpdateParentSkillRebuildsContentFromBodyOnlyPayload(t *testing.T) {
 		t.Fatalf("query updated parent skill: %v", err)
 	}
 
-	expectedContent := "---\nname: git-workflow\ndescription: Updated git workflow\n---\n# Git Workflow\n\nUse small, reviewable commits."
+	expectedContent := "---\nname: git-workflow\ncategory: coding\ndescription: Updated git workflow\n---\n# Git Workflow\n\nUse small, reviewable commits."
 	if updated.SkillName != "git-workflow" {
 		t.Fatalf("expected skill name to stay git-workflow, got %q", updated.SkillName)
 	}
@@ -2594,6 +2815,47 @@ func TestUpdateParentSkillRebuildsContentFromBodyOnlyPayload(t *testing.T) {
 	}
 	if updated.Content != expectedContent {
 		t.Fatalf("unexpected updated DB content: %q", updated.Content)
+	}
+}
+
+func TestUpdateParentSkillAllowsDuplicateParentNameAcrossCategories(t *testing.T) {
+	db := newSkillTestDB(t)
+
+	firstReq := createSkillRequest{
+		Name:        "git-workflow",
+		Description: "Git workflow for postman test",
+		Category:    "coding",
+		Content:     "# Git Workflow\n\nKeep commit history clean and easy to review.",
+	}
+	if err := createParentSkill(context.Background(), db.DB, "u1", "User 1", firstReq); err != nil {
+		t.Fatalf("create first parent skill: %v", err)
+	}
+	secondReq := createSkillRequest{
+		Name:        "release-check",
+		Description: "Release checklist",
+		Category:    "ops",
+		Content:     "# Release Checklist\n\nRun release checks.",
+	}
+	if err := createParentSkill(context.Background(), db.DB, "u1", "User 1", secondReq); err != nil {
+		t.Fatalf("create second parent skill: %v", err)
+	}
+
+	var second orm.SkillResource
+	if err := db.Where("owner_user_id = ? AND node_type = ? AND skill_name = ?", "u1", evolution.SkillNodeTypeParent, "release-check").Take(&second).Error; err != nil {
+		t.Fatalf("query second parent skill: %v", err)
+	}
+
+	updateReq := updateSkillRequest{Name: stringPtr("git-workflow")}
+	if err := updateSkill(context.Background(), db.DB, "u1", "User 1", second.ID, updateReq); err != nil {
+		t.Fatalf("update parent skill with same name in another category: %v", err)
+	}
+
+	var updated orm.SkillResource
+	if err := db.Where("id = ?", second.ID).Take(&updated).Error; err != nil {
+		t.Fatalf("query updated parent skill: %v", err)
+	}
+	if updated.SkillName != "git-workflow" || updated.Category != "ops" {
+		t.Fatalf("expected skill identity ops/git-workflow, got %q/%q", updated.Category, updated.SkillName)
 	}
 }
 
@@ -2642,47 +2904,6 @@ func TestUpdateParentSkillMetadataOnlyDoesNotCreateResourceVersion(t *testing.T)
 	}
 	if !strings.Contains(latest.Diff, "+Use small, reviewable commits.") {
 		t.Fatalf("expected latest diff to include content body update, got %q", latest.Diff)
-	}
-}
-
-func TestUpdateParentSkillRejectsDuplicateParentNameAcrossCategories(t *testing.T) {
-	db := newSkillTestDB(t)
-
-	firstReq := createSkillRequest{
-		Name:        "git-workflow",
-		Description: "Git workflow for postman test",
-		Category:    "coding",
-		Content:     "# Git Workflow\n\nKeep commit history clean and easy to review.",
-	}
-	if err := createParentSkill(context.Background(), db.DB, "u1", "User 1", firstReq); err != nil {
-		t.Fatalf("create first parent skill: %v", err)
-	}
-	secondReq := createSkillRequest{
-		Name:        "release-check",
-		Description: "Release checklist",
-		Category:    "ops",
-		Content:     "# Release Checklist\n\nRun release checks.",
-	}
-	if err := createParentSkill(context.Background(), db.DB, "u1", "User 1", secondReq); err != nil {
-		t.Fatalf("create second parent skill: %v", err)
-	}
-
-	var second orm.SkillResource
-	if err := db.Where("owner_user_id = ? AND node_type = ? AND skill_name = ?", "u1", evolution.SkillNodeTypeParent, "release-check").Take(&second).Error; err != nil {
-		t.Fatalf("query second parent skill: %v", err)
-	}
-
-	updateReq := updateSkillRequest{Name: stringPtr("git-workflow")}
-	if err := updateSkill(context.Background(), db.DB, "u1", "User 1", second.ID, updateReq); !errors.Is(err, gorm.ErrDuplicatedKey) {
-		t.Fatalf("expected duplicate parent skill name error, got %v", err)
-	}
-
-	var unchanged orm.SkillResource
-	if err := db.Where("id = ?", second.ID).Take(&unchanged).Error; err != nil {
-		t.Fatalf("query unchanged parent skill: %v", err)
-	}
-	if unchanged.SkillName != "release-check" {
-		t.Fatalf("expected skill name to remain release-check, got %q", unchanged.SkillName)
 	}
 }
 
@@ -3271,7 +3492,7 @@ func TestUpdateParentSkillRenameMovesChildrenAndRebuildsFrontmatter(t *testing.T
 		t.Fatalf("query renamed child skill: %v", err)
 	}
 
-	expectedParentContent := "---\nname: git-workflow-renamed\ndescription: Renamed git workflow\n---\n# Git Workflow\n\nKeep commit history clean and easy to review."
+	expectedParentContent := "---\nname: git-workflow-renamed\ncategory: coding\ndescription: Renamed git workflow\n---\n# Git Workflow\n\nKeep commit history clean and easy to review."
 	if updatedParent.Content != expectedParentContent {
 		t.Fatalf("unexpected renamed parent content: %q", updatedParent.Content)
 	}
