@@ -5,17 +5,14 @@ from lazyllm.tools.rag import CodeSplitter, Document, LLMParser, TransformArgs
 from lazyllm.tools.rag.doc_impl import NodeGroupType
 from lazyllm.tools.rag.parsing_service import DocumentProcessor
 from lazyllm.tools.rag.readers import (
-    DocxReader,
     EpubReader,
     HWPReader,
     IPYNBReader,
-    MarkdownReader,
     MboxReader,
     PandasCSVReader,
     PandasExcelReader
 )
 from lazyllm.tools.rag.readers.ocrReader import DynamicPDFReader
-from lazyllm.tools.rag.readers.readerBase import TxtReader
 
 from lazymind.model_config import get_dynamic_role_slot_map
 from lazymind.config import EMBED_IMAGE, EMBED_INDEX_KWARGS, EMBED_KEYS, EMBED_MAIN, config as _cfg
@@ -128,7 +125,6 @@ def _register_document_readers(docs: Document) -> None:
     excel_reader = PandasExcelReader()
     docs.add_reader('*.xls', excel_reader)
     docs.add_reader('*.xlsx', excel_reader)
-
 
 
 def reset_stores() -> None:

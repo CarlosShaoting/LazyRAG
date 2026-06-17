@@ -21,7 +21,9 @@ func TestNeedsOfficeConvertBeforeParse(t *testing.T) {
 		ContentType:      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 		ConvertRequired:  true,
 	}
-	mineruCfg := map[string]any{"ocr_type": "mineru", "ocr_url": "https://mineru.net"}
+	officialMineruCfg := map[string]any{"ocr_type": "mineru", "ocr_url": "https://mineru.net/api/v4/"}
+	officialMineruEmptyURLCfg := map[string]any{"ocr_type": "mineru"}
+	selfHostedMineruCfg := map[string]any{"ocr_type": "mineru", "ocr_url": "http://172.24.176.1:20234/api/v1/pdf_parse"}
 	paddleCfg := map[string]any{"ocr_type": "paddleocr", "ocr_url": "http://paddle:8000"}
 
 	tests := []struct {
@@ -30,13 +32,15 @@ func TestNeedsOfficeConvertBeforeParse(t *testing.T) {
 		ocrConfig map[string]any
 		want      bool
 	}{
-		{"ppt with mineru skips convert", pptExt, mineruCfg, false},
+		{"ppt with official mineru skips convert", pptExt, officialMineruCfg, false},
+		{"ppt with official mineru empty url skips convert", pptExt, officialMineruEmptyURLCfg, false},
+		{"ppt with self-hosted mineru converts", pptExt, selfHostedMineruCfg, true},
 		{"ppt with paddle converts", pptExt, paddleCfg, true},
 		{"ppt without ocr config converts", pptExt, nil, true},
-		{"docx with mineru still converts", docExt, mineruCfg, true},
+		{"docx with official mineru still converts", docExt, officialMineruCfg, true},
 		{"xlsx always converts", xlsxExt, paddleCfg, true},
-		{"xlsx with mineru still converts", xlsxExt, mineruCfg, true},
-		{"non-office never converts", documentExt{StoredPath: "/data/demo.pdf", ConvertRequired: false}, mineruCfg, false},
+		{"xlsx with official mineru still converts", xlsxExt, officialMineruCfg, true},
+		{"non-office never converts", documentExt{StoredPath: "/data/demo.pdf", ConvertRequired: false}, officialMineruCfg, false},
 	}
 
 	for _, tt := range tests {
@@ -91,6 +95,19 @@ func TestParsePathForIngestionPresentationPaddle(t *testing.T) {
 		ConvertRequired:  true,
 	}
 	cfg := map[string]any{"ocr_type": "paddleocr"}
+	if got := parsePathForIngestion(d, cfg); got != "/data/demo.pdf" {
+		t.Fatalf("parsePathForIngestion() = %q, want converted pdf path", got)
+	}
+}
+
+func TestParsePathForIngestionPresentationSelfHostedMineru(t *testing.T) {
+	d := documentExt{
+		StoredPath:       "/data/demo.pptx",
+		ParseStoredPath:  "/data/demo.pdf",
+		OriginalFilename: "demo.pptx",
+		ConvertRequired:  true,
+	}
+	cfg := map[string]any{"ocr_type": "mineru", "ocr_url": "http://local-mineru:8000/api/v1/pdf_parse"}
 	if got := parsePathForIngestion(d, cfg); got != "/data/demo.pdf" {
 		t.Fatalf("parsePathForIngestion() = %q, want converted pdf path", got)
 	}

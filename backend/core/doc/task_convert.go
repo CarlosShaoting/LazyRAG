@@ -127,9 +127,26 @@ func ocrTypeFromConfig(ocrConfig map[string]any) string {
 	return strings.ToLower(strings.TrimSpace(raw))
 }
 
+func ocrURLFromConfig(ocrConfig map[string]any) string {
+	if ocrConfig == nil {
+		return ""
+	}
+	raw, _ := ocrConfig["ocr_url"].(string)
+	return strings.TrimSpace(raw)
+}
+
+// isOfficialMinerU mirrors lazyllm resolve_ocr_variant: empty URL or mineru.net host means online official API.
+func isOfficialMinerU(ocrConfig map[string]any) bool {
+	if ocrTypeFromConfig(ocrConfig) != "mineru" {
+		return false
+	}
+	url := strings.ToLower(ocrURLFromConfig(ocrConfig))
+	return url == "" || strings.Contains(url, "mineru.net")
+}
+
 // needsOfficeConvertBeforeParse decides whether office-convert-service runs before parsing.
-// PPT/PPTX/PPTM skip conversion when MinerU is the active OCR provider so DynamicPDFReader
-// can route them to MineruPPTReader.
+// PPT/PPTX/PPTM skip conversion only when official MinerU (mineru.net) is configured so
+// DynamicPDFReader can route them to MineruPPTReader; self-hosted MinerU still converts to PDF.
 func needsOfficeConvertBeforeParse(d documentExt, ocrConfig map[string]any) bool {
 	if !d.ConvertRequired {
 		return false
@@ -138,7 +155,7 @@ func needsOfficeConvertBeforeParse(d documentExt, ocrConfig map[string]any) bool
 	if !isOfficeDocument(src, d.ContentType, d.OriginalFilename) {
 		return false
 	}
-	if isPresentationDocument(src, d.ContentType, d.OriginalFilename) && ocrTypeFromConfig(ocrConfig) == "mineru" {
+	if isPresentationDocument(src, d.ContentType, d.OriginalFilename) && isOfficialMinerU(ocrConfig) {
 		return false
 	}
 	return true
