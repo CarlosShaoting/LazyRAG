@@ -276,13 +276,13 @@ def build_document(algo_id: str = ALGO_ID, *, serve: bool = True) -> Document:
                            group_type=NodeGroupType.CHUNK, transform=_build_line_transform(), parent='block')
     docs.create_node_group(name='code', display_name='code slice',
                            group_type=NodeGroupType.CODE, transform=_build_code_transform())
-    # docs.create_node_group(
-    #     name='doc-summary',
-    #     display_name='document summary',
-    #     group_type=NodeGroupType.SUMMARY,
-    #     transform=LLMParser(AutoModel(model='llm'), language='zh', task_type='summary'),
-    #     lazy_mode='all',
-    # )
+    docs.create_node_group(
+        name='doc-summary',
+        display_name='document summary',
+        group_type=NodeGroupType.SUMMARY,
+        transform=LLMParser(AutoModel(model='llm'), language='zh', task_type='summary'),
+        lazy_mode='all',
+    )
 
     # Only source=dynamic embed_image needs lazy mode; static configs are always ready.
     if EMBED_IMAGE in get_dynamic_role_slot_map():
@@ -292,7 +292,7 @@ def build_document(algo_id: str = ALGO_ID, *, serve: bool = True) -> Document:
     docs.activate_group('block', embed_keys=[EMBED_MAIN])
     docs.activate_group('line', embed_keys=[EMBED_MAIN])
     docs.activate_group('code', embed_keys=[EMBED_MAIN])
-    # docs.activate_group('doc-summary', embed_keys=[EMBED_MAIN])
+    docs.activate_group('doc-summary', embed_keys=[EMBED_MAIN])
     if serve:
         docs._manager._kbs = lazyllm.ServerModule(_quiet_trace(docs._manager._kbs), port=server_port)
     return docs
