@@ -5,6 +5,7 @@ from lazymind.chat.config import DEFAULT_CHAT_DATASET
 from lazymind.chat.service.chat_service import handle_chat
 from lazymind.chat.service.component import get_all_tool_groups
 from lazymind.model_config import inject_model_config
+from lazyllm.tools.rag import inject_ocr_config
 from lazyllm.tools.tool_config_inject import inject_tool_config
 
 router = APIRouter()
@@ -94,6 +95,15 @@ async def chat(
             )
         ),
     ] = None,
+    ocr_config: Annotated[
+        Optional[Dict[str, Any]],
+        Body(
+            description=(
+                'Per-request OCR configuration for attachment parsing. '
+                'Keys: ocr_type, ocr_url, ocr_auth / mineru_api_key / paddle_api_key.'
+            )
+        ),
+    ] = None,
     mcp_config: Annotated[
         Optional[List[Dict[str, Any]]],
         Body(
@@ -136,6 +146,7 @@ async def chat(
         has_subagents=bool(has_subagents),
         model_config=llm_config,
         tool_config=tool_config,
+        ocr_config=ocr_config,
         mcp_config=mcp_config,
         trace=trace,
         plugin_context=plugin_context,

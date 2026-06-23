@@ -87,16 +87,14 @@ VISION_EXTRACT_DEFAULT_INSTRUCTION = (
 )
 ATTACHED_FILES_GUIDANCE = (
     '# Attached file rules\n'
-    'The user may provide attached files in this conversation. Treat the attached file '
-    'paths in the system prompt as available evidence, and choose tools by file type:\n'
-    '- If an attached file is an image, call `vision_extractor` with its short filename '
-    'shown under Attached Files (or the local path when no short ref is available) '
-    'before answering questions that depend on its visual content.\n'
-    '- If an attached file is a PDF, text, document, or data file, call `kb_tmp_search` or another '
-    '`kb_*` tool with the attached file scope before answering questions that depend on '
-    'its contents.\n'
-    '- Do not ignore attached files or ask the user to paste their contents when a suitable '
-    'tool is available.'
+    'The user may provide attached files in this conversation. When an '
+    '"Attached File References" section is present, its extracted text is already '
+    'available for this turn — use it directly and do not ask the user to re-upload '
+    'or paste file contents.\n'
+    '- If no reference section exists for an attached image, call `vision_extractor` '
+    'with its short filename under Attached Files before answering visual questions.\n'
+    '- If no reference section exists for an attached document, call `kb_tmp_search` '
+    'or another `kb_*` tool scoped to the attached files before answering.'
 )
 
 SEARCH_GUIDANCE = (

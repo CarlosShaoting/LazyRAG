@@ -436,6 +436,10 @@ func TestBuildLazyChatRequestMapsAllFields(t *testing.T) {
 		"llm_config": map[string]any{
 			"llm": map[string]any{"source": "openai", "model": "gpt-4o"},
 		},
+		"ocr_config": map[string]any{
+			"ocr_type": "mineru",
+			"ocr_url":  "https://mineru.net/api/v4/",
+		},
 		"mcp_config": []any{
 			map[string]any{
 				"id":        "msp_1",
@@ -494,6 +498,9 @@ func TestBuildLazyChatRequestMapsAllFields(t *testing.T) {
 	}
 	if req.LLMConfig == nil || req.LLMConfig["llm"] == nil {
 		t.Fatalf("expected llm_config to be forwarded, got %#v", req.LLMConfig)
+	}
+	if req.OCRConfig == nil || req.OCRConfig["ocr_type"] != "mineru" {
+		t.Fatalf("expected ocr_config to be forwarded, got %#v", req.OCRConfig)
 	}
 	if len(req.MCPConfig) != 1 {
 		t.Fatalf("expected mcp_config to be forwarded, got %#v", req.MCPConfig)

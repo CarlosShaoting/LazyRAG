@@ -92,6 +92,18 @@ x-ocr-env: &ocr-env
   LAZYLLM_MINERU_API_KEY: ${LAZYLLM_MINERU_API_KEY:-}
   LAZYLLM_PADDLE_API_KEY: ${LAZYLLM_PADDLE_API_KEY:-}
 
+# LazyMind reader/cache settings are configured via LAZYMIND_* and forwarded to
+# lazyllm as LAZYLLM_* so ModuleCache / reader layers pick them up at startup.
+x-cache-env: &cache-env
+  LAZYMIND_CACHE_STRATEGY: ${LAZYMIND_CACHE_STRATEGY:-file}
+  LAZYLLM_CACHE_STRATEGY: ${LAZYMIND_CACHE_STRATEGY:-file}
+  LAZYMIND_CACHE_MODE: ${LAZYMIND_CACHE_MODE:-RW}
+  LAZYLLM_CACHE_MODE: ${LAZYMIND_CACHE_MODE:-RW}
+  LAZYMIND_CACHE_DIR: ${LAZYMIND_CACHE_DIR:-/var/lib/lazymind/uploads/.lazyllm_cache}
+  LAZYLLM_CACHE_DIR: ${LAZYMIND_CACHE_DIR:-/var/lib/lazymind/uploads/.lazyllm_cache}
+  LAZYMIND_READER_CACHE: ${LAZYMIND_READER_CACHE:-true}
+  LAZYLLM_READER_CACHE: ${LAZYMIND_READER_CACHE:-true}
+
 services:
 
   kong:
@@ -407,6 +419,8 @@ services:
     volumes:
       - ./data/core/uploads:/var/lib/lazymind/uploads
       - ./data/traces:/var/lib/lazymind/traces
+      - *lazyllm-src-mount
+      - *algorithm-src-mount
     environment:
       <<: [*db-conn, *upload-paths, *llm-api-keys, *trace-config]
       LAZYMIND_DOCUMENT_SERVICE_PORT: "8000"
@@ -544,7 +558,7 @@ services:
       - sqlite-data:/data/sqlite
     environment:
       LAZYMIND_DOCUMENT_PROCESSOR_PORT: "8000"
-      <<: [*runtime-home, *db-conn, *upload-paths, *llm-api-keys, *ocr-env, *trace-config]
+      <<: [*runtime-home, *db-conn, *upload-paths, *llm-api-keys, *ocr-env, *cache-env, *trace-config]
       LAZYMIND_MODEL_CONFIG_PATH: ${LAZYMIND_MODEL_CONFIG_PATH:-dynamic}
       LAZYLLM_EXPECTED_LOG_MODULES: "all"
     command: ["python", "-m", "lazymind.processor.service.server"]
@@ -589,7 +603,7 @@ services:
       LAZYMIND_DOCUMENT_WORKER_HIGH_PRIORITY_TASK_TYPES: ""
       LAZYMIND_DOCUMENT_WORKER_HIGH_PRIORITY_ONLY: "false"
       LAZYMIND_DOCUMENT_WORKER_POLL_MODE: direct
-      <<: [*runtime-home, *db-conn, *upload-paths, *llm-api-keys, *ocr-env, *trace-config]
+      <<: [*runtime-home, *db-conn, *upload-paths, *llm-api-keys, *ocr-env, *cache-env, *trace-config]
       LAZYMIND_MODEL_CONFIG_PATH: ${LAZYMIND_MODEL_CONFIG_PATH:-dynamic}
       LAZYLLM_EXPECTED_LOG_MODULES: "all"
     command: ["python", "-m", "lazymind.processor.service.worker"]
@@ -637,7 +651,7 @@ services:
       start_period: 180s
     environment:
       LAZYMIND_UPLOAD_ROOT: /var/lib/lazymind/uploads
-      <<: [*runtime-home, *upload-paths, *llm-api-keys, *ocr-env, *db-conn, *trace-config]
+      <<: [*runtime-home, *upload-paths, *llm-api-keys, *ocr-env, *cache-env, *db-conn, *trace-config]
       LAZYMIND_DOCUMENT_PROCESSOR_URL: http://processor-server:8000
       LAZYMIND_ALGO_SERVER_PORT: "8000"
       LAZYMIND_MODEL_CONFIG_PATH: ${LAZYMIND_MODEL_CONFIG_PATH:-dynamic}
@@ -723,7 +737,7 @@ services:
       LAZYMIND_ROUTER_DEFAULT_ALGO_PATH: /opt/lazymind/chat
       LAZYMIND_ROUTER_DEFAULT_INSTANCE_COUNT: 1
       LAZYMIND_PLUGINS_DIR: /app/plugins
-      <<: [*runtime-home, *trace-config, *proxy-env, *db-conn, *core-db-conn, *llm-api-keys, *upload-paths]
+      <<: [*runtime-home, *trace-config, *proxy-env, *db-conn, *core-db-conn, *llm-api-keys, *upload-paths, *ocr-env, *cache-env]
     command: ["python", "-m", "lazymind.router.app", "--port", "8046"]
     depends_on:
       lazyllm-algo:

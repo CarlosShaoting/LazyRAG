@@ -24,6 +24,7 @@ from lazymind.chat.service.component import (
     normalize_history_for_agent,
 )
 from lazymind.chat.engine.agent_core import build_react_agent, drive_agent
+from lazymind.chat.engine.attachment_reader import build_attachment_reference_prompt
 from lazymind.chat.service.utils import (
     SensitiveFilter,
     basename_from_path,
@@ -36,6 +37,7 @@ from lazymind.chat.service.utils import (
 )
 from lazyllm.tools.fs.client import FS
 from lazymind.model_config import inject_model_config, summarize_model_config_for_log
+from lazyllm.tools.rag import inject_ocr_config
 from lazyllm.tools.tool_config_inject import inject_tool_config
 from lazyllm import AutoModel
 from lazyllm.tools.mcp.client import MCPClient
@@ -182,6 +184,7 @@ async def handle_chat(query: str, history: Optional[List[Dict[str, Any]]],
                       has_subagents: Optional[bool] = False,
                       model_config: Optional[Dict[str, Any]] = None,
                       tool_config: Optional[Dict[str, Union[str, List[str]]]] = None,
+                      ocr_config: Optional[Dict[str, Any]] = None,
                       mcp_config: Optional[List[Dict[str, Any]]] = None,
                       trace: Optional[bool] = False,
                       plugin_context: Optional[Dict[str, Any]] = None,
@@ -254,6 +257,14 @@ async def handle_chat(query: str, history: Optional[List[Dict[str, Any]]],
     lazyllm.locals._init_sid(sid=session_id)
     inject_model_config(model_config)
     inject_tool_config(tool_config)
+    inject_ocr_config(ocr_config)
+    file_reference_prompt = ''
+    if resolved_files:
+        file_reference_prompt = await asyncio.to_thread(
+            build_attachment_reference_prompt,
+            resolved_files,
+            priority=priority,
+        )
     lazyllm.globals['agentic_config'] = agentic_config
     disabled = set(disabled_tools or [])
     active_configs = filter_tools(
@@ -288,6 +299,8 @@ async def handle_chat(query: str, history: Optional[List[Dict[str, Any]]],
     )
     if plugin_system_prompt:
         runtime_prompt = runtime_prompt + '\n\n' + plugin_system_prompt
+    if file_reference_prompt:
+        runtime_prompt = runtime_prompt + '\n\n' + file_reference_prompt
 
     llm = AutoModel(model='llm')
 

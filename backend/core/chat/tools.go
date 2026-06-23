@@ -165,6 +165,13 @@ func applyChatRuntimeConfigs(ctx context.Context, db *gorm.DB, userID string, bo
 	if len(toolConfig) > 0 {
 		body["tool_config"] = toolConfig
 	}
+	ocrConfig, err := modelconfig.LoadOCRConfig(ctx, db, userID)
+	if err != nil {
+		return err
+	}
+	if len(ocrConfig) > 0 {
+		body["ocr_config"] = ocrConfig
+	}
 	return nil
 }
 

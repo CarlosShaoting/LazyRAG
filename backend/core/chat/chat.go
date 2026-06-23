@@ -68,6 +68,7 @@ type LazyChatRequest struct {
 	UserID             string          `json:"user_id"`
 	EnvironmentContext map[string]any  `json:"environment_context,omitempty"`
 	LLMConfig          map[string]any  `json:"llm_config,omitempty"`
+	OCRConfig          map[string]any  `json:"ocr_config,omitempty"`
 	ToolConfig         map[string]any  `json:"tool_config,omitempty"`
 	Mode               string          `json:"mode,omitempty"`
 	HasSubagents       bool            `json:"has_subagents"`
@@ -317,6 +318,9 @@ func buildLazyChatRequest(body map[string]any) *LazyChatRequest {
 	}
 	if llmConfig, ok := body["llm_config"].(map[string]any); ok {
 		req.LLMConfig = llmConfig
+	}
+	if ocrConfig, ok := body["ocr_config"].(map[string]any); ok {
+		req.OCRConfig = ocrConfig
 	}
 	if toolConfig, ok := body["tool_config"].(map[string]string); ok {
 		tc := make(map[string]any, len(toolConfig))
