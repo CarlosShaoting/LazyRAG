@@ -65,6 +65,7 @@ def _serialize_doc_node_like(node: Any) -> Dict[str, Any]:
             'index',
             'file_name',
             'source',
+            'source_path',
             'store_num',
             'lazyllm_store_num',
             'page',
@@ -86,7 +87,20 @@ def _serialize_doc_node_like(node: Any) -> Dict[str, Any]:
         and local_path.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'))
     )
     image_markdown = None
-    if is_image and local_path:
+    if group == 'image':
+        source_path = metadata['source_path']
+        signed = static_file_url_from_any(source_path)
+        text = signed
+        compact_metadata = dict(compact_metadata)
+        compact_metadata['image_url'] = signed
+        compact_metadata['local_path'] = source_path
+        file_label = (
+            compact_metadata.get('file_name')
+            or global_md.get('file_name')
+            or basename_from_path(signed)
+        )
+        image_markdown = f'![{file_label}]({signed})'
+    elif is_image and local_path:
         signed = static_file_url_from_any(local_path)
         if signed:
             text = signed
@@ -117,7 +131,10 @@ def _serialize_doc_node_like(node: Any) -> Dict[str, Any]:
     }
     if image_markdown:
         serialized['image_markdown'] = image_markdown
-        serialized['local_path'] = local_path
+        if group == 'image':
+            serialized['local_path'] = metadata['source_path']
+        else:
+            serialized['local_path'] = local_path
     return serialized
 
 

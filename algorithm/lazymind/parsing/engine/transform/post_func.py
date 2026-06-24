@@ -157,6 +157,13 @@ def _extract_image_path(node: DocNode) -> str:
         match = re.search(r'!\[.*?\]\((.*?)\)', text)
         if match and match.group(1):
             return match.group(1)
+        bare = re.search(
+            r'(images/[^\s\)\]]+\.(?:jpg|jpeg|png|gif|bmp|webp|tiff|tif))',
+            text,
+            re.I,
+        )
+        if bare:
+            return bare.group(1)
     metadata = node.metadata
     for key in ('image_url', 'image_path', 'img_path', 'image', 'img'):
         if metadata.get(key):
@@ -168,6 +175,22 @@ def _extract_image_path(node: DocNode) -> str:
         if line.get('image_path'):
             return line['image_path']
     return ''
+
+
+def _rewrite_block_image_nodes(nodes: List[DocNode]) -> None:
+    loader = ImageNodeLoader()
+    for node in nodes:
+        image_path = _extract_image_path(node)
+        if not image_path:
+            continue
+        cache_dir = loader._get_image_cache_dir(node)
+        local_path = loader._resolve_cached_image_path(image_path, cache_dir)
+        source_path = os.path.abspath(local_path)
+        file_name = os.path.basename(source_path)
+        markdown = f'![{file_name}]({source_path})'
+        node._content = markdown
+        node.metadata['source_path'] = source_path
+        node.metadata['display_content'] = markdown
 
 
 class LayoutNodeParser(ModuleBase):
@@ -358,14 +381,16 @@ class ImageNodeLoader(ModuleBase):
                         continue
                     seen_paths.add(normalized_path)
                     source_path = os.path.abspath(local_image_path)
+                    file_name = os.path.basename(source_path)
                     metadata = {
                         'source_path': source_path,
                         'normalized_source_path': normalized_path,
-                        'file_name': os.path.basename(source_path),
+                        'file_name': file_name,
                         'file_ext': Path(source_path).suffix.lower() or '.jpg',
                         'file_type': 'image',
                         'is_pure_image': True,
                         'image_url': local_image_path,
+                        'display_content': f'![{file_name}]({source_path})',
                     }
                     image_nodes.append(ImageDocNode(image_path=normalized_path, metadata=metadata))
                 except Exception as exc:
@@ -771,8 +796,7 @@ class NodeParser:
             parser_ppl.merge_nodes = MergeNodeParser()
 
         nodes = parser_ppl(nodes)
-        # use parallel? text-img
-        # can be moved into mineruPdfReader
+        _rewrite_block_image_nodes(nodes)
         extracted_img_nodes = ImageNodeLoader()(raw_nodes)
         nodes.extend(extracted_img_nodes)
         embed_keys = ['file_name', 'title']

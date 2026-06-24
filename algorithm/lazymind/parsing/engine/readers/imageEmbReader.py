@@ -44,6 +44,7 @@ class ImageEmbReader(LazyLLMReaderBase):
             'file_ext': suffix,
             'file_type': 'image',
             'is_pure_image': True,
+            'display_content': f'![{file_name}]({abs_path})',
         }
         return [ImageDocNode(image_path=normalized_path, metadata=metadata)]
 
