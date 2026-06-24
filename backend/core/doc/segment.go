@@ -642,16 +642,17 @@ func mapChunkToSegment(datasetID, documentID string, item map[string]any) Segmen
 	tableContent := firstAnyStringWithFallbackMaps(item, meta, globalMetaMap, "", "table_content")
 	imageKey := firstAnyStringWithFallbackMaps(item, meta, globalMetaMap, "", "image_key")
 	imageURI := firstAnyStringWithFallbackMaps(item, meta, globalMetaMap, "", "image_uri")
-	displayContent := firstAnyStringWithFallbackMaps(item, meta, globalMetaMap, "", "display_content")
 	sourcePath := firstAnyStringWithMeta(item, meta, "", "source_path")
+	var displayContent string
 	if sourcePath != "" {
 		fileName := firstAnyStringWithMeta(item, meta, "", "file_name")
-		if displayContent == "" {
-			displayContent = fmt.Sprintf("![%s](%s)", fileName, sourcePath)
-		}
+		displayContent = fmt.Sprintf("![%s](%s)", fileName, sourcePath)
 		imageKeys = []string{sourcePath}
-	} else if displayContent == "" {
-		displayContent = content
+	} else {
+		displayContent = firstAnyStringWithFallbackMaps(item, meta, globalMetaMap, "", "display_content")
+		if displayContent == "" {
+			displayContent = content
+		}
 	}
 	if len(imageKeys) == 0 {
 		imageKeys = []string{}

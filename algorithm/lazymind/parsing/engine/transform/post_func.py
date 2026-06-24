@@ -177,22 +177,6 @@ def _extract_image_path(node: DocNode) -> str:
     return ''
 
 
-def _rewrite_block_image_nodes(nodes: List[DocNode]) -> None:
-    loader = ImageNodeLoader()
-    for node in nodes:
-        image_path = _extract_image_path(node)
-        if not image_path:
-            continue
-        cache_dir = loader._get_image_cache_dir(node)
-        local_path = loader._resolve_cached_image_path(image_path, cache_dir)
-        source_path = os.path.abspath(local_path)
-        file_name = os.path.basename(source_path)
-        markdown = f'![{file_name}]({source_path})'
-        node._content = markdown
-        node.metadata['source_path'] = source_path
-        node.metadata['display_content'] = markdown
-
-
 class LayoutNodeParser(ModuleBase):
     """
     Classify nodes via regex ->
@@ -309,7 +293,19 @@ class ImageNodeLoader(ModuleBase):
         self._normalized_root.mkdir(parents=True, exist_ok=True)
 
     def forward(self, document: List[DocNode], **kwargs) -> List[ImageDocNode]:
-        return self._parse_nodes(document)
+        return self.load([], document)
+
+    def load(self, block_nodes: List[DocNode], raw_nodes: List[DocNode]) -> List[ImageDocNode]:
+        source_by_image_path = {}
+        image_nodes = self._collect_image_doc_nodes(raw_nodes, source_by_image_path)
+        for node in block_nodes:
+            image_path = _extract_image_path(node)
+            source_path = source_by_image_path.get(image_path)
+            if not source_path:
+                continue
+            node.metadata['source_path'] = source_path
+            node.metadata.setdefault('file_name', os.path.basename(source_path))
+        return image_nodes
 
     @classmethod
     def class_name(cls) -> str:
@@ -354,7 +350,12 @@ class ImageNodeLoader(ModuleBase):
     def _normalize_image_file(self, image_path: str) -> str:
         return normalize_image_file(image_path=image_path, normalized_root=self._normalized_root)
 
-    def _parse_nodes(self, document: List[DocNode], **kwargs) -> List[ImageDocNode]:
+    def _collect_image_doc_nodes(
+        self,
+        document: List[DocNode],
+        source_by_image_path: dict,
+        **kwargs,
+    ) -> List[ImageDocNode]:
         image_nodes = []
         seen_paths = set()
         for node in document:
@@ -381,6 +382,7 @@ class ImageNodeLoader(ModuleBase):
                         continue
                     seen_paths.add(normalized_path)
                     source_path = os.path.abspath(local_image_path)
+                    source_by_image_path[image_path] = source_path
                     file_name = os.path.basename(source_path)
                     metadata = {
                         'source_path': source_path,
@@ -390,7 +392,6 @@ class ImageNodeLoader(ModuleBase):
                         'file_type': 'image',
                         'is_pure_image': True,
                         'image_url': local_image_path,
-                        'display_content': f'![{file_name}]({source_path})',
                     }
                     image_nodes.append(ImageDocNode(image_path=normalized_path, metadata=metadata))
                 except Exception as exc:
@@ -796,9 +797,7 @@ class NodeParser:
             parser_ppl.merge_nodes = MergeNodeParser()
 
         nodes = parser_ppl(nodes)
-        _rewrite_block_image_nodes(nodes)
-        extracted_img_nodes = ImageNodeLoader()(raw_nodes)
-        nodes.extend(extracted_img_nodes)
+        nodes.extend(ImageNodeLoader().load(nodes, raw_nodes))
         embed_keys = ['file_name', 'title']
         del_keys = ['list_type', 'code_type', 'text_type', 'table_caption', 'table_footnote']
         for ind, node in enumerate(nodes):
