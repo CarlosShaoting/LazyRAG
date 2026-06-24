@@ -299,13 +299,34 @@ class ImageNodeLoader(ModuleBase):
         source_by_image_path = {}
         image_nodes = self._collect_image_doc_nodes(raw_nodes, source_by_image_path)
         for node in block_nodes:
-            image_path = _extract_image_path(node)
-            source_path = source_by_image_path.get(image_path)
+            source_path = self._lookup_source_path(node, source_by_image_path)
             if not source_path:
                 continue
             node.metadata['source_path'] = source_path
-            node.metadata.setdefault('file_name', os.path.basename(source_path))
         return image_nodes
+
+    @staticmethod
+    def _remember_source_path(source_by_image_path: dict, image_path: str, source_path: str) -> None:
+        source_by_image_path[image_path] = source_path
+        base_name = os.path.basename(image_path.replace('\\', '/'))
+        if base_name:
+            source_by_image_path[base_name] = source_path
+
+    def _lookup_source_path(self, node: DocNode, source_by_image_path: dict) -> str:
+        image_path = _extract_image_path(node)
+        if image_path:
+            source_path = source_by_image_path.get(image_path)
+            if source_path:
+                return source_path
+            base_name = os.path.basename(image_path.replace('\\', '/'))
+            return source_by_image_path.get(base_name, '')
+        text = (node.text or '').strip()
+        if not text:
+            return ''
+        return source_by_image_path.get(text) or source_by_image_path.get(
+            os.path.basename(text.replace('\\', '/')),
+            '',
+        )
 
     @classmethod
     def class_name(cls) -> str:
@@ -382,8 +403,8 @@ class ImageNodeLoader(ModuleBase):
                         continue
                     seen_paths.add(normalized_path)
                     source_path = os.path.abspath(local_image_path)
-                    source_by_image_path[image_path] = source_path
-                    file_name = os.path.basename(source_path)
+                    self._remember_source_path(source_by_image_path, image_path, source_path)
+                    file_name = node.metadata.get('file_name') or os.path.basename(source_path)
                     metadata = {
                         'source_path': source_path,
                         'normalized_source_path': normalized_path,
@@ -393,7 +414,11 @@ class ImageNodeLoader(ModuleBase):
                         'is_pure_image': True,
                         'image_url': local_image_path,
                     }
-                    image_nodes.append(ImageDocNode(image_path=normalized_path, metadata=metadata))
+                    image_nodes.append(ImageDocNode(
+                        image_path=normalized_path,
+                        metadata=metadata,
+                        global_metadata=copy.deepcopy(node.global_metadata),
+                    ))
                 except Exception as exc:
                     LOG.warning(f'[ImageNodeLoader] load image failed: {image_path}, error: {exc}')
                     continue
