@@ -412,7 +412,6 @@ class ImageNodeLoader(ModuleBase):
                         'file_ext': Path(source_path).suffix.lower() or '.jpg',
                         'file_type': 'image',
                         'is_pure_image': True,
-                        'image_url': local_image_path,
                     }
                     image_nodes.append(ImageDocNode(
                         image_path=normalized_path,
