@@ -8,7 +8,7 @@ Two tool types are registered dynamically per-conversation:
 Both are stop-tools: after a successful invocation the ReAct loop terminates immediately
 without entering a summarize step.
 
-Framework tools (save_artifact / load_artifact / list_artifacts) are always merged into
+Framework tools (save_artifact / get_artifact / list_artifacts) are always merged into
 the step's tool list regardless of what the plugin's state.yml declares.  This ensures
 every SubAgent can persist and retrieve artifacts without plugin authors having to
 remember to list them explicitly.
@@ -32,8 +32,12 @@ from lazymind.chat.engine.tools.infra import handle_tool_errors
 
 _FRAMEWORK_TOOLS: List[str] = [
     'save_artifact',
-    'load_artifact',
+    'get_artifact',
     'list_artifacts',
+    'list_knowledge_bases',
+    'read_user_attachment',
+    'find_user_attachment',
+    'find_artifact',
 ]
 
 
@@ -116,8 +120,8 @@ def _trigger_plugin_step(
         user_input: The user's original or latest input.
         is_cold_start: True for the first step of a new session.
         runtime_instruction: Optional ephemeral instruction injected into the step
-            objective for this execution only.  Used for partial retries where the
-            user wants to regenerate only a subset of list artifacts.
+            objective for this execution only.  Used for retries where the user
+            wants to refine or partially regenerate the output.
             Not persisted to session state.
         partial_indices: Maps artifact_key → list_index values that should overwrite
             existing list-slot entries rather than appending. None means full write.
@@ -220,6 +224,21 @@ def _trigger_plugin_step(
         params['retry_hint'] = runtime_instruction
     if partial_indices:
         params['partial_indices'] = partial_indices
+    # Propagate full per-turn attachment index so SubAgent can access user files.
+    history_files_per_turn: dict = cfg.get('history_files_per_turn') or {}
+    if history_files_per_turn:
+        params['history_files_per_turn'] = history_files_per_turn
+
+    # Inject focused_tab (UI context hint) into the objective.
+    # focused_sort_order is NOT injected — it is the UI scroll position,
+    # not the user's intended operation target. The SubAgent reads the
+    # runtime_instruction directly and decides which sort_order to pass
+    # to save_artifact based on the user's stated intent.
+    focused_tab = cfg.get('focused_tab')
+    enriched_instruction = runtime_instruction or ''
+    if focused_tab:
+        sep = ' ' if enriched_instruction else ''
+        enriched_instruction = enriched_instruction + sep + f'User is currently viewing tab: {focused_tab}.'
 
     _write_agent_data(
         'task_created',
@@ -227,7 +246,7 @@ def _trigger_plugin_step(
         title=f'{plugin_id}:{step_id}',
         agent_type='plugin_step',
         mode='manual',          # Plugin steps always async; Go controls auto-advance
-        objective=_render_step_objective(step_config, user_input, runtime_instruction),
+        objective=_render_step_objective(step_config, user_input, enriched_instruction),
         params=params,
         input_artifact_keys=input_keys,
         output_artifact_keys=output_keys,
@@ -240,7 +259,6 @@ def _trigger_plugin_step(
 # ---------------------------------------------------------------------------
 # Public tool factories
 # ---------------------------------------------------------------------------
-
 def _build_step_choices_doc(
     forward_steps: List[str],
     rewind_steps: List[str],
@@ -411,8 +429,40 @@ def build_advance_step_tool(
 # High-level helper consumed by chat_service
 # ---------------------------------------------------------------------------
 
+
+def _build_session_artifact_section(session_id: str) -> str:
+    """Build the artifact-context block prepended to the current user-turn.
+
+    Returned text is injected before the user's query (not into the system prompt)
+    so the LLM sees up-to-date session state without the snapshot polluting history.
+    """
+    if not session_id:
+        return ''
+    from lazymind.chat.engine.subagent.db import TaskQueryDB
+    lines = TaskQueryDB().format_plugin_session_artifacts(session_id)
+    if not lines:
+        return ''
+    # Replace the generic header with a plugin-specific one that warns against re-running steps.
+    lines[0] = (
+        '## Current session artifacts [AUTHORITATIVE — queried at request time]\n'
+        '> Any artifact list mentioned in the conversation history is OUTDATED and must be ignored.\n'
+        '> The list below is the ONLY source of truth for what is currently available.'
+    )
+    return '\n'.join(lines)
+
+
+def _build_chat_agent_task_context(conversation_id: str) -> str:
+    """Build the ## Tasks system-prompt section for ChatAgent."""
+    conv_id = conversation_id.strip()
+    if not conv_id:
+        return ''
+    from lazymind.chat.engine.subagent.db import TaskQueryDB
+    return TaskQueryDB().build_chat_agent_task_context(conv_id)
+
+
 def resolve_plugin_injection(
     plugin_context: Optional[Dict[str, Any]],
+    conversation_id: str = '',
 ) -> tuple:
     """Resolve plugin tools, system prompt, stop-tools and agentic_config patches.
 
@@ -420,20 +470,24 @@ def resolve_plugin_injection(
     branching so chat_service stays free of plugin-internal details.
 
     Returns:
-        (plugin_tools, plugin_system_prompt, plugin_stop_tools, agentic_config_patch)
+        (plugin_tools, plugin_system_prompt, plugin_stop_tools, agentic_config_patch, plugin_artifact_context)
 
-        plugin_tools          – list of callables to append to the agent tool list.
-        plugin_system_prompt  – extra system-prompt text to append (may be empty).
-        plugin_stop_tools     – list of tool names that terminate the ReAct loop.
-        agentic_config_patch  – dict to merge into agentic_config (may be empty).
+        plugin_tools             – list of callables to append to the agent tool list.
+        plugin_system_prompt     – extra system-prompt text to append (may be empty).
+        plugin_stop_tools        – list of tool names that terminate the ReAct loop.
+        agentic_config_patch     – dict to merge into agentic_config (may be empty).
+        plugin_artifact_context  – artifact summary to prepend to the current user-turn (not system prompt).
     """
     plugin_tools: List[Any] = []
     plugin_system_prompt: str = ''
     plugin_stop_tools: List[str] = []
     agentic_config_patch: Dict[str, Any] = {}
+    plugin_artifact_context: str = ''
 
     if not plugin_loader._registry:
-        return plugin_tools, plugin_system_prompt, plugin_stop_tools, agentic_config_patch
+        # No plugins registered — inject SubAgent task context for pure SubAgent conversations.
+        plugin_system_prompt = _build_chat_agent_task_context(conversation_id)
+        return plugin_tools, plugin_system_prompt, plugin_stop_tools, agentic_config_patch, plugin_artifact_context
 
     if plugin_context and isinstance(plugin_context, dict):
         p_session_id = plugin_context.get('session_id', '')
@@ -445,6 +499,8 @@ def resolve_plugin_injection(
                 'plugin_id': p_plugin_id,
                 'plugin_session_id': p_session_id,
                 'plugin_step': p_current_step,
+                'focused_tab': plugin_context.get('focused_tab'),
+                'focused_sort_order': plugin_context.get('focused_sort_order'),
             }
             sm = plugin_loader.get_state_machine(p_plugin_id)
 
@@ -471,8 +527,15 @@ def resolve_plugin_injection(
                 rewind_steps=rewind_steps,
                 step_labels=step_labels,
             )]
+            # find_artifact lets ChatAgent look up plugin step outputs by key.
+            from lazymind.chat.engine.subagent.tools import find_artifact
+            plugin_tools.append(find_artifact)
+            # save_plugin_artifact lets ChatAgent write an artifact directly.
+            from lazymind.chat.engine.tools.subagent_chat_tools import save_plugin_artifact
+            plugin_tools.append(save_plugin_artifact)
             plugin_stop_tools = ['advance_step']
             plugin_system_prompt = plugin_loader.get_scenario(p_plugin_id)
+            plugin_artifact_context = _build_session_artifact_section(p_session_id)
         else:
             # Cold start: no active session yet
             plugin_tools = build_cold_start_tools()
@@ -493,5 +556,8 @@ def resolve_plugin_injection(
                 for spec in (plugin_loader._registry or {}).values()
             ]
             plugin_system_prompt = '\n\n---\n\n'.join(s for s in scenarios if s)
+        task_context = _build_chat_agent_task_context(conversation_id)
+        if task_context:
+            plugin_system_prompt = (plugin_system_prompt + '\n\n' + task_context).strip()
 
-    return plugin_tools, plugin_system_prompt, plugin_stop_tools, agentic_config_patch
+    return plugin_tools, plugin_system_prompt, plugin_stop_tools, agentic_config_patch, plugin_artifact_context

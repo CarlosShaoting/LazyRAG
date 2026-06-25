@@ -1,6 +1,6 @@
 import { Avatar, Button, Divider, Flex, message, Spin, Tooltip } from "antd";
 import { trim } from "lodash";
-import { useEffect, useReducer, useRef, useState } from "react";
+import { useEffect, useReducer, useRef } from "react";
 import type { MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -75,6 +75,7 @@ interface FeedbackState {
   showModal: boolean;
   isSubmitting: boolean;
   localFeedbackType: FeedBackChatHistoryRequestTypeEnum | undefined;
+  localFeedbackHistoryId: string | undefined;
   targetHistoryId: string | undefined;
 }
 
@@ -85,11 +86,13 @@ type FeedbackAction =
   | {
       type: "SUBMIT_SUCCESS";
       feedbackType: FeedBackChatHistoryRequestTypeEnum;
+      historyId: string;
     }
   | { type: "SUBMIT_FAIL" }
   | {
       type: "SYNC_FROM_SERVER";
       feedbackType: FeedBackChatHistoryRequestTypeEnum | undefined;
+      historyId: string | undefined;
     };
 
 function normalizeFeedbackType(
@@ -152,6 +155,7 @@ function feedbackReducer(
         ...state,
         isSubmitting: false,
         localFeedbackType: action.feedbackType,
+        localFeedbackHistoryId: action.historyId,
         showModal: false,
         targetHistoryId: undefined,
       };
@@ -160,13 +164,13 @@ function feedbackReducer(
       return {
         ...state,
         isSubmitting: false,
-        targetHistoryId: undefined,
       };
 
     case "SYNC_FROM_SERVER":
       return {
         ...state,
         localFeedbackType: action.feedbackType,
+        localFeedbackHistoryId: action.historyId,
       };
 
     default:
@@ -196,16 +200,18 @@ const AssistantMessage = (props: any) => {
     showModal: false,
     isSubmitting: false,
     localFeedbackType: normalizeFeedbackType(item?.feed_back),
+    localFeedbackHistoryId: item?.history_id,
     targetHistoryId: undefined,
   });
 
   const loadActiveSession = usePluginStore((s) => s.loadActiveSession);
   // Eagerly load the plugin session so the panel appears without waiting for component mount.
+  const isLast = index === length - 1;
   useEffect(() => {
-    if (index === length - 1 && sessionId) {
+    if (isLast && sessionId) {
       loadActiveSession(sessionId);
     }
-  }, [index, length, sessionId, loadActiveSession]);
+  }, [isLast, sessionId, loadActiveSession]);
 
   const pluginSession = usePluginStore((s) =>
     sessionId ? s.sessionByConversation[sessionId] ?? null : null,
@@ -215,8 +221,9 @@ const AssistantMessage = (props: any) => {
     dispatch({
       type: "SYNC_FROM_SERVER",
       feedbackType: normalizeFeedbackType(item?.feed_back),
+      historyId: item?.history_id,
     });
-  }, [item?.feed_back]);
+  }, [item?.feed_back, item?.history_id]);
 
   const handleCopy = async (text?: string) => {
     try {
@@ -413,30 +420,54 @@ const AssistantMessage = (props: any) => {
     );
   }
 
-  
   function getCurrentFeedback(historyId?: string) {
-    if (historyId && item.answers) {
-      const answer = item.answers.find(
-        (ans: any) => ans.history_id === historyId,
-      );
-      return normalizeFeedbackType(answer?.feed_back ?? item.feed_back);
+    const resolvedHistoryId = historyId || item?.history_id;
+    if (
+      resolvedHistoryId &&
+      feedbackState.localFeedbackHistoryId === resolvedHistoryId &&
+      feedbackState.localFeedbackType
+    ) {
+      return feedbackState.localFeedbackType;
     }
-    return (
-      feedbackState.localFeedbackType ?? normalizeFeedbackType(item.feed_back)
-    );
+
+    if (resolvedHistoryId && item?.answers) {
+      const answer = item.answers.find(
+        (ans: any) => ans.history_id === resolvedHistoryId,
+      );
+      if (answer && answer.feed_back !== undefined && answer.feed_back !== null) {
+        return normalizeFeedbackType(answer.feed_back);
+      }
+    }
+
+    if (!historyId || resolvedHistoryId === item?.history_id) {
+      return normalizeFeedbackType(item?.feed_back);
+    }
+
+    return undefined;
   }
 
   const createUpdatedItem = (
     feedbackType: FeedBackChatHistoryRequestTypeEnum,
     targetHistoryId?: string,
   ) => {
-    if (targetHistoryId && item.answers) {
+    const resolvedHistoryId = targetHistoryId || item?.history_id;
+    if (resolvedHistoryId && item?.answers) {
+      const hasTargetAnswer = item.answers.some(
+        (ans: any) => ans.history_id === resolvedHistoryId,
+      );
       const updatedAnswers = item.answers.map((ans: any) =>
-        ans.history_id === targetHistoryId
+        ans.history_id === resolvedHistoryId
           ? { ...ans, feed_back: feedbackType }
           : { ...ans, feed_back: undefined },
       );
-      return { ...item, feed_back: undefined, answers: updatedAnswers };
+      return {
+        ...item,
+        feed_back:
+          resolvedHistoryId === item?.history_id || !hasTargetAnswer
+            ? feedbackType
+            : undefined,
+        answers: updatedAnswers,
+      };
     }
     return { ...item, feed_back: feedbackType };
   };
@@ -450,7 +481,7 @@ const AssistantMessage = (props: any) => {
       return;
     }
 
-    const targetHistoryId = historyId || item.history_id;
+    const targetHistoryId = historyId || item?.history_id;
     if (!targetHistoryId) {
       message.error(t("chat.historyIdMissingFeedback"));
       return;
@@ -469,10 +500,14 @@ const AssistantMessage = (props: any) => {
         feedBackChatHistoryRequest: { history_id: targetHistoryId, type },
       })
       .then(() => {
-        const updatedItem = createUpdatedItem(type, historyId);
+        const updatedItem = createUpdatedItem(type, targetHistoryId);
         updateMessage(updatedItem);
 
-        dispatch({ type: "SUBMIT_SUCCESS", feedbackType: type });
+        dispatch({
+          type: "SUBMIT_SUCCESS",
+          feedbackType: type,
+          historyId: targetHistoryId,
+        });
       })
       .catch(() => {
         message.error(t("chat.feedbackFailedRetry"));
@@ -494,7 +529,7 @@ const AssistantMessage = (props: any) => {
       return;
     }
 
-    const targetHistoryId = historyId || item.history_id;
+    const targetHistoryId = historyId || item?.history_id;
     if (!targetHistoryId) {
       message.error(t("chat.historyIdMissingFeedback"));
       return;
@@ -513,7 +548,7 @@ const AssistantMessage = (props: any) => {
 
   
   function handleFeedbackSubmit(_reasons: string[], _comment: string) {
-    const targetHistoryId = feedbackState.targetHistoryId || item.history_id;
+    const targetHistoryId = feedbackState.targetHistoryId || item?.history_id;
     if (!targetHistoryId) {
       message.error(t("chat.historyIdMissingFeedback"));
       dispatch({ type: "CLOSE_MODAL" });
@@ -538,13 +573,14 @@ const AssistantMessage = (props: any) => {
       .then(() => {
         const updatedItem = createUpdatedItem(
           FeedBackChatHistoryRequestTypeEnum.FeedBackTypeUnlike,
-          item.answers ? targetHistoryId : undefined,
+          targetHistoryId,
         );
         updateMessage(updatedItem);
 
         dispatch({
           type: "SUBMIT_SUCCESS",
           feedbackType: FeedBackChatHistoryRequestTypeEnum.FeedBackTypeUnlike,
+          historyId: targetHistoryId,
         });
         message.success(t("chat.thanksFeedback"));
       })

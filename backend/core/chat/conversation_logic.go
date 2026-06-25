@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 
 	"lazymind/core/common"
@@ -20,6 +19,7 @@ import (
 	"lazymind/core/log"
 	"lazymind/core/plugin"
 	"lazymind/core/resourceupdate"
+	"lazymind/core/state"
 	"lazymind/core/subagent"
 )
 
@@ -53,11 +53,11 @@ func toolConfigFromBody(reqBody map[string]any) map[string]any {
 	return nil
 }
 
-func recordConversationIdleAfterPersist(ctx context.Context, db *gorm.DB, rdb *redis.Client, convID, userID, historyID string, at time.Time, query, answer string) {
-	if db == nil || rdb == nil {
+func recordConversationIdleAfterPersist(ctx context.Context, db *gorm.DB, stateStore state.Store, convID, userID, historyID string, at time.Time, query, answer string) {
+	if db == nil || stateStore == nil {
 		return
 	}
-	if err := resourceupdate.RecordConversationIdleMessage(ctx, db, rdb, resourceupdate.ConversationIdleRecord{
+	if err := resourceupdate.RecordConversationIdleMessage(ctx, db, stateStore, resourceupdate.ConversationIdleRecord{
 		SessionID:      convID,
 		UserID:         userID,
 		LastMessageID:  historyID,
@@ -414,7 +414,68 @@ func filePathsForUpstreamChat(raw map[string]any) any {
 	return out
 }
 
-func buildChatRequestBody(convID, sessionID, query string, histories []orm.ChatHistory, raw map[string]any, resourceContext *evolution.ChatResourceContext, userID string) map[string]any {
+// filesPerTurnMap builds a map of turn -> []filePath from historical chat_histories
+// plus the current turn's uploads. Format: {"current": [...], "<seq>": [...]}.
+// Python uses this both for per-turn file context and to reconstruct the merged file list.
+
+// filesPerTurnMap builds a map of seq -> []filePath from historical chat_histories,
+// plus an entry for the current turn (seq=0) from the raw input.
+// This is passed to Python as history_files_per_turn so it can rebuild per-turn file context.
+func filesPerTurnMap(histories []orm.ChatHistory, currentFiles any, currentSeq int) map[string][]string {
+	out := make(map[string][]string)
+	// Current turn files keyed by actual seq number.
+	var currentPaths []string
+	switch xs := currentFiles.(type) {
+	case []any:
+		for _, it := range xs {
+			if s, ok := it.(string); ok && strings.TrimSpace(s) != "" {
+				currentPaths = append(currentPaths, strings.TrimSpace(s))
+			}
+		}
+	case []string:
+		for _, s := range xs {
+			if strings.TrimSpace(s) != "" {
+				currentPaths = append(currentPaths, strings.TrimSpace(s))
+			}
+		}
+	}
+	if len(currentPaths) > 0 {
+		out[fmt.Sprintf("%d", currentSeq)] = currentPaths
+	}
+	// Historical turns keyed by seq.
+	for _, h := range histories {
+		if len(h.Ext) == 0 {
+			continue
+		}
+		var ext struct {
+			Input []map[string]any `json:"input"`
+		}
+		if err := json.Unmarshal(h.Ext, &ext); err != nil {
+			continue
+		}
+		seqKey := fmt.Sprintf("%d", h.Seq)
+		for _, item := range ext.Input {
+			typ, _ := item["input_type"].(string)
+			typ = strings.ToLower(strings.TrimSpace(typ))
+			if typ != "image" && typ != "file" {
+				continue
+			}
+			uri, _ := item["uri"].(string)
+			uri = strings.TrimSpace(uri)
+			if uri == "" {
+				continue
+			}
+			lower := strings.ToLower(uri)
+			if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+				continue
+			}
+			out[seqKey] = append(out[seqKey], uri)
+		}
+	}
+	return out
+}
+
+func buildChatRequestBody(ctx context.Context, db *gorm.DB, convID, sessionID, query string, histories []orm.ChatHistory, raw map[string]any, resourceContext *evolution.ChatResourceContext, userID string, currentSeq int) map[string]any {
 	if strings.TrimSpace(sessionID) == "" {
 		sessionID = upstreamSessionID(convID)
 	}
@@ -425,28 +486,45 @@ func buildChatRequestBody(convID, sessionID, query string, histories []orm.ChatH
 			mode = m
 		}
 	}
+	currentFilePaths := filePathsForUpstreamChat(raw)
+	filesMap := filesPerTurnMap(histories, currentFilePaths, currentSeq)
 	body := map[string]any{
-		"query":           query,
-		"session_id":      sessionID,
-		"conversation_id": convID,
-		"history":         buildHistoryMessages(histories),
-		"filters":         raw["filters"],
-		"files":           filePathsForUpstreamChat(raw),
-		"databases":       raw["databases"],
-		"debug":           raw["debug"],
-		"reasoning":       resolveReasoning(raw),
-		"priority":        raw["priority"],
-		"enable_thinking": raw["enable_thinking"],
-		"use_memory":      useMemory,
-		"user_id":         strings.TrimSpace(userID),
-		"mode":            mode,
+		"query":            query,
+		"session_id":       sessionID,
+		"conversation_id":  convID,
+		"history":          buildHistoryMessages(histories),
+		"filters":          raw["filters"],
+		"files":            filesMap,
+		"current_turn_seq": currentSeq,
+		"databases":        raw["databases"],
+		"debug":            raw["debug"],
+		"reasoning":        resolveReasoning(raw),
+		"priority":         raw["priority"],
+		"enable_thinking":  raw["enable_thinking"],
+		"use_memory":       useMemory,
+		"user_id":          strings.TrimSpace(userID),
+		"mode":             mode,
 	}
 	if environmentContext, ok := raw["environment_context"].(map[string]any); ok {
 		body["environment_context"] = environmentContext
 	}
 	// Propagate plugin_context so Python ChatAgent receives the active session info.
+	// Merge plugin_ui_state (focused_tab, focused_sort_order) from the request body.
+	// Python reads artifact state directly from the DB via _build_session_artifact_section.
 	if pc, ok := raw["plugin_context"].(map[string]any); ok && len(pc) > 0 {
-		body["plugin_context"] = pc
+		mergedPC := make(map[string]any, len(pc)+4)
+		for k, v := range pc {
+			mergedPC[k] = v
+		}
+		if uis, ok := raw["plugin_ui_state"].(map[string]any); ok {
+			if ft, ok := uis["focused_tab"]; ok {
+				mergedPC["focused_tab"] = ft
+			}
+			if fso, ok := uis["focused_sort_order"]; ok {
+				mergedPC["focused_sort_order"] = fso
+			}
+		}
+		body["plugin_context"] = mergedPC
 	}
 	if resourceContext != nil {
 		body["disabled_tools"] = resourceContext.DisabledTools
@@ -547,7 +625,7 @@ func handleNonStreamChat(
 	w http.ResponseWriter,
 	reqCtx context.Context,
 	db *gorm.DB,
-	rdb *redis.Client,
+	stateStore state.Store,
 	baseURL string,
 	reqBody map[string]any,
 	convID, query string,
@@ -556,14 +634,11 @@ func handleNonStreamChat(
 ) {
 	pyBody, _ := json.Marshal(reqBody)
 	upstreamURL := common.JoinURL(baseURL, "/api/chat")
-	fmt.Printf("DEBUG upstream request url=%s params=%s\n", upstreamURL, debugJSON(reqBody))
-	respBytes, statusCode, err := common.HTTPPost(reqCtx, upstreamURL, "application/json", pyBody)
+	respBytes, _, err := common.HTTPPost(reqCtx, upstreamURL, "application/json", pyBody)
 	if err != nil {
-		fmt.Println("DEBUG upstream request failed url=", upstreamURL, " err=", err)
 		common.ReplyErr(w, fmt.Sprintf("%s: %v", "chat service unavailable", err), http.StatusBadGateway)
 		return
 	}
-	fmt.Println("DEBUG upstream response url=", upstreamURL, " status=", statusCode)
 	var pyResp struct {
 		Code int             `json:"code"`
 		Msg  string          `json:"msg"`
@@ -647,13 +722,13 @@ func handleNonStreamChat(
 			return
 		}
 	}
-	if rdb != nil {
-		_ = setChatStatus(reqCtx, rdb, convID, historyID, "completed", answer)
+	if stateStore != nil {
+		_ = setChatStatus(reqCtx, stateStore, convID, historyID, "completed", answer)
 	}
 	db.Model(&orm.Conversation{}).Where("id = ?", convID).Update("updated_at", now)
 	if !target.IsRegeneration {
 		db.Model(&orm.Conversation{}).Where("id = ?", convID).UpdateColumn("chat_times", gorm.Expr("chat_times + ?", 1))
-		recordConversationIdleAfterPersist(context.Background(), db, rdb, convID, userIDFromChatRequestBody(reqBody), historyID, now, query, answer)
+		recordConversationIdleAfterPersist(context.Background(), db, stateStore, convID, userIDFromChatRequestBody(reqBody), historyID, now, query, answer)
 	}
 	common.ReplyOK(w, map[string]any{
 		"conversation_id": convID,
@@ -669,7 +744,7 @@ func handleStreamChat(
 	w http.ResponseWriter,
 	r *http.Request,
 	db *gorm.DB,
-	rdb *redis.Client,
+	stateStore state.Store,
 	baseURL string,
 	reqBody map[string]any,
 	convID, query string,
@@ -698,28 +773,28 @@ func handleStreamChat(
 	}
 	chatCtx, chatCancel := context.WithCancel(context.Background())
 	defer chatCancel()
-	if rdb != nil {
+	if stateStore != nil {
 		if target.IsRegeneration {
-			_ = clearChatData(chatCtx, rdb, convID, historyID)
+			_ = clearChatData(chatCtx, stateStore, convID, historyID)
 		}
-		_ = setChatInput(chatCtx, rdb, convID, historyID, query, target.Seq, historyExt)
-		_ = setChatStatus(chatCtx, rdb, convID, historyID, "generating", "")
+		_ = setChatInput(chatCtx, stateStore, convID, historyID, query, target.Seq, historyExt)
+		_ = setChatStatus(chatCtx, stateStore, convID, historyID, "generating", "")
 		if dualReply {
-			_ = setChatInput(chatCtx, rdb, convID, secondaryHistoryID, query, target.Seq, historyExt)
-			_ = setChatStatus(chatCtx, rdb, convID, secondaryHistoryID, "generating", "")
-			_ = setMultiAnswerInfo(chatCtx, rdb, convID, historyID, secondaryHistoryID, target.Seq)
+			_ = setChatInput(chatCtx, stateStore, convID, secondaryHistoryID, query, target.Seq, historyExt)
+			_ = setChatStatus(chatCtx, stateStore, convID, secondaryHistoryID, "generating", "")
+			_ = setMultiAnswerInfo(chatCtx, stateStore, convID, historyID, secondaryHistoryID, target.Seq)
 		}
 		go func() {
-			_ = watchChatCancelSignal(chatCtx, rdb, convID, historyID)
+			_ = watchChatCancelSignal(chatCtx, stateStore, convID, historyID)
 			chatCancel()
 		}()
 	}
 
 	if !dualReply {
-		streamSingleAnswer(chatCtx, reqCtx, w, flusher, db, rdb, baseURL, reqBody, convID, query, historyID, target, historyExt)
+		streamSingleAnswer(chatCtx, reqCtx, w, flusher, db, stateStore, baseURL, reqBody, convID, query, historyID, target, historyExt)
 		return
 	}
-	streamDualAnswer(chatCtx, reqCtx, w, flusher, db, rdb, baseURL, reqBody, convID, query, historyID, secondaryHistoryID, target, historyExt)
+	streamDualAnswer(chatCtx, reqCtx, w, flusher, db, stateStore, baseURL, reqBody, convID, query, historyID, secondaryHistoryID, target, historyExt)
 }
 
 func streamSingleAnswer(
@@ -727,7 +802,7 @@ func streamSingleAnswer(
 	w http.ResponseWriter,
 	flusher http.Flusher,
 	db *gorm.DB,
-	rdb *redis.Client,
+	stateStore state.Store,
 	baseURL string,
 	reqBody map[string]any,
 	convID, query, historyID string,
@@ -737,8 +812,8 @@ func streamSingleAnswer(
 	seq := target.Seq
 	ch, err := StreamChatUpstream(chatCtx, baseURL, reqBody)
 	if err != nil {
-		if rdb != nil {
-			_ = setChatStatus(chatCtx, rdb, convID, historyID, "failed", "")
+		if stateStore != nil {
+			_ = setChatStatus(chatCtx, stateStore, convID, historyID, "failed", "")
 		}
 		writeSSEChunk(w, flusher, &ChatChunkResponse{
 			ConversationID:    convID,
@@ -776,7 +851,7 @@ func streamSingleAnswer(
 	for d := range ch {
 		if d.TaskCreated != nil {
 			userIDForTask, _ := reqBody["user_id"].(string)
-			notice := handleTaskCreated(chatCtx, db, rdb, convID, historyID, userIDForTask, d.TaskCreated, llmConfigFromBody(reqBody), toolConfigFromBody(reqBody))
+			notice := handleTaskCreated(chatCtx, db, stateStore, convID, historyID, userIDForTask, d.TaskCreated, llmConfigFromBody(reqBody), toolConfigFromBody(reqBody))
 			if notice != nil {
 				taskChunk := &ChatChunkResponse{
 					ConversationID: convID,
@@ -788,12 +863,12 @@ func streamSingleAnswer(
 				if reqCtx.Err() == nil {
 					writeSSEChunk(w, flusher, taskChunk)
 				}
-				if rdb != nil {
-					_ = appendChatChunk(chatCtx, rdb, convID, historyID, taskChunk)
+				if stateStore != nil {
+					_ = appendChatChunk(chatCtx, stateStore, convID, historyID, taskChunk)
 					// Also write to the conversation-level events channel so the frontend
 					// receives task_created notifications regardless of which history stream
 					// is currently open (covers auto-advance internal requests).
-					_ = AppendConvEvent(chatCtx, rdb, convID, &ConvEvent{
+					_ = AppendConvEvent(chatCtx, stateStore, convID, &ConvEvent{
 						Type:    "task_created",
 						Payload: notice,
 					})
@@ -839,8 +914,8 @@ func streamSingleAnswer(
 		if reqCtx.Err() == nil {
 			writeSSEChunk(w, flusher, chunk)
 		}
-		if rdb != nil {
-			_ = appendChatChunk(chatCtx, rdb, convID, historyID, chunk)
+		if stateStore != nil {
+			_ = appendChatChunk(chatCtx, stateStore, convID, historyID, chunk)
 		}
 	}
 	now := time.Now()
@@ -885,15 +960,15 @@ func streamSingleAnswer(
 			persisted = true
 		}
 	}
-	if rdb != nil {
-		_ = setChatStatus(context.Background(), rdb, convID, historyID, "completed", stripToolTags(fullText))
+	if stateStore != nil {
+		_ = setChatStatus(context.Background(), stateStore, convID, historyID, "completed", stripToolTags(fullText))
 	}
 	if persisted {
 		db.Model(&orm.Conversation{}).Where("id = ?", convID).Update("updated_at", now)
 	}
 	if persisted && !target.IsRegeneration {
 		db.Model(&orm.Conversation{}).Where("id = ?", convID).UpdateColumn("chat_times", gorm.Expr("chat_times + ?", 1))
-		recordConversationIdleAfterPersist(context.Background(), db, rdb, convID, userIDFromChatRequestBody(reqBody), historyID, now, query, stripToolTags(fullText))
+		recordConversationIdleAfterPersist(context.Background(), db, stateStore, convID, userIDFromChatRequestBody(reqBody), historyID, now, query, stripToolTags(fullText))
 	}
 	if reqCtx.Err() == nil {
 		// text：message text，finish_reason text STOP
@@ -920,7 +995,7 @@ func streamDualAnswer(
 	w http.ResponseWriter,
 	flusher http.Flusher,
 	db *gorm.DB,
-	rdb *redis.Client,
+	stateStore state.Store,
 	baseURL string,
 	reqBody map[string]any,
 	convID, query, historyID, secondaryHistoryID string,
@@ -938,9 +1013,9 @@ func streamDualAnswer(
 	}
 	secondaryCh, err2 := StreamChatUpstream(chatCtx, baseURL, secondaryReq)
 	if err1 != nil && err2 != nil {
-		if rdb != nil {
-			_ = setChatStatus(chatCtx, rdb, convID, historyID, "failed", "")
-			_ = setChatStatus(chatCtx, rdb, convID, secondaryHistoryID, "failed", "")
+		if stateStore != nil {
+			_ = setChatStatus(chatCtx, stateStore, convID, historyID, "failed", "")
+			_ = setChatStatus(chatCtx, stateStore, convID, secondaryHistoryID, "failed", "")
 		}
 		writeSSEChunk(w, flusher, map[string]any{"finish_reason": "FINISH_REASON_UNKNOWN"})
 		return
@@ -984,8 +1059,8 @@ func streamDualAnswer(
 			})
 			writeMu.Unlock()
 		}
-		if rdb != nil {
-			_ = appendChatChunk(chatCtx, rdb, convID, historyID, &ChatChunkResponse{
+		if stateStore != nil {
+			_ = appendChatChunk(chatCtx, stateStore, convID, historyID, &ChatChunkResponse{
 				ConversationID: convID, Seq: int32(seq), Delta: delta, HistoryID: historyID,
 				ReasoningContent: "", Sources: sources,
 			})
@@ -1014,8 +1089,8 @@ func streamDualAnswer(
 			})
 			writeMu.Unlock()
 		}
-		if rdb != nil {
-			_ = appendChatChunk(chatCtx, rdb, convID, secondaryHistoryID, &ChatChunkResponse{
+		if stateStore != nil {
+			_ = appendChatChunk(chatCtx, stateStore, convID, secondaryHistoryID, &ChatChunkResponse{
 				ConversationID: convID, Seq: int32(seq), Delta: delta, HistoryID: secondaryHistoryID,
 				ReasoningContent: "", Sources: sources,
 			})
@@ -1067,8 +1142,8 @@ func streamDualAnswer(
 						if !shouldEmitStreamFrame(delta, d.Sources) {
 							continue
 						}
-						if rdb != nil {
-							_ = appendChatChunk(bg, rdb, convID, historyID, &ChatChunkResponse{
+						if stateStore != nil {
+							_ = appendChatChunk(bg, stateStore, convID, historyID, &ChatChunkResponse{
 								ConversationID: convID, Seq: int32(seq), Delta: delta, HistoryID: historyID,
 								ReasoningContent: "", Sources: d.Sources,
 							})
@@ -1096,8 +1171,8 @@ func streamDualAnswer(
 						if !shouldEmitStreamFrame(delta, d.Sources) {
 							continue
 						}
-						if rdb != nil {
-							_ = appendChatChunk(bg, rdb, convID, secondaryHistoryID, &ChatChunkResponse{
+						if stateStore != nil {
+							_ = appendChatChunk(bg, stateStore, convID, secondaryHistoryID, &ChatChunkResponse{
 								ConversationID: convID, Seq: int32(seq), Delta: delta, HistoryID: secondaryHistoryID,
 								ReasoningContent: "", Sources: d.Sources,
 							})
@@ -1128,9 +1203,9 @@ dualPersist:
 		Ext:           historyExt,
 		TimeMixin:     orm.TimeMixin{CreateTime: now, UpdateTime: now},
 	}).Error
-	if rdb != nil {
-		_ = setChatStatus(context.Background(), rdb, convID, historyID, "completed", stripToolTags(primaryText))
-		_ = setChatStatus(context.Background(), rdb, convID, secondaryHistoryID, "completed", stripToolTags(secondaryText))
+	if stateStore != nil {
+		_ = setChatStatus(context.Background(), stateStore, convID, historyID, "completed", stripToolTags(primaryText))
+		_ = setChatStatus(context.Background(), stateStore, convID, secondaryHistoryID, "completed", stripToolTags(secondaryText))
 	}
 	db.Model(&orm.Conversation{}).Where("id = ?", convID).Update("updated_at", now)
 	if !target.IsRegeneration {
@@ -1150,7 +1225,7 @@ dualPersist:
 func handleTaskCreated(
 	chatCtx context.Context,
 	db *gorm.DB,
-	rdb *redis.Client,
+	stateStore state.Store,
 	convID, historyID, userID string,
 	ev *TaskCreatedEvent,
 	llmConfig map[string]any,
@@ -1162,7 +1237,7 @@ func handleTaskCreated(
 
 	// Plugin Step path — handled separately.
 	if ev.AgentType == "plugin_step" {
-		return handlePluginStepCreated(chatCtx, db, rdb, convID, historyID, userID, ev, llmConfig, toolConfig)
+		return handlePluginStepCreated(chatCtx, db, stateStore, convID, historyID, userID, ev, llmConfig, toolConfig)
 	}
 	mode := ev.Mode
 	if mode != "auto" && mode != "manual" {
@@ -1178,10 +1253,10 @@ func handleTaskCreated(
 		existing, getErr := subagent.GetTask(chatCtx, db, ev.TaskID)
 		if getErr == nil && existing != nil {
 			_ = subagent.UpdateStatus(chatCtx, db, existing.ID, subagent.StatusRunning)
-			_ = subagent.WriteStatus(chatCtx, rdb, existing.ID, map[string]any{
+			_ = subagent.WriteStatus(chatCtx, stateStore, existing.ID, map[string]any{
 				"status": subagent.StatusRunning, "progress": existing.ProgressPct,
 			})
-			go subagent.Run(context.Background(), db, rdb, subagent.RunRequest{
+			go subagent.Run(context.Background(), db, stateStore, subagent.RunRequest{
 				TaskID:        existing.ID,
 				AgentType:     existing.AgentType,
 				Params:        ev.Params,
@@ -1221,11 +1296,11 @@ func handleTaskCreated(
 		fmt.Println("[Core] [SUBAGENT_CREATE_TASK_FAILED] err=", err)
 		return nil
 	}
-	_ = subagent.WriteStatus(chatCtx, rdb, task.ID, map[string]any{
+	_ = subagent.WriteStatus(chatCtx, stateStore, task.ID, map[string]any{
 		"status": subagent.StatusPending, "progress": 0,
 	})
 
-	go subagent.Run(context.Background(), db, rdb, subagent.RunRequest{
+	go subagent.Run(context.Background(), db, stateStore, subagent.RunRequest{
 		TaskID:        task.ID,
 		AgentType:     ev.AgentType,
 		Params:        ev.Params,
@@ -1252,7 +1327,7 @@ func handleTaskCreated(
 func handlePluginStepCreated(
 	ctx context.Context,
 	db *gorm.DB,
-	rdb *redis.Client,
+	stateStore state.Store,
 	convID, historyID, userID string,
 	ev *TaskCreatedEvent,
 	llmConfig map[string]any,
@@ -1276,6 +1351,39 @@ func handlePluginStepCreated(
 		if cold, ok := ev.Params["is_cold_start"].(bool); ok {
 			params.IsColdStart = cold
 		}
+		if rh, ok := ev.Params["retry_hint"].(string); ok {
+			params.RetryHint = rh
+		}
+		if pi, ok := ev.Params["partial_indices"].(map[string]any); ok {
+			parsed := make(map[string][]int, len(pi))
+			for k, v := range pi {
+				if arr, ok2 := v.([]any); ok2 {
+					ints := make([]int, 0, len(arr))
+					for _, elem := range arr {
+						if f, ok3 := elem.(float64); ok3 {
+							ints = append(ints, int(f))
+						}
+					}
+					parsed[k] = ints
+				}
+			}
+			params.PartialIndices = parsed
+		}
+		if hfpt, ok := ev.Params["history_files_per_turn"].(map[string]any); ok {
+			parsed := make(map[string][]string, len(hfpt))
+			for k, v := range hfpt {
+				if arr, ok2 := v.([]any); ok2 {
+					strs := make([]string, 0, len(arr))
+					for _, elem := range arr {
+						if s, ok3 := elem.(string); ok3 {
+							strs = append(strs, s)
+						}
+					}
+					parsed[k] = strs
+				}
+			}
+			params.HistoryFilesPerTurn = parsed
+		}
 	}
 	if params.PluginID == "" || params.StepID == "" {
 		fmt.Println("[Core] [PLUGIN_STEP_INVALID_PARAMS] plugin_id or step_id missing")
@@ -1283,7 +1391,7 @@ func handlePluginStepCreated(
 	}
 
 	sessionID, taskID, err := plugin.HandlePluginStepCreated(
-		ctx, db, rdb, convID, historyID, userID,
+		ctx, db, stateStore, convID, historyID, userID,
 		ev.TaskID, ev.Title, ev.Objective,
 		params,
 		ev.InputArtifactKeys, ev.OutputArtifactKeys,

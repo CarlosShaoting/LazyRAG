@@ -232,7 +232,7 @@ func TestListBindingsBySourceIDsScansAuthConnections(t *testing.T) {
 	}
 }
 
-func TestGetSourceSummaryComputesStorageBytesFromDocuments(t *testing.T) {
+func TestGetSourceSummaryComputesDocumentCounts(t *testing.T) {
 	db := openStoreFakeDB(t, []storeFakeQuery{
 		{columns: []string{"source_id"}, rows: [][]driver.Value{{"source-1"}}},
 		{columns: []string{"source_id", "binding_id"}, rows: [][]driver.Value{{"source-1", "binding-1"}}},
@@ -240,6 +240,7 @@ func TestGetSourceSummaryComputesStorageBytesFromDocuments(t *testing.T) {
 		{columns: []string{"count"}, rows: [][]driver.Value{{int64(3)}}},
 		{columns: []string{"count"}, rows: [][]driver.Value{{int64(2)}}},
 		{columns: []string{"storage_bytes"}, rows: [][]driver.Value{{int64(42)}}},
+		{columns: []string{"count"}, rows: [][]driver.Value{{int64(7)}}},
 		{columns: []string{"source_state", "count"}, rows: [][]driver.Value{}},
 		{columns: []string{"status", "count"}, rows: [][]driver.Value{}},
 		{columns: []string{"binding_id"}, rows: [][]driver.Value{}},
@@ -255,6 +256,9 @@ func TestGetSourceSummaryComputesStorageBytesFromDocuments(t *testing.T) {
 	}
 	if summary.StorageBytes != 42 {
 		t.Fatalf("storage bytes were not aggregated: got=%d", summary.StorageBytes)
+	}
+	if summary.ParsedDocumentCount != 7 {
+		t.Fatalf("parsed document count was not aggregated: got=%d", summary.ParsedDocumentCount)
 	}
 }
 
@@ -306,9 +310,11 @@ func TestSourceObjectUpsertAssignmentsPreserveExistingSizeOnZero(t *testing.T) {
 			t.Fatalf("size_bytes update should use expression, got %#v", assignment.Value)
 		}
 		if !strings.Contains(expr.SQL, "excluded.size_bytes > 0") ||
-			!strings.Contains(expr.SQL, "provider_meta_json->>'kind' = 'wiki_node'") ||
+			!strings.Contains(expr.SQL, "provider_meta_json->>'kind' IN") ||
+			!strings.Contains(expr.SQL, "wiki_node") ||
+			!strings.Contains(expr.SQL, "drive_file") ||
 			!strings.Contains(expr.SQL, "source_object_index.size_bytes") {
-			t.Fatalf("size_bytes update should keep existing wiki size when incoming size is zero: %q", expr.SQL)
+			t.Fatalf("size_bytes update should keep existing feishu export size when incoming size is zero: %q", expr.SQL)
 		}
 		return
 	}

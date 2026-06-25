@@ -13,22 +13,23 @@ import (
 	"strings"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 
 	"lazymind/core/common"
 	"lazymind/core/common/orm"
+	"lazymind/core/state"
 	"lazymind/core/subagent"
 )
 
 // DefaultMode returns the configured plugin advance mode (auto|manual).
-// Defaults to "manual" when unset.
-func DefaultMode() string {
+func DefaultMode() string { return defaultMode() }
+
+func defaultMode() string {
 	v := strings.TrimSpace(os.Getenv("LAZYMIND_PLUGIN_MODE"))
-	if v == "auto" {
-		return "auto"
+	if v == "manual" {
+		return "manual"
 	}
-	return "manual"
+	return "auto"
 }
 
 // PluginStepParams are the task_created.params fields for plugin_step agent type.
@@ -49,6 +50,11 @@ type PluginStepParams struct {
 	// Nil / empty means full write (append for list, overwrite for single).
 	// Example: {"material_images": [1]} — only slot entry at list_index=1 is replaced.
 	PartialIndices map[string][]int `json:"partial_indices,omitempty"`
+
+	// HistoryFilesPerTurn carries the full per-turn user attachment index so the
+	// SubAgent can access uploaded files via read_user_attachment / find_user_attachment.
+	// Key = conversation turn sequence (string), value = list of absolute file paths.
+	HistoryFilesPerTurn map[string][]string `json:"history_files_per_turn,omitempty"`
 }
 
 // asMap serialises the params into the generic map expected by subagent.RunRequest.Params.
@@ -66,16 +72,20 @@ func (p PluginStepParams) asMap() map[string]any {
 	if len(p.PartialIndices) > 0 {
 		m["partial_indices"] = p.PartialIndices
 	}
+	if len(p.HistoryFilesPerTurn) > 0 {
+		m["history_files_per_turn"] = p.HistoryFilesPerTurn
+	}
 	return m
 }
 
 // PluginChatContext carries plugin identifiers threaded through the SubAgent event loop.
 type PluginChatContext struct {
-	SessionID string
-	PluginID  string
-	StepID    string
-	ConvID    string
-	UserID    string
+	SessionID           string
+	PluginID            string
+	StepID              string
+	ConvID              string
+	UserID              string
+	HistoryFilesPerTurn map[string][]string
 }
 
 // HandlePluginStepCreated processes a task_created event for agent_type='plugin_step'.
@@ -91,7 +101,7 @@ type PluginChatContext struct {
 func HandlePluginStepCreated(
 	ctx context.Context,
 	db *gorm.DB,
-	rdb *redis.Client,
+	stateStore state.Store,
 	convID, historyID, userID string,
 	taskID, title, objective string,
 	params PluginStepParams,
@@ -155,6 +165,9 @@ func HandlePluginStepCreated(
 	if len(params.PartialIndices) > 0 {
 		rawParamsMap["partial_indices"] = params.PartialIndices
 	}
+	if len(params.HistoryFilesPerTurn) > 0 {
+		rawParamsMap["history_files_per_turn"] = params.HistoryFilesPerTurn
+	}
 	rawParams, _ := json.Marshal(rawParamsMap)
 	inputJSON, _ := json.Marshal(inputKeys)
 	outputJSON, _ := json.Marshal(outputKeys)
@@ -183,26 +196,30 @@ func HandlePluginStepCreated(
 	}
 
 	// Seed Redis status.
-	_ = subagent.WriteStatus(ctx, rdb, task.ID, map[string]any{
+	_ = subagent.WriteStatus(ctx, stateStore, task.ID, map[string]any{
 		"status": subagent.StatusPending, "progress": 0,
 	})
 
 	// Launch SubAgent goroutine.
 	// input_artifact_keys, output_artifact_keys, and tools are NOT forwarded here:
 	// the Python runner reads them from the DB task record and plugin_loader respectively.
-	go subagent.Run(context.Background(), db, rdb, subagent.RunRequest{
+	runParams := map[string]any{
+		"plugin_id":  pluginID,
+		"step_id":    stepID,
+		"session_id": sessionID,
+	}
+	if len(params.HistoryFilesPerTurn) > 0 {
+		runParams["history_files_per_turn"] = params.HistoryFilesPerTurn
+	}
+	go subagent.Run(context.Background(), db, stateStore, subagent.RunRequest{
 		TaskID:        task.ID,
 		AgentType:     "plugin_step",
 		WorkspacePath: task.WorkspacePath,
-		Params: map[string]any{
-			"plugin_id":  pluginID,
-			"step_id":    stepID,
-			"session_id": sessionID,
-		},
-		DBDSN:      subagent.DBDSN(),
-		Resume:     false,
-		LLMConfig:  llmConfig,
-		ToolConfig: toolConfig,
+		Params:        runParams,
+		DBDSN:         subagent.DBDSN(),
+		Resume:        false,
+		LLMConfig:     llmConfig,
+		ToolConfig:    toolConfig,
 	})
 
 	return sessionID, task.ID, nil
@@ -213,7 +230,7 @@ func HandlePluginStepCreated(
 func OnSubAgentDone(
 	ctx context.Context,
 	db *gorm.DB,
-	rdb *redis.Client,
+	stateStore state.Store,
 	taskID, status, summary string,
 	onSSE func(eventType string, payload map[string]any),
 	pctx *PluginChatContext,
@@ -251,7 +268,7 @@ func OnSubAgentDone(
 	}
 
 	if DefaultMode() == "auto" {
-		go advanceAutoMode(ctx, db, rdb, summary, onSSE, pctx)
+		go advanceAutoMode(ctx, db, stateStore, summary, onSSE, pctx)
 	} else {
 		_ = UpdateSessionStatus(ctx, db, pctx.SessionID, SessionStatusWaiting)
 		onSSE("step_waiting", map[string]any{
@@ -259,18 +276,20 @@ func OnSubAgentDone(
 			"step_id":    pctx.StepID,
 		})
 	}
+	// Write content_snapshot to all selected revisions for this step.
+	go OnSubAgentDoneSnapshot(context.Background(), db, pctx)
 }
 
 // advanceAutoMode calls DriverAgent and either triggers a new ChatAgent turn or ends the session.
 func advanceAutoMode(
 	ctx context.Context,
 	db *gorm.DB,
-	rdb *redis.Client,
+	stateStore state.Store,
 	summary string,
 	onSSE func(string, map[string]any),
 	pctx *PluginChatContext,
 ) {
-	verdict, reason := callDriverAgent(pctx.PluginID, pctx.StepID, summary, pctx.SessionID)
+	verdict, reason := callDriverAgent(pctx.PluginID, pctx.StepID, summary, pctx.SessionID, pctx.HistoryFilesPerTurn)
 	switch verdict {
 	case "DONE":
 		_ = UpdateSessionStatus(ctx, db, pctx.SessionID, SessionStatusCompleted)
@@ -368,6 +387,7 @@ func triggerNextChatTurn(
 
 // OnArtifactEvent is called when a plugin_step SubAgent emits an artifact event.
 // It checks slot binding and writes plugin_slot_revisions if the artifact is bound.
+// Caption embedded in the artifact value is written to sub_agent_artifacts.caption.
 //
 // For list-cardinality slots, the artifact value may carry a "list_index" field
 // (written by save_artifact) that enables partial retry: only the revision at that
@@ -393,15 +413,119 @@ func OnArtifactEvent(
 	}
 
 	// For list slots, extract list_index from the artifact value if present.
-	// A non-nil value triggers partial-retry semantics (replace that index only).
 	var listIndex *int
 	if cardinality == "list" {
 		listIndex = extractListIndex(ctx, db, taskID, artifactKey)
 	}
 
-	if _, err := WriteSlotRevision(ctx, db,
-		pctx.SessionID, slotID, artifactKey, pctx.StepID, attempt, cardinality, listIndex); err != nil {
+	// Extract caption from artifact value and write it to sub_agent_artifacts.caption.
+	// PostgreSQL does not support UPDATE with ORDER BY/LIMIT, so we first fetch the
+	// target row's primary key (task_id + artifact_key + seq), then update by PK.
+	if caption := extractCaption(ctx, db, taskID, artifactKey); caption != "" {
+		var target orm.SubAgentArtifact
+		if db.WithContext(ctx).
+			Where("task_id = ? AND artifact_key = ?", taskID, artifactKey).
+			Order("seq DESC").
+			First(&target).Error == nil {
+			_ = db.WithContext(ctx).Model(&orm.SubAgentArtifact{}).
+				Where("task_id = ? AND artifact_key = ? AND seq = ?", target.TaskID, target.ArtifactKey, target.Seq).
+				Update("caption", caption).Error
+		}
+	}
+
+	rev, err := WriteSlotRevision(ctx, db,
+		pctx.SessionID, slotID, artifactKey, pctx.StepID, attempt, cardinality, listIndex)
+	if err != nil {
 		fmt.Printf("[Plugin] WriteSlotRevision failed: %v\n", err)
+		return
+	}
+
+	// Back-fill list_index into sub_agent_artifacts.value so that HideSlotItem
+	// can match the artifact row by list_index when the user deletes an item.
+	// This is needed for append-mode artifacts where Python does not yet know
+	// the list_index assigned by Go (sort_order was not passed to save_artifact).
+	if cardinality == "list" && rev != nil && rev.ListIndex != nil {
+		backfillArtifactListIndex(ctx, db, taskID, artifactKey, *rev.ListIndex)
+	}
+}
+
+// OnSubAgentDoneSnapshot back-fills artifact_seq on any AI slot revision that was
+// written before the artifact row existed (i.e. artifact_seq is still NULL).
+// This covers the race where WriteSlotRevision ran before save_artifact committed.
+// Human revisions (change_source='human') are never touched.
+func OnSubAgentDoneSnapshot(
+	ctx context.Context,
+	db *gorm.DB,
+	pctx *PluginChatContext,
+) {
+	if pctx == nil {
+		return
+	}
+	revisions, err := LoadSelectedSlots(ctx, db, pctx.SessionID)
+	if err != nil {
+		fmt.Printf("[Plugin] OnSubAgentDoneSnapshot: load slots: %v\n", err)
+		return
+	}
+
+	step, _ := GetLatestStep(ctx, db, pctx.SessionID, pctx.StepID)
+	if step == nil {
+		return
+	}
+
+	for _, rev := range revisions {
+		if rev.StepID != pctx.StepID || rev.Attempt != step.Attempt {
+			continue
+		}
+		// Only fix AI revisions where artifact_seq was not resolved at write time.
+		if rev.ChangeSource != "ai" || rev.ArtifactSeq != nil {
+			continue
+		}
+
+		// Find the matching artifact row.
+		var art orm.SubAgentArtifact
+		if rev.ListIndex != nil {
+			var candidates []orm.SubAgentArtifact
+			db.WithContext(ctx).
+				Where("task_id = ? AND artifact_key = ?", step.TaskID, rev.ArtifactKey).
+				Order("seq DESC").
+				Find(&candidates)
+			for _, c := range candidates {
+				var v map[string]any
+				if json.Unmarshal(c.Value, &v) != nil {
+					continue
+				}
+				var liInt int
+				switch idx := v["list_index"].(type) {
+				case float64:
+					liInt = int(idx)
+				case int:
+					liInt = idx
+				default:
+					continue
+				}
+				if liInt == *rev.ListIndex {
+					art = c
+					break
+				}
+			}
+			if art.TaskID == "" {
+				continue
+			}
+		} else {
+			if err := db.WithContext(ctx).
+				Where("task_id = ? AND artifact_key = ?", step.TaskID, rev.ArtifactKey).
+				Order("seq DESC").
+				First(&art).Error; err != nil {
+				continue
+			}
+		}
+
+		seq := art.Seq
+		if err := db.WithContext(ctx).Model(&orm.PluginSlotRevision{}).
+			Where("id = ?", rev.ID).
+			Update("artifact_seq", seq).Error; err != nil {
+			fmt.Printf("[Plugin] OnSubAgentDoneSnapshot: backfill artifact_seq rev=%s: %v\n", rev.ID, err)
+		}
 	}
 }
 
@@ -432,6 +556,27 @@ func extractListIndex(ctx context.Context, db *gorm.DB, taskID, artifactKey stri
 		return &idx
 	}
 	return nil
+}
+
+// extractCaption reads the most recent artifact value for the given (taskID, artifactKey)
+// and returns the caption string embedded in the JSON value, or "" if absent.
+func extractCaption(ctx context.Context, db *gorm.DB, taskID, artifactKey string) string {
+	var a orm.SubAgentArtifact
+	err := db.WithContext(ctx).
+		Where("task_id = ? AND artifact_key = ?", taskID, artifactKey).
+		Order("seq DESC").
+		First(&a).Error
+	if err != nil {
+		return ""
+	}
+	var v map[string]any
+	if json.Unmarshal(a.Value, &v) != nil {
+		return ""
+	}
+	if cap, ok := v["caption"].(string); ok {
+		return strings.TrimSpace(cap)
+	}
+	return ""
 }
 
 // resolveSlotBinding looks up (slotID, cardinality) for an artifact key from the Python plugin API.
@@ -465,7 +610,7 @@ func resolveSlotBinding(pluginID, artifactKey string) (slotID, cardinality strin
 
 // callDriverAgent posts to the Python DriverAgent endpoint and returns (verdict, reason).
 // On any error defaults to ("PASS", "").
-func callDriverAgent(pluginID, stepID, stepResult, sessionID string) (verdict, reason string) {
+func callDriverAgent(pluginID, stepID, stepResult, sessionID string, historyFilesPerTurn map[string][]string) (verdict, reason string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	reqBody := map[string]any{
@@ -473,6 +618,9 @@ func callDriverAgent(pluginID, stepID, stepResult, sessionID string) (verdict, r
 		"step_id":     stepID,
 		"step_result": stepResult,
 		"session_id":  sessionID,
+	}
+	if len(historyFilesPerTurn) > 0 {
+		reqBody["history_files_per_turn"] = historyFilesPerTurn
 	}
 	body, _ := json.Marshal(reqBody)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, driverEndpoint(), bytes.NewReader(body))
@@ -502,4 +650,44 @@ func callDriverAgent(pluginID, stepID, stepResult, sessionID string) (verdict, r
 // driverEndpoint returns the DriverAgent URL.
 func driverEndpoint() string {
 	return common.ChatServiceEndpoint() + "/api/plugin/driver"
+}
+
+// backfillArtifactListIndex patches the most-recent sub_agent_artifacts row for
+// (taskID, artifactKey) to embed {"list_index": listIndex} inside its value JSON.
+// This ensures HideSlotItem can match artifacts by list_index even when the AI
+// wrote the artifact in append-mode (no sort_order → no list_index in value at write time).
+// Skipped silently if the row already contains the correct list_index.
+func backfillArtifactListIndex(ctx context.Context, db *gorm.DB, taskID, artifactKey string, listIndex int) {
+	var art orm.SubAgentArtifact
+	if err := db.WithContext(ctx).
+		Where("task_id = ? AND artifact_key = ?", taskID, artifactKey).
+		Order("seq DESC").
+		First(&art).Error; err != nil {
+		return
+	}
+	var v map[string]any
+	if json.Unmarshal(art.Value, &v) != nil {
+		return
+	}
+	// Already correct — no update needed.
+	if existing, ok := v["list_index"]; ok {
+		switch idx := existing.(type) {
+		case float64:
+			if int(idx) == listIndex {
+				return
+			}
+		case int:
+			if idx == listIndex {
+				return
+			}
+		}
+	}
+	v["list_index"] = listIndex
+	newVal, err := json.Marshal(v)
+	if err != nil {
+		return
+	}
+	_ = db.WithContext(ctx).Model(&orm.SubAgentArtifact{}).
+		Where("task_id = ? AND artifact_key = ? AND seq = ?", art.TaskID, art.ArtifactKey, art.Seq).
+		Update("value", newVal).Error
 }

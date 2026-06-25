@@ -54,7 +54,7 @@ const NewChatPage = () => {
       {t("chat.retryCheckModelProvider")}
     </Button>
   ) : (
-    <Button type="primary" size="small" onClick={() => navigate("/model-providers")}>
+    <Button type="primary" size="small" onClick={() => navigate("/model-providers/default-services")}>
       {t("chat.goConfigureModelProvider")}
     </Button>
   );
@@ -135,6 +135,10 @@ const NewChatPage = () => {
     e.preventDefault();
     e.stopPropagation();
     if (isChatDisabled) {
+      return;
+    }
+    // Ignore internal DOM drag-and-drop (e.g. plugin panel card sorting).
+    if (!Array.from(e.dataTransfer.types).includes('Files')) {
       return;
     }
     dragCounterRef.current++;
@@ -248,7 +252,7 @@ const NewChatPage = () => {
                         type="primary"
                         size="small"
                         className="model-provider-warning-action"
-                        onClick={() => navigate("/model-providers")}
+                        onClick={() => navigate("/model-providers/default-services")}
                       >
                         {t("knowledge.goToConfig")}
                       </Button>

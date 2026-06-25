@@ -73,7 +73,7 @@ const ImportTaskList = (props: IProps) => {
     pollingRef.current.cancel();
 
     const taskStatus = TAB_TO_TASK_STATUS[currentTab];
-    const pageToken = tokens[page - 1];
+    const pageToken = getTaskPageToken(page, size, tokens);
 
     const updateTableData = ({ data = {} }: { data?: { tasks?: any[]; total_size?: number; next_page_token?: string } }) => {
       const tasks: any[] = data.tasks || [];
@@ -209,12 +209,17 @@ const ImportTaskList = (props: IProps) => {
       width: 105,
       render: (time: string, record: any) => {
         const isRunning = tab === TaskTab.Running;
+        const startTime = getElapsedStartTime({
+          startTime: record.start_time,
+          fallbackTime: record.create_time || time,
+          isRunning,
+        });
         const endTime = isRunning
           ? undefined
           : record.finish_time || record.create_time || time;
         return (
           <ElapsedTime
-            startTime={record.start_time || time}
+            startTime={startTime}
             endTime={endTime}
           />
         );
@@ -315,5 +320,56 @@ const ImportTaskList = (props: IProps) => {
     </div>
   );
 };
+
+function getElapsedStartTime({
+  startTime,
+  fallbackTime,
+  isRunning,
+}: {
+  startTime?: number | string;
+  fallbackTime?: number | string;
+  isRunning: boolean;
+}) {
+  const parsedStartTime = parseTaskTime(startTime);
+  if (!parsedStartTime) {
+    return fallbackTime;
+  }
+
+  if (isRunning && parsedStartTime.isAfter(moment())) {
+    return fallbackTime;
+  }
+
+  return startTime;
+}
+
+function getTaskPageToken(
+  page: number,
+  pageSize: number,
+  tokens: (string | undefined)[],
+) {
+  if (page <= 1) {
+    return undefined;
+  }
+
+  return tokens[page - 1] || String((page - 1) * pageSize);
+}
+
+function parseTaskTime(value?: number | string) {
+  if (value === undefined || value === null || value === "" || value === 0 || value === "0") {
+    return null;
+  }
+  const text = String(value).trim();
+  const numeric = Number(text);
+  if (Number.isFinite(numeric) && text !== "") {
+    if (numeric >= 1_000_000_000 && numeric < 1_000_000_000_000) {
+      return moment(numeric * 1000);
+    }
+    if (numeric >= 1_000_000_000_000) {
+      return moment(numeric);
+    }
+  }
+  const parsed = moment(text);
+  return parsed.isValid() ? parsed : null;
+}
 
 export default ImportTaskList;
