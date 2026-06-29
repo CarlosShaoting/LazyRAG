@@ -184,6 +184,9 @@ func TestListToolsForwardsRuntimeConfigsAndMarksDisabled(t *testing.T) {
 	if ocrConfig["ocr_type"] != "mineru" {
 		t.Fatalf("expected ocr_config forwarded, got %#v", upstreamBody["ocr_config"])
 	}
+	if useCache, ok := upstreamBody["use_cache"].(bool); !ok || !useCache {
+		t.Fatalf("expected use_cache forwarded, got %#v", upstreamBody["use_cache"])
+	}
 	if _, ok := upstreamBody["mcp_config"]; ok {
 		t.Fatalf("list tools should not forward mcp_config, got %#v", upstreamBody["mcp_config"])
 	}

@@ -172,6 +172,7 @@ func applyChatRuntimeConfigs(ctx context.Context, db *gorm.DB, userID string, bo
 	if len(ocrConfig) > 0 {
 		body["ocr_config"] = ocrConfig
 	}
+	body["use_cache"] = common.ReaderUseCacheEnabled()
 	return nil
 }
 

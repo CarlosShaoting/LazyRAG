@@ -38,7 +38,7 @@ from lazymind.chat.service.utils import (
 )
 from lazyllm.tools.fs.client import FS
 from lazymind.model_config import inject_model_config, summarize_model_config_for_log
-from lazyllm.tools.rag import inject_ocr_config
+from lazyllm.tools.rag import inject_reader_config
 from lazyllm.tools.tool_config_inject import inject_tool_config
 from lazyllm import AutoModel
 from lazyllm.tools.mcp.client import MCPClient
@@ -331,6 +331,7 @@ async def handle_chat(query: str, history: Optional[List[Dict[str, Any]]],
                       model_config: Optional[Dict[str, Any]] = None,
                       tool_config: Optional[Dict[str, Union[str, List[str]]]] = None,
                       ocr_config: Optional[Dict[str, Any]] = None,
+                      use_cache: Optional[bool] = None,
                       mcp_config: Optional[List[Dict[str, Any]]] = None,
                       trace: Optional[bool] = False,
                       plugin_context: Optional[Dict[str, Any]] = None,
@@ -459,7 +460,10 @@ async def handle_chat(query: str, history: Optional[List[Dict[str, Any]]],
     lazyllm.locals._init_sid(sid=session_id)
     inject_model_config(model_config)
     inject_tool_config(tool_config)
-    inject_ocr_config(ocr_config)
+    inject_reader_config(
+        use_cache=use_cache if use_cache is not None else bool(_cfg['reader_cache']),
+        ocr_config=ocr_config,
+    )
     file_reference_prompt = ''
     if resolved_files:
         file_reference_prompt = await asyncio.to_thread(

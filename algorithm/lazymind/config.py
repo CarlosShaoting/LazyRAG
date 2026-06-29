@@ -140,7 +140,7 @@ config.add('cache_mode', str, 'RW', 'CACHE_MODE', options=['RW', 'RO', 'WO', 'NO
 config.add('cache_dir', str, os.path.join(config['shared_upload_dir'], '.lazyllm_cache'), 'CACHE_DIR',
            description='ModuleCache root (LAZYLLM_CACHE_DIR).')
 config.add('reader_cache', bool, True, 'READER_CACHE',
-           description='Reader cache: ModuleCache + OCR (LAZYLLM_READER_CACHE).')
+           description='Reader cache default; injected as use_cache per request (LAZYMIND_READER_CACHE).')
 config.add('document_processor_url', str, 'http://localhost:8000', 'DOCUMENT_PROCESSOR_URL',
            description='Document processor service URL.')
 config.add('algo_server_port', int, 8000, 'ALGO_SERVER_PORT', description='Algorithm server port.')

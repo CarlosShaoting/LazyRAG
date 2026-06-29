@@ -20,10 +20,6 @@ CHAT_DOCUMENT_EXTENSIONS = ('.pdf', '.doc', '.docx', '.ppt', '.pptx', '.pptm')
 _PROMPT_TEMPLATE_PLACEHOLDER_RE = re.compile(r'\{(\w+)\}')
 
 
-def _reader_cache_enabled() -> bool:
-    return bool(lazyllm.config['reader_cache'])
-
-
 def _sanitize_for_prompt_template(text: str) -> str:
     # ChatPrompter scans instruction for `{word}` placeholders. Escape attachment
     # bodies only at prompt-build time so OCR/PDF caches stay canonical.
@@ -37,7 +33,7 @@ def _get_document_reader() -> DynamicPDFReader:
     return DynamicPDFReader(
         image_cache_dir=_cfg['ocr_cache_dir'],
         timeout=3600,
-    ).use_reader_cache(_reader_cache_enabled())
+    )
 
 
 def _suffix(path: str) -> str:
@@ -68,7 +64,8 @@ def _file_digest(path: str) -> str:
         return 'stat_unavailable'
 
 
-def _log_parse_start(path: str, *, kind: str, use_cache: bool) -> float:
+def _log_parse_start(path: str, *, kind: str) -> float:
+    use_cache = bool(lazyllm.globals.config['use_cache'])
     name = Path(path).name
     LOG.info(
         f'[AttachmentReader] parse start file={name} kind={kind} '
@@ -83,8 +80,8 @@ def _log_parse_done(
     kind: str,
     started_at: float,
     body: str,
-    use_cache: bool,
 ) -> None:
+    use_cache = bool(lazyllm.globals.config['use_cache'])
     elapsed = time.perf_counter() - started_at
     name = Path(path).name
     LOG.info(
@@ -95,17 +92,16 @@ def _log_parse_done(
 
 
 def read_chat_document_text(file_path: str) -> str:
-    use_cache = _reader_cache_enabled()
-    started_at = _log_parse_start(file_path, kind='document', use_cache=use_cache)
+    started_at = _log_parse_start(file_path, kind='document')
     reader = _get_document_reader()
-    nodes = reader(file_path, use_cache=use_cache)
+    nodes = reader(file_path)
     parts: List[str] = []
     for node in nodes or []:
         text = str(getattr(node, 'text', '') or '').strip()
         if text:
             parts.append(text)
     body = '\n\n'.join(parts)
-    _log_parse_done(file_path, kind='document', started_at=started_at, body=body, use_cache=use_cache)
+    _log_parse_done(file_path, kind='document', started_at=started_at, body=body)
     return body
 
 
@@ -117,7 +113,7 @@ def extract_image_description(
 ) -> str:
     if not is_model_role_available('vlm'):
         raise RuntimeError('vlm model role is not configured')
-    started_at = _log_parse_start(file_path, kind='image', use_cache=False)
+    started_at = _log_parse_start(file_path, kind='image')
     prompt_instruction = (instruction or VISION_EXTRACT_DEFAULT_INSTRUCTION).strip()
     encoded_query = encode_query_with_filepaths(prompt_instruction, [file_path])
     vlm = AutoModel(model='vlm')
@@ -129,7 +125,7 @@ def extract_image_description(
         priority=priority,
     )
     body = str(out).strip()
-    _log_parse_done(file_path, kind='image', started_at=started_at, body=body, use_cache=False)
+    _log_parse_done(file_path, kind='image', started_at=started_at, body=body)
     return body
 
 

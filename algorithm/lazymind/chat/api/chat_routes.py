@@ -106,6 +106,10 @@ async def chat(
             )
         ),
     ] = None,
+    use_cache: Annotated[
+        Optional[bool],
+        Body(description='Whether to enable reader cache for attachment parsing.'),
+    ] = None,
     mcp_config: Annotated[
         Optional[List[Dict[str, Any]]],
         Body(
@@ -154,6 +158,7 @@ async def chat(
         model_config=llm_config,
         tool_config=tool_config,
         ocr_config=ocr_config,
+        use_cache=use_cache,
         mcp_config=mcp_config,
         trace=trace,
         plugin_context=plugin_context,
