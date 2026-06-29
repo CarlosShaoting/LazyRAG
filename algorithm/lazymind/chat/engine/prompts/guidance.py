@@ -8,6 +8,10 @@ DEFAULT_SYSTEM_PROMPT = (
     "being genuinely useful over being verbose unless otherwise directed below. "
     "Be targeted and efficient in your exploration and investigations."
 )
+VISION_EXTRACT_DEFAULT_INSTRUCTION = (
+    'Please describe this image in detail for downstream reasoning. '
+    'Focus on the key objects, text, layout, and any notable visual cues.'
+)
 IMAGE_REFERENCE_MARKDOWN_GUIDANCE = (
     '# Image path formatting (mandatory)\n'
     'When showing images in your answer, you MUST copy the `image_markdown` field from '
