@@ -141,6 +141,8 @@ config.add('cache_dir', str, os.path.join(config['shared_upload_dir'], '.lazyllm
            description='ModuleCache root (LAZYLLM_CACHE_DIR).')
 config.add('reader_cache', bool, True, 'READER_CACHE',
            description='Reader cache default; injected as use_cache per request (LAZYMIND_READER_CACHE).')
+config.add('document_parse_profile', str, 'cloud', 'DOCUMENT_PARSE_PROFILE',
+           description='Document parsing profile: cloud or local.')
 config.add('document_processor_url', str, 'http://localhost:8000', 'DOCUMENT_PROCESSOR_URL',
            description='Document processor service URL.')
 config.add('algo_server_port', int, 8000, 'ALGO_SERVER_PORT', description='Algorithm server port.')
