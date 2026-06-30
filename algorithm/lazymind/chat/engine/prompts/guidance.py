@@ -34,14 +34,18 @@ KNOWLEDGE_EVIDENCE_CITATION_GUIDANCE = (
 )
 ATTACHED_FILES_GUIDANCE = (
     '# Attached file rules\n'
-    'The user may provide attached files in this conversation. When an '
-    '"Attached File References" section is present, its extracted text is already '
-    'available for this turn — use it directly and do not ask the user to re-upload '
-    'or paste file contents.\n'
-    '- If no reference section exists for an attached image, call `vision_extractor` '
-    'with its short filename under Attached Files before answering visual questions.\n'
-    '- If no reference section exists for an attached document, call `kb_tmp_search` '
-    'or another `kb_*` tool scoped to the attached files before answering.'
+    'Attachments are listed for reference only — do NOT parse or read them automatically.\n'
+    '- `find_user_attachment(filename, turn=N)`: get path/url to pass to image tools, plugins, '
+    '`vision_extractor`, or `save_plugin_artifact`. Prefer this for images when the task is '
+    'visual (edit, generate, plugin) or you only need the file location.\n'
+    '- `read_user_attachment(filename, turn=N)`: extract TEXT — OCR for pdf/doc/docx/pptx, or a '
+    'text description via vision for images. Use only when you need document text or a textual '
+    'answer about image content (e.g. "what does this document say", "describe this diagram").\n'
+    'Supported uploads: png, jpg, jpeg, pdf, doc, docx, pptx.\n'
+    '- Default to the current turn (marked 当前轮次) when the user says '
+    '"this image / 这张图 / 这个文件" without naming a turn.\n'
+    '- For knowledge-base questions about indexed documents, you may also use '
+    '`kb_tmp_search` or other `kb_*` tools when appropriate.'
 )
 
 SEARCH_GUIDANCE = (

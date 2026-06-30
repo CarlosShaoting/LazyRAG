@@ -25,7 +25,6 @@ from lazymind.chat.service.component import (
     normalize_history_for_agent,
 )
 from lazymind.chat.engine.agent_core import build_react_agent, drive_agent
-from lazymind.chat.engine.attachment_reader import build_attachment_reference_prompt
 from lazymind.chat.service.utils import (
     SensitiveFilter,
     basename_from_path,
@@ -302,10 +301,14 @@ def _build_user_attachment_context(history_files_per_turn: Dict[str, List[str]],
         'Only fall back to historical turns when the user explicitly references a past turn '
         'or when the current turn has no attachments.'
     )
-    lines.append("To read a file's content, call read_user_attachment(filename, turn=N).")
-    lines.append("To get a file's accessible path, call find_user_attachment(filename, turn=N).")
-    lines.append('When passing an attachment path to save_plugin_artifact, always use the `path` field '
-                 '(local absolute path) from find_user_attachment, NOT the `url` field.')
+    lines.append(
+        'Do not parse attachments by default. '
+        'Use find_user_attachment(filename, turn=N) to get path/url for image tools, plugins, '
+        'or vision_extractor (visual/edit tasks). '
+        'Use read_user_attachment only when you need extracted text (documents, or textual '
+        'Q&A about image content). Supported: png, jpg, jpeg, pdf, doc, docx, pptx.'
+    )
+    lines.append("find_user_attachment returns `path` (local) and `url` (signed); prefer `path` for save_plugin_artifact.")
 
     return '\n'.join(lines)
 
@@ -475,13 +478,6 @@ async def handle_chat(request: ChatRequest) -> Union[Dict[str, Any], StreamingRe
     if parts:
         agent_query = '\n\n---\n\n'.join(parts) + '\n\n---\n\n## User Request\n' + agent_query
 
-    file_reference_prompt = ''
-    if resolved_files:
-        file_reference_prompt = await asyncio.to_thread(
-            build_attachment_reference_prompt,
-            resolved_files,
-            priority=priority,
-        )
     disabled = set(agent.disabled_tools or [])
     active_configs = filter_tools(
         [cfg for cfg in DEFAULT_TOOLS if cfg.name not in disabled],
@@ -538,8 +534,6 @@ async def handle_chat(request: ChatRequest) -> Union[Dict[str, Any], StreamingRe
     )
     if plugin_system_prompt:
         runtime_prompt = runtime_prompt + '\n\n' + plugin_system_prompt
-    if file_reference_prompt:
-        runtime_prompt = runtime_prompt + '\n\n' + file_reference_prompt
 
     llm = AutoModel(model='llm')
 

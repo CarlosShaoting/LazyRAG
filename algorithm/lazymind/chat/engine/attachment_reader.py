@@ -11,12 +11,12 @@ from lazyllm import AutoModel, LOG
 from lazyllm.components.formatter import encode_query_with_filepaths
 from lazyllm.tools.rag.readers.ocrReader import DynamicPDFReader
 
-from lazymind.chat.config import IMAGE_EXTENSIONS
+from lazymind.chat.config import CHAT_DOCUMENT_EXTENSIONS, IMAGE_EXTENSIONS
 from lazymind.chat.engine.prompts import VISION_EXTRACT_DEFAULT_INSTRUCTION
 from lazymind.config import config as _cfg
 from lazymind.model_config import is_model_role_available
 
-CHAT_DOCUMENT_EXTENSIONS = ('.pdf', '.doc', '.docx', '.ppt', '.pptx', '.pptm')
+_SUPPORTED_ATTACHMENT_LABEL = 'png, jpg, jpeg, pdf, doc, docx, pptx'
 _PROMPT_TEMPLATE_PLACEHOLDER_RE = re.compile(r'\{(\w+)\}')
 
 
@@ -46,6 +46,10 @@ def is_chat_image_file(path: str) -> bool:
 
 def is_chat_document_file(path: str) -> bool:
     return _suffix(path) in CHAT_DOCUMENT_EXTENSIONS
+
+
+def is_chat_attachment_file(path: str) -> bool:
+    return is_chat_image_file(path) or is_chat_document_file(path)
 
 
 def filter_chat_image_files(files: List[str]) -> List[str]:
@@ -129,6 +133,21 @@ def extract_image_description(
     return body
 
 
+def parse_attachment_content(file_path: str, *, priority: int = 0) -> str:
+    """Parse one chat attachment: images via VLM, documents via OCR reader."""
+    path = str(Path(file_path).resolve())
+    if not is_chat_attachment_file(path):
+        raise ValueError(
+            f'Unsupported attachment type: {Path(path).suffix or "(no extension)"}. '
+            f'Supported: {_SUPPORTED_ATTACHMENT_LABEL}.'
+        )
+    if is_chat_image_file(path):
+        if not is_model_role_available('vlm'):
+            raise RuntimeError('vlm model role is not configured')
+        return extract_image_description(path, priority=priority)
+    return read_chat_document_text(path)
+
+
 def _build_reference_section(file_path: str, body: str, *, kind: str) -> str:
     name = Path(file_path).name
     label = 'Image' if kind == 'image' else 'Document'
@@ -146,19 +165,16 @@ def build_attachment_reference_prompt(files: List[str], *, priority: int = 0) ->
     for file_path in files:
         path = str(Path(file_path).resolve())
         try:
-            if is_chat_image_file(path):
-                if not is_model_role_available('vlm'):
-                    LOG.warning(f'[AttachmentReader] skip image (no vlm): {path}')
-                    continue
-                description = extract_image_description(path, priority=priority)
-                if description:
-                    sections.append(_build_reference_section(path, description, kind='image'))
-            elif is_chat_document_file(path):
-                text = read_chat_document_text(path)
-                if text:
-                    sections.append(_build_reference_section(path, text, kind='document'))
-            else:
+            if is_chat_image_file(path) and not is_model_role_available('vlm'):
+                LOG.warning(f'[AttachmentReader] skip image (no vlm): {path}')
+                continue
+            if not is_chat_attachment_file(path):
                 LOG.info(f'[AttachmentReader] unsupported attachment skipped: {path}')
+                continue
+            body = parse_attachment_content(path, priority=priority)
+            if body:
+                kind = 'image' if is_chat_image_file(path) else 'document'
+                sections.append(_build_reference_section(path, body, kind=kind))
         except Exception as exc:
             LOG.warning(f'[AttachmentReader] failed to parse {path}: {exc}')
     batch_elapsed = time.perf_counter() - batch_started_at

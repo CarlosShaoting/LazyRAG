@@ -23,6 +23,20 @@ def test_filter_chat_image_files():
     assert ar.filter_chat_image_files(files) == ['/data/a.png', '/data/b.JPEG']
 
 
+def test_parse_attachment_content_routes_by_suffix(monkeypatch, tmp_path):
+    pdf_path = tmp_path / 'demo.pdf'
+    image_path = tmp_path / 'photo.png'
+    pdf_path.write_text('dummy', encoding='utf-8')
+    image_path.write_bytes(b'png')
+
+    monkeypatch.setattr(ar, 'is_model_role_available', lambda role: role == 'vlm')
+    monkeypatch.setattr(ar, 'read_chat_document_text', lambda path: f'parsed:{path}')
+    monkeypatch.setattr(ar, 'extract_image_description', lambda path, **kwargs: 'blue sky photo')
+
+    assert ar.parse_attachment_content(str(pdf_path)) == f'parsed:{pdf_path.resolve()}'
+    assert ar.parse_attachment_content(str(image_path)) == 'blue sky photo'
+
+
 def test_build_attachment_reference_prompt(monkeypatch, tmp_path):
     pdf_path = tmp_path / 'demo.pdf'
     image_path = tmp_path / 'photo.png'
@@ -72,6 +86,16 @@ def test_build_attachment_reference_prompt_sanitizes_document_body(monkeypatch, 
     assert 'template { query } then { response }' in prompt
     assert '{query}' not in prompt
     assert '{response}' not in prompt
+
+
+def test_parse_attachment_content_rejects_unsupported_suffix(tmp_path):
+    bad = tmp_path / 'archive.zip'
+    bad.write_bytes(b'zip')
+    try:
+        ar.parse_attachment_content(str(bad))
+        assert False, 'expected ValueError'
+    except ValueError as exc:
+        assert 'Unsupported attachment type' in str(exc)
 
 
 def test_read_chat_document_text_joins_nodes(monkeypatch):
