@@ -283,7 +283,7 @@ def _build_attachment_context_for_subagent(history_files_per_turn: 'Dict[str, Li
         'find_user_attachment for path/url (image tools, plugins); '
         'read_user_attachment only when extracted text is required.'
     )
-    lines.append("find_user_attachment(filename, turn=N) returns path/url without parsing.")
+    lines.append('find_user_attachment(filename, turn=N) returns path/url without parsing.')
     return '\n'.join(lines)
 
 

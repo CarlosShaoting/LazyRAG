@@ -308,7 +308,10 @@ def _build_user_attachment_context(history_files_per_turn: Dict[str, List[str]],
         'Use read_user_attachment only when you need extracted text (documents, or textual '
         'Q&A about image content). Supported: png, jpg, jpeg, pdf, doc, docx, pptx.'
     )
-    lines.append("find_user_attachment returns `path` (local) and `url` (signed); prefer `path` for save_plugin_artifact.")
+    lines.append(
+        'find_user_attachment returns `path` (local) and `url` (signed); '
+        'prefer `path` for save_plugin_artifact.'
+    )
 
     return '\n'.join(lines)
 
