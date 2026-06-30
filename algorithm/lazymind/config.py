@@ -133,12 +133,6 @@ config.add('mineru_backend', str, 'pipeline', 'MINERU_BACKEND', description='Min
 config.add('mineru_server_port', int, 8000, 'MINERU_SERVER_PORT', description='MinerU server port.')
 config.add('ocr_cache_dir', str, os.path.join(config['shared_upload_dir'], '.image_cache'), 'OCR_CACHE_DIR',
            description='OCR cache root for parsed results and images.')
-config.add('cache_strategy', str, 'file', 'CACHE_STRATEGY', options=['memory', 'file', 'sqlite', 'redis'],
-           description='ModuleCache strategy (LAZYLLM_CACHE_STRATEGY).')
-config.add('cache_mode', str, 'RW', 'CACHE_MODE', options=['RW', 'RO', 'WO', 'NONE'],
-           description='ModuleCache mode (LAZYLLM_CACHE_MODE).')
-config.add('cache_dir', str, os.path.join(config['shared_upload_dir'], '.lazyllm_cache'), 'CACHE_DIR',
-           description='ModuleCache root (LAZYLLM_CACHE_DIR).')
 config.add('reader_cache', bool, True, 'READER_CACHE',
            description='Reader cache default; injected as use_cache per request (LAZYMIND_READER_CACHE).')
 config.add('document_parse_profile', str, 'cloud', 'DOCUMENT_PARSE_PROFILE',
