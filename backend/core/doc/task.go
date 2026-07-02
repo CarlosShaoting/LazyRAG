@@ -1403,7 +1403,7 @@ func startParseTasksInternal(r *http.Request, datasetID string, taskIDs []string
 			items = append(items, buildAddFileItem(datasetID, candidate.task, candidate.doc, candidate.docExt, parsePath))
 		}
 		if len(baseTasks) > 0 {
-			extResults, err := callExternalAddDocs(r, addRequest{Items: items, KbID: kbID, SourceType: "EXTERNAL", IdempotencyKey: newTaskID(), ModelConfig: llmConfig, OCRConfig: ocrConfig, UseCache: common.ReaderUseCacheEnabled()})
+			extResults, err := callExternalAddDocs(r, addRequest{Items: items, KbID: kbID, SourceType: "EXTERNAL", IdempotencyKey: newTaskID(), ModelConfig: llmConfig, OCRConfig: ocrConfig})
 			if err != nil {
 				for i, taskRow := range baseTasks {
 					resolved := common.ResolveAppError(err.Error(), http.StatusBadGateway)
@@ -1459,7 +1459,7 @@ func startParseTasksInternal(r *http.Request, datasetID string, taskIDs []string
 					return
 				}
 				item := buildAddFileItem(datasetID, candidate.task, candidate.doc, dExt, parsePath)
-				extResults, err := callExternalAddDocs(r, addRequest{Items: []addFileItem{item}, KbID: kbID, SourceType: "EXTERNAL", IdempotencyKey: newTaskID(), ModelConfig: llmConfig, OCRConfig: ocrConfig, UseCache: common.ReaderUseCacheEnabled()})
+				extResults, err := callExternalAddDocs(r, addRequest{Items: []addFileItem{item}, KbID: kbID, SourceType: "EXTERNAL", IdempotencyKey: newTaskID(), ModelConfig: llmConfig, OCRConfig: ocrConfig})
 				if err != nil {
 					resolved := common.ResolveAppError(err.Error(), http.StatusBadGateway)
 					outcomes[idx] = officeOutcome{task: candidate.task, doc: candidate.doc, docExt: dExt, result: StartTaskResult{TaskID: candidate.task.ID, DocumentID: candidate.doc.ID, DisplayName: candidate.doc.DisplayName, Status: "FAILED", SubmitStatus: "FAILED", Message: resolved.Message, Detail: fmt.Sprint(resolved.Detail)}}
@@ -2604,7 +2604,7 @@ func startReparseTasksInternal(r *http.Request, datasetID string, taskIDs []stri
 		Str("reparse_mode", reparseMode).
 		Str("strategy", strategy).
 		Msg("submitting reparse batch to doc service")
-	lazyllmTaskIDs, err := callExternalReparseDocs(r, reparseRequest{DocIDs: docIDs, KbID: kbID, NgNames: ngNames, Strategy: strategy, IdempotencyKey: newTaskID(), ModelConfig: llmConfig, OCRConfig: ocrConfig, UseCache: common.ReaderUseCacheEnabled()})
+	lazyllmTaskIDs, err := callExternalReparseDocs(r, reparseRequest{DocIDs: docIDs, KbID: kbID, NgNames: ngNames, Strategy: strategy, IdempotencyKey: newTaskID(), ModelConfig: llmConfig, OCRConfig: ocrConfig})
 	if err != nil {
 		errMsg := common.ResolveAppError(err.Error(), http.StatusBadGateway).Message
 		applog.Logger.Error().

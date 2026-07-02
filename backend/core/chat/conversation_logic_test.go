@@ -582,7 +582,6 @@ func TestBuildLazyChatRequestMapsAllFields(t *testing.T) {
 			"ocr_type": "mineru",
 			"ocr_url":  "https://mineru.net/api/v4/",
 		},
-		"use_cache": true,
 		"tool_config": map[string]any{
 			"bing": "token-1",
 		},
@@ -662,9 +661,6 @@ func TestBuildLazyChatRequestMapsAllFields(t *testing.T) {
 	}
 	if req.Runtime.OCRConfig == nil || req.Runtime.OCRConfig["ocr_type"] != "mineru" {
 		t.Fatalf("expected ocr_config to be forwarded, got %#v", req.Runtime.OCRConfig)
-	}
-	if !req.Runtime.UseCache {
-		t.Fatalf("expected use_cache to be forwarded, got %#v", req.Runtime.UseCache)
 	}
 	if req.Runtime.ToolConfig == nil || req.Runtime.ToolConfig["bing"] != "token-1" {
 		t.Fatalf("expected tool_config to be forwarded, got %#v", req.Runtime.ToolConfig)

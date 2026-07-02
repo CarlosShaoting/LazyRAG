@@ -69,11 +69,11 @@ def _file_digest(path: str) -> str:
 
 
 def _log_parse_start(path: str, *, kind: str) -> float:
-    use_cache = bool(lazyllm.globals.config['use_cache'])
+    reader_use_cache = bool(lazyllm.config['reader_use_cache'])
     name = Path(path).name
     LOG.info(
         f'[AttachmentReader] parse start file={name} kind={kind} '
-        f'digest={_file_digest(path)} use_cache={use_cache} path={path}'
+        f'digest={_file_digest(path)} reader_use_cache={reader_use_cache} path={path}'
     )
     return time.perf_counter()
 
@@ -85,12 +85,12 @@ def _log_parse_done(
     started_at: float,
     body: str,
 ) -> None:
-    use_cache = bool(lazyllm.globals.config['use_cache'])
+    reader_use_cache = bool(lazyllm.config['reader_use_cache'])
     elapsed = time.perf_counter() - started_at
     name = Path(path).name
     LOG.info(
         f'[AttachmentReader] parse done file={name} kind={kind} '
-        f'elapsed={elapsed:.3f}s chars={len(body)} use_cache={use_cache} '
+        f'elapsed={elapsed:.3f}s chars={len(body)} reader_use_cache={reader_use_cache} '
         f'digest={_file_digest(path)} path={path}'
     )
 

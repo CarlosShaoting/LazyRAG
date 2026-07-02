@@ -169,7 +169,6 @@ func applyChatRuntimeConfigs(ctx context.Context, db *gorm.DB, userID string, bo
 	if len(ocrConfig) > 0 {
 		body["ocr_config"] = ocrConfig
 	}
-	body["use_cache"] = common.ReaderUseCacheEnabled()
 	agentConfig := loadUserAgentConfig(ctx, db, userID, body)
 	if len(agentConfig) > 0 {
 		// Merge into existing agentic_config body key, or set it.

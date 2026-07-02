@@ -90,7 +90,6 @@ type ChatRuntimeOptions struct {
 	EnvironmentContext map[string]any `json:"environment_context,omitempty"`
 	LLMConfig          map[string]any `json:"llm_config,omitempty"`
 	OCRConfig          map[string]any `json:"ocr_config,omitempty"`
-	UseCache           bool           `json:"use_cache,omitempty"`
 	ToolConfig         map[string]any `json:"tool_config,omitempty"`
 	MCPConfig          []any          `json:"mcp_config,omitempty"`
 }
@@ -404,9 +403,6 @@ func buildLazyChatRequest(body map[string]any) *LazyChatRequest {
 	}
 	if ocrConfig, ok := body["ocr_config"].(map[string]any); ok {
 		req.Runtime.OCRConfig = ocrConfig
-	}
-	if useCache, ok := body["use_cache"].(bool); ok {
-		req.Runtime.UseCache = useCache
 	}
 	if toolConfig, ok := body["tool_config"].(map[string]string); ok {
 		tc := make(map[string]any, len(toolConfig))

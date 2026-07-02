@@ -429,10 +429,7 @@ async def handle_chat(request: ChatRequest) -> Union[Dict[str, Any], StreamingRe
     lazyllm.locals._init_sid(sid=conversation.session_id)
     inject_model_config(runtime.llm_config)
     inject_tool_config(runtime.tool_config)
-    inject_reader_config(
-        use_cache=runtime.use_cache if runtime.use_cache is not None else bool(_cfg['reader_cache']),
-        ocr_config=runtime.ocr_config,
-    )
+    inject_reader_config(ocr_config=runtime.ocr_config)
     lazyllm.globals['agentic_config'] = agentic_config
 
     plugin_tools, plugin_system_prompt, plugin_stop_tools, agentic_config_patch, plugin_artifact_context = \

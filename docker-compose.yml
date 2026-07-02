@@ -94,12 +94,13 @@ x-ocr-env: &ocr-env
   LAZYLLM_PADDLE_API_KEY: ${LAZYLLM_PADDLE_API_KEY:-}
 
 # ModuleCache is configured via LAZYLLM_CACHE_* (lazyllm.module.module).
-# Per-request reader cache toggle: LAZYMIND_READER_CACHE (Go) -> use_cache -> inject_reader_config.
+# Reader content cache: LAZYMIND_READER_USE_CACHE -> LAZYLLM_READER_USE_CACHE (lazyllm.config reader_use_cache).
 x-cache-env: &cache-env
   LAZYLLM_CACHE_STRATEGY: ${LAZYLLM_CACHE_STRATEGY:-file}
   LAZYLLM_CACHE_MODE: ${LAZYLLM_CACHE_MODE:-RW}
   LAZYLLM_CACHE_DIR: ${LAZYLLM_CACHE_DIR:-/var/lib/lazymind/uploads/.lazyllm_cache}
-  LAZYMIND_READER_CACHE: ${LAZYMIND_READER_CACHE:-true}
+  LAZYMIND_READER_USE_CACHE: ${LAZYMIND_READER_USE_CACHE:-true}
+  LAZYLLM_READER_USE_CACHE: ${LAZYMIND_READER_USE_CACHE:-true}
 
 services:
 
