@@ -19,6 +19,7 @@ remember to list them explicitly.
 """
 from __future__ import annotations
 
+import re
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -26,6 +27,7 @@ import lazyllm
 from lazyllm.tools.agent.base import _write_agent_data
 
 from lazymind.chat.plugin import plugin_loader
+from lazymind.chat.engine.kb_filters import enrich_filters_from_conversation
 
 
 # ---------------------------------------------------------------------------
@@ -55,6 +57,134 @@ def _merge_tools(declared: List[str]) -> List[str]:
             seen.add(t)
             merged.append(t)
     return merged
+
+
+def _fetch_slot_artifact_text(session_id: str, artifact_key: str) -> str:
+    """Read a plugin slot artifact text via Go core (best-effort)."""
+    if not session_id:
+        return ''
+    try:
+        import httpx
+        from lazymind.config import config as _cfg
+        core_url = str(_cfg['core_api_url']).rstrip('/')
+        resp = httpx.get(f'{core_url}/plugin-sessions/{session_id}/slots', timeout=3.0)
+        if resp.status_code != 200:
+            return ''
+        payload = resp.json()
+        data = payload.get('data') if isinstance(payload.get('data'), dict) else payload
+        for slot in data.get('slots') or []:
+            if slot.get('artifact_key') != artifact_key:
+                continue
+            value = slot.get('artifact_value') or {}
+            if isinstance(value, str):
+                return value
+            if isinstance(value, dict):
+                return str(value.get('text') or value.get('content') or '')
+        return ''
+    except Exception:
+        return ''
+
+
+def _parse_workflow(analysis_text: str) -> str:
+    """Extract WORKFLOW value from subject_analysis (supports markdown **WORKFLOW**:)."""
+    normalized = re.sub(r'\*+', '', analysis_text or '')
+    match = re.search(r'WORKFLOW:\s*([A-Z_]+)', normalized, re.I)
+    return match.group(1).upper() if match else ''
+
+
+def _artifact_value_is_usable(artifact_key: str, value: Any, content_type: Optional[str] = None) -> bool:
+    """Return True when a slot artifact_value looks non-empty and consumable downstream."""
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if not isinstance(value, dict):
+        return bool(value)
+    ct = (content_type or value.get('type') or '').lower()
+    is_image = ct == 'image' or artifact_key in {
+        'material_image', 'generated_image_url', 'enhanced_image_url',
+    }
+    if is_image:
+        for field in ('url', 'path'):
+            ref = str(value.get(field) or '').strip()
+            if ref.startswith(('http://', 'https://', '/static-files/', 'data:image/')):
+                return True
+            if ref.startswith('/') and len(ref) > 1:
+                return True
+        return False
+    text = str(value.get('text') or value.get('content') or '').strip()
+    return len(text) >= 10
+
+
+def _session_has_usable_artifact(session_id: str, artifact_key: str) -> bool:
+    """Check whether the plugin session already has a selected, usable artifact for key."""
+    if not session_id or not artifact_key:
+        return False
+    try:
+        import httpx
+        from lazymind.config import config as _cfg
+        core_url = str(_cfg['core_api_url']).rstrip('/')
+        resp = httpx.get(f'{core_url}/plugin-sessions/{session_id}/slots', timeout=3.0)
+        if resp.status_code != 200:
+            return False
+        payload = resp.json()
+        data = payload.get('data') if isinstance(payload.get('data'), dict) else payload
+        for slot in data.get('slots') or []:
+            if slot.get('artifact_key') != artifact_key:
+                continue
+            if slot.get('selected') is False:
+                continue
+            value = slot.get('artifact_value')
+            if _artifact_value_is_usable(
+                artifact_key, value, slot.get('content_type'),
+            ):
+                return True
+        return False
+    except Exception:
+        return False
+
+
+def _required_output_keys(
+    step_config: Dict[str, Any],
+    step_id: str,
+    cfg: Dict[str, Any],
+) -> List[str]:
+    """Return output artifact keys that must be saved before the SubAgent finishes."""
+    output_defs = step_config.get('outputs', [])
+    required: List[str] = []
+    for out in output_defs:
+        artifact_id = out.get('artifact_id', '')
+        if not artifact_id:
+            continue
+        if out.get('required', True):
+            required.append(artifact_id)
+    session_id: str = cfg.get('plugin_session_id', '') or cfg.get('session_id', '')
+    # EDIT_UPLOAD: user uploads imply raw image + edit instruction in analyze_subject.
+    if step_id == 'analyze_subject':
+        history_files = cfg.get('history_files_per_turn') or {}
+        has_user_files = any(bool(v) for v in history_files.values())
+        if has_user_files:
+            for key in ('generated_image_url', 'optimized_prompt'):
+                if key not in required:
+                    required.append(key)
+        return required
+    # collect_materials: FIND_AND_EDIT needs raw image + edit prompt; KB_STYLE reuses analyze outputs.
+    if step_id == 'collect_materials':
+        workflow = _parse_workflow(_fetch_slot_artifact_text(session_id, 'subject_analysis'))
+        if workflow == 'FIND_AND_EDIT':
+            for key in ('material_image', 'generated_image_url', 'optimized_prompt'):
+                if key not in required:
+                    required.append(key)
+        elif workflow == 'KB_STYLE':
+            required = [
+                k for k in required
+                if not (
+                    k in ('material_summary', 'material_image')
+                    and _session_has_usable_artifact(session_id, k)
+                )
+            ]
+        return required
+    return required
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +330,16 @@ def _trigger_plugin_step(
                                 f'Please trigger {producer_step!r} first.'
                             )
                         continue
-                    if step_status in ('running', 'failed', 'interrupted'):
+                    if step_status in ('running', 'interrupted'):
+                        return (
+                            f'Error: artifact {artifact_id!r} not ready '
+                            f'(producer step {producer_step!r} status: {step_status!r}).'
+                        )
+                    if step_status == 'failed':
+                        if not required:
+                            continue
+                        if _session_has_usable_artifact(session_id, artifact_id):
+                            continue
                         return (
                             f'Error: artifact {artifact_id!r} not ready '
                             f'(producer step {producer_step!r} status: {step_status!r}).'
@@ -210,7 +349,16 @@ def _trigger_plugin_step(
 
     # --- Emit task_created signal ---
     task_id = str(uuid.uuid4())
-    output_keys = [o['artifact_id'] for o in step_config.get('outputs', [])]
+    output_defs = step_config.get('outputs', [])
+    output_keys = [o['artifact_id'] for o in output_defs if o.get('artifact_id')]
+    required_output_keys = _required_output_keys(step_config, step_id, cfg)
+    if step_id == 'analyze_subject':
+        history_files = cfg.get('history_files_per_turn') or {}
+        has_user_files = any(bool(v) for v in history_files.values())
+        if has_user_files:
+            for key in ('generated_image_url', 'optimized_prompt'):
+                if key not in output_keys:
+                    output_keys.append(key)
     input_keys = [i['artifact_id'] for i in inputs]
 
     # Framework tools are always present regardless of plugin declaration.
@@ -229,10 +377,22 @@ def _trigger_plugin_step(
         params['retry_hint'] = runtime_instruction
     if partial_indices:
         params['partial_indices'] = partial_indices
+    params['required_output_artifact_keys'] = required_output_keys
     # Propagate full per-turn attachment index so SubAgent can access user files.
     history_files_per_turn: dict = cfg.get('history_files_per_turn') or {}
     if history_files_per_turn:
         params['history_files_per_turn'] = history_files_per_turn
+
+    # Propagate KB filters and user_id so kb_search works in plugin steps.
+    filters: dict = dict(cfg.get('filters') or {})
+    conv_id = str(cfg.get('conversation_id') or '').strip()
+    if conv_id:
+        filters = enrich_filters_from_conversation(conv_id, filters)
+    if filters:
+        params['filters'] = filters
+    user_id: str = str(cfg.get('user_id') or '').strip()
+    if user_id:
+        params['user_id'] = user_id
 
     # Inject focused_tab (UI context hint) into the objective.
     # focused_sort_order is NOT injected — it is the UI scroll position,
@@ -244,6 +404,24 @@ def _trigger_plugin_step(
     if focused_tab:
         sep = ' ' if enriched_instruction else ''
         enriched_instruction = enriched_instruction + sep + f'User is currently viewing tab: {focused_tab}.'
+    kb_id = filters.get('kb_id') if filters else None
+    if step_id == 'analyze_subject':
+        sep = '\n\n' if enriched_instruction else ''
+        if kb_id:
+            enriched_instruction = (
+                enriched_instruction + sep
+                + 'User has selected a knowledge base for this session. '
+                + 'kb_search is available ONLY in this step; filters.kb_id is already configured — '
+                + 'do NOT pass kb_id manually. If the user wants KB style/content, set WORKFLOW: KB_STYLE '
+                + 'and call kb_search here; save material_summary and/or material_image from results.'
+            )
+    elif step_id == 'collect_materials':
+        sep = '\n\n' if enriched_instruction else ''
+        enriched_instruction = (
+            enriched_instruction + sep
+            + 'Do NOT call kb_search — knowledge base retrieval runs only in analyze_subject. '
+            + 'For KB_STYLE, use material_summary / material_image already saved in analyze.'
+        )
 
     _write_agent_data(
         'task_created',

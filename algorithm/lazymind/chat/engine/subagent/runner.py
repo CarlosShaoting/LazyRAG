@@ -17,12 +17,28 @@ from lazymind.chat.service.component.event_translator import AgentEventFrameTran
 from lazymind.chat.service.component.tool_registry import DEFAULT_TOOLS, build_agent_tools
 from lazyllm.tools.tool_config_inject import inject_tool_config
 
+from lazymind.chat.engine.kb_filters import enrich_filters_from_conversation
 from .context import SubAgentContext, set_context, LARGE_TOOL_RESULT_THRESHOLD
 from .db import SubAgentDB
 from . import tools as subagent_tools
 
 
 _ZH_RE = re.compile(r'[\u4e00-\u9fff]')
+
+
+def _prewarm_kb_runtime_if_needed(tool_names: Optional[List[str]]) -> None:
+    """Initialize KB retrievers on the runner thread before the agent thread pool starts."""
+    if not tool_names:
+        return
+    normalized = {str(t).strip().lower() for t in tool_names}
+    if 'kb' not in normalized:
+        return
+    try:
+        from lazymind.chat.engine.tools.kb import KBToolGroup
+        KBToolGroup()._ensure_search_runtime()
+        LOG.info('[SubAgent] KB search runtime pre-warmed')
+    except Exception as exc:
+        LOG.warning('[SubAgent] KB pre-warm failed: %s', exc)
 
 
 def _build_artifact_context_section(
@@ -358,11 +374,30 @@ def _objective_prompt(ctx: SubAgentContext, db: Optional['SubAgentDB'] = None) -
         )
         if sort_order_hints:
             lines.append(sort_order_hints)
-    lines.append(
-        'You MUST call save_artifact for EACH of the following keys before you finish — '
-        'do NOT skip this step even if you have already written the results in plain text: '
-        + ', '.join(ctx.output_artifact_keys)
-    )
+    if ctx.params.get('required_output_artifact_keys') is not None:
+        required_keys = _coerce_str_list(ctx.params.get('required_output_artifact_keys'))
+    elif str(ctx.agent_type or '') == 'plugin_step':
+        required_keys = []
+    else:
+        required_keys = list(ctx.output_artifact_keys)
+    if required_keys:
+        lines.append(
+            'You MUST call save_artifact for EACH of the following keys before you finish — '
+            'do NOT skip this step even if you have already written the results in plain text: '
+            + ', '.join(required_keys)
+        )
+    else:
+        lines.append(
+            'Save only artifacts required by the step prompt and WORKFLOW in subject_analysis. '
+            'Do NOT save generated_image_url or optimized_prompt unless WORKFLOW is FIND_AND_EDIT. '
+            'Never write placeholder text for any artifact key.'
+        )
+    optional_keys = [k for k in ctx.output_artifact_keys if k not in required_keys]
+    if optional_keys:
+        lines.append(
+            'Optional output keys (save ONLY when the step prompt explicitly requires them; '
+            'never save placeholders): ' + ', '.join(optional_keys)
+        )
     lines.append(
         'IMPORTANT: Writing results in your reply text does NOT count as saving an artifact. '
         'You must explicitly call save_artifact(key=..., value=...) for every required key. '
@@ -506,6 +541,14 @@ async def run_subagent_stream(
         output_keys = _coerce_str_list(task.get('output_artifact_keys'))
         input_keys = _coerce_str_list(task.get('input_artifact_keys'))
         params = _coerce_dict(task.get('params'))
+        effective_agent_type = str(task.get('agent_type') or agent_type or '')
+        if params.get('required_output_artifact_keys') is not None:
+            required_output_keys = _coerce_str_list(params.get('required_output_artifact_keys'))
+        elif effective_agent_type == 'plugin_step':
+            # Do not treat every declared output as mandatory when Go omits empty lists.
+            required_output_keys = []
+        else:
+            required_output_keys = output_keys
 
         ctx = SubAgentContext(
             task_id=task_id,
@@ -525,7 +568,6 @@ async def run_subagent_stream(
         # (artifact context is now injected as a summary section in _objective_prompt instead).
         # Also resolve tools from plugin_loader when no explicit list was provided.
         # Go no longer forwards the tools list for plugin_step tasks.
-        effective_agent_type = str(task.get('agent_type') or agent_type or '')
         if effective_agent_type == 'plugin_step':
             # Strip any remaining {{artifact_key}} placeholders so they don't confuse the LLM.
             ctx.objective = re.sub(r'\{\{[^}]+\}\}', '', ctx.objective).strip()
@@ -544,14 +586,24 @@ async def run_subagent_stream(
         if effective_agent_type == 'plugin_step':
             history_files_per_turn = params.get('history_files_per_turn') or {}
             all_files = [p for paths in history_files_per_turn.values() for p in paths]
+            filters = dict(params.get('filters') or {})
+            if not filters.get('kb_id') and ctx.conversation_id:
+                filters = enrich_filters_from_conversation(ctx.conversation_id, filters)
             lazyllm.globals['agentic_config'] = {
                 'plugin_id': params.get('plugin_id', ''),
                 'plugin_session_id': params.get('session_id', ''),
                 'plugin_step': params.get('step_id', ''),
-                'query': ctx.objective,
+                'query': str(params.get('user_input') or ctx.objective),
                 'files': all_files,
                 'history_files_per_turn': history_files_per_turn,
+                'filters': filters,
+                'user_id': str(params.get('user_id') or '').strip(),
+                'conversation_id': str(task.get('conversation_id') or '').strip(),
             }
+            # Materialize session bucket before Parallel-based tools (e.g. kb_search).
+            _ = lazyllm.globals._data
+
+        _prewarm_kb_runtime_if_needed(tools)
 
         yield _sse({'type': 'task_start', 'task_id': task_id})
 
@@ -655,15 +707,22 @@ async def run_subagent_stream(
             ev['task_id'] = task_id
             yield _sse(ev)
 
+        # Plugin-specific backfills before completeness check.
+        _backfill_plugin_artifacts(ctx)
+        while emitted:
+            ev = emitted.pop(0)
+            ev['task_id'] = task_id
+            yield _sse(ev)
+
         # Flush any buffered text/think from translator (e.g. citation scanning remainder).
         for frame in translator.finish(final_result):
             ev_type = 'think' if frame.get('think') else 'text'
             yield _sse({'type': ev_type, 'task_id': task_id,
                         'think': frame.get('think'), 'text': frame.get('text')})
 
-        # Completeness check: every declared output key must have at least one artifact.
+        # Completeness check: every required output key must have at least one artifact.
         saved = set(ctx.saved_keys())
-        missing = [k for k in output_keys if k not in saved]
+        missing = [k for k in required_output_keys if k not in saved]
         if missing:
             steps = db.load_steps(task_id)
             is_ok, eval_summary = _evaluate_completion(
@@ -689,7 +748,7 @@ async def run_subagent_stream(
             yield 'data: [DONE]\n\n'
             return
 
-        summary = _result_summary(final_result, output_keys)
+        summary = _result_summary(final_result, required_output_keys)
         cost = round(time.time() - start_time, 3)
         # Auto-flush any pending drafts before emitting done.
         _auto_flush_drafts(ctx, db)
@@ -719,6 +778,75 @@ async def run_subagent_stream(
             pass
         if db is not None:
             db.dispose()
+
+
+def _image_ref_from_artifact_value(value: Any) -> str:
+    if not isinstance(value, dict):
+        return ''
+    for field in ('path', 'url'):
+        ref = str(value.get(field) or '').strip()
+        if ref:
+            return ref
+    return ''
+
+
+def _workflow_from_subject_analysis(ctx: 'SubAgentContext') -> str:
+    from lazymind.chat.plugin.plugin_manager import _parse_workflow
+
+    rows = ctx.local_artifacts(keys=['subject_analysis'])
+    if not rows:
+        rows = ctx.db.load_artifacts(ctx.task_id, keys=['subject_analysis'])
+    for row in rows:
+        val = row.get('value') or {}
+        text = val.get('text') if isinstance(val, dict) else str(val)
+        if not text:
+            continue
+        workflow = _parse_workflow(text)
+        if workflow:
+            return workflow
+    return ''
+
+
+def _backfill_plugin_artifacts(ctx: 'SubAgentContext') -> None:
+    """Repair common image-plugin artifact gaps so Result tab shows raw vs enhanced correctly."""
+    if (ctx.params or {}).get('plugin_id') != 'image-plugin':
+        return
+    step_id = str((ctx.params or {}).get('step_id') or '')
+    saved = set(ctx.saved_keys())
+    if step_id != 'collect_materials':
+        return
+    if _workflow_from_subject_analysis(ctx) != 'FIND_AND_EDIT':
+        return
+    if 'generated_image_url' in saved:
+        return
+    from . import tools as subagent_tools
+    for row in ctx.local_artifacts(keys=['material_image']):
+        ref = _image_ref_from_artifact_value(row.get('value'))
+        if not ref:
+            continue
+        try:
+            subagent_tools.save_artifact(
+                'generated_image_url',
+                ref,
+                content_type='image',
+                source_tool='backfill_raw_image',
+            )
+            LOG.info(
+                '[SubAgent] backfilled generated_image_url from material_image for task=%s',
+                ctx.task_id,
+            )
+            return
+        except Exception as exc:
+            LOG.warning('[SubAgent] backfill generated_image_url failed: %s', exc)
+
+
+def _parse_draft_stem(stem: str) -> tuple:
+    """Split a draft filename stem into (artifact_key, list_index_or_none)."""
+    if '_' in stem:
+        prefix, suffix = stem.rsplit('_', 1)
+        if suffix.isdigit():
+            return prefix, int(suffix)
+    return stem, None
 
 
 def _make_cancel_stop_condition():
@@ -774,17 +902,37 @@ def _auto_flush_drafts(ctx: 'SubAgentContext', db: 'SubAgentDB') -> None:
 
     This is a safety net: if the model called patch_artifact but forgot to call
     save_artifact, the edits are not lost — they are committed here at step boundary.
+    Only drafts for required keys or keys already saved in this run are flushed.
     """
     from . import tools as subagent_tools
+    required = set(_coerce_str_list((ctx.params or {}).get('required_output_artifact_keys')))
+    saved = set(ctx.saved_keys())
     for draft_key, original_type, content in ctx.list_pending_drafts():
-        try:
-            # Re-use save_artifact logic by calling it with the draft content.
-            # Reconstruct the plain key: strip trailing _<list_index> if present.
-            subagent_tools.save_artifact(draft_key, content, content_type=original_type)
+        base_key, list_index = _parse_draft_stem(draft_key)
+        if required:
+            if base_key not in required and base_key not in saved:
+                ctx.delete_draft(draft_key)
+                LOG.info(
+                    '[SubAgent] discarded optional draft key=%r for task=%s',
+                    base_key, ctx.task_id,
+                )
+                continue
+        elif base_key not in saved:
             ctx.delete_draft(draft_key)
-            LOG.info('[SubAgent] auto-flushed draft key=%r for task=%s', draft_key, ctx.task_id)
+            LOG.info(
+                '[SubAgent] discarded draft for unsaved key=%r for task=%s',
+                base_key, ctx.task_id,
+            )
+            continue
+        try:
+            sort_order = (list_index + 1) if list_index is not None else None
+            subagent_tools.save_artifact(
+                base_key, content, content_type=original_type, sort_order=sort_order,
+            )
+            ctx.delete_draft(draft_key)
+            LOG.info('[SubAgent] auto-flushed draft key=%r for task=%s', base_key, ctx.task_id)
         except Exception as exc:
-            LOG.warning('[SubAgent] auto-flush draft key=%r failed: %s', draft_key, exc)
+            LOG.warning('[SubAgent] auto-flush draft key=%r failed: %s', base_key, exc)
 
 
 def _coerce_str_list(value: Any) -> List[str]:
@@ -911,7 +1059,12 @@ def _evaluate_completion(
         # to call save_artifact but include the results in their final reply.
         if is_succeeded and ctx is not None and force_text and missing_keys:
             content = summary if summary else force_text
+            _image_keys = frozenset({
+                'generated_image_url', 'enhanced_image_url', 'material_image',
+            })
             for key in missing_keys:
+                if key in _image_keys:
+                    continue
                 try:
                     seq = ctx.next_artifact_seq(key)
                     ctx.record_local_artifact(key, 'text', {'text': content}, seq)

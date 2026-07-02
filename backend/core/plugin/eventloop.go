@@ -19,6 +19,7 @@ import (
 	"lazymind/core/modelconfig"
 	"lazymind/core/state"
 	"lazymind/core/subagent"
+	"lazymind/core/store"
 	"lazymind/core/taskcenter"
 )
 
@@ -50,6 +51,12 @@ type PluginStepParams struct {
 	// SubAgent can access uploaded files via read_user_attachment / find_user_attachment.
 	// Key = conversation turn sequence (string), value = list of absolute file paths.
 	HistoryFilesPerTurn map[string][]string `json:"history_files_per_turn,omitempty"`
+
+	// Filters carries retrieval filters (e.g. kb_id) from the chat session into plugin steps.
+	Filters map[string]any `json:"filters,omitempty"`
+
+	// UserID is the chat user id for KB ACL and signed static-file URLs.
+	UserID string `json:"user_id,omitempty"`
 }
 
 // asMap serialises the params into the generic map expected by subagent.RunRequest.Params.
@@ -72,6 +79,12 @@ func (p PluginStepParams) asMap() map[string]any {
 	}
 	if len(p.HistoryFilesPerTurn) > 0 {
 		m["history_files_per_turn"] = p.HistoryFilesPerTurn
+	}
+	if len(p.Filters) > 0 {
+		m["filters"] = p.Filters
+	}
+	if p.UserID != "" {
+		m["user_id"] = p.UserID
 	}
 	return m
 }
@@ -232,6 +245,19 @@ func HandlePluginStepCreated(
 	}
 	if len(params.HistoryFilesPerTurn) > 0 {
 		rawParamsMap["history_files_per_turn"] = params.HistoryFilesPerTurn
+	}
+	filters := params.Filters
+	if len(filters) == 0 {
+		filters = filtersFromConversation(db, convID)
+		if len(filters) > 0 {
+			params.Filters = filters
+		}
+	}
+	if len(filters) > 0 {
+		rawParamsMap["filters"] = filters
+	}
+	if params.UserID != "" {
+		rawParamsMap["user_id"] = params.UserID
 	}
 	rawParams, _ := json.Marshal(rawParamsMap)
 	inputJSON, _ := json.Marshal(inputKeys)
@@ -496,6 +522,9 @@ func triggerNextChatTurn(
 			"plugin_id":    pluginID,
 			"current_step": currentStep,
 		},
+	}
+	if searchConfig := loadConversationSearchConfig(store.DB(), convID); len(searchConfig) > 0 {
+		reqBody["conversation"] = map[string]any{"search_config": searchConfig}
 	}
 	body, _ := json.Marshal(reqBody)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)

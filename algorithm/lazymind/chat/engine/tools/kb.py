@@ -495,6 +495,11 @@ class KBToolGroup:
         doc = DOCUMENT
         docid = target if target_type == 'docid' else ''
         file_name = target if target_type == 'file_name' else None
+        if not keyword:
+            raise ValueError('keyword is required')
+        if not (target and str(target).strip()):
+            LOG.warning('[kb_keyword_search] no target; falling back to kb_search')
+            return self.kb_search(query=keyword)
         LOG.info(f'[kb_keyword_search] store={_cfg["segment_store_type"]!r} keyword={keyword!r} docid={docid!r} '
                  f'file_name={file_name!r} group={group!r} phrase={phrase} sort_by={sort_by!r} size={size}')
 

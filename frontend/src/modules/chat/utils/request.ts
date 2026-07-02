@@ -143,16 +143,33 @@ export function PluginSessionApi() {
         options,
       );
     },
-    getSteps(sessionId: string, options?: RawAxiosRequestConfig) {
-      return axiosInstance.get(
-        `${coreApiBaseUrl}/plugin-sessions/${encodeURIComponent(sessionId)}/steps`,
-        options,
-      );
-    },
     patchSlot(sessionId: string, slotId: string, selectedRevision: number, options?: RawAxiosRequestConfig) {
       return axiosInstance.patch(
         `${coreApiBaseUrl}/plugin-sessions/${encodeURIComponent(sessionId)}/slots/${encodeURIComponent(slotId)}`,
         { selected_revision: selectedRevision },
+        options,
+      );
+    },
+    advanceSession(
+      sessionId: string,
+      action: 'continue' | 'retry' = 'continue',
+      searchConfig?: Record<string, unknown>,
+      options?: RawAxiosRequestConfig,
+    ) {
+      return axiosInstance.post(
+        `${coreApiBaseUrl}/plugin-sessions/${encodeURIComponent(sessionId)}:advance`,
+        { action, ...(searchConfig ? { search_config: searchConfig } : {}) },
+        options,
+      );
+    },
+    syncSessionSearchConfig(
+      sessionId: string,
+      searchConfig: Record<string, unknown>,
+      options?: RawAxiosRequestConfig,
+    ) {
+      return axiosInstance.post(
+        `${coreApiBaseUrl}/plugin-sessions/${encodeURIComponent(sessionId)}:sync-search-config`,
+        { search_config: searchConfig },
         options,
       );
     },

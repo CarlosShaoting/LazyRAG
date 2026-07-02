@@ -35,10 +35,8 @@ const EMPTY_TASKS: SubAgentTask[] = [];
 const RUNNING_STATUSES: TaskStatus[] = ["pending", "running"];
 
 function imageUrlOf(value: any): string {
-  if (!value) return "";
-  if (value.url) return value.url;
-  if (value.path) return resolveCoreAssetUrl(value.path);
-  return "";
+  const raw = value?.url || value?.path;
+  return raw ? resolveCoreAssetUrl(raw) : "";
 }
 
 // Strip lazyllm tool-call/result XML tags from think content, keeping only the pure reasoning text.

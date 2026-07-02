@@ -669,6 +669,63 @@ function TabSlotGrid({
       />
     );
   }
+  const resolveVisibleSlots = (slotDefs: SlotDef[]): SlotDef[] => {
+    if (session.plugin_id !== 'image-plugin' || tab.id !== 'result') {
+      return slotDefs;
+    }
+    const selectedImageSlots = (session.slots ?? []).filter(
+      (s) => s.selected && s.content_type === 'image',
+    );
+    if (!selectedImageSlots.length) {
+      return slotDefs;
+    }
+    const latest = [...selectedImageSlots].sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+    )[0];
+    const sourceTool = String(latest?.artifact_value?._source_tool ?? '').trim();
+    if (sourceTool === 'image_generator') {
+      return slotDefs
+        .filter((s) => (s.artifact_key ?? s.id) === 'generated_image_url')
+        .map((s) => ({
+          ...s,
+          // In pure generation flow, this slot is the final generated output, not an editor input.
+          label: 'Generated Image',
+        }));
+    }
+    if (sourceTool === 'image_editor') {
+      const allowed = new Set(['generated_image_url', 'enhanced_image_url']);
+      return slotDefs.filter((s) => allowed.has(s.artifact_key ?? s.id));
+    }
+    return slotDefs;
+  };
+  const visibleSlots = resolveVisibleSlots(tab.slots);
+  const latestResultSourceTool = (() => {
+    if (session.plugin_id !== 'image-plugin' || tab.id !== 'result') {
+      return '';
+    }
+    const selectedImageSlots = (session.slots ?? []).filter(
+      (s) => s.selected && s.content_type === 'image',
+    );
+    if (!selectedImageSlots.length) {
+      return '';
+    }
+    const latest = [...selectedImageSlots].sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+    )[0];
+    return String(latest?.artifact_value?._source_tool ?? '').trim();
+  })();
+  const resolveSlotLabel = (slotDef: SlotDef): string => {
+    const key = slotDef.artifact_key ?? slotDef.id;
+    if (
+      session.plugin_id === 'image-plugin'
+      && tab.id === 'result'
+      && key === 'generated_image_url'
+      && latestResultSourceTool === 'image_generator'
+    ) {
+      return 'Generated Image';
+    }
+    return slotDef.label ?? slotDef.id;
+  };
   return (
     <div className={`plugin-panel__tab-content plugin-panel__tab-content--${tab.layout ?? 'list'}`}>
       {/* Hidden file input for adding new items */}
@@ -680,7 +737,7 @@ function TabSlotGrid({
         onChange={handleAddFileChange}
         aria-hidden='true'
       />
-      {tab.slots.map((slotDef) => {
+      {visibleSlots.map((slotDef) => {
         const artifactKey = slotDef.artifact_key ?? slotDef.id;
         const revisions = (session.slots ?? []).filter(
           (s) => s.artifact_key === artifactKey && s.selected,
@@ -689,8 +746,8 @@ function TabSlotGrid({
         const isDraggable = Boolean(slotDef.ordered);
         return (
           <div key={slotDef.id} className='plugin-panel__named-slot'>
-            {slotDef.label && (
-              <span className='plugin-panel__slot-label'>{slotDef.label}</span>
+            {(slotDef.label || slotDef.id) && (
+              <span className='plugin-panel__slot-label'>{resolveSlotLabel(slotDef)}</span>
             )}
             {revisions.length === 0 ? (
               <div

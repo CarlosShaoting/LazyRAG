@@ -2,41 +2,72 @@
 
 ## 场景描述
 
-帮助用户生成并增强高质量图片。工作流分五步：
+帮助用户生成、查找或编辑图片。工作流由 ChatAgent **动态路由**（dynamic 模式），无独立「准备底图」步骤——底图准备合并在前序步骤中。
 
-1. **analyze_subject** — 分析用户描述的主体、风格、氛围
-2. **collect_materials** — 收集参考素材，为后续生成提供参考
-3. **optimize_prompt** — 基于分析结果生成高质量英文图片生成 prompt
-4. **generate_image** — 调用图片生成模型产出原始图片
-5. **enhance_image** — 对原始图片进行风格增强 / 超分处理
+步骤：
 
-**步骤 3（optimize_prompt）和步骤 5（enhance_image）支持独立重跑**：用户无需重启整个流程，
-只需表达对 prompt 或增强结果不满意即可触发单步重跑。
+1. **analyze_subject** — 分析需求 + **知识库检索（kb_search，仅此步骤）**；EDIT_UPLOAD 时同时保存 raw image + 编辑指令
+2. **collect_materials** — 联网搜图；FIND_AND_EDIT 时同时保存 raw image + 编辑指令
+3. **optimize_prompt** — 文生图 prompt（CREATE_NEW / KB_STYLE）
+4. **generate_image** — 文生图（CREATE_NEW / KB_STYLE）
+5. **enhance_image** — 图生图编辑（image_editor）
 
-## 用户意图识别
+## 动态路由
 
-### 冷启动（无活跃会话）
-
-- 用户提到「生成图片」、「画一张」、「绘制」、「创建图片」等图片生成类请求
-  → 调用 `trigger_image_plugin(user_input=<用户原始描述>)`
-
-### 有活跃会话时
-
-| 用户意图 | 推荐步骤 | 工具调用 |
+| WORKFLOW | 示例 | 路径 |
 |---|---|---|
-| 想重新收集参考素材 | collect_materials | `advance_step(step_id='collect_materials', user_input=<说明>)` |
-| 对 prompt 不满意，想重新优化 | optimize_prompt | `advance_step(step_id='optimize_prompt', user_input=<说明>)` |
-| 想用当前 prompt 重新生图 | generate_image | `advance_step(step_id='generate_image', user_input=<说明>)` |
-| 想重新增强（换风格 / 更高清） | enhance_image | `advance_step(step_id='enhance_image', user_input=<说明>)` |
-| 对最终结果满意 | （无需操作，DriverAgent 自动判 DONE） | — |
+| `CREATE_NEW` | 「画一张赛博朋克城市」 | analyze → collect → optimize → generate → enhance |
+| `KB_STYLE` | 已选知识库 + 「根据知识库中的风格画图」 | analyze(kb_search) → collect → optimize → generate → enhance |
+| `FIND_AND_EDIT` | 「找哈兰德照片，加红色王老吉」 | analyze → collect → enhance |
+| `EDIT_UPLOAD` | 用户已上传 + 「加水印」 | analyze → enhance |
 
-当用户或 DriverAgent 指出问题源于某个前序步骤时，使用 `advance_step` 并传入该前序步骤的 `step_id` 即可回退重做。可用的前序步骤由 `advance_step` 工具的 Rewind 列表动态给出，无需在此枚举。
+### KB_STYLE 示例
 
-## 注意
+```
+用户: [已选择知识库] 根据知识库中的风格，画一张产品宣传图
 
-- 冷启动时必须调用 `trigger_image_plugin`，不要跳过。
-- 调用工具后立即停止，不要输出额外文字。
-- 工具返回确认消息后，对用户简短说明当前正在进行的步骤，例如：
-  - 冷启动：「正在分析您的描述，请稍候……」
-  - 优化 prompt：「正在重新优化提示词……」
-  - 重跑增强：「正在重新增强图片，新版本会追加到增强结果列表中……」
+1. trigger_image_plugin → analyze_subject (WORKFLOW: KB_STYLE)
+   — kb_search 召回风格文字 → material_summary，召回参考图 → material_image
+2. advance_step(collect_materials) — 仅联网素材（如需要）；不调用 kb_search
+3. advance_step(optimize_prompt) — 融合 KB 风格写英文 prompt
+4. advance_step(generate_image) — image_generator
+5. advance_step(enhance_image) — 可选精修
+```
+
+前提：前端会话需传入 `filters.kb_id`（与 Chat 选知识库一致）；**kb_search 仅在 analyze_subject 执行**。
+若 analyze 之后才选择知识库，需 **重跑 analyze_subject**（或用户明确要求重查知识库）。
+
+### FIND_AND_EDIT 示例
+
+```
+用户: 找一张哈兰德的照片，给他衣服上加上红色的王老吉三个字
+
+1. trigger_image_plugin → analyze_subject
+2. advance_step(collect_materials) — 搜图，并在本步内保存 material_image +
+   generated_image_url + optimized_prompt（编辑指令）
+3. advance_step(enhance_image) — image_editor 编辑
+```
+
+全程不调用 image_generator。
+
+### 路由规则
+
+1. 读 `subject_analysis` 的 `WORKFLOW` / `NEXT_STEPS`。
+2. **analyze_subject**：需求分析、路由、**知识库 kb_search（仅此步）**；联网搜图在 **collect_materials**。ChatAgent 收到 analyze 通过后应 `advance_step` 到 `NEXT_STEPS` 的下一步。
+3. 收到「Step X passed review」类系统消息后，**必须** `find_artifact('subject_analysis')` 并 `advance_step` 到 `NEXT_STEPS` 的下一步；不要停下来问用户要图。
+4. `FIND_AND_EDIT`（如「找哈兰德照片改成 Q 版」）：即使用户会话里存在历史附件，只要本轮是「先找图再编辑」，就应判为 FIND_AND_EDIT，analyze 完成后 **必须** `advance_step(collect_materials)`，由 collect 步骤去搜图。
+5. `advance_step` 的 step_id 必须在工具列出的 Available steps 中。
+6. 编辑类请求禁止 advance 到 `generate_image`。
+7. KB_STYLE / CREATE_NEW：collect_materials 完成后 advance 到 `optimize_prompt`。
+8. FIND_AND_EDIT：collect_materials 完成后 **必须** `advance_step(enhance_image)`，**禁止** advance 到 `optimize_prompt` 或 `generate_image`。
+9. EDIT_UPLOAD：analyze_subject 完成后直接 advance 到 `enhance_image`。
+
+## 有活跃会话时
+
+| 用户意图 | 步骤 |
+|---|---|
+| 重新收集素材 / 换底图 | collect_materials |
+| 重查知识库 / 换 KB 风格参考 | analyze_subject |
+| 重优化 prompt | optimize_prompt |
+| 重新文生图 | generate_image |
+| 重新编辑 | enhance_image |

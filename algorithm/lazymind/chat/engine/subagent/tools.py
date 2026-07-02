@@ -4,12 +4,31 @@ import json
 import os
 from typing import Any, Dict, List, Optional
 
-from lazymind.chat.engine.tools.infra import tool_success
+from lazymind.chat.engine.tools.infra import tool_error, tool_success
 
-from .context import require_context, LARGE_ARTIFACT_THRESHOLD
+from .context import get_context, require_context, LARGE_ARTIFACT_THRESHOLD
 
 # Valid artifact content types.
 _CONTENT_TYPES = {'text', 'json', 'image', 'file', 'file_list'}
+
+UPLOAD_MARKER = '/var/lib/lazymind/uploads/'
+SUBAGENT_MARKER = '/data/subagent/'
+
+
+def _is_valid_image_ref(path: str) -> bool:
+    """Return True when *path* looks like a real image URL or filesystem reference."""
+    p = (path or '').strip()
+    if not p:
+        return False
+    if p.startswith(('http://', 'https://', '/static-files/', 'data:image/')):
+        return True
+    if p.startswith('/data/subagent/') or SUBAGENT_MARKER in p:
+        return True
+    if p.startswith(UPLOAD_MARKER) or p.startswith('/var/lib/lazymind/uploads/'):
+        return True
+    if os.path.isabs(p) and os.path.isfile(p):
+        return True
+    return False
 
 
 def _build_artifact_value(value: Any, content_type: str):
@@ -41,7 +60,16 @@ def _build_artifact_value(value: Any, content_type: str):
             return {'type': 'json', 'path': rel, 'size': os.path.getsize(abs_path)}, 'file'
         return {'data': value}, 'json'
     if content_type == 'image':
-        src = str(value)
+        src = str(value).strip()
+        if not _is_valid_image_ref(src):
+            raise ValueError(
+                f'Invalid image reference {src!r}: expected http(s) URL, /static-files/ path, '
+                'or an existing absolute file path — placeholder text is not allowed.'
+            )
+        # '/static-files/...' (possibly with query) is a signed URL path, not a local
+        # filesystem path. Keep it as URL text instead of copying from disk.
+        if src.startswith('/static-files/'):
+            return {'path': src}, 'image'
         if os.path.isabs(src):
             # Copy into workspace; keep absolute path so Go core can sign a URL for it.
             dst_rel = ctx.copy_into_workspace(src)
@@ -119,6 +147,12 @@ def save_artifact(key: str, value: Any, content_type: str = 'text',
         A confirmation that the artifact was saved.
     """
     ctx = require_context()
+    if ctx.output_artifact_keys and key not in ctx.output_artifact_keys:
+        return tool_error(
+            'save_artifact',
+            f"Artifact key {key!r} is not declared for this step. "
+            f'Allowed keys: {", ".join(ctx.output_artifact_keys)}',
+        )
     ct = content_type if content_type in _CONTENT_TYPES else 'text'
     built, actual_ct = _build_artifact_value(value, ct)
     if source_tool:
@@ -500,6 +534,69 @@ def _get_plugin_artifact_all(ctx: Any, key: str, session_id: str) -> Dict[str, A
             'message': f"No artifact found for key '{key}' in plugin session {session_id}.",
         })
     return tool_success('get_artifact', {'status': 'ok', 'key': key, 'artifacts': artifacts})
+
+
+def _get_plugin_artifacts_via_core(
+    session_id: str,
+    artifact_key: str,
+    sort_order: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Fetch plugin slot artifacts via Go core HTTP API (ChatAgent path)."""
+    import httpx
+    from lazymind.config import config as _cfg
+
+    core_url = str(_cfg['core_api_url']).rstrip('/')
+    try:
+        resp = httpx.get(
+            f'{core_url}/plugin-sessions/{session_id}/slots',
+            timeout=10.0,
+        )
+    except Exception as exc:
+        return tool_success('get_artifact', {
+            'status': 'error',
+            'message': f'Failed to query plugin slots: {exc}',
+        })
+    if resp.status_code != 200:
+        return tool_success('get_artifact', {
+            'status': 'error',
+            'message': f'Go core returned {resp.status_code}: {resp.text[:200]}',
+        })
+
+    payload = resp.json()
+    data = payload.get('data') if isinstance(payload.get('data'), dict) else payload
+    slots = data.get('slots') or []
+    artifacts: List[Dict[str, Any]] = []
+    for slot in slots:
+        if slot.get('artifact_key') != artifact_key:
+            continue
+        if slot.get('selected') is False:
+            continue
+        slot_sort = slot.get('sort_order')
+        if sort_order is not None and slot_sort != sort_order:
+            continue
+        value = slot.get('artifact_value')
+        if value is None:
+            continue
+        artifacts.append({
+            'artifact_key': artifact_key,
+            'content_type': slot.get('content_type'),
+            'value': value,
+            'sort_order': slot_sort,
+        })
+
+    if not artifacts:
+        return tool_success('get_artifact', {
+            'status': 'empty',
+            'message': (
+                f"No artifact found for key '{artifact_key}' "
+                f'in plugin session {session_id}.'
+            ),
+        })
+    return tool_success('get_artifact', {
+        'status': 'ok',
+        'key': artifact_key,
+        'artifacts': artifacts,
+    })
 
 
 def patch_artifact(
@@ -1089,12 +1186,18 @@ def find_artifact(artifact_key: str, sort_order: Optional[int] = None) -> Dict[s
             'message': 'No active plugin session found in agentic_config.',
         })
 
-    ctx = require_context()
-
-    if sort_order is not None:
-        result_dict = _get_plugin_artifact_by_sort_order(ctx, artifact_key, session_id, sort_order)
+    ctx = get_context()
+    if ctx is not None:
+        if sort_order is not None:
+            result_dict = _get_plugin_artifact_by_sort_order(
+                ctx, artifact_key, session_id, sort_order,
+            )
+        else:
+            result_dict = _get_plugin_artifact_all(ctx, artifact_key, session_id)
     else:
-        result_dict = _get_plugin_artifact_all(ctx, artifact_key, session_id)
+        result_dict = _get_plugin_artifacts_via_core(
+            session_id, artifact_key, sort_order,
+        )
 
     # Unwrap inner result to extract the path.
     inner = result_dict.get('result', result_dict)
@@ -1118,6 +1221,10 @@ def find_artifact(artifact_key: str, sort_order: Optional[int] = None) -> Dict[s
         except Exception:
             value = {}
 
+    signed_url: Optional[str] = None
+    if isinstance(value.get('url'), str) and value.get('url'):
+        signed_url = value['url']
+
     path: Optional[str] = value.get('path') or value.get('url') or value.get('text')
     if not path or not isinstance(path, str):
         return tool_success('find_artifact', {
@@ -1125,21 +1232,24 @@ def find_artifact(artifact_key: str, sort_order: Optional[int] = None) -> Dict[s
             'message': f"Artifact '{artifact_key}' has no resolvable path.",
         })
 
-    # Try to get a signed URL from Go /static-files:sign.
-    signed_url: Optional[str] = None
-    try:
-        import httpx
-        from lazymind.config import config as _cfg
-        core_url = str(_cfg['core_api_url']).rstrip('/')
-        resp = httpx.post(
-            f'{core_url}/static-files:sign',
-            json={'path': path},
-            timeout=3.0,
-        )
-        if resp.status_code == 200:
-            signed_url = resp.json().get('data', {}).get('url') or resp.json().get('url')
-    except Exception:
-        pass
+    # Re-sign local paths when the slots API did not already provide a URL.
+    if not signed_url:
+        try:
+            import httpx
+            from lazymind.config import config as _cfg
+            core_url = str(_cfg['core_api_url']).rstrip('/')
+            resp = httpx.post(
+                f'{core_url}/static-files:sign',
+                json={'paths': [path]},
+                timeout=3.0,
+            )
+            if resp.status_code == 200:
+                payload = resp.json()
+                data = payload.get('data') if isinstance(payload.get('data'), dict) else payload
+                urls = data.get('urls') or {}
+                signed_url = urls.get(path)
+        except Exception:
+            pass
 
     out: Dict[str, Any] = {
         'status': 'ok',
