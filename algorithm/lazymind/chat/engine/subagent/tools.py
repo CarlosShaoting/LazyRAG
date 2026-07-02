@@ -9,7 +9,7 @@ from lazymind.chat.engine.attachment_reader import (
     is_chat_image_file,
     parse_attachment_content,
 )
-from lazymind.chat.engine.tools.infra import handle_tool_errors, tool_success
+from lazymind.chat.engine.tools.infra import tool_success
 
 from .context import require_context, LARGE_ARTIFACT_THRESHOLD
 
@@ -71,7 +71,6 @@ def _build_artifact_value(value: Any, content_type: str):
     return {'text': str(value)}, 'text'
 
 
-@handle_tool_errors
 def save_artifact(key: str, value: Any, content_type: str = 'text',
                   source_tool: Optional[str] = None,
                   sort_order: Optional[int] = None,
@@ -253,7 +252,6 @@ def _resolve_list_index_from_sort_order(
         return None, None
 
 
-@handle_tool_errors
 def get_artifact(key: str, sort_order: Optional[int] = None, task_ref: Optional[str] = None,
                  start_line: Optional[int] = None, end_line: Optional[int] = None) -> Dict[str, Any]:
     """Read a previously saved artifact by key.
@@ -509,7 +507,6 @@ def _get_plugin_artifact_all(ctx: Any, key: str, session_id: str) -> Dict[str, A
     return tool_success('get_artifact', {'status': 'ok', 'key': key, 'artifacts': artifacts})
 
 
-@handle_tool_errors
 def patch_artifact(
     key: str,
     patch: Any,
@@ -759,7 +756,6 @@ def _json_patch_apply(obj: Any, ops: List[Any]) -> Any:
     return obj
 
 
-@handle_tool_errors
 def discard_draft(key: str, sort_order: Optional[int] = None) -> Dict[str, Any]:
     """Discard all uncommitted patch edits for an artifact and revert to the last saved version.
 
@@ -790,7 +786,6 @@ def discard_draft(key: str, sort_order: Optional[int] = None) -> Dict[str, Any]:
     return tool_success('discard_draft', {'status': 'ok', 'message': msg})
 
 
-@handle_tool_errors
 def list_artifacts(task_ref: Optional[str] = None) -> Dict[str, Any]:
     """List the artifact keys produced so far in the current task.
 
@@ -810,7 +805,6 @@ def list_artifacts(task_ref: Optional[str] = None) -> Dict[str, Any]:
     return tool_success('list_artifacts', {'status': 'ok', 'keys': summary, 'message': msg})
 
 
-@handle_tool_errors
 def list_knowledge_bases() -> Dict[str, Any]:
     """List knowledge bases accessible to the current user.
 
@@ -962,7 +956,6 @@ def _resolve_attachment(
     )
 
 
-@handle_tool_errors
 def read_user_attachment(filename: str, turn: Optional[int] = None) -> Dict[str, Any]:
     """Extract text from a user-uploaded attachment (on demand only).
 
@@ -1021,7 +1014,6 @@ def read_user_attachment(filename: str, turn: Optional[int] = None) -> Dict[str,
     })
 
 
-@handle_tool_errors
 def find_user_attachment(filename: str, turn: Optional[int] = None) -> Dict[str, Any]:
     """Return path/url of a user-uploaded attachment without parsing it.
 
@@ -1078,7 +1070,6 @@ def find_user_attachment(filename: str, turn: Optional[int] = None) -> Dict[str,
     return tool_success('find_user_attachment', result)
 
 
-@handle_tool_errors
 def find_artifact(artifact_key: str, sort_order: Optional[int] = None) -> Dict[str, Any]:
     """Return the accessible URL or local path of a plugin artifact.
 
