@@ -430,7 +430,7 @@ func advanceAutoMode(
 		pctxCopy := *pctx
 		go func() {
 			triggerNextChatTurn(pctxCopy.ConvID, pctxCopy.SessionID, pctxCopy.PluginID, pctxCopy.StepID,
-				pctxCopy.UserID, summary, func() {
+				pctxCopy.PluginMode, pctxCopy.UserID, summary, func() {
 					onSSE("auto_chat_started", map[string]any{
 						"session_id":      pctxCopy.SessionID,
 						"conversation_id": pctxCopy.ConvID,
@@ -487,7 +487,7 @@ func advanceAutoMode(
 	pctxCopy := *pctx
 	go func() {
 		triggerNextChatTurn(pctxCopy.ConvID, pctxCopy.SessionID, pctxCopy.PluginID, pctxCopy.StepID,
-			pctxCopy.UserID, driverMsg, func() {
+			pctxCopy.PluginMode, pctxCopy.UserID, driverMsg, func() {
 				// Emit after core has accepted the request and set Redis generating status,
 				// so the frontend resume SSE does not race with stream setup.
 				onSSE("auto_chat_started", map[string]any{
@@ -504,7 +504,7 @@ func advanceAutoMode(
 // the next ChatAgent round. This ensures history persistence, applyChatRuntimeConfigs,
 // and all other Go-side pipeline steps run exactly as in a real user turn.
 func triggerNextChatTurn(
-	convID, sessionID, pluginID, currentStep, userID, syntheticMsg string,
+	convID, sessionID, pluginID, currentStep, pluginMode, userID, syntheticMsg string,
 	onReady func(),
 ) {
 	coreURL := common.CoreSelfEndpoint() + "/conversations:chat"
@@ -521,6 +521,7 @@ func triggerNextChatTurn(
 			"session_id":   sessionID,
 			"plugin_id":    pluginID,
 			"current_step": currentStep,
+			"plugin_mode":  pluginMode,
 		},
 	}
 	if searchConfig := loadConversationSearchConfig(store.DB(), convID); len(searchConfig) > 0 {

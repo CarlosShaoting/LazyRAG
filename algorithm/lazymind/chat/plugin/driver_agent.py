@@ -182,23 +182,17 @@ def evaluate_step(
         file_list = ', '.join(_os.path.basename(f) for f in user_files)
         user_msg += f'\n\nUser-uploaded files available for this step: {file_list}'
 
-    # Inject artifact read tools so DriverAgent can inspect produced artifacts.
-    tools = []
-    try:
-        from lazymind.chat.engine.subagent.tools import find_artifact, get_artifact
-        tools = [find_artifact, get_artifact]
-    except Exception:
-        pass
-
     driver_db = None
     try:
         _init_driver_sid(session_id, plugin_id, step_id)
         driver_db = _init_driver_artifact_context(session_id, plugin_id, step_id)
         llm = _build_llm(llm_config)
-        if tools:
-            response = llm(user_msg, system_prompt=driver_prompt, tools=tools)
-        else:
-            response = llm(user_msg, system_prompt=driver_prompt)
+        # Do not pass Python callables via `tools` here:
+        # some backends serialize tool payload directly and fail with
+        # "Object of type function is not JSON serializable".
+        # Driver evaluation should rely on the provided step_result and
+        # plugin_artifacts_summary context for robustness.
+        response = llm(user_msg, system_prompt=driver_prompt)
         cleaned = _clean_message(str(response or ''))
         if cleaned:
             return {'message': cleaned}

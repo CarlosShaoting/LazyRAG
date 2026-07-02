@@ -796,7 +796,7 @@ func AdvanceSession(w http.ResponseWriter, r *http.Request) {
 		}
 		go triggerNextChatTurn(
 			session.ConversationID, sessionID, session.PluginID,
-			session.CurrentStepID, userID, syntheticMsg, nil,
+			session.CurrentStepID, "dynamic", userID, syntheticMsg, nil,
 		)
 		common.ReplyOK(w, map[string]any{"action": body.Action, "message": syntheticMsg})
 
