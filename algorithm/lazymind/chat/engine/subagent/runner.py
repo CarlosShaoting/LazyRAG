@@ -34,8 +34,8 @@ def _prewarm_kb_runtime_if_needed(tool_names: Optional[List[str]]) -> None:
     if 'kb' not in normalized:
         return
     try:
-        from lazymind.chat.engine.tools.kb import KBToolGroup
-        KBToolGroup()._ensure_search_runtime()
+        from lazymind.chat.engine.tools.kb import _ensure_kb_search_runtime
+        _ensure_kb_search_runtime()
         LOG.info('[SubAgent] KB search runtime pre-warmed')
     except Exception as exc:
         LOG.warning('[SubAgent] KB pre-warm failed: %s', exc)
@@ -559,8 +559,9 @@ async def run_subagent_stream(
             workspace_path=str(task.get('workspace_path') or ''),
             input_artifact_keys=input_keys,
             output_artifact_keys=output_keys,
-            db=db,
-            emit=_emit,
+            db_dsn=db_dsn,
+            _db=db,
+            _emit=_emit,
         )
         ctx.ensure_workspace()
 

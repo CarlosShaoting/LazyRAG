@@ -118,8 +118,9 @@ def _init_driver_artifact_context(
             workspace_path=tempfile.mkdtemp(prefix='driver_'),
             input_artifact_keys=[],
             output_artifact_keys=[],
-            db=db,
-            emit=lambda _ev: None,
+            db_dsn=dsn,
+            _db=db,
+            _emit=lambda _ev: None,
         )
         set_context(ctx)
         return db
