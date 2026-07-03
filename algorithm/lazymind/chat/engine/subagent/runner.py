@@ -17,7 +17,6 @@ from lazymind.chat.service.component.event_translator import AgentEventFrameTran
 from lazymind.chat.service.component.tool_registry import DEFAULT_TOOLS, build_agent_tools
 from lazyllm.tools.tool_config_inject import inject_tool_config
 
-from lazymind.chat.engine.kb_filters import enrich_filters_from_conversation
 from .context import SubAgentContext, set_context, LARGE_TOOL_RESULT_THRESHOLD
 from .db import SubAgentDB
 from . import tools as subagent_tools
@@ -186,42 +185,21 @@ def _build_subagent_tools(extra_tools: Optional[List[Any]]) -> List[Any]:
 _ZH_RE = re.compile('[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]')
 
 
-def _build_partial_sort_order_hints(session_id: str, partial_indices: 'Dict[str, List[int]]',
-                                    plugin_id: str = '') -> str:
+def _build_partial_sort_order_hints(
+    db: 'SubAgentDB',
+    session_id: str,
+    partial_indices: 'Dict[str, List[int]]',
+) -> str:
     """Translate partial_indices (0-based list_index) into sort_order guidance for the AI.
 
-    Queries Go core to resolve each list_index to its current 1-based sort_order,
-    then returns a concise instruction block the AI can act on directly.
+    Resolves each list_index to its current 1-based sort_order, then returns a
+    concise instruction block the AI can act on directly.
     Returns an empty string on any error or when translation is unnecessary.
     """
     try:
-        import httpx
-        from lazymind.config import config as _cfg
-        from lazymind.chat.plugin import plugin_loader
-        core_url = str(_cfg['core_api_url']).rstrip('/')
-
-        if not plugin_id:
-            return ''
-        spec = plugin_loader.get_plugin(plugin_id)
-        if not spec:
-            return ''
-
         hints: List[str] = []
         for artifact_key, list_indexes in partial_indices.items():
-            slot_def = spec.get_slot_for_artifact_key(artifact_key)
-            if not slot_def:
-                continue
-            slot_id = slot_def.get('id', '')
-            if not slot_id:
-                continue
-            # Fetch order_list for this slot.
-            resp = httpx.get(
-                f'{core_url}/plugin-sessions/{session_id}/slots/{slot_id}/order',
-                timeout=3.0,
-            )
-            if resp.status_code != 200:
-                continue
-            order_list: list = resp.json().get('data', {}).get('order_list', [])
+            order_list = db.load_slot_order_list(session_id, artifact_key)
             if not order_list:
                 continue
             # Build list_index → sort_order map.
@@ -371,10 +349,9 @@ def _objective_prompt(ctx: SubAgentContext, db: Optional['SubAgentDB'] = None) -
     # Translate partial_indices (internal 0-based list_index) into sort_order guidance.
     # This tells the AI exactly which display position(s) to overwrite instead of append.
     partial_indices: Dict[str, List[int]] = ctx.params.get('partial_indices') or {}
-    plugin_id_for_hints: str = ctx.params.get('plugin_id', '')
-    if partial_indices and session_id:
+    if partial_indices and session_id and db:
         sort_order_hints = _build_partial_sort_order_hints(
-            session_id, partial_indices, plugin_id=plugin_id_for_hints
+            db, session_id, partial_indices,
         )
         if sort_order_hints:
             lines.append(sort_order_hints)
@@ -386,68 +363,26 @@ def _objective_prompt(ctx: SubAgentContext, db: Optional['SubAgentDB'] = None) -
         required_keys = list(ctx.output_artifact_keys)
     if required_keys:
         lines.append(
-            'You MUST call save_artifact for EACH of the following keys before you finish — '
-            'do NOT skip this step even if you have already written the results in plain text: '
+            'Required output artifacts: '
             + ', '.join(required_keys)
+            + '. Call save_artifact for each required key before finishing.'
         )
     else:
         lines.append(
-            'Save only artifacts required by the step prompt and WORKFLOW in subject_analysis. '
-            'Do NOT save generated_image_url or optimized_prompt unless WORKFLOW is FIND_AND_EDIT. '
-            'Never write placeholder text for any artifact key.'
+            'No output artifact is unconditionally required. Save only artifacts requested by '
+            'the objective or step prompt, and never save placeholder content.'
         )
     optional_keys = [k for k in ctx.output_artifact_keys if k not in required_keys]
     if optional_keys:
         lines.append(
-            'Optional output keys (save ONLY when the step prompt explicitly requires them; '
-            'never save placeholders): ' + ', '.join(optional_keys)
+            'Optional output artifact keys: ' + ', '.join(optional_keys)
         )
-    lines.append(
-        'IMPORTANT: Writing results in your reply text does NOT count as saving an artifact. '
-        'You must explicitly call save_artifact(key=..., value=...) for every required key. '
-        'The task is considered INCOMPLETE and will be marked as FAILED if any required artifact '
-        'key is missing. Do not write a final summary until all save_artifact calls are done.'
-    )
-    lines.append(
-        '## Overwrite vs. Append for list slots\n'
-        'save_artifact has an optional sort_order parameter (1-based):\n'
-        '- Omit sort_order → append a new item at the end of the list.\n'
-        '- Pass sort_order=N → overwrite the item currently at display position N.\n'
-        'If the objective says the user wants to replace a specific item '
-        '(e.g. "重新收集第二张图", "replace item 3", "redo position N"), '
-        'you MUST pass sort_order=N. Omitting it will append a new item instead of replacing.'
-    )
     lines.append(
         'After all required artifacts are saved, write a final summary that contains the '
         'actual results and key findings — not only a reference to the artifacts. '
         'For example, if you searched for information, include the information itself. '
         'The summary must be self-contained and directly usable by the caller without '
         'opening any artifact.'
-    )
-    lines.append(
-        '## Artifact local editing guide\n'
-        '### When to use patch_artifact vs save_artifact\n'
-        '- Targeted edits (fix a paragraph, update a field, rename a section): '
-        'use patch_artifact instead of regenerating the full content.\n'
-        '- Full rewrite: use save_artifact directly.\n'
-        '- You decide based on task semantics; the framework imposes no size restriction.\n'
-        '\n'
-        '### patch_artifact usage\n'
-        '- patch_artifact edits a local draft only — changes are NOT committed yet.\n'
-        '- After all edits are done, call save_artifact to commit (creates a new revision).\n'
-        '- If you forget to call save_artifact, the framework auto-commits all pending '
-        'drafts when the step ends.\n'
-        '- patch failed (old_str not found): call get_artifact with start_line/end_line '
-        'to read the relevant lines, confirm the exact text, then retry.\n'
-        '- To discard all uncommitted edits and revert to the last saved version: '
-        'call discard_draft(key).\n'
-        '\n'
-        '### Reading large artifacts in chunks\n'
-        '- get_artifact supports start_line and end_line parameters (1-based, inclusive).\n'
-        '- First call: get_artifact(key, start_line=1, end_line=1) — the response includes '
-        'total_lines so you can plan subsequent reads without loading the whole file.\n'
-        '- Chunked reads bypass the content-size truncation limit.\n'
-        '- Typical workflow: read target lines → identify old_str → call patch_artifact.'
     )
     return '\n'.join(lines)
 
@@ -592,8 +527,6 @@ async def run_subagent_stream(
             history_files_per_turn = params.get('history_files_per_turn') or {}
             all_files = [p for paths in history_files_per_turn.values() for p in paths]
             filters = dict(params.get('filters') or {})
-            if not filters.get('kb_id') and ctx.conversation_id:
-                filters = enrich_filters_from_conversation(ctx.conversation_id, filters)
             lazyllm.globals['agentic_config'] = {
                 'plugin_id': params.get('plugin_id', ''),
                 'plugin_session_id': params.get('session_id', ''),
@@ -712,13 +645,6 @@ async def run_subagent_stream(
             ev['task_id'] = task_id
             yield _sse(ev)
 
-        # Plugin-specific backfills before completeness check.
-        _backfill_plugin_artifacts(ctx)
-        while emitted:
-            ev = emitted.pop(0)
-            ev['task_id'] = task_id
-            yield _sse(ev)
-
         # Flush any buffered text/think from translator (e.g. citation scanning remainder).
         for frame in translator.finish(final_result):
             ev_type = 'think' if frame.get('think') else 'text'
@@ -783,67 +709,6 @@ async def run_subagent_stream(
             pass
         if db is not None:
             db.dispose()
-
-
-def _image_ref_from_artifact_value(value: Any) -> str:
-    if not isinstance(value, dict):
-        return ''
-    for field in ('path', 'url'):
-        ref = str(value.get(field) or '').strip()
-        if ref:
-            return ref
-    return ''
-
-
-def _workflow_from_subject_analysis(ctx: 'SubAgentContext') -> str:
-    from lazymind.chat.plugin.plugin_manager import _parse_workflow
-
-    rows = ctx.local_artifacts(keys=['subject_analysis'])
-    if not rows:
-        rows = ctx.db.load_artifacts(ctx.task_id, keys=['subject_analysis'])
-    for row in rows:
-        val = row.get('value') or {}
-        text = val.get('text') if isinstance(val, dict) else str(val)
-        if not text:
-            continue
-        workflow = _parse_workflow(text)
-        if workflow:
-            return workflow
-    return ''
-
-
-def _backfill_plugin_artifacts(ctx: 'SubAgentContext') -> None:
-    """Repair common image-plugin artifact gaps so Result tab shows raw vs enhanced correctly."""
-    if (ctx.params or {}).get('plugin_id') != 'image-plugin':
-        return
-    step_id = str((ctx.params or {}).get('step_id') or '')
-    saved = set(ctx.saved_keys())
-    if step_id != 'collect_materials':
-        return
-    if _workflow_from_subject_analysis(ctx) != 'FIND_AND_EDIT':
-        return
-    if 'generated_image_url' in saved:
-        return
-    from . import tools as subagent_tools
-    for row in ctx.local_artifacts(keys=['material_image']):
-        ref = _image_ref_from_artifact_value(row.get('value'))
-        if not ref:
-            continue
-        try:
-            subagent_tools.save_artifact(
-                'generated_image_url',
-                ref,
-                content_type='image',
-                source_tool='backfill_raw_image',
-            )
-            LOG.info(
-                '[SubAgent] backfilled generated_image_url from material_image for task=%s',
-                ctx.task_id,
-            )
-            return
-        except Exception as exc:
-            LOG.warning('[SubAgent] backfill generated_image_url failed: %s', exc)
-
 
 def _parse_draft_stem(stem: str) -> tuple:
     """Split a draft filename stem into (artifact_key, list_index_or_none)."""

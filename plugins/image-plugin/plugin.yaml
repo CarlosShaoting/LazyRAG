@@ -3,9 +3,11 @@ name: AI Image Generation
 description: >
   Generate, find, or edit images from natural language descriptions.
   The workflow is dynamic: ChatAgent routes through analyze_subject,
-  collect_materials, optimize_prompt, generate_image, and enhance_image
+  optimize_prompt, generate_image, collect_materials, and enhance_image
   based on user intent (CREATE_NEW vs FIND_AND_EDIT vs EDIT_UPLOAD).
-  Raw-image preparation is merged into analyze_subject or collect_materials.
+  CREATE_NEW and KB_STYLE skip material collection and generate directly after
+  prompt optimization; collect_materials is only for preparing a raw source
+  image for image editing.
 
 when_to_use: >
   Call this tool whenever the user wants to generate, draw, create, paint,

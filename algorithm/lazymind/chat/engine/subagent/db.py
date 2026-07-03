@@ -330,6 +330,33 @@ class SubAgentDB:
         except Exception:
             return None
 
+    def load_slot_order_list(self, session_id: str, artifact_key: str) -> List[int]:
+        """Return list_index values in UI display order for a plugin slot artifact."""
+        try:
+            with self._conn() as conn:
+                rows = conn.execute(
+                    text(
+                        'SELECT val::int AS list_index '
+                        'FROM plugin_slot_order pso, '
+                        '     jsonb_array_elements_text(pso.order_list) '
+                        '     WITH ORDINALITY AS t(val, ord) '
+                        'WHERE pso.session_id = :session_id '
+                        '  AND pso.slot_id = ( '
+                        '    SELECT psr.slot_id '
+                        '    FROM plugin_slot_revisions psr '
+                        '    WHERE psr.session_id = :session_id '
+                        '      AND psr.artifact_key = :artifact_key '
+                        '    ORDER BY psr.created_at DESC '
+                        '    LIMIT 1 '
+                        '  ) '
+                        'ORDER BY ord ASC'
+                    ),
+                    {'session_id': session_id, 'artifact_key': artifact_key},
+                ).mappings().all()
+            return [int(r['list_index']) for r in rows]
+        except Exception:
+            return []
+
     def resolve_slot_revision_value(
         self, row: Dict[str, Any]
     ) -> tuple:

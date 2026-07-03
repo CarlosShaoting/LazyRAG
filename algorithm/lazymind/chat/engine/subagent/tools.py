@@ -225,16 +225,14 @@ def _write_artifact_draft(
 def _resolve_list_index_from_sort_order(
     artifact_key: str, sort_order: int
 ) -> tuple[Optional[int], Optional[str]]:
-    """Query Go core to translate sort_order → list_index for a list-slot artifact.
+    """Translate sort_order → list_index for a list-slot artifact.
 
     Returns (list_index, None) on success, or (None, error_message) when sort_order
     is out of range. Returns (None, None) on technical errors or non-list slots
     (caller should silently append in those cases).
     """
     try:
-        import httpx
         import lazyllm
-        from lazymind.config import config as _cfg
         cfg = {}
         try:
             cfg = lazyllm.globals.get('agentic_config') or {}
@@ -243,29 +241,8 @@ def _resolve_list_index_from_sort_order(
         session_id: str = cfg.get('plugin_session_id', '')
         if not session_id:
             return None, None
-        # Look up slot_id from plugin_loader via artifact_key.
-        plugin_id: str = cfg.get('plugin_id', '')
-        if not plugin_id:
-            return None, None
-        from lazymind.chat.plugin import plugin_loader
-        spec = plugin_loader.get_plugin(plugin_id)
-        if not spec:
-            return None, None
-        slot_def = spec.get_slot_for_artifact_key(artifact_key)
-        if not slot_def:
-            return None, None
-        slot_id = slot_def.get('id', '')
-        if not slot_id:
-            return None, None
-        core_url = str(_cfg['core_api_url']).rstrip('/')
-        url = (
-            f'{core_url}/plugin-sessions/{session_id}'
-            f'/slots/{slot_id}/order'
-        )
-        resp = httpx.get(url, timeout=3.0)
-        if resp.status_code != 200:
-            return None, None
-        order_list: list = resp.json().get('data', {}).get('order_list', [])
+        ctx = require_context()
+        order_list = ctx.db.load_slot_order_list(session_id, artifact_key)
         if not order_list:
             # Single-cardinality slot — sort_order is meaningless, ignore silently.
             return None, None
@@ -539,69 +516,6 @@ def _get_plugin_artifact_all(ctx: Any, key: str, session_id: str) -> Dict[str, A
             'message': f"No artifact found for key '{key}' in plugin session {session_id}.",
         })
     return tool_success('get_artifact', {'status': 'ok', 'key': key, 'artifacts': artifacts})
-
-
-def _get_plugin_artifacts_via_core(
-    session_id: str,
-    artifact_key: str,
-    sort_order: Optional[int] = None,
-) -> Dict[str, Any]:
-    """Fetch plugin slot artifacts via Go core HTTP API (ChatAgent path)."""
-    import httpx
-    from lazymind.config import config as _cfg
-
-    core_url = str(_cfg['core_api_url']).rstrip('/')
-    try:
-        resp = httpx.get(
-            f'{core_url}/plugin-sessions/{session_id}/slots',
-            timeout=10.0,
-        )
-    except Exception as exc:
-        return tool_success('get_artifact', {
-            'status': 'error',
-            'message': f'Failed to query plugin slots: {exc}',
-        })
-    if resp.status_code != 200:
-        return tool_success('get_artifact', {
-            'status': 'error',
-            'message': f'Go core returned {resp.status_code}: {resp.text[:200]}',
-        })
-
-    payload = resp.json()
-    data = payload.get('data') if isinstance(payload.get('data'), dict) else payload
-    slots = data.get('slots') or []
-    artifacts: List[Dict[str, Any]] = []
-    for slot in slots:
-        if slot.get('artifact_key') != artifact_key:
-            continue
-        if slot.get('selected') is False:
-            continue
-        slot_sort = slot.get('sort_order')
-        if sort_order is not None and slot_sort != sort_order:
-            continue
-        value = slot.get('artifact_value')
-        if value is None:
-            continue
-        artifacts.append({
-            'artifact_key': artifact_key,
-            'content_type': slot.get('content_type'),
-            'value': value,
-            'sort_order': slot_sort,
-        })
-
-    if not artifacts:
-        return tool_success('get_artifact', {
-            'status': 'empty',
-            'message': (
-                f"No artifact found for key '{artifact_key}' "
-                f'in plugin session {session_id}.'
-            ),
-        })
-    return tool_success('get_artifact', {
-        'status': 'ok',
-        'key': artifact_key,
-        'artifacts': artifacts,
-    })
 
 
 def patch_artifact(
@@ -1196,17 +1110,17 @@ def find_artifact(artifact_key: str, sort_order: Optional[int] = None) -> Dict[s
         })
 
     ctx = get_context()
-    if ctx is not None:
-        if sort_order is not None:
-            result_dict = _get_plugin_artifact_by_sort_order(
-                ctx, artifact_key, session_id, sort_order,
-            )
-        else:
-            result_dict = _get_plugin_artifact_all(ctx, artifact_key, session_id)
-    else:
-        result_dict = _get_plugin_artifacts_via_core(
-            session_id, artifact_key, sort_order,
+    if ctx is None:
+        return tool_success('find_artifact', {
+            'status': 'error',
+            'message': 'find_artifact requires an active SubAgent context.',
+        })
+    if sort_order is not None:
+        result_dict = _get_plugin_artifact_by_sort_order(
+            ctx, artifact_key, session_id, sort_order,
         )
+    else:
+        result_dict = _get_plugin_artifact_all(ctx, artifact_key, session_id)
 
     # Unwrap inner result to extract the path.
     inner = result_dict.get('result', result_dict)
