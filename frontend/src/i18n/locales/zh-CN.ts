@@ -842,6 +842,8 @@ const zhCN = {
     send: "发送",
     pluginContinue: "继续",
     pluginRetry: "重试",
+    pluginGeneratedImage: "生成图片",
+    pluginAddAttachment: "新增附件",
     pluginStop: "停止",
     askCardSubmit: "提交",
     askCardPrev: "上一项",

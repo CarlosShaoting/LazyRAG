@@ -65,7 +65,6 @@ ui:
           cardinality: list
           artifact_key: material_image
           ordered: true
-          caption_key: material_image_caption
 
         - id: material_summary
           label: Material Summary

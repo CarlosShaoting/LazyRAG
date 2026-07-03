@@ -150,18 +150,6 @@ export function PluginSessionApi() {
         options,
       );
     },
-    advanceSession(
-      sessionId: string,
-      action: 'continue' | 'retry' = 'continue',
-      searchConfig?: Record<string, unknown>,
-      options?: RawAxiosRequestConfig,
-    ) {
-      return axiosInstance.post(
-        `${coreApiBaseUrl}/plugin-sessions/${encodeURIComponent(sessionId)}:advance`,
-        { action, ...(searchConfig ? { search_config: searchConfig } : {}) },
-        options,
-      );
-    },
     syncSessionSearchConfig(
       sessionId: string,
       searchConfig: Record<string, unknown>,

@@ -255,7 +255,8 @@ steps:
       2. If the tool call fails, STOP immediately with a concise failure note.
       3. Take `local_path` (preferred) or `image_url` — do NOT fabricate paths.
       4. Save:
-           save_artifact(key='generated_image_url', content_type='image', value=<local_path or image_url>)
+           save_artifact(key='generated_image_url', content_type='image',
+                         value=<local_path or image_url>, source_tool='image_generator')
       5. Final text image links MUST start with `/static-files/` if present.
       6. Stop after saving.
     tools:
@@ -301,7 +302,8 @@ steps:
            urls=[<url from validate_image_ref or validated artifact>]
       4. Take `local_path` (preferred) or `image_url` from the tool result.
       5. Save the **edited** image ONLY here:
-           save_artifact(key='enhanced_image_url', content_type='image', value=<local_path or image_url>)
+           save_artifact(key='enhanced_image_url', content_type='image',
+                         value=<local_path or image_url>, source_tool='image_editor')
          Do NOT call save_artifact(key='generated_image_url', ...) in this step — that slot
          must keep the original raw photo from collect_materials.
          For partial retry, pass sort_order=N per the "Partial retry instruction" block.

@@ -212,9 +212,7 @@ func HandlePluginStepCreated(
 		if uErr := UpdateSessionCurrentStep(ctx, db, sessionID, stepID); uErr != nil {
 			fmt.Printf("[Plugin] failed to update current_step: %v\n", uErr)
 		}
-		// Ensure session is marked active when a new step starts. This covers the
-		// auto-advance path where advanceAutoMode triggers ChatAgent directly without
-		// going through /plugin-sessions/{id}:advance (which would set active explicitly).
+		// Ensure session is marked active when a new step starts (e.g. auto-advance via ChatAgent).
 		if uErr := UpdateSessionStatus(ctx, db, sessionID, SessionStatusActive); uErr != nil {
 			fmt.Printf("[Plugin] failed to reset session status to active: %v\n", uErr)
 		}
@@ -436,7 +434,7 @@ func advanceAutoMode(
 						"conversation_id": pctxCopy.ConvID,
 						"driver_message":  summary,
 					})
-				})
+				}, "driver")
 			checkAndFallbackIfStuck(ctx, db, stateStore, onSSE, &pctxCopy)
 		}()
 		return
@@ -495,7 +493,7 @@ func advanceAutoMode(
 					"conversation_id": pctxCopy.ConvID,
 					"driver_message":  driverMsg,
 				})
-			})
+			}, "driver")
 		checkAndFallbackIfStuck(ctx, db, stateStore, onSSE, &pctxCopy)
 	}()
 }
@@ -506,8 +504,18 @@ func advanceAutoMode(
 func triggerNextChatTurn(
 	convID, sessionID, pluginID, currentStep, pluginMode, userID, syntheticMsg string,
 	onReady func(),
+	syntheticSource string,
 ) {
 	coreURL := common.CoreSelfEndpoint() + "/conversations:chat"
+	pluginCtx := map[string]any{
+		"session_id":   sessionID,
+		"plugin_id":    pluginID,
+		"current_step": currentStep,
+		"plugin_mode":  pluginMode,
+	}
+	if syntheticSource != "" {
+		pluginCtx["synthetic_source"] = syntheticSource
+	}
 	reqBody := map[string]any{
 		"query":           syntheticMsg,
 		"conversation_id": convID,
@@ -517,12 +525,7 @@ func triggerNextChatTurn(
 		"stream": true,
 		"mode":   "auto",
 		"input":  []map[string]any{{"input_type": "text", "text": syntheticMsg}},
-		"plugin_context": map[string]any{
-			"session_id":   sessionID,
-			"plugin_id":    pluginID,
-			"current_step": currentStep,
-			"plugin_mode":  pluginMode,
-		},
+		"plugin_context": pluginCtx,
 	}
 	if searchConfig := loadConversationSearchConfig(store.DB(), convID); len(searchConfig) > 0 {
 		reqBody["conversation"] = map[string]any{"search_config": searchConfig}

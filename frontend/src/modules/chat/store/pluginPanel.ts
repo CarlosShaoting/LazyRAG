@@ -276,8 +276,6 @@ interface PluginStore {
   loadActiveSession: (conversationId: string) => Promise<void>;
   refreshSlots: (conversationId: string, sessionId: string) => Promise<void>;
   patchSlot: (conversationId: string, sessionId: string, slotId: string, revision: number) => Promise<void>;
-  advanceSession: (conversationId: string, sessionId: string, searchConfig?: Record<string, unknown>) => Promise<void>;
-  retrySession: (conversationId: string, sessionId: string, searchConfig?: Record<string, unknown>) => Promise<void>;
   syncSessionSearchConfig: (conversationId: string, sessionId: string, searchConfig: Record<string, unknown>) => Promise<void>;
   clearSession: (conversationId: string) => void;
   setAutoRunning: (conversationId: string, running: boolean) => void;
@@ -390,14 +388,6 @@ export const usePluginStore = create<PluginStore>()((set, get) => ({
     try {
       const res = await PluginSessionApi().getSlots(sessionId);
       const slots: SlotRevision[] = res?.data?.data?.slots ?? [];
-      console.log('[refreshSlots] raw slots from API:', slots.map(s => ({
-        slot_id: s.slot_id,
-        list_index: s.list_index,
-        revision: s.revision,
-        change_source: s.change_source,
-        artifact_value: s.artifact_value,
-        content_type: s.content_type,
-      })));
       set((state) => {
         const session = state.sessionByConversation[conversationId];
         if (!session) return state;
@@ -417,24 +407,6 @@ export const usePluginStore = create<PluginStore>()((set, get) => ({
     try {
       await PluginSessionApi().patchSlot(sessionId, slotId, revision);
       get().refreshSlots(conversationId, sessionId);
-    } catch {
-      // ignore
-    }
-  },
-
-  advanceSession: async (conversationId, sessionId, searchConfig) => {
-    try {
-      await PluginSessionApi().advanceSession(sessionId, 'continue', searchConfig);
-      get().loadActiveSession(conversationId);
-    } catch {
-      // ignore
-    }
-  },
-
-  retrySession: async (conversationId, sessionId, searchConfig) => {
-    try {
-      await PluginSessionApi().advanceSession(sessionId, 'retry', searchConfig);
-      get().loadActiveSession(conversationId);
     } catch {
       // ignore
     }

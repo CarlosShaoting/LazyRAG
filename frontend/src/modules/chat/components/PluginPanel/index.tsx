@@ -30,6 +30,20 @@ function parseIntentText(raw?: string): string {
   }
 }
 
+/** Latest _source_tool among selected image slots (newest first). */
+function getLatestSelectedImageSourceTool(session: PluginSession): string {
+  const selectedImageSlots = (session.slots ?? []).filter(
+    (s) => s.selected && s.content_type === 'image',
+  );
+  if (!selectedImageSlots.length) {
+    return '';
+  }
+  const latest = [...selectedImageSlots].sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+  )[0];
+  return String(latest?.artifact_value?._source_tool ?? '').trim();
+}
+
 /** IntentPopover shows global intent + per-step intent inside a floating popover. */
 function IntentPopover({
   session,
@@ -434,6 +448,7 @@ function SortableImageList({
   onFocusSortOrder?: (sortOrder: number | undefined) => void;
   onAddItem?: () => void;
 }) {
+  const { t } = useTranslation();
   const reorderSlotItems = usePluginStore((s) => s.reorderSlotItems);
   // localOrder stores list_index values in display order.
   const [localOrder, setLocalOrder] = useState<number[]>(() =>
@@ -612,7 +627,7 @@ function SortableImageList({
           type='button'
         >
           <span className='plugin-panel__image-add-card-icon'>+</span>
-          <span className='plugin-panel__image-add-card-label'>新增附件</span>
+          <span className='plugin-panel__image-add-card-label'>{t('chat.pluginAddAttachment')}</span>
         </button>
       )}
     </div>
@@ -635,6 +650,7 @@ function TabSlotGrid({
   const addFileInputRef = useRef<HTMLInputElement>(null);
   const addingSlotIdRef = useRef<string>('');
   const addingSlotTypeRef = useRef<string>('');
+  const { t } = useTranslation();
   const { createSlotItem } = usePluginStore();
 
   const handleAddItem = useCallback((slotId: string, slotType: string) => {
@@ -700,30 +716,15 @@ function TabSlotGrid({
     return slotDefs;
   };
   const visibleSlots = resolveVisibleSlots(tab.slots);
-  const latestResultSourceTool = (() => {
-    if (session.plugin_id !== 'image-plugin' || tab.id !== 'result') {
-      return '';
-    }
-    const selectedImageSlots = (session.slots ?? []).filter(
-      (s) => s.selected && s.content_type === 'image',
-    );
-    if (!selectedImageSlots.length) {
-      return '';
-    }
-    const latest = [...selectedImageSlots].sort(
-      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-    )[0];
-    return String(latest?.artifact_value?._source_tool ?? '').trim();
-  })();
   const resolveSlotLabel = (slotDef: SlotDef): string => {
     const key = slotDef.artifact_key ?? slotDef.id;
     if (
       session.plugin_id === 'image-plugin'
       && tab.id === 'result'
       && key === 'generated_image_url'
-      && latestResultSourceTool === 'image_generator'
+      && getLatestSelectedImageSourceTool(session) === 'image_generator'
     ) {
-      return 'Generated Image';
+      return t('chat.pluginGeneratedImage');
     }
     return slotDef.label ?? slotDef.id;
   };
@@ -743,6 +744,9 @@ function TabSlotGrid({
         const revisions = (session.slots ?? []).filter(
           (s) => s.artifact_key === artifactKey && s.selected,
         );
+        if (revisions.length === 0) {
+          return null;
+        }
         const isImageList = slotDef.type === 'image' && slotDef.cardinality === 'list';
         const isDraggable = Boolean(slotDef.ordered);
         return (
@@ -750,14 +754,7 @@ function TabSlotGrid({
             {(slotDef.label || slotDef.id) && (
               <span className='plugin-panel__slot-label'>{resolveSlotLabel(slotDef)}</span>
             )}
-            {revisions.length === 0 ? (
-              <div
-                className='plugin-panel__slot-placeholder'
-                aria-label={`${slotDef.label} pending`}
-              >
-                <span>—</span>
-              </div>
-            ) : isImageList ? (
+            {isImageList ? (
               <SortableImageList
                 revisions={revisions}
                 session={session}

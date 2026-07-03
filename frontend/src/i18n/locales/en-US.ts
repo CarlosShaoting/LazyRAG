@@ -876,6 +876,8 @@ const enUS = {
     send: "Send",
     pluginContinue: "Continue",
     pluginRetry: "Retry",
+    pluginGeneratedImage: "Generated Image",
+    pluginAddAttachment: "Add attachment",
     pluginStop: "Stop",
     askCardSubmit: "Submit",
     askCardPrev: "Previous",

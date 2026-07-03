@@ -101,15 +101,26 @@ def check_sensitive_content(
     return sensitive_word if has_sensitive else None
 
 
-def _is_plugin_internal_step_message(query: str, plugin_context: Optional[Dict[str, Any]]) -> bool:
+def _should_skip_sensitive_filter(
+    query: str,
+    plugin_context: Optional[Dict[str, Any]],
+) -> bool:
+    """Skip sensitive-word check for trusted plugin synthetic turns."""
     if not isinstance(plugin_context, dict):
         return False
     if not plugin_context.get('plugin_id') or not plugin_context.get('session_id'):
         return False
+    if plugin_context.get('synthetic_source') == 'driver':
+        return True
     text = str(query or '').strip()
     if not text:
         return False
     return text.startswith('Step ') and ' completed.' in text
+
+
+def _is_plugin_internal_step_message(query: str, plugin_context: Optional[Dict[str, Any]]) -> bool:
+    """Backward-compatible alias for plugin synthetic-turn detection."""
+    return _should_skip_sensitive_filter(query, plugin_context)
 
 
 def _build_mcp_tools(mcp_config: List[Dict[str, Any]]) -> list:
@@ -347,7 +358,7 @@ async def handle_chat(request: ChatRequest) -> Union[Dict[str, Any], StreamingRe
     plugin_context = plugin.plugin_context or {}
     priority = runtime.priority or LAZYMIND_LLM_PRIORITY
     query, agent_query = _normalize_cite_message_query_for_agent(message.query)
-    skip_sensitive_filter = _is_plugin_internal_step_message(query, plugin_context)
+    skip_sensitive_filter = _should_skip_sensitive_filter(query, plugin_context)
     sensitive_word = None if skip_sensitive_filter else check_sensitive_content(query)
     if sensitive_word:
         cost = round(time.time() - start_time, 3)
@@ -366,8 +377,9 @@ async def handle_chat(request: ChatRequest) -> Union[Dict[str, Any], StreamingRe
             cost,
         ), final_data={'tool_call_turns': 0})
     if skip_sensitive_filter:
+        reason = plugin_context.get('synthetic_source') or 'plugin_internal_step'
         LOG.info(
-            f'[ChatServer] [SENSITIVE_FILTER_SKIPPED] [reason=plugin_internal_step] '
+            f'[ChatServer] [SENSITIVE_FILTER_SKIPPED] [reason={reason}] '
             f'[session_id={conversation.session_id}] [current_step={plugin_context.get("current_step")}]'
         )
 

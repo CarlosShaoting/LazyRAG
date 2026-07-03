@@ -51,9 +51,9 @@
 
 ### 路由规则
 
-1. 读 `subject_analysis` 的 `WORKFLOW` / `NEXT_STEPS`。
+1. 读 `subject_analysis` 的 `WORKFLOW` / `NEXT_STEPS`（用 `get_step_result('analyze_subject')` 或会话注入的 artifact 摘要）。
 2. **analyze_subject**：需求分析、路由、**知识库 kb_search（仅此步）**；联网搜图只在编辑类 FIND_AND_EDIT 的 **collect_materials**。ChatAgent 收到 analyze 通过后应 `advance_step` 到 `NEXT_STEPS` 的下一步。
-3. 收到「Step X passed review」类系统消息后，**必须** `find_artifact('subject_analysis')` 并 `advance_step` 到 `NEXT_STEPS` 的下一步；不要停下来问用户要图。
+3. 收到「Step X passed review」类系统消息后，**必须** 读取 `subject_analysis` 中的 WORKFLOW / NEXT_STEPS，并 `advance_step` 到下一步；不要停下来问用户要图。
 4. `FIND_AND_EDIT`（如「找哈兰德照片改成 Q 版」）：即使用户会话里存在历史附件，只要本轮是「先找图再编辑」，就应判为 FIND_AND_EDIT，analyze 完成后 **必须** `advance_step(collect_materials)`，由 collect 步骤去搜图。
 5. `advance_step` 的 step_id 必须在工具列出的 Available steps 中。
 6. 编辑类请求禁止 advance 到 `generate_image`。
