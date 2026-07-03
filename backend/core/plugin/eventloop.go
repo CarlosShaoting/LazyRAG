@@ -522,9 +522,9 @@ func triggerNextChatTurn(
 		// stream=true is required so that task_created events emitted by the ChatAgent
 		// are written to the Redis SSE buffer and delivered to the frontend.
 		// Non-streaming mode skips the event pipeline entirely.
-		"stream": true,
-		"mode":   "auto",
-		"input":  []map[string]any{{"input_type": "text", "text": syntheticMsg}},
+		"stream":         true,
+		"mode":           "auto",
+		"input":          []map[string]any{{"input_type": "text", "text": syntheticMsg}},
 		"plugin_context": pluginCtx,
 	}
 	if searchConfig := loadConversationSearchConfig(store.DB(), convID); len(searchConfig) > 0 {
