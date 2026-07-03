@@ -639,6 +639,8 @@ def test_build_intent_section_global_only(loaded_plugin):
     with patch('lazymind.chat.engine.subagent.db.TaskQueryDB', mock_db_class):
         result = plugin_manager._build_intent_section('sess-2')
 
+    assert 'Only global rule' in result
+
 
 def test_parse_workflow_markdown_bold():
     from lazymind.chat.plugin.plugin_manager import _parse_workflow

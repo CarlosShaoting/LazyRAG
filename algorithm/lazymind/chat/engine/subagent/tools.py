@@ -150,7 +150,7 @@ def save_artifact(key: str, value: Any, content_type: str = 'text',
     if ctx.output_artifact_keys and key not in ctx.output_artifact_keys:
         return tool_error(
             'save_artifact',
-            f"Artifact key {key!r} is not declared for this step. "
+            f'Artifact key {key!r} is not declared for this step. '
             f'Allowed keys: {", ".join(ctx.output_artifact_keys)}',
         )
     ct = content_type if content_type in _CONTENT_TYPES else 'text'
