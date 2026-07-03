@@ -703,6 +703,7 @@ async def run_subagent_stream(
         if db is not None:
             db.dispose()
 
+
 def _parse_draft_stem(stem: str) -> tuple:
     """Split a draft filename stem into (artifact_key, list_index_or_none)."""
     if '_' in stem:
