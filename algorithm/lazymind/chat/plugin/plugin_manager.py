@@ -128,7 +128,7 @@ def _trigger_plugin_step(
             objective for this execution only.  Used for retries where the user
             wants to refine or partially regenerate the output.
             Not persisted to session state.
-        partial_indices: Maps artifact_key → list_index values that should overwrite
+        partial_indices: Maps slot → list_index values that should overwrite
             existing list-slot entries rather than appending. None means full write.
     """
     cfg = _agentic_config()
@@ -187,9 +187,9 @@ def _trigger_plugin_step(
                     if isinstance(s, dict)
                 }
                 for inp in inputs:
-                    artifact_id = inp['artifact_id']
+                    slot = inp['slot']
                     required = inp.get('required', True)
-                    producer_steps = plugin_loader.find_producer_steps(plugin_id, artifact_id)
+                    producer_steps = plugin_loader.find_producer_steps(plugin_id, slot)
                     if not producer_steps:
                         continue
                     producer_statuses = {
@@ -206,20 +206,20 @@ def _trigger_plugin_step(
                     if step_status is None:
                         if required:
                             return (
-                                f'Error: required artifact {artifact_id!r} not available. '
+                                f'Error: required artifact {slot!r} not available. '
                                 f'Please trigger {preferred_producer!r} first.'
                             )
                         continue
                     if step_status in ('running', 'interrupted'):
                         return (
-                            f'Error: artifact {artifact_id!r} not ready '
+                            f'Error: artifact {slot!r} not ready '
                             f'(producer step {preferred_producer!r} status: {step_status!r}).'
                         )
                     if step_status == 'failed':
                         if not required:
                             continue
                         return (
-                            f'Error: artifact {artifact_id!r} not ready '
+                            f'Error: artifact {slot!r} not ready '
                             f'(producer step {preferred_producer!r} status: {step_status!r}).'
                         )
         except Exception:
@@ -228,13 +228,13 @@ def _trigger_plugin_step(
     # --- Emit task_created signal ---
     task_id = str(uuid.uuid4())
     output_defs = step_config.get('outputs', [])
-    output_keys = [o['artifact_id'] for o in output_defs if o.get('artifact_id')]
+    output_keys = [o['slot'] for o in output_defs if o.get('slot')]
     required_output_keys = [
-        o['artifact_id']
+        o['slot']
         for o in output_defs
-        if o.get('artifact_id') and o.get('required', True)
+        if o.get('slot') and o.get('required', True)
     ]
-    input_keys = [i['artifact_id'] for i in inputs]
+    input_keys = [i['slot'] for i in inputs]
 
     # Framework tools are always present regardless of plugin declaration.
     declared_tools: List[str] = step_config.get('tools', [])
@@ -258,7 +258,7 @@ def _trigger_plugin_step(
     if history_files_per_turn:
         params['history_files_per_turn'] = history_files_per_turn
 
-    # Propagate KB filters and user_id so kb_search works in plugin steps.
+    # Propagate KB filters and user_id for plugin context (KB search runs in ChatAgent path).
     filters: dict = dict(cfg.get('filters') or {})
     if filters:
         params['filters'] = filters
@@ -273,6 +273,16 @@ def _trigger_plugin_step(
     # to save_artifact based on the user's stated intent.
     focused_tab = cfg.get('focused_tab')
     enriched_instruction = runtime_instruction or ''
+    from lazymind.chat.plugin.kb_prefetch import inject_plugin_kb_prefetch
+    enriched_instruction = inject_plugin_kb_prefetch(
+        plugin_id=plugin_id,
+        session_id=session_id,
+        query=user_input,
+        filters=filters,
+        user_id=user_id,
+        runtime_instruction=enriched_instruction,
+        refresh=is_cold_start,
+    )
     if focused_tab:
         sep = ' ' if enriched_instruction else ''
         enriched_instruction = enriched_instruction + sep + f'User is currently viewing tab: {focused_tab}.'
@@ -285,8 +295,8 @@ def _trigger_plugin_step(
         mode='manual',          # Plugin steps always async; Go controls auto-advance
         objective=_render_step_objective(step_config, user_input, enriched_instruction),
         params=params,
-        input_artifact_keys=input_keys,
-        output_artifact_keys=output_keys,
+        input_slots=input_keys,
+        output_slots=output_keys,
         tools=merged_tools,
         resume=False,
     )
@@ -319,8 +329,8 @@ def _trigger_plugin_end(plugin_id: str) -> str:
             'user_input': '',
             'is_cold_start': False,
         },
-        input_artifact_keys=[],
-        output_artifact_keys=[],
+        input_slots=[],
+        output_slots=[],
         tools=[],
         resume=False,
     )
@@ -490,7 +500,7 @@ def build_advance_step_and_hand_off_tool(
         '    user_input (str): Concise goal statement for the SubAgent — synthesise intent\n'
         '        from the conversation.  Do NOT pass vague phrases like "继续" or "continue".\n'
         '    runtime_instruction (str, optional): Ephemeral directive for this run only.\n'
-        '    partial_indices (dict, optional): Maps artifact_key → list_index values to\n'
+        '    partial_indices (dict, optional): Maps slot → list_index values to\n'
         '        overwrite (list-cardinality slots only).\n\n'
         'Returns:\n'
         '    Confirmation that the step was queued. Exits ReAct immediately after.'

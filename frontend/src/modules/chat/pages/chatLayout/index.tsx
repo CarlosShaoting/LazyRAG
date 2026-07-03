@@ -159,7 +159,7 @@ const ChatLayout: FC<IChatLayoutProps> = (props) => {
   );
 
   // When the user changes KB selection during an active plugin session, persist it on the
-  // conversation so analyze_subject (the only kb_search step) inherits filters.kb_id.
+  // conversation so analyze_subject KB prefetch inherits filters.kb_id.
   const kbSyncInitializedRef = useRef(false);
   useEffect(() => {
     kbSyncInitializedRef.current = false;

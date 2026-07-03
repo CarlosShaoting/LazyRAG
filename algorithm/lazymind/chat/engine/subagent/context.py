@@ -31,40 +31,13 @@ class SubAgentContext:
     objective: str
     params: Dict[str, Any]
     workspace_path: str
-    input_artifact_keys: List[str]
-    output_artifact_keys: List[str]
-    db_dsn: str = ''
-    _db: Optional[SubAgentDB] = field(default=None, repr=False, compare=False)
-    _emit: Optional[Callable[[Dict[str, Any]], None]] = field(default=None, repr=False, compare=False)
+    input_slots: List[str]
+    output_slots: List[str]
+    db: SubAgentDB
+    emit: Callable[[Dict[str, Any]], None]
     # artifact seq counters and local cache (Go persists to DB; this serves intra-task reads).
     _artifact_counts: Dict[str, int] = field(default_factory=dict)
     _local_artifacts: List[Dict[str, Any]] = field(default_factory=list)
-
-    def __getstate__(self) -> Dict[str, Any]:
-        state = self.__dict__.copy()
-        # SQLAlchemy engines and local callbacks are runtime-only objects and
-        # must not be serialized through lazyllm.globals.
-        state['_db'] = None
-        state['_emit'] = None
-        return state
-
-    def __setstate__(self, state: Dict[str, Any]) -> None:
-        self.__dict__.update(state)
-        self.__dict__['_db'] = None
-        self.__dict__['_emit'] = None
-
-    @property
-    def db(self) -> SubAgentDB:
-        if self._db is None:
-            if not self.db_dsn:
-                raise RuntimeError('SubAgent DB is not initialized and db_dsn is empty.')
-            self._db = SubAgentDB(self.db_dsn)
-        return self._db
-
-    def emit(self, event: Dict[str, Any]) -> None:
-        if self._emit is None:
-            return
-        self._emit(event)
 
     def next_artifact_seq(self, key: str) -> int:
         self._artifact_counts[key] = self._artifact_counts.get(key, 0) + 1
@@ -72,14 +45,14 @@ class SubAgentContext:
 
     def record_local_artifact(self, key: str, content_type: str, value: Dict[str, Any], seq: int) -> None:
         self._local_artifacts.append({
-            'artifact_key': key, 'content_type': content_type, 'value': value, 'seq': seq,
+            'slot': key, 'content_type': content_type, 'value': value, 'seq': seq,
         })
 
     def local_artifacts(self, keys: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         if keys is None:
             return list(self._local_artifacts)
         keyset = set(keys)
-        return [a for a in self._local_artifacts if a['artifact_key'] in keyset]
+        return [a for a in self._local_artifacts if a['slot'] in keyset]
 
     def saved_keys(self) -> List[str]:
         return list(self._artifact_counts.keys())

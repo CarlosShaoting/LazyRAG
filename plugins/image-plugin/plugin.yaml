@@ -15,10 +15,12 @@ when_to_use: >
   request — including "画一张图", "帮我生成图片", "找一张XX的照片然后加上YY",
   "在这张图上加水印", "根据知识库中的风格画图", or "draw a cat".
   When the user has selected a knowledge base, use KB_STYLE workflow;
-  kb_search runs only in analyze_subject for style references.
+  knowledge-base retrieval is prefetched automatically when the plugin starts.
   Do NOT trigger if image generation is merely one sub-step within a larger
   multi-step task (e.g. "write a report and add an image"). Do NOT trigger
   for text content, quizzes, reports, summaries, or any non-visual task.
+
+kb_prefetch: true
 
 tool_scripts:
   - path: scripts/tools.py
@@ -42,6 +44,41 @@ steps:
   - id: enhance_image
     label: Enhance Image
 
+slots:
+  - id: subject_analysis
+    label: Subject Analysis
+    type: text
+    cardinality: single
+    summary_max_chars: 300
+
+  - id: material_images
+    label: Reference Materials
+    type: image
+    cardinality: list
+    ordered: true
+
+  - id: material_summary
+    label: Material Summary
+    type: text
+    cardinality: single
+    summary_max_chars: 400
+
+  - id: prompt_used
+    label: Optimized Prompt
+    type: text
+    cardinality: single
+
+  - id: enhanced_image_output
+    label: Enhanced Images
+    type: image
+    cardinality: list
+    ordered: true
+
+  - id: image_output
+    label: Raw Image
+    type: image
+    cardinality: single
+
 ui:
   tabs:
     - id: analysis
@@ -49,56 +86,26 @@ ui:
       layout: list
       slots:
         - id: subject_analysis
-          label: Subject Analysis
-          type: text
-          cardinality: single
-          artifact_key: subject_analysis
-          summary_max_chars: 300
 
     - id: materials
       label: Materials
       layout: grid
       slots:
         - id: material_images
-          label: Reference Materials
-          type: image
-          cardinality: list
-          artifact_key: material_image
-          ordered: true
-
         - id: material_summary
-          label: Material Summary
-          type: text
-          cardinality: single
-          artifact_key: material_summary
-          summary_max_chars: 400
 
     - id: prompt
       label: Prompt
       layout: list
       slots:
         - id: prompt_used
-          label: Optimized Prompt
-          type: text
-          cardinality: single
-          artifact_key: optimized_prompt
 
     - id: result
       label: Result
       layout: horizontal
       slots:
         - id: image_output
-          label: Raw Image
-          type: image
-          cardinality: single
-          artifact_key: generated_image_url
-
         - id: enhanced_image_output
-          label: Enhanced Images
-          type: image
-          cardinality: list
-          artifact_key: enhanced_image_url
-          ordered: true
 
 i18n:
   zh-CN:
