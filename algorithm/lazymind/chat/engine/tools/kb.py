@@ -12,7 +12,7 @@ from lazymind.chat.engine.tools._utils import (
     parse_number_range,
     truncate_text,
 )
-from lazymind.chat.engine.tools.algo import DOCUMENT, search_kb, search_kb_sequential, search_temp_files
+from lazymind.chat.engine.tools.algo import DOCUMENT, search_kb, search_temp_files
 from lazymind.chat.engine.tools.infra import (
     resolve_index,
 )
@@ -351,8 +351,7 @@ class KBToolGroup:
             'user_id': agentic_config.get('user_id', ''),
         }
 
-        search_fn = search_kb_sequential if agentic_config.get('is_subagent') else search_kb
-        result = search_fn(
+        result = search_kb(
             payload,
             retrievers=retrievers,
             reranker=reranker,
