@@ -42,7 +42,7 @@ function parseExpires(url: string): number {
   return Number.isFinite(value) ? value : 0;
 }
 
-function isExpiredSignedUrl(url: string): boolean {
+export function isExpiredSignedUrl(url: string): boolean {
   const expires = parseExpires(url);
   if (!expires) {
     return false;
