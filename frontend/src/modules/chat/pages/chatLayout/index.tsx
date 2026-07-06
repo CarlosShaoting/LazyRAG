@@ -180,9 +180,6 @@ const ChatLayout: FC<IChatLayoutProps> = (props) => {
       return;
     }
     const searchConfig = buildPluginSearchConfig(chatConfig);
-    if (!searchConfig) {
-      return;
-    }
     void usePluginStore.getState().syncSessionSearchConfig(
       sessionId,
       session.session_id,

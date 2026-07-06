@@ -4,11 +4,8 @@ import type { ChatConfig } from "@/modules/chat/components/ChatConfigs";
 
 export function buildPluginSearchConfig(
   chatConfig?: Pick<ChatConfig, "knowledgeBaseId" | "creators" | "tags">,
-): Record<string, unknown> | undefined {
+): Record<string, unknown> {
   const kbIds = chatConfig?.knowledgeBaseId?.filter(Boolean) ?? [];
-  if (kbIds.length === 0) {
-    return undefined;
-  }
   return {
     dataset_list: kbIds.map((id) => ({ id })),
     creators: chatConfig?.creators ?? [],
@@ -177,13 +174,31 @@ export interface PluginSession {
   plugin_id: string;
   status: "active" | "completed" | "failed" | "waiting";
   current_step_id: string;
+  /** Global intent/constraint for this session, JSON string e.g. {"text":"..."} */
+  intent_context?: string;
   created_at: string;
   updated_at: string;
   slots?: SlotRevision[];
+  /** Steps for this session, used in completed/waiting state to render rollback step list. */
+  steps?: PluginSessionStep[];
   /** The tab currently focused by the user — forwarded to the AI in plugin_context. */
   focusedTab?: string;
   /** The sort_order item currently focused by the user — forwarded to the AI. */
   focusedSortOrder?: number;
+}
+
+/** A single step execution record from plugin_session_steps. */
+export interface PluginSessionStep {
+  id: string;
+  session_id: string;
+  step_id: string;
+  attempt: number;
+  task_id: string;
+  status: string;
+  /** Step-level intent/constraint, JSON string e.g. {"text":"..."} */
+  intent_context?: string;
+  created_at: string;
+  updated_at: string;
 }
 
 // Slot value resolved from a TaskArtifact's value field.
@@ -331,9 +346,20 @@ export const usePluginStore = create<PluginStore>()((set, get) => ({
   },
 
   setSession: (conversationId, session) => {
-    set((state) => ({
-      sessionByConversation: { ...state.sessionByConversation, [conversationId]: session },
-    }));
+    set((state) => {
+      const next: Partial<PluginStore> = {
+        sessionByConversation: { ...state.sessionByConversation, [conversationId]: session },
+      };
+      if (session && session.status !== 'active') {
+        if (state.autoRunningByConversation[conversationId]) {
+          next.autoRunningByConversation = {
+            ...state.autoRunningByConversation,
+            [conversationId]: false,
+          };
+        }
+      }
+      return next;
+    });
   },
 
   updateSlot: (conversationId, slot) => {
@@ -370,6 +396,17 @@ export const usePluginStore = create<PluginStore>()((set, get) => ({
     try {
       const res = await PluginSessionApi().getLatestSession(conversationId);
       const session: PluginSession | null = res?.data?.data?.session ?? null;
+      // Load step records for completed and waiting sessions so the Panel can
+      // render the rollback list and step-status badges correctly.
+      if (session && (session.status === 'completed' || session.status === 'waiting') && session.session_id) {
+        try {
+          const stepsRes = await PluginSessionApi().getSteps(session.session_id);
+          const rawSteps = stepsRes?.data?.data?.steps ?? [];
+          session.steps = rawSteps.filter((s: PluginSessionStep) => s.step_id !== '__end__');
+        } catch {
+          session.steps = [];
+        }
+      }
       get().setSession(conversationId, session);
       // Also refresh dismissed sessions so the restore button appears immediately on load.
       get().fetchDismissedSessions(conversationId);
@@ -410,7 +447,7 @@ export const usePluginStore = create<PluginStore>()((set, get) => ({
     }
   },
 
-  syncSessionSearchConfig: async (conversationId, sessionId, searchConfig) => {
+  syncSessionSearchConfig: async (_conversationId, sessionId, searchConfig) => {
     try {
       await PluginSessionApi().syncSessionSearchConfig(sessionId, searchConfig);
     } catch {

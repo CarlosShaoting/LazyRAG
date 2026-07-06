@@ -22,24 +22,6 @@ from .db import SubAgentDB
 from . import tools as subagent_tools
 
 
-_ZH_RE = re.compile(r'[\u4e00-\u9fff]')
-
-
-def _prewarm_kb_runtime_if_needed(tool_names: Optional[List[str]]) -> None:
-    """Initialize KB retrievers on the runner thread before the agent thread pool starts."""
-    if not tool_names:
-        return
-    normalized = {str(t).strip().lower() for t in tool_names}
-    if 'kb' not in normalized:
-        return
-    try:
-        from lazymind.chat.engine.tools.kb import KBToolGroup
-        KBToolGroup()._ensure_search_runtime()
-        LOG.info('[SubAgent] KB search runtime pre-warmed')
-    except Exception as exc:
-        LOG.warning('[SubAgent] KB pre-warm failed: %s', exc)
-
-
 def _format_kb_prefetch_block(payload: Any) -> str:
     """Format kb_search tool_success payload into an objective injection block."""
     result = payload
@@ -213,19 +195,7 @@ def _resolve_plugin_step_tools(params: Dict[str, Any]) -> Optional[List[str]]:
         if _loader.get_plugin(plugin_id) is None:
             return None
         declared: List[str] = step_config.get('tools', [])
-        # Mirror _merge_tools from plugin_manager: prepend framework tools.
-        _FRAMEWORK_TOOLS = [
-            'save_artifact', 'get_artifact', 'list_artifacts',
-            'list_knowledge_bases', 'read_user_attachment', 'find_user_attachment',
-            'find_artifact', 'patch_artifact', 'discard_draft',
-        ]
-        seen: set = set()
-        merged: List[str] = []
-        for t in _FRAMEWORK_TOOLS + list(declared):
-            if t not in seen:
-                seen.add(t)
-                merged.append(t)
-        return merged
+        return list(declared)
     except Exception as exc:
         LOG.warning(f'[SubAgent] _resolve_plugin_step_tools failed: {exc}')
         return None
@@ -681,7 +651,6 @@ async def run_subagent_stream(
             # Materialize session bucket before Parallel-based tools (e.g. kb_search).
             _ = lazyllm.globals._data
 
-        _prewarm_kb_runtime_if_needed(tools)
         # kb_search cannot run on the SubAgent task sid / StreamCallHelper workers
         # (pickled_data missing). Prefetch in a clean session and drop kb tools.
         had_kb_tool = bool(tools) and 'kb' in {str(t).strip().lower() for t in tools}
