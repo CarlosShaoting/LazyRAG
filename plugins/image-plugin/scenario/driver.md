@@ -7,7 +7,7 @@ describing what was produced and whether it meets the criteria below.
 ### analyze_subject
 - Acceptable when `subject_analysis` is saved and contains at least 50 words with an explicit WORKFLOW.
 - For WORKFLOW: KB_STYLE, knowledge-base text findings must be summarized inside `subject_analysis`.
-- KB image hits are optional; missing `material_images` is acceptable when text style guidance is enough.
+- KB image hits are optional (max 3, save URL directly); do NOT use vision_extractor in analyze_subject.
 - For CREATE_NEW or KB_STYLE, missing source photo or prompt at this step is expected; next step is `optimize_prompt`.
 - For FIND_AND_EDIT or EDIT_UPLOAD, missing raw source image or edit prompt is expected; next step is `collect_materials`.
 - Not acceptable when `image_output` or `prompt_used` were saved here (they belong in later steps).

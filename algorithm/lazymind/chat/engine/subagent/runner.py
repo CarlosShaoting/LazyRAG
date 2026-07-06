@@ -56,10 +56,17 @@ def _format_kb_prefetch_block(payload: Any) -> str:
         'KB retrieval was executed on the SubAgent runner thread (not inside the',
         'tool worker). Use these hits directly. Do NOT call kb_search again.',
         '',
+        'Do NOT call vision_extractor or multimodal on any image URL below.',
+        'KB image URLs are local/trusted — save at most 3 directly via',
+        'save_artifact(material_images) without validate_image_ref.',
+        'Use text hits for style/subject analysis.',
+        '',
     ]
     if not items:
         lines.append('(No knowledge-base hits returned for this query.)')
         return '\n'.join(lines)
+    image_urls_shown = 0
+    _MAX_KB_IMAGE_URLS = 3
     for idx, item in enumerate(items, start=1):
         if not isinstance(item, dict):
             lines.append(f'### Hit {idx}')
@@ -70,10 +77,15 @@ def _format_kb_prefetch_block(payload: Any) -> str:
         file_name = str(item.get('file_name') or 'unknown')
         lines.append(f'### Hit {idx} ({group}) — {file_name}')
         if group == 'image':
+            if image_urls_shown >= _MAX_KB_IMAGE_URLS:
+                lines.append('- (image URL omitted — max 3 image refs for this step)')
+                lines.append('')
+                continue
             meta = item.get('metadata') or {}
             url = meta.get('image_url') or item.get('local_path') or ''
             if url:
                 lines.append(f'- image_url: {url}')
+                image_urls_shown += 1
         text = str(item.get('text') or '').strip()
         if text:
             lines.append(text)

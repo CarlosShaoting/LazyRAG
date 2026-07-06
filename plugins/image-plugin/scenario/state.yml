@@ -65,9 +65,9 @@ steps:
 
       Your task:
       1. If the system prompt lists user-uploaded images under "## User Uploaded Files",
-         call find_user_attachment(filename) to get the local path, then call vision_extractor
-         (multimodal tool, same as Chat) with that path or short filename — do NOT pass
-         signed /static-files/ URLs. Incorporate the visual description into your analysis.
+         call find_user_attachment(filename) only to confirm the file exists and to
+         route EDIT_UPLOAD — do NOT call vision_extractor or any VLM in this step.
+         Visual analysis of uploads belongs in collect_materials when needed.
       2. Identify the main subject(s) and sub-topics that require reference materials.
       3. Suggest a suitable artistic style (photorealistic, oil painting, anime, etc.).
       4. Note mood, lighting, and composition hints from the user text and any uploaded images.
@@ -89,11 +89,13 @@ steps:
       7. When filters.kb_id is set (or WORKFLOW is KB_STYLE), read the
          "## Knowledge base prefetch (authoritative)" block in the objective
          (KB was retrieved before this step; do NOT call kb_search):
-           a. Extract visual style, color palette, composition, and subject cues from text hits.
-           b. Include those findings inside subject_analysis.
-           c. Image hits are OPTIONAL. Only when clearly useful,
-              call validate_image_ref(url=<local_path or url from hit>) then
-              save_artifact(key='material_images', content_type='image', value=<url from ok result>).
+           a. Extract visual style, color palette, composition, and subject cues from
+              **text hits only** — never call vision_extractor/multimodal on KB images.
+           b. Include those text findings inside subject_analysis.
+           c. KB image URLs are optional references only. KB recall URLs are already
+              local/trusted — do NOT call validate_image_ref on them. Save at most **3**:
+              save_artifact(key='material_images', content_type='image', value=<url from hit>).
+              Do NOT visually analyze KB images; the frontend shows at most a few thumbnails.
       8. Save the structured analysis:
            save_artifact(key='subject_analysis', content_type='text', value=<analysis text>)
       9. If WORKFLOW is KB_STYLE, FIND_AND_EDIT, EDIT_UPLOAD, or CREATE_NEW:
@@ -109,8 +111,6 @@ steps:
       Keep the analysis concise (100–200 words). Stop after saving required artifacts only.
     tools:
       - kb
-      - multimodal
-      - validate_image_ref
     outputs:
       - slot: subject_analysis
         content_type: text
@@ -121,8 +121,8 @@ steps:
     acceptance_criteria: |
       subject_analysis artifact must be saved and contain at least 50 words with WORKFLOW and NEXT_STEPS.
       For KB_STYLE with a knowledge base available: KB text findings from the prefetch block
-      must be included in subject_analysis; material_images is optional and should only be saved
-      when useful.
+      must be included in subject_analysis; material_images is optional (max 3 KB URLs,
+      save directly — no validate_image_ref, no VLM). Do NOT call vision_extractor in this step.
       Do NOT save image_output or prompt_used in this step.
 
   collect_materials:

@@ -6,7 +6,7 @@
 
 步骤：
 
-1. **analyze_subject** — 分析需求 + 路由；若已选知识库，**KB 检索在触发本步之前自动完成**并注入 runtime_instruction
+1. **analyze_subject** — 分析需求 + 路由；若已选知识库，**KB 检索在触发本步之前自动完成**并注入 objective。本步**禁止**对 KB 图片调用 VLM，仅用文本命中写分析；最多直接保存 3 张 KB 参考图 URL（无需 validate_image_ref）
 2. **collect_materials** — 仅用于 FIND_AND_EDIT / EDIT_UPLOAD，准备 raw image + 编辑指令
 3. **optimize_prompt** — 文生图 prompt（CREATE_NEW / KB_STYLE）
 4. **generate_image** — 文生图（CREATE_NEW / KB_STYLE）
@@ -27,8 +27,7 @@
 用户: [已选择知识库] 根据知识库中的风格，画一张产品宣传图
 
 1. trigger_image_plugin / advance_step(analyze_subject)
-   — SubAgent 调用 kb_search（顺序检索，避免 worker 内 parallel）
-   — 将 KB 文本结论写入 subject_analysis；可选保存 material_images
+   — KB 预取注入 objective；SubAgent 仅用文本命中写 subject_analysis，不对 KB 图调 VLM；可选最多 3 张 material_images
 2. advance_step(optimize_prompt) — 融合 KB 风格写英文 prompt
 3. advance_step(generate_image) — image_generator
 4. advance_step("__end__") — 纯生成完成
