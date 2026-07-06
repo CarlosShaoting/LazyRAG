@@ -45,6 +45,50 @@ def _search_text(
     return _ctx_expand(merged)
 
 
+def _fuse_retriever_results(results):
+    nodes = tuple(r for r in results if r)
+    return RRFFusion(top_k=50)(nodes)
+
+
+def _search_kb_impl(
+    payload: dict,
+    *,
+    retrievers: List[Retriever],
+    reranker: Optional[Reranker],
+    image_retriever: Optional[Retriever],
+    retriever_topk: int = 20,
+    rerank_topk: int = 20,
+    k_max: int = 10,
+    image_topk: int = 3,
+    concurrent_retrievers: bool = True,
+):
+    query = payload['query']
+    expanded = get_vocab_manager(payload['user_id'])(query)
+
+    def _kb_retrieve(expanded: str):
+        filters = payload.get('filters') or {}
+        if concurrent_retrievers:
+            results = parallel(*retrievers)(
+                expanded, filters=filters, topk=retriever_topk
+            )
+        else:
+            # Plugin SubAgent calls already run inside a LazyLLM tool worker; avoid
+            # nested Parallel there while keeping the normal ChatAgent path parallel.
+            results = [
+                retriever(expanded, filters=filters, topk=retriever_topk)
+                for retriever in retrievers
+            ]
+        return _fuse_retriever_results(results)
+
+    text_nodes = _search_text(expanded, _kb_retrieve, reranker, rerank_topk, k_max)
+
+    if image_retriever is None:
+        return text_nodes
+
+    image_nodes = list(image_retriever(query, filters=payload.get('filters') or {}, topk=image_topk) or [])
+    return list(text_nodes or []) + image_nodes[:image_topk]
+
+
 def search_kb(
     payload: dict,
     *,
@@ -56,23 +100,29 @@ def search_kb(
     k_max: int = 10,
     image_topk: int = 3,
 ):
-    query = payload['query']
-    expanded = get_vocab_manager(payload['user_id'])(query)
+    return _search_kb_impl(
+        payload, retrievers=retrievers, reranker=reranker, image_retriever=image_retriever,
+        retriever_topk=retriever_topk, rerank_topk=rerank_topk, k_max=k_max,
+        image_topk=image_topk, concurrent_retrievers=True,
+    )
 
-    def _kb_retrieve(expanded: str):
-        results = parallel(*retrievers)(
-            expanded, filters=payload.get('filters') or {}, topk=retriever_topk
-        )
-        nodes = tuple(r for r in results if r)
-        return RRFFusion(top_k=50)(nodes)
 
-    text_nodes = _search_text(expanded, _kb_retrieve, reranker, rerank_topk, k_max)
-
-    if image_retriever is None:
-        return text_nodes
-
-    image_nodes = list(image_retriever(query, filters=payload.get('filters') or {}, topk=image_topk) or [])
-    return list(text_nodes or []) + image_nodes[:image_topk]
+def search_kb_sequential(
+    payload: dict,
+    *,
+    retrievers: List[Retriever],
+    reranker: Optional[Reranker],
+    image_retriever: Optional[Retriever],
+    retriever_topk: int = 20,
+    rerank_topk: int = 20,
+    k_max: int = 10,
+    image_topk: int = 3,
+):
+    return _search_kb_impl(
+        payload, retrievers=retrievers, reranker=reranker, image_retriever=image_retriever,
+        retriever_topk=retriever_topk, rerank_topk=rerank_topk, k_max=k_max,
+        image_topk=image_topk, concurrent_retrievers=False,
+    )
 
 
 def search_temp_files(

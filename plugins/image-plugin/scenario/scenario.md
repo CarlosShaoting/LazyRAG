@@ -27,15 +27,15 @@
 用户: [已选择知识库] 根据知识库中的风格，画一张产品宣传图
 
 1. trigger_image_plugin / advance_step(analyze_subject)
-   — 系统在启动 analyze 前自动 kb_search，结果写入 runtime_instruction
-   — SubAgent 将 KB 文本结论写入 subject_analysis；可选保存 material_images
+   — SubAgent 调用 kb_search（顺序检索，避免 worker 内 parallel）
+   — 将 KB 文本结论写入 subject_analysis；可选保存 material_images
 2. advance_step(optimize_prompt) — 融合 KB 风格写英文 prompt
 3. advance_step(generate_image) — image_generator
 4. advance_step("__end__") — 纯生成完成
 ```
 
-前提：前端会话需传入 `filters.kb_id`（与 Chat 选知识库一致）；**SubAgent 不再调用 kb_search**。
-若 analyze 之后才选择知识库，需 **重跑 analyze_subject**（会重新预取 KB）。
+前提：前端会话需传入 `filters.kb_id`（与 Chat 选知识库一致）。
+若 analyze 之后才选择知识库，需 **重跑 analyze_subject**。
 
 ### FIND_AND_EDIT 示例
 

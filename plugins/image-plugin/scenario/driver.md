@@ -12,7 +12,7 @@ describing what was produced and whether it meets the criteria below.
 - For FIND_AND_EDIT or EDIT_UPLOAD, missing raw source image or edit prompt is expected; next step is `collect_materials`.
 - Not acceptable when `image_output` or `prompt_used` were saved here (they belong in later steps).
 - Not acceptable when the artifact is missing, too short, or WORKFLOW is unclear.
-- Not acceptable when a knowledge base was prefetched but subject_analysis omits KB style findings.
+- Not acceptable when filters.kb_id was set but subject_analysis omits KB style findings from kb_search.
 - After 2+ consecutive failures for this step, state that the step should not be retried again.
 
 ### collect_materials

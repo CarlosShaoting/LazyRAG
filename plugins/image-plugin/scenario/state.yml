@@ -75,7 +75,7 @@ steps:
            WORKFLOW: <one of CREATE_NEW | KB_STYLE | FIND_AND_EDIT | EDIT_UPLOAD>
            - CREATE_NEW — brand-new image from scratch (text-to-image).
            - KB_STYLE — user wants style/content from a selected knowledge base as reference
-             (e.g. "根据知识库中的风格画图"). KB findings are prefetched into runtime_instruction.
+             (e.g. "根据知识库中的风格画图"). Call kb_search in this step when filters.kb_id is set.
            - FIND_AND_EDIT — user asks to find/search an existing photo online, then edit it.
              Use this even when older session attachments exist, unless the user clearly
              refers to a newly uploaded image for this request.
@@ -86,15 +86,14 @@ steps:
            SKIP_STEPS: <comma-separated step ids to skip, or "none">
       6. If the runtime instruction mentions a selected knowledge base, filters.kb_id is set,
          or the user explicitly references 知识库 / knowledge base style, prefer WORKFLOW: KB_STYLE.
-      7. Knowledge-base retrieval is NOT available in this step — it runs before this step
-         when filters.kb_id is set. Read the "## Knowledge base prefetch" block inside
-         {{runtime_instruction}} (if present):
+      7. When filters.kb_id is set (or WORKFLOW is KB_STYLE), read the
+         "## Knowledge base prefetch (authoritative)" block in the objective
+         (KB was retrieved before this step; do NOT call kb_search):
            a. Extract visual style, color palette, composition, and subject cues from text hits.
-           b. Include those findings inside subject_analysis when WORKFLOW is KB_STYLE.
-           c. Image references in the prefetch block are OPTIONAL. Only when clearly useful,
-              call validate_image_ref(url=<local_path or url from prefetch>) then
+           b. Include those findings inside subject_analysis.
+           c. Image hits are OPTIONAL. Only when clearly useful,
+              call validate_image_ref(url=<local_path or url from hit>) then
               save_artifact(key='material_images', content_type='image', value=<url from ok result>).
-           d. Never call kb_search in this step.
       8. Save the structured analysis:
            save_artifact(key='subject_analysis', content_type='text', value=<analysis text>)
       9. If WORKFLOW is KB_STYLE, FIND_AND_EDIT, EDIT_UPLOAD, or CREATE_NEW:
@@ -109,6 +108,7 @@ steps:
 
       Keep the analysis concise (100–200 words). Stop after saving required artifacts only.
     tools:
+      - kb
       - multimodal
       - validate_image_ref
     outputs:
@@ -120,8 +120,9 @@ steps:
         required: false
     acceptance_criteria: |
       subject_analysis artifact must be saved and contain at least 50 words with WORKFLOW and NEXT_STEPS.
-      For KB_STYLE with a knowledge base available: KB text findings must be included in
-      subject_analysis; material_images is optional and should only be saved when useful.
+      For KB_STYLE with a knowledge base available: KB text findings from the prefetch block
+      must be included in subject_analysis; material_images is optional and should only be saved
+      when useful.
       Do NOT save image_output or prompt_used in this step.
 
   collect_materials:
@@ -139,7 +140,7 @@ steps:
          FIND_AND_EDIT or EDIT_UPLOAD. If WORKFLOW is KB_STYLE or CREATE_NEW, stop and say
          this step should be skipped; do not search the web and do not save placeholders.
       - Read WORKFLOW from subject_analysis.
-      - Do NOT call kb_search — knowledge base retrieval runs before analyze_subject.
+      - Do NOT call kb_search here — KB retrieval belongs in analyze_subject.
       - For FIND_AND_EDIT, you MUST call web_search at least once for the requested source
         subject before calling image_search_tool.
       - If web_search is unavailable, fall back to wikipedia, then continue.

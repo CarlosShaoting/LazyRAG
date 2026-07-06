@@ -15,12 +15,10 @@ when_to_use: >
   request — including "画一张图", "帮我生成图片", "找一张XX的照片然后加上YY",
   "在这张图上加水印", "根据知识库中的风格画图", or "draw a cat".
   When the user has selected a knowledge base, use KB_STYLE workflow;
-  knowledge-base retrieval is prefetched automatically when the plugin starts.
+  the analyze_subject step calls kb_search inside the plugin SubAgent.
   Do NOT trigger if image generation is merely one sub-step within a larger
   multi-step task (e.g. "write a report and add an image"). Do NOT trigger
   for text content, quizzes, reports, summaries, or any non-visual task.
-
-kb_prefetch: true
 
 tool_scripts:
   - path: scripts/tools.py

@@ -19,6 +19,7 @@ remember to list them explicitly.
 """
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -87,6 +88,20 @@ def _agentic_config() -> Dict[str, Any]:
         return lazyllm.globals['agentic_config'] or {}
     except Exception:
         return {}
+
+
+def _export_parent_agentic_config(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the JSON-safe request context a plugin SubAgent should inherit."""
+    exported: Dict[str, Any] = {}
+    for key, value in (config or {}).items():
+        if key == 'citation_state':
+            continue
+        try:
+            json.dumps(value)
+        except (TypeError, ValueError):
+            continue
+        exported[key] = value
+    return exported
 
 
 def _render_step_objective(
@@ -237,6 +252,8 @@ def _trigger_plugin_step(
     input_keys = [i['slot'] for i in inputs]
 
     # Framework tools are always present regardless of plugin declaration.
+    # Domain tools (e.g. kb) come only from state.yml — Go does not forward this
+    # list to the SubAgent runner; runner re-resolves tools from plugin_loader.
     declared_tools: List[str] = step_config.get('tools', [])
     merged_tools = _merge_tools(declared_tools)
 
@@ -247,6 +264,9 @@ def _trigger_plugin_step(
         'user_input': user_input,
         'is_cold_start': is_cold_start,
     }
+    parent_agentic_config = _export_parent_agentic_config(cfg)
+    if parent_agentic_config:
+        params['parent_agentic_config'] = parent_agentic_config
     # Map Python-side runtime_instruction to Go-side retry_hint field name.
     if runtime_instruction:
         params['retry_hint'] = runtime_instruction
@@ -258,7 +278,7 @@ def _trigger_plugin_step(
     if history_files_per_turn:
         params['history_files_per_turn'] = history_files_per_turn
 
-    # Propagate KB filters and user_id for plugin context (KB search runs in ChatAgent path).
+    # Propagate KB filters and user_id so plugin SubAgents can call kb_search.
     filters: dict = dict(cfg.get('filters') or {})
     if filters:
         params['filters'] = filters
@@ -273,16 +293,6 @@ def _trigger_plugin_step(
     # to save_artifact based on the user's stated intent.
     focused_tab = cfg.get('focused_tab')
     enriched_instruction = runtime_instruction or ''
-    from lazymind.chat.plugin.kb_prefetch import inject_plugin_kb_prefetch
-    enriched_instruction = inject_plugin_kb_prefetch(
-        plugin_id=plugin_id,
-        session_id=session_id,
-        query=user_input,
-        filters=filters,
-        user_id=user_id,
-        runtime_instruction=enriched_instruction,
-        refresh=is_cold_start,
-    )
     if focused_tab:
         sep = ' ' if enriched_instruction else ''
         enriched_instruction = enriched_instruction + sep + f'User is currently viewing tab: {focused_tab}.'

@@ -143,10 +143,6 @@ class PluginSpec:
         # Validate: auto-capable steps need driver.md
         self._validate()
 
-    @property
-    def kb_prefetch_enabled(self) -> bool:
-        return bool(self.yaml.get('kb_prefetch'))
-
     def _load_script_tools(self) -> Dict[str, Callable]:
         """Dynamically import functions declared in plugin.yaml tool_scripts.
 
@@ -305,11 +301,6 @@ def load_all() -> None:
 
 def get_plugin(plugin_id: str) -> Optional[PluginSpec]:
     return _registry.get(plugin_id)
-
-
-def kb_prefetch_enabled(plugin_id: str) -> bool:
-    spec = get_plugin(plugin_id)
-    return bool(spec and spec.kb_prefetch_enabled)
 
 
 def list_plugins() -> List[Dict[str, Any]]:
