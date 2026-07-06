@@ -303,7 +303,7 @@ class KBToolGroup:
         return (agentic_config.get('filters') or {}).get('kb_id')
 
     def _ensure_search_runtime(self) -> tuple[List[Retriever], Optional[Reranker], Retriever]:
-        """Prewarm entry used by SubAgent runner before the agent thread pool starts."""
+        """Initialize retriever/reranker singletons on first KB tool use."""
         return _ensure_kb_search_runtime()
 
     def kb_search(

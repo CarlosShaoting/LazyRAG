@@ -86,9 +86,8 @@ steps:
            SKIP_STEPS: <comma-separated step ids to skip, or "none">
       6. If the runtime instruction mentions a selected knowledge base, filters.kb_id is set,
          or the user explicitly references 知识库 / knowledge base style, prefer WORKFLOW: KB_STYLE.
-      7. When filters.kb_id is set (or WORKFLOW is KB_STYLE), read the
-         "## Knowledge base prefetch (authoritative)" block in the objective
-         (KB was retrieved before this step; do NOT call kb_search):
+      7. When filters.kb_id is set (or WORKFLOW is KB_STYLE), call kb_search with the
+         user's core subject/style query, then:
            a. Extract visual style, color palette, composition, and subject cues from
               **text hits only** — never call vision_extractor/multimodal on KB images.
            b. Include those text findings inside subject_analysis.
