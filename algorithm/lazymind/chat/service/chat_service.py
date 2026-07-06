@@ -92,15 +92,6 @@ def _normalize_kb_id_filter(raw_kb_id: Any) -> str | list[str] | None:
     return None
 
 
-def check_sensitive_content(
-    query: str,
-) -> Optional[str]:
-    if not sensitive_filter.loaded:
-        return None
-    has_sensitive, sensitive_word = sensitive_filter.check(query)
-    return sensitive_word if has_sensitive else None
-
-
 def _should_skip_sensitive_filter(
     query: str,
     plugin_context: Optional[Dict[str, Any]],
@@ -118,9 +109,16 @@ def _should_skip_sensitive_filter(
     return text.startswith('Step ') and ' completed.' in text
 
 
-def _is_plugin_internal_step_message(query: str, plugin_context: Optional[Dict[str, Any]]) -> bool:
-    """Backward-compatible alias for plugin synthetic-turn detection."""
-    return _should_skip_sensitive_filter(query, plugin_context)
+def check_sensitive_content(
+    query: str,
+    plugin_context: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    if _should_skip_sensitive_filter(query, plugin_context):
+        return None
+    if not sensitive_filter.loaded:
+        return None
+    has_sensitive, sensitive_word = sensitive_filter.check(query)
+    return sensitive_word if has_sensitive else None
 
 
 def _build_mcp_tools(mcp_config: List[Dict[str, Any]]) -> list:
@@ -359,7 +357,7 @@ async def handle_chat(request: ChatRequest) -> Union[Dict[str, Any], StreamingRe
     priority = runtime.priority or LAZYMIND_LLM_PRIORITY
     query, agent_query = _normalize_cite_message_query_for_agent(message.query)
     skip_sensitive_filter = _should_skip_sensitive_filter(query, plugin_context)
-    sensitive_word = None if skip_sensitive_filter else check_sensitive_content(query)
+    sensitive_word = check_sensitive_content(query, plugin_context)
     if sensitive_word:
         cost = round(time.time() - start_time, 3)
         LOG.warning(

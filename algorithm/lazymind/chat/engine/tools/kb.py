@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Literal, Optional, Set
+from typing import Any, Dict, List, Literal, Optional
 
 import lazyllm
 from lazyllm import AutoModel, LOG
@@ -75,38 +75,14 @@ def _build_reranker() -> Optional[Reranker]:
     )
 
 
-# Fixed node groups activated by lazymind.parsing.service.build_document.
-# Seeded before Retriever init so validation does not RPC under a SubAgent session
-# (that path can return an empty active_node_groups map).
-_KNOWN_ACTIVE_GROUPS: Dict[str, Set[str]] = {
-    'lazyllm_root': set(),
-    'image': {EMBED_IMAGE},
-    'block': {EMBED_MAIN},
-    'line': {EMBED_MAIN},
-    'code': {EMBED_MAIN},
-    'doc-summary': {EMBED_MAIN},
-}
-
-
 def _ensure_kb_search_runtime() -> tuple[List[Retriever], Optional[Reranker], Retriever]:
-    """Build KB Retrievers on the current thread (call from SubAgent runner prewarm).
-
-    Retriever.__init__ reads DOCUMENT.active_node_groups. Under a SubAgent session
-    that RPC can return {}. Seed known groups first, then construct Retrievers on
-    the runner thread so the agent worker never hits an uninitialized runtime.
-    """
     global _kb_retrievers, _kb_reranker, _kb_image_retriever
     if _kb_retrievers is not None and _kb_image_retriever is not None:
         return _kb_retrievers, _kb_reranker, _kb_image_retriever
 
-    # Populate cached_property so validation skips the session-sensitive RPC.
-    DOCUMENT.__dict__['active_node_groups'] = {
-        k: set(v) for k, v in _KNOWN_ACTIVE_GROUPS.items()
-    }
     _kb_retrievers = [Retriever(DOCUMENT, **cfg) for cfg in _KB_RETRIEVER_CONFIGS]
     _kb_reranker = _build_reranker()
     _kb_image_retriever = Retriever(DOCUMENT, **_KB_IMAGE_RETRIEVER_CONFIG)
-    LOG.info('[KB_RUNTIME] search runtime ready groups=%s', DOCUMENT.active_node_groups)
     return _kb_retrievers, _kb_reranker, _kb_image_retriever
 
 
@@ -301,10 +277,6 @@ class KBToolGroup:
     def __key_source__(self) -> Any:
         agentic_config = lazyllm.globals.get('agentic_config') or {}
         return (agentic_config.get('filters') or {}).get('kb_id')
-
-    def _ensure_search_runtime(self) -> tuple[List[Retriever], Optional[Reranker], Retriever]:
-        """Initialize retriever/reranker singletons on first KB tool use."""
-        return _ensure_kb_search_runtime()
 
     def kb_search(
         self,
@@ -541,8 +513,7 @@ class KBToolGroup:
         if not keyword:
             raise ValueError('keyword is required')
         if not (target and str(target).strip()):
-            LOG.warning('[kb_keyword_search] no target; falling back to kb_search')
-            return self.kb_search(query=keyword)
+            raise ValueError('target is required')
         LOG.info(f'[kb_keyword_search] store={_cfg["segment_store_type"]!r} keyword={keyword!r} docid={docid!r} '
                  f'file_name={file_name!r} group={group!r} phrase={phrase} sort_by={sort_by!r} size={size}')
 
