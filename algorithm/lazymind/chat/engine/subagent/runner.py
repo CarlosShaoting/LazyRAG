@@ -477,9 +477,8 @@ async def run_subagent_stream(
             workspace_path=str(task.get('workspace_path') or ''),
             input_slots=input_keys,
             output_slots=output_keys,
-            db=db,
-            emit=_emit,
         )
+        ctx.bind_runtime(db=db, emit=_emit)
         ctx.ensure_workspace()
 
         # For plugin_step tasks: remove {{slot}} placeholders from the objective

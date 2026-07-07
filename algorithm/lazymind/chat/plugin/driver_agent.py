@@ -118,9 +118,8 @@ def _init_driver_artifact_context(
             workspace_path=tempfile.mkdtemp(prefix='driver_'),
             input_slots=[],
             output_slots=[],
-            db=db,
-            emit=lambda _ev: None,
         )
+        ctx.bind_runtime(db=db, emit=lambda _ev: None)
         set_context(ctx)
         return db
     except Exception as exc:
