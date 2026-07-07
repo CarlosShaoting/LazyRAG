@@ -33,33 +33,16 @@ class SubAgentContext:
     workspace_path: str
     input_slots: List[str]
     output_slots: List[str]
-    _db: Optional[SubAgentDB] = field(default=None, repr=False, compare=False)
-    _emit_fn: Optional[Callable[[Dict[str, Any]], None]] = field(default=None, repr=False, compare=False)
+    db: SubAgentDB
+    emit: Callable[[Dict[str, Any]], None]
     # artifact seq counters and local cache (Go persists to DB; this serves intra-task reads).
     _artifact_counts: Dict[str, int] = field(default_factory=dict)
     _local_artifacts: List[Dict[str, Any]] = field(default_factory=list)
 
-    @property
-    def db(self) -> SubAgentDB:
-        db = self._db
-        if db is None:
-            raise RuntimeError(f'SubAgent DB is not bound for task_id={self.task_id}.')
-        return db
-
-    def emit(self, event: Dict[str, Any]) -> None:
-        emit_fn = self._emit_fn
-        if emit_fn is None:
-            return
-        emit_fn(event)
-
-    def bind_runtime(self, db: SubAgentDB, emit: Callable[[Dict[str, Any]], None]) -> None:
-        self._db = db
-        self._emit_fn = emit
-
     def __getstate__(self) -> Dict[str, Any]:
         state = dict(self.__dict__)
-        state['_db'] = None
-        state['_emit_fn'] = None
+        state['db'] = None
+        state['emit'] = None
         return state
 
     def next_artifact_seq(self, key: str) -> int:
