@@ -94,10 +94,7 @@ def _normalize_kb_id_filter(raw_kb_id: Any) -> str | list[str] | None:
 
 def check_sensitive_content(
     query: str,
-    enable_check: bool = True,
 ) -> Optional[str]:
-    if not enable_check:
-        return None
     if not sensitive_filter.loaded:
         return None
     has_sensitive, sensitive_word = sensitive_filter.check(query)
@@ -370,10 +367,7 @@ async def handle_chat(request: ChatRequest) -> Union[Dict[str, Any], StreamingRe
         isinstance(plugin_context, dict)
         and plugin_context.get('synthetic_source') == 'driver'
     )
-    sensitive_word = check_sensitive_content(
-        query,
-        enable_check=not is_driver_turn,
-    )
+    sensitive_word = None if is_driver_turn else check_sensitive_content(query)
     if sensitive_word:
         cost = round(time.time() - start_time, 3)
         LOG.warning(
