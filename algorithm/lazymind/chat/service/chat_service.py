@@ -92,28 +92,11 @@ def _normalize_kb_id_filter(raw_kb_id: Any) -> str | list[str] | None:
     return None
 
 
-def _should_skip_sensitive_filter(
-    query: str,
-    plugin_context: Optional[Dict[str, Any]],
-) -> bool:
-    """Skip sensitive-word check for trusted plugin synthetic turns."""
-    if not isinstance(plugin_context, dict):
-        return False
-    if not plugin_context.get('plugin_id') or not plugin_context.get('session_id'):
-        return False
-    if plugin_context.get('synthetic_source') == 'driver':
-        return True
-    text = str(query or '').strip()
-    if not text:
-        return False
-    return text.startswith('Step ') and ' completed.' in text
-
-
 def check_sensitive_content(
     query: str,
-    plugin_context: Optional[Dict[str, Any]] = None,
+    enable_check: bool = True,
 ) -> Optional[str]:
-    if _should_skip_sensitive_filter(query, plugin_context):
+    if not enable_check:
         return None
     if not sensitive_filter.loaded:
         return None
@@ -383,8 +366,14 @@ async def handle_chat(request: ChatRequest) -> Union[Dict[str, Any], StreamingRe
     plugin_context = plugin.plugin_context or {}
     priority = runtime.priority or LAZYMIND_LLM_PRIORITY
     query, agent_query = _normalize_cite_message_query_for_agent(message.query)
-    skip_sensitive_filter = _should_skip_sensitive_filter(query, plugin_context)
-    sensitive_word = check_sensitive_content(query, plugin_context)
+    is_driver_turn = (
+        isinstance(plugin_context, dict)
+        and plugin_context.get('synthetic_source') == 'driver'
+    )
+    sensitive_word = check_sensitive_content(
+        query,
+        enable_check=not is_driver_turn,
+    )
     if sensitive_word:
         cost = round(time.time() - start_time, 3)
         LOG.warning(
@@ -401,13 +390,6 @@ async def handle_chat(request: ChatRequest) -> Union[Dict[str, Any], StreamingRe
             },
             cost,
         ), final_data={'tool_call_turns': 0})
-    if skip_sensitive_filter:
-        reason = plugin_context.get('synthetic_source') or 'plugin_internal_step'
-        LOG.info(
-            f'[ChatServer] [SENSITIVE_FILTER_SKIPPED] [reason={reason}] '
-            f'[session_id={conversation.session_id}] [current_step={plugin_context.get("current_step")}]'
-        )
-
     filters = dict(retrieval.filters or {})
     files_map: Dict[str, List[str]] = message.files if isinstance(message.files, dict) else {}
     flat_files: List[str] = []
