@@ -148,7 +148,7 @@ func (w *DefaultParseWorker) runClaimed(ctx context.Context, task store.ParseTas
 		if isSupersedeError(err) {
 			return w.supersede(ctx, task, err.Error())
 		}
-		return w.handleFailureWithPhase(ctx, task, err, "download")
+		return w.handleNonRetryableFailureWithPhase(ctx, task, err, "download")
 	}
 	if exported.CleanupToken != "" {
 		defer func() {
@@ -209,13 +209,16 @@ func (w *DefaultParseWorker) validateTaskFreshness(exec executionContext) error 
 		return fmt.Errorf("state generation changed")
 	}
 	if exec.task.TaskAction == taskpkg.TaskActionDelete {
-		if exec.state.SourceState != statepkg.SourceStateDeleted || exec.state.PendingAction != statepkg.PendingActionDelete {
+		if !deleteTaskStillPending(exec.state) {
 			return fmt.Errorf("delete task is obsolete")
 		}
 		if exec.state.ActiveTaskID != "" && exec.state.ActiveTaskID != exec.task.TaskID {
 			return fmt.Errorf("task was replaced")
 		}
 		return nil
+	}
+	if !parseTaskStillPending(exec.state, exec.task.TaskAction) {
+		return fmt.Errorf("parse task is obsolete")
 	}
 	if exec.state.SourceVersion != exec.task.SourceVersion {
 		return fmt.Errorf("source version changed")
@@ -224,6 +227,27 @@ func (w *DefaultParseWorker) validateTaskFreshness(exec executionContext) error 
 		return fmt.Errorf("task was replaced")
 	}
 	return nil
+}
+
+func deleteTaskStillPending(state store.DocumentState) bool {
+	if state.PendingAction != statepkg.PendingActionDelete {
+		return false
+	}
+	return state.SourceState == statepkg.SourceStateDeleted || state.SourceState == statepkg.SourceStateOutOfScope
+}
+
+func parseTaskStillPending(state store.DocumentState, taskAction string) bool {
+	if state.PendingAction != "" {
+		return state.PendingAction == taskAction
+	}
+	switch taskAction {
+	case taskpkg.TaskActionCreate:
+		return state.SourceState == statepkg.SourceStateNew
+	case taskpkg.TaskActionReparse:
+		return state.SourceState == statepkg.SourceStateModified
+	default:
+		return false
+	}
 }
 
 func (w *DefaultParseWorker) exportObject(ctx context.Context, exec executionContext) (connector.ExportedObject, error) {
@@ -381,6 +405,26 @@ func (w *DefaultParseWorker) handleFailureWithPhase(ctx context.Context, task st
 	}
 	return w.reducer.ApplyTaskFailure(ctx, statepkg.TaskFailureInput{
 		Task:      failed,
+		ErrorCode: reason,
+		Message:   err.Error(),
+		Phase:     phase,
+		FailedAt:  now,
+	})
+}
+
+func (w *DefaultParseWorker) handleNonRetryableFailureWithPhase(ctx context.Context, task store.ParseTask, err error, phase string) error {
+	reason := errorCode(err)
+	now := w.clock().UTC()
+	task.Status = TaskStatusFailed
+	task.LastError = store.JSON{"reason": reason}
+	task.LeaseOwner = ""
+	task.LeaseUntil = nil
+	task.UpdatedAt = now
+	if err := w.store.SaveParseTask(ctx, task); err != nil {
+		return err
+	}
+	return w.reducer.ApplyTaskFailure(ctx, statepkg.TaskFailureInput{
+		Task:      task,
 		ErrorCode: reason,
 		Message:   err.Error(),
 		Phase:     phase,

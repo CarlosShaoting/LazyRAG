@@ -15,6 +15,7 @@ const stateBackendEnv = "LAZYMIND_STATE_BACKEND"
 type Config struct {
 	Address                           string
 	Port                              int
+	DBDriver                          string
 	DBDSN                             string
 	DBMigrationFile                   string
 	CoreBaseURL                       string
@@ -34,6 +35,7 @@ type Config struct {
 	TargetSearchCachePrewarmStagger   time.Duration
 	WorkerLeaseTTL                    time.Duration
 	WorkerMaxBackoff                  time.Duration
+	CrawlListRequestInterval          time.Duration
 	ParseDeadLetterAfter              int64
 	GenerateTasksMaxObjectsPerRequest int
 	ParseWorkerGlobalConcurrency      int
@@ -56,6 +58,7 @@ func defaultConfig() Config {
 	return Config{
 		Address:                           "127.0.0.1",
 		Port:                              18080,
+		DBDriver:                          "postgres",
 		DefaultDatasetAlgoID:              "general_algo",
 		DefaultDatasetAlgoName:            "General",
 		LocalFSDefaultAgentID:             "file-watcher-local-001",
@@ -65,6 +68,7 @@ func defaultConfig() Config {
 		TargetSearchCachePrewarmStagger:   10 * time.Second,
 		WorkerLeaseTTL:                    60 * time.Second,
 		WorkerMaxBackoff:                  10 * time.Minute,
+		CrawlListRequestInterval:          500 * time.Millisecond,
 		ParseDeadLetterAfter:              3,
 		GenerateTasksMaxObjectsPerRequest: 20,
 		ParseWorkerGlobalConcurrency:      20,
@@ -89,6 +93,9 @@ func (c *Config) applyEnv() {
 	}
 	if dsn := strings.TrimSpace(os.Getenv("LAZYMIND_SCAN_CONTROL_PLANE_DB_DSN")); dsn != "" {
 		c.DBDSN = dsn
+	}
+	if driver := strings.TrimSpace(os.Getenv("LAZYMIND_SCAN_CONTROL_PLANE_DB_DRIVER")); driver != "" {
+		c.DBDriver = driver
 	}
 	if migrationFile := strings.TrimSpace(os.Getenv("LAZYMIND_SCAN_CONTROL_PLANE_DB_MIGRATION_FILE")); migrationFile != "" {
 		c.DBMigrationFile = migrationFile
@@ -136,6 +143,7 @@ func (c *Config) applyEnv() {
 	c.TargetSearchCachePrewarmStagger = durationEnv("SOURCEENGINE_TARGET_SEARCH_CACHE_PREWARM_STAGGER", c.TargetSearchCachePrewarmStagger)
 	c.WorkerLeaseTTL = durationEnv("SOURCEENGINE_WORKER_LEASE_TTL", c.WorkerLeaseTTL)
 	c.WorkerMaxBackoff = durationEnv("SOURCEENGINE_WORKER_MAX_BACKOFF", c.WorkerMaxBackoff)
+	c.CrawlListRequestInterval = durationEnv("SOURCEENGINE_CRAWL_LIST_REQUEST_INTERVAL", c.CrawlListRequestInterval)
 	c.ParseDeadLetterAfter = int64Env("SOURCEENGINE_PARSE_DEAD_LETTER_AFTER", c.ParseDeadLetterAfter)
 	c.GenerateTasksMaxObjectsPerRequest = intEnv("SOURCEENGINE_GENERATE_TASKS_MAX_OBJECTS_PER_REQUEST", c.GenerateTasksMaxObjectsPerRequest)
 	c.ParseWorkerGlobalConcurrency = intEnv("SOURCEENGINE_PARSE_WORKER_GLOBAL_CONCURRENCY", c.ParseWorkerGlobalConcurrency)
@@ -154,6 +162,11 @@ func (c Config) Validate() error {
 	}
 	if strings.TrimSpace(c.DBDSN) == "" {
 		return fmt.Errorf("db dsn is required")
+	}
+	switch strings.ToLower(strings.TrimSpace(c.DBDriver)) {
+	case "postgres", "sqlite":
+	default:
+		return fmt.Errorf("db driver must be postgres or sqlite")
 	}
 	if strings.TrimSpace(c.CoreBaseURL) == "" {
 		return fmt.Errorf("core base url is required")
@@ -199,6 +212,9 @@ func (c Config) Validate() error {
 	}
 	if c.WorkerMaxBackoff <= 0 {
 		return fmt.Errorf("worker max backoff must be positive")
+	}
+	if c.CrawlListRequestInterval < 0 {
+		return fmt.Errorf("crawl list request interval must be non-negative")
 	}
 	if c.ParseDeadLetterAfter <= 0 {
 		return fmt.Errorf("parse dead letter after must be positive")

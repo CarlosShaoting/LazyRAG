@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -19,6 +20,10 @@ type ComposeServiceStatus struct {
 	State    string
 	Health   string
 	ExitCode int
+}
+
+type ComposeStartupPlan struct {
+	Services []string
 }
 
 type composeReadinessState int
@@ -52,10 +57,7 @@ func derivedComposeProfileArgs() []string {
 	if enabledFromEnv("LAZYMIND_DEPLOY_MINERU") {
 		profiles = append(profiles, "mineru")
 	}
-	if isBuiltInServiceURI("LAZYMIND_MILVUS_URI", "http://milvus:19530") {
-		profiles = append(profiles, "milvus")
-	}
-	if isBuiltInServiceURI("LAZYMIND_OPENSEARCH_URI", "https://opensearch:9200") {
+	if localSegmentStoreUsesBuiltInOpenSearch() {
 		profiles = append(profiles, "opensearch")
 	}
 	if enabledFromEnv("LAZYMIND_ENABLE_MILVUS_DASHBOARD") && containsProfile(profiles, "milvus") {
@@ -87,6 +89,15 @@ func isBuiltInServiceURI(envName, fallback string) bool {
 		v = fallback
 	}
 	return v == fallback || v == fallback+"/"
+}
+
+func localSegmentStoreType() string {
+	return strings.TrimSpace(envText("LAZYMIND_SEGMENT_STORE_TYPE", "SQLiteStore"))
+}
+
+func localSegmentStoreUsesBuiltInOpenSearch() bool {
+	return strings.EqualFold(localSegmentStoreType(), "opensearch") &&
+		isBuiltInServiceURI("LAZYMIND_SEGMENT_STORE_URI_OR_PATH", "https://opensearch:9200")
 }
 
 func containsProfile(profiles []string, want string) bool {
@@ -144,59 +155,151 @@ func (m *ComposeManager) ComposeHasContainers(ctx context.Context, repoRoot stri
 	return len(statuses) > 0, nil
 }
 
-func (m *ComposeManager) ComposeUp(ctx context.Context, repoRoot string, profile string) error {
+func (m *ComposeManager) ComposeStartupPlan(ctx context.Context, repoRoot string) (ComposeStartupPlan, error) {
 	services, err := m.ComposeServices(ctx, repoRoot)
+	if err != nil {
+		return ComposeStartupPlan{}, err
+	}
+	disabled, err := parseRuntimeOverlay(filepath.Join(repoRoot, localComposeOverrideName))
+	disabledContainerTypes := []string{}
+	if err == nil {
+		disabledContainerTypes = disabled.DisabledContainerTypes
+	} else if !os.IsNotExist(err) {
+		return ComposeStartupPlan{}, err
+	}
+
+	remaining, err := filterRemainingServices(services, disabledContainerTypes)
+	if err != nil {
+		return ComposeStartupPlan{}, err
+	}
+	return ComposeStartupPlan{Services: remaining}, nil
+}
+
+func (m *ComposeManager) ComposeUp(ctx context.Context, cfg RuntimeConfig, paths RuntimePaths) error {
+	repoRoot := paths.RepoRoot
+	plan, err := m.ComposeStartupPlan(ctx, repoRoot)
 	if err != nil {
 		return err
 	}
-	disabled, err := parseRuntimeOverlay(filepath.Join(repoRoot, localComposeOverrideName))
-	if err != nil && !os.IsNotExist(err) {
+	if len(plan.Services) == 0 {
+		return nil
+	}
+	if err := m.BuildEnabledServices(ctx, repoRoot, plan.Services); err != nil {
 		return err
 	}
 
-	remaining, err := filterRemainingServices(services, disabled.DisabledContainerTypes)
-	if err != nil {
-		return err
-	}
-	if len(remaining) == 0 {
-		_ = profile
-	}
-	args := append(m.composeArgs(repoRoot), "up", "--build")
-	for _, svc := range disabled.DisabledContainerTypes {
-		if svc == "" {
-			continue
-		}
-		args = append(args, "--scale", svc+"=0")
-	}
-	args = append(args, remaining...)
+	args := append(m.composeArgs(repoRoot), "up", "--no-build", "--detach", "--no-deps")
+	args = append(args, plan.Services...)
+	env := localComposeEnv(cfg)
 	if streamer, ok := m.runner.(CommandStreamer); ok {
-		err := streamer.Stream(ctx, Command{Name: "docker", Args: args, Dir: repoRoot}, os.Stdout, os.Stderr)
+		err := streamer.Stream(ctx, Command{Name: "docker", Args: args, Dir: repoRoot, Env: env}, os.Stdout, os.Stderr)
 		if err != nil {
 			return fmt.Errorf("docker compose up failed: %w", err)
 		}
 		return nil
 	}
-	res, err := m.runner.Run(ctx, Command{Name: "docker", Args: args, Dir: repoRoot})
+	res, err := m.runner.Run(ctx, Command{Name: "docker", Args: args, Dir: repoRoot, Env: env})
 	if err != nil {
 		return fmt.Errorf("docker compose up failed: %w (%s)", err, strings.TrimSpace(res.Stderr))
 	}
 	return nil
 }
 
-func filterRemainingServices(allServices []string, disabled []string) ([]string, error) {
-	available := make(map[string]struct{}, len(allServices))
-	for _, svc := range allServices {
-		available[svc] = struct{}{}
+type composeConfigJSON struct {
+	Services map[string]composeConfigService `json:"services"`
+}
+
+type composeConfigService struct {
+	Build *composeBuildConfig `json:"build"`
+}
+
+type composeBuildConfig struct{}
+
+func (m *ComposeManager) BuildEnabledServices(ctx context.Context, repoRoot string, services []string) error {
+	if len(services) == 0 {
+		return nil
 	}
-	disabledSet := map[string]struct{}{}
-	for _, d := range disabled {
-		if d == "" {
+	config, err := m.ComposeConfigJSON(ctx, repoRoot)
+	if err != nil {
+		return err
+	}
+
+	seen := map[string]struct{}{}
+	buildServices := []string{}
+	for _, serviceName := range services {
+		service, ok := config.Services[serviceName]
+		if !ok || service.Build == nil {
 			continue
 		}
-		if _, ok := available[d]; !ok {
-			return nil, fmt.Errorf("unknown disabled service: %s", d)
+		if _, ok := seen[serviceName]; ok {
+			continue
 		}
-		disabledSet[d] = struct{}{}
+		seen[serviceName] = struct{}{}
+		buildServices = append(buildServices, serviceName)
+	}
+	if len(buildServices) == 0 {
+		return nil
+	}
+
+	args := append(m.composeArgs(repoRoot), "build")
+	args = append(args, buildServices...)
+	cmd := Command{Name: "docker", Args: args, Dir: repoRoot}
+	if streamer, ok := m.runner.(CommandStreamer); ok {
+		if err := streamer.Stream(ctx, cmd, os.Stdout, os.Stderr); err != nil {
+			return fmt.Errorf("docker compose build failed: %w", err)
+		}
+		return nil
+	}
+	res, err := m.runner.Run(ctx, cmd)
+	if err != nil {
+		return fmt.Errorf("docker compose build failed: %w (%s)", err, strings.TrimSpace(res.Stderr))
+	}
+	return nil
+}
+
+func (m *ComposeManager) ComposeConfigJSON(ctx context.Context, repoRoot string) (composeConfigJSON, error) {
+	args := append(m.composeArgs(repoRoot), "config", "--format", "json")
+	res, err := m.runner.Run(ctx, Command{Name: "docker", Args: args, Dir: repoRoot})
+	if err != nil {
+		return composeConfigJSON{}, fmt.Errorf("docker compose config --format json failed: %w (%s)", err, strings.TrimSpace(res.Stderr))
+	}
+	var config composeConfigJSON
+	if err := json.Unmarshal([]byte(res.Stdout), &config); err != nil {
+		return composeConfigJSON{}, fmt.Errorf("parse docker compose config json: %w", err)
+	}
+	return config, nil
+}
+
+func localComposeEnv(cfg RuntimeConfig) []string {
+	return []string{
+		"LAZYMIND_FRONTEND_PORT=" + strconv.Itoa(cfg.FrontendPort),
+		"LAZYMIND_LOCAL_NETWORK_PROFILE=" + cfg.NetworkProfile,
+		"LAZYMIND_LOCAL_PROXY_PORT=" + strconv.Itoa(cfg.LocalProxy.Port),
+		"LAZYMIND_LOCAL_AUTH_PORT=" + strconv.Itoa(cfg.LocalProxy.AuthHostPort),
+		"LAZYMIND_LOCAL_PROXY_AUTH_HOST_PORT=" + strconv.Itoa(cfg.LocalProxy.AuthHostPort),
+		"LAZYMIND_AUTH_SERVICE_PORT=" + strconv.Itoa(cfg.LocalProxy.AuthHostPort),
+		"LAZYMIND_LOCAL_PROXY_CORE_HOST_PORT=" + strconv.Itoa(cfg.LocalProxy.CoreHostPort),
+		"LAZYMIND_LOCAL_CORE_PORT=" + strconv.Itoa(cfg.LocalProxy.CoreHostPort),
+		"LAZYMIND_LOCAL_PROXY_CHAT_HOST_PORT=" + strconv.Itoa(cfg.LocalProxy.ChatHostPort),
+		"LAZYMIND_LOCAL_PROXY_SCAN_HOST_PORT=" + strconv.Itoa(cfg.LocalProxy.ScanHostPort),
+		"LAZYMIND_LOCAL_PROXY_EVO_HOST_PORT=" + strconv.Itoa(cfg.LocalProxy.EvoHostPort),
+		"LAZYMIND_LOCAL_FILE_WATCHER_PORT=" + strconv.Itoa(cfg.FileWatcher.Port),
+		"LAZYMIND_LOCAL_POSTGRES_PORT=" + strconv.Itoa(cfg.Algorithm.PostgresPort),
+		"LAZYMIND_LOCAL_DOC_PORT=" + strconv.Itoa(cfg.Algorithm.DocPort),
+		"LAZYMIND_LOCAL_PROCESSOR_PORT=" + strconv.Itoa(cfg.Algorithm.ProcessorPort),
+		"LAZYMIND_LOCAL_ALGO_PORT=" + strconv.Itoa(cfg.Algorithm.AlgoPort),
+		"LAZYMIND_LOCAL_WORKER_PORT=" + strconv.Itoa(cfg.Algorithm.WorkerPort),
+		"LAZYMIND_LOCAL_CHAT_PORT=" + strconv.Itoa(cfg.Algorithm.ChatPort),
+		"LAZYMIND_LOCAL_EVO_PORT=" + strconv.Itoa(cfg.Algorithm.EvoPort),
+		"LAZYMIND_LOCAL_MILVUS_PORT=" + strconv.Itoa(cfg.ModeProfile.VectorStore.Port),
+		"LAZYMIND_LOCAL_OPENSEARCH_PORT=" + strconv.Itoa(cfg.Algorithm.OpenSearchPort),
+	}
+}
+
+func filterRemainingServices(allServices []string, disabled []string) ([]string, error) {
+	disabledSet, err := validateKnownServices(allServices, disabled, "disabled service")
+	if err != nil {
+		return nil, err
 	}
 	remaining := make([]string, 0, len(allServices))
 	for _, svc := range allServices {
@@ -206,6 +309,24 @@ func filterRemainingServices(allServices []string, disabled []string) ([]string,
 		remaining = append(remaining, svc)
 	}
 	return remaining, nil
+}
+
+func validateKnownServices(allServices []string, services []string, label string) (map[string]struct{}, error) {
+	available := make(map[string]struct{}, len(allServices))
+	for _, svc := range allServices {
+		available[svc] = struct{}{}
+	}
+	serviceSet := map[string]struct{}{}
+	for _, d := range services {
+		if d == "" {
+			continue
+		}
+		if _, ok := available[d]; !ok {
+			return nil, fmt.Errorf("unknown %s: %s", label, d)
+		}
+		serviceSet[d] = struct{}{}
+	}
+	return serviceSet, nil
 }
 
 func parseComposeStatusJSON(raw string) ([]ComposeServiceStatus, error) {
@@ -297,4 +418,25 @@ func classifyComposeReadiness(statuses []ComposeServiceStatus) (composeReadiness
 		}
 	}
 	return composeReadinessReady, "all services ready"
+}
+
+func filterComposeStatuses(statuses []ComposeServiceStatus, services []string) []ComposeServiceStatus {
+	if len(services) == 0 {
+		return nil
+	}
+	wanted := make(map[string]struct{}, len(services))
+	for _, service := range services {
+		wanted[service] = struct{}{}
+	}
+	filtered := make([]ComposeServiceStatus, 0, len(statuses))
+	for _, st := range statuses {
+		service := st.Service
+		if service == "" {
+			service = st.Name
+		}
+		if _, ok := wanted[service]; ok {
+			filtered = append(filtered, st)
+		}
+	}
+	return filtered
 }

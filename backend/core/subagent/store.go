@@ -27,18 +27,18 @@ const (
 // CreateTaskInput carries the fields needed to create a task record.
 // seq_in_conversation is allocated inside the transaction, not provided by the caller.
 type CreateTaskInput struct {
-	TaskID             string
-	ConversationID     string
-	TriggerHistoryID   string
-	AgentType          string
-	Title              string
-	Objective          string
-	Mode               string
-	Params             json.RawMessage
-	InputArtifactKeys  json.RawMessage
-	OutputArtifactKeys json.RawMessage
-	WorkspacePath      string
-	CreateUserID       string
+	TaskID           string
+	ConversationID   string
+	TriggerHistoryID string
+	AgentType        string
+	Title            string
+	Objective        string
+	Mode             string
+	Params           json.RawMessage
+	InputSlots       json.RawMessage
+	OutputSlots      json.RawMessage
+	WorkspacePath    string
+	CreateUserID     string
 }
 
 // lockConversationSeq serializes seq_in_conversation allocation per conversation.
@@ -76,24 +76,24 @@ func CreateTask(ctx context.Context, db *gorm.DB, in CreateTaskInput) (*orm.SubA
 			return err
 		}
 		t := &orm.SubAgentTask{
-			ID:                 in.TaskID,
-			ConversationID:     in.ConversationID,
-			TriggerHistoryID:   in.TriggerHistoryID,
-			SeqInConversation:  maxSeq + 1,
-			AgentType:          in.AgentType,
-			Title:              in.Title,
-			Objective:          in.Objective,
-			Params:             normalizeJSON(in.Params, "{}"),
-			Mode:               in.Mode,
-			Status:             StatusPending,
-			ProgressPct:        0,
-			LastHeartbeat:      now,
-			WorkspacePath:      in.WorkspacePath,
-			InputArtifactKeys:  normalizeJSON(in.InputArtifactKeys, "[]"),
-			OutputArtifactKeys: normalizeJSON(in.OutputArtifactKeys, "[]"),
-			CreateUserID:       in.CreateUserID,
-			CreatedAt:          now,
-			UpdatedAt:          now,
+			ID:                in.TaskID,
+			ConversationID:    in.ConversationID,
+			TriggerHistoryID:  in.TriggerHistoryID,
+			SeqInConversation: maxSeq + 1,
+			AgentType:         in.AgentType,
+			Title:             in.Title,
+			Objective:         in.Objective,
+			Params:            normalizeJSON(in.Params, "{}"),
+			Mode:              in.Mode,
+			Status:            StatusPending,
+			ProgressPct:       0,
+			LastHeartbeat:     now,
+			WorkspacePath:     in.WorkspacePath,
+			InputSlots:        normalizeJSON(in.InputSlots, "[]"),
+			OutputSlots:       normalizeJSON(in.OutputSlots, "[]"),
+			CreateUserID:      in.CreateUserID,
+			CreatedAt:         now,
+			UpdatedAt:         now,
 		}
 		if err := tx.Create(t).Error; err != nil {
 			return err
@@ -153,6 +153,10 @@ func UpdateProgress(ctx context.Context, db *gorm.DB, taskID string, pct int, ph
 }
 
 // UpdateFinalStatus marks a terminal status (succeeded/failed/interrupted/canceled) with optional summary.
+// "failed" is never allowed to overwrite an already-terminal interrupted or succeeded status: a race
+// between StopActivePluginSession (which writes interrupted) and the SSE-EOF handler (which calls
+// routeError → UpdateFinalStatus with failed) would otherwise silently downgrade interrupted → failed,
+// breaking the checkpoint-resume path and causing the frontend to display "failed" after a user stop.
 func UpdateFinalStatus(ctx context.Context, db *gorm.DB, taskID, status, summary string) error {
 	now := time.Now().UTC()
 	updates := map[string]any{
@@ -164,7 +168,12 @@ func UpdateFinalStatus(ctx context.Context, db *gorm.DB, taskID, status, summary
 	if status == StatusSucceeded {
 		updates["progress_pct"] = 100
 	}
-	return db.WithContext(ctx).Model(&orm.SubAgentTask{}).Where("id = ?", taskID).Updates(updates).Error
+	q := db.WithContext(ctx).Model(&orm.SubAgentTask{}).Where("id = ?", taskID)
+	if status == StatusFailed {
+		// Do not downgrade a terminal interrupted/succeeded status to failed.
+		q = q.Where("status NOT IN ?", []string{StatusInterrupted, StatusSucceeded})
+	}
+	return q.Updates(updates).Error
 }
 
 // SaveArtifact appends one artifact row for a task.
@@ -173,7 +182,7 @@ func SaveArtifact(ctx context.Context, db *gorm.DB, taskID, key, contentType str
 	row := &orm.SubAgentArtifact{
 		ID:          "saa_" + common.GenerateID(),
 		TaskID:      taskID,
-		ArtifactKey: key,
+		Slot:        key,
 		ContentType: contentType,
 		Value:       normalizeJSON(value, "{}"),
 		Seq:         seq,
@@ -182,11 +191,11 @@ func SaveArtifact(ctx context.Context, db *gorm.DB, taskID, key, contentType str
 	return db.WithContext(ctx).Create(row).Error
 }
 
-// LoadArtifacts returns artifacts for a task ordered by (artifact_key, seq).
+// LoadArtifacts returns artifacts for a task ordered by (slot, seq).
 func LoadArtifacts(ctx context.Context, db *gorm.DB, taskID string) ([]orm.SubAgentArtifact, error) {
 	var rows []orm.SubAgentArtifact
 	if err := db.WithContext(ctx).Where("task_id = ?", taskID).
-		Order("artifact_key ASC, seq ASC").Find(&rows).Error; err != nil {
+		Order("slot ASC, seq ASC").Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	return rows, nil

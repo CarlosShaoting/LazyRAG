@@ -66,18 +66,43 @@ func (m *LocalProxyManager) Down(ctx context.Context, cfg RuntimeConfig, paths R
 }
 
 func localProxyEnv(cfg RuntimeConfig, paths RuntimePaths) []string {
+	env := append([]string{}, localRuntimeEnv(cfg)...)
+	env = append(env,
+		"LAZYMIND_LOCAL_PROXY_BASE_ROOT="+filepath.Join(paths.RuntimeRoot, "local-proxy"),
+		"LAZYMIND_LOCAL_PROXY_BIN="+paths.LocalProxyBin,
+		"LAZYMIND_LOCAL_PROXY_CONFIG="+paths.LocalProxyConfig,
+		"LAZYMIND_LOCAL_PROXY_LOG_FILE="+paths.LocalProxyLog,
+	)
+	return env
+}
+
+func localRuntimeEnv(cfg RuntimeConfig) []string {
 	return []string{
+		processComposePortEnvVar + "=" + strconv.Itoa(cfg.ProcessComposePort),
 		frontendPortEnvVar + "=" + strconv.Itoa(cfg.FrontendPort),
+		frontendLANOriginEnvVar + "=" + frontendLANOrigin(cfg),
+		localNetworkProfileEnvVar + "=" + cfg.NetworkProfile,
 		localProxyAddressEnvVar + "=" + cfg.LocalProxy.Address,
 		localProxyPortEnvVar + "=" + strconv.Itoa(cfg.LocalProxy.Port),
+		localAuthPortEnvVar + "=" + strconv.Itoa(cfg.LocalProxy.AuthHostPort),
 		localProxyAuthHostPortEnvVar + "=" + strconv.Itoa(cfg.LocalProxy.AuthHostPort),
 		localProxyCoreHostPortEnvVar + "=" + strconv.Itoa(cfg.LocalProxy.CoreHostPort),
 		localProxyChatHostPortEnvVar + "=" + strconv.Itoa(cfg.LocalProxy.ChatHostPort),
 		localProxyScanHostPortEnvVar + "=" + strconv.Itoa(cfg.LocalProxy.ScanHostPort),
 		localProxyEvoHostPortEnvVar + "=" + strconv.Itoa(cfg.LocalProxy.EvoHostPort),
-		"LAZYMIND_LOCAL_PROXY_BASE_ROOT=" + filepath.Join(paths.RuntimeRoot, "local-proxy"),
-		"LAZYMIND_LOCAL_PROXY_BIN=" + paths.LocalProxyBin,
-		"LAZYMIND_LOCAL_PROXY_CONFIG=" + paths.LocalProxyConfig,
-		"LAZYMIND_LOCAL_PROXY_LOG_FILE=" + paths.LocalProxyLog,
 	}
+}
+
+func frontendLANOrigin(cfg RuntimeConfig) string {
+	if explicit := strings.TrimSpace(os.Getenv(frontendLANOriginEnvVar)); explicit != "" {
+		return explicit
+	}
+	if cfg.NetworkProfile != "lan" {
+		return ""
+	}
+	ip := firstLANIPv4()
+	if ip == "" {
+		return ""
+	}
+	return "http://" + ip + ":" + strconv.Itoa(cfg.FrontendPort)
 }

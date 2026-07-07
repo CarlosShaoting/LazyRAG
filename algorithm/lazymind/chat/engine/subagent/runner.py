@@ -4,6 +4,7 @@ import json
 import os
 import re
 import time
+from asyncio import CancelledError
 from typing import Any, Dict, List, Optional
 
 import lazyllm
@@ -35,9 +36,9 @@ def _build_artifact_context_section(
       Reads from plugin_slot_revisions with sort_order from plugin_slot_order.
       Resolves human vs AI revision for each row, then builds per-key ordered summaries.
 
-    Ordinary SubAgent (no session_id, but has input_artifact_keys):
+    Ordinary SubAgent (no session_id, but has input_slots):
       Reads from sub_agent_artifacts of succeeded steps in the same session.
-      sort_order = seq within the same artifact_key group.
+      sort_order = seq within the same slot group.
     """
     params = ctx.params
     session_id: str = params.get('session_id', '')
@@ -45,7 +46,7 @@ def _build_artifact_context_section(
     if session_id:
         return db.format_plugin_session_artifacts(session_id)
 
-    if ctx.input_artifact_keys:
+    if ctx.input_slots:
         steps = db.load_plugin_session_steps(session_id) if session_id else []
         succeeded_task_ids = [
             s['task_id'] for s in steps
@@ -190,8 +191,8 @@ def _build_partial_sort_order_hints(session_id: str, partial_indices: 'Dict[str,
             return ''
 
         hints: List[str] = []
-        for artifact_key, list_indexes in partial_indices.items():
-            slot_def = spec.get_slot_for_artifact_key(artifact_key)
+        for slot, list_indexes in partial_indices.items():
+            slot_def = spec.get_slot(slot)
             if not slot_def:
                 continue
             slot_id = slot_def.get('id', '')
@@ -213,7 +214,7 @@ def _build_partial_sort_order_hints(session_id: str, partial_indices: 'Dict[str,
             if sort_orders:
                 so_str = ', '.join(str(s) for s in sort_orders)
                 hints.append(
-                    f'For artifact key "{artifact_key}": overwrite the item(s) at '
+                    f'For slot "{slot}": overwrite the item(s) at '
                     f'sort_order={so_str} — pass sort_order=N when calling save_artifact '
                     f'so that only those position(s) are replaced.'
                 )
@@ -277,9 +278,38 @@ def _build_attachment_context_for_subagent(history_files_per_turn: 'Dict[str, Li
     lines.append('')
     lines.append('Turn numbers are 1-based integers matching the "Turn N" labels above.')
     lines.append('Omit the turn parameter to search the current turn first, then historical turns.')
-    lines.append("To read a file's content, call read_user_attachment(filename, turn=N).")
-    lines.append("To get a file's accessible URL/path, call find_user_attachment(filename, turn=N).")
+    lines.append(
+        'Do not parse attachments by default. '
+        'find_user_attachment for path/url (image tools, plugins); '
+        'read_user_attachment only when extracted text is required.'
+    )
+    lines.append('find_user_attachment(filename, turn=N) returns path/url without parsing.')
     return '\n'.join(lines)
+
+
+def _build_intent_context_section(db: 'SubAgentDB', session_id: str, step_id: str = '') -> List[str]:
+    """Read global + step-level intent from DB and return prompt lines.
+
+    Returns an empty list if there are no intent constraints to inject.
+    """
+    try:
+        lines: List[str] = []
+        session_intent: Optional[str] = db.get_session_intent(session_id)
+        step_intent: Optional[str] = db.get_step_intent(session_id, step_id) if step_id else None
+
+        if not session_intent and not step_intent:
+            return []
+
+        lines.append('')
+        lines.append('## User Intent & Constraints')
+        lines.append('The following constraints were specified by the user and MUST be respected:')
+        if session_intent:
+            lines.append(f'Global constraints: {session_intent}')
+        if step_intent:
+            lines.append(f'Step-specific constraints: {step_intent}')
+        return lines
+    except Exception:
+        return []
 
 
 def _objective_prompt(ctx: SubAgentContext, db: Optional['SubAgentDB'] = None) -> str:
@@ -305,12 +335,18 @@ def _objective_prompt(ctx: SubAgentContext, db: Optional['SubAgentDB'] = None) -
     # Inject artifact context: plugin session reads from slot revisions with sort_order;
     # ordinary SubAgent reads from sub_agent_artifacts of prior succeeded steps.
     session_id: str = ctx.params.get('session_id', '')
-    if session_id or ctx.input_artifact_keys:
+    step_id: str = ctx.params.get('step_id', '')
+    if session_id or ctx.input_slots:
         artifact_section = _build_artifact_context_section(ctx, db) if db else []
         if artifact_section:
             lines.extend(artifact_section)
-        elif ctx.input_artifact_keys:
-            lines.append(f'Input artifact keys you may read: {", ".join(ctx.input_artifact_keys)}')
+        elif ctx.input_slots:
+            lines.append(f'Input slots you may read: {", ".join(ctx.input_slots)}')
+    # Inject intent/constraints from the plugin session so SubAgent respects user preferences.
+    if session_id and db:
+        intent_lines = _build_intent_context_section(db, session_id, step_id)
+        if intent_lines:
+            lines.extend(intent_lines)
     # Inject user attachment context so the SubAgent knows which files were uploaded.
     history_files_per_turn: Dict[str, List[str]] = ctx.params.get('history_files_per_turn') or {}
     attachment_section = _build_attachment_context_for_subagent(history_files_per_turn)
@@ -329,7 +365,7 @@ def _objective_prompt(ctx: SubAgentContext, db: Optional['SubAgentDB'] = None) -
     lines.append(
         'You MUST call save_artifact for EACH of the following keys before you finish — '
         'do NOT skip this step even if you have already written the results in plain text: '
-        + ', '.join(ctx.output_artifact_keys)
+        + ', '.join(ctx.output_slots)
     )
     lines.append(
         'IMPORTANT: Writing results in your reply text does NOT count as saving an artifact. '
@@ -471,8 +507,8 @@ async def run_subagent_stream(
             yield 'data: [DONE]\n\n'
             return
 
-        output_keys = _coerce_str_list(task.get('output_artifact_keys'))
-        input_keys = _coerce_str_list(task.get('input_artifact_keys'))
+        output_keys = _coerce_str_list(task.get('output_slots'))
+        input_keys = _coerce_str_list(task.get('input_slots'))
         params = _coerce_dict(task.get('params'))
 
         ctx = SubAgentContext(
@@ -482,20 +518,20 @@ async def run_subagent_stream(
             objective=str(task.get('objective') or ''),
             params=params,
             workspace_path=str(task.get('workspace_path') or ''),
-            input_artifact_keys=input_keys,
-            output_artifact_keys=output_keys,
+            input_slots=input_keys,
+            output_slots=output_keys,
             db=db,
             emit=_emit,
         )
         ctx.ensure_workspace()
 
-        # For plugin_step tasks: remove {{artifact_key}} placeholders from the objective
+        # For plugin_step tasks: remove {{slot}} placeholders from the objective
         # (artifact context is now injected as a summary section in _objective_prompt instead).
         # Also resolve tools from plugin_loader when no explicit list was provided.
         # Go no longer forwards the tools list for plugin_step tasks.
         effective_agent_type = str(task.get('agent_type') or agent_type or '')
         if effective_agent_type == 'plugin_step':
-            # Strip any remaining {{artifact_key}} placeholders so they don't confuse the LLM.
+            # Strip any remaining {{slot}} placeholders so they don't confuse the LLM.
             ctx.objective = re.sub(r'\{\{[^}]+\}\}', '', ctx.objective).strip()
             if not tools:
                 tools = _resolve_plugin_step_tools(params)
@@ -529,6 +565,7 @@ async def run_subagent_stream(
             llm=llm,
             tools=_build_subagent_tools(runtime_tools),
             force_summarize_context=ctx.objective,
+            extra_stop_condition=_make_cancel_stop_condition(),
         )
 
         step_seq = db.max_step_seq(task_id) + 1 if resume else 0
@@ -647,10 +684,12 @@ async def run_subagent_stream(
                 _auto_flush_drafts(ctx, db)
                 yield _sse({'type': 'done', 'task_id': task_id, 'status': 'succeeded',
                             'summary': eval_summary, 'cost': cost})
+                _emit_step_done(effective_agent_type, params, eval_summary, 'succeeded')
             else:
                 yield _sse({'type': 'error', 'task_id': task_id, 'status': 'failed',
                             'summary': eval_summary,
                             'message': f'缺少 artifact: {", ".join(missing)}。{eval_summary}'})
+                _emit_step_done(effective_agent_type, params, eval_summary, 'failed')
             yield 'data: [DONE]\n\n'
             return
 
@@ -660,6 +699,8 @@ async def run_subagent_stream(
         _auto_flush_drafts(ctx, db)
         yield _sse({'type': 'done', 'task_id': task_id, 'status': 'succeeded',
                     'summary': summary, 'cost': cost})
+        # Signal advance_step (dynamic mode) that this step finished.
+        _emit_step_done(effective_agent_type, params, summary, 'succeeded')
         yield 'data: [DONE]\n\n'
     except Exception as exc:  # noqa: BLE001
         LOG.exception('[SubAgent] run failed')
@@ -675,8 +716,61 @@ async def run_subagent_stream(
                     'summary': exc_summary, 'message': exc_summary})
         yield 'data: [DONE]\n\n'
     finally:
+        try:
+            from lazyllm.common.queue import FileSystemQueue
+            FileSystemQueue(klass='cancel').clear()
+        except Exception:
+            pass
         if db is not None:
             db.dispose()
+
+
+def _make_cancel_stop_condition():
+    """Return a stop_condition function that raises CancelledError when a cancel signal is detected.
+
+    Called once per task run. Each ReAct iteration, the condition polls the cancel queue
+    (FileSystemQueue klass='cancel'). If a message with tag='cancel' is found, it raises
+    CancelledError so the runner follows the interrupted path.
+    """
+    def _check(output) -> bool:
+        try:
+            from lazyllm.common.queue import FileSystemQueue
+            msgs = FileSystemQueue(klass='cancel').dequeue() or []
+            for raw in msgs:
+                try:
+                    if json.loads(raw).get('tag') == 'cancel':
+                        raise CancelledError('stopped by user')
+                except (ValueError, TypeError):
+                    pass
+        except CancelledError:
+            raise
+        except Exception:
+            pass
+        return False
+    return _check
+
+
+def _emit_step_done(effective_agent_type: str, params: Dict[str, Any], summary: str, status: str) -> None:
+    """Write step_done signal to FileSystemQueue so advance_step (dynamic mode) can unblock.
+
+    The queue klass is 'step_done_<session_id>_<step_id>'.  The global request sid
+    (task_id) is already set by lazyllm.globals._init_sid at runner entry, so
+    FileSystemQueue picks up the right bucket automatically.
+    """
+    if effective_agent_type != 'plugin_step':
+        return
+    session_id = params.get('session_id', '')
+    step_id = params.get('step_id', '')
+    if not session_id or not step_id:
+        return
+    try:
+        import json as _json
+        from lazyllm.common.queue import FileSystemQueue
+        klass = f'step_done_{session_id}_{step_id}'
+        msg = _json.dumps({'status': status, 'summary': summary}, ensure_ascii=False)
+        FileSystemQueue(klass=klass).enqueue(msg)
+    except Exception:
+        pass
 
 
 def _auto_flush_drafts(ctx: 'SubAgentContext', db: 'SubAgentDB') -> None:
@@ -826,7 +920,7 @@ def _evaluate_completion(
                     seq = ctx.next_artifact_seq(key)
                     ctx.record_local_artifact(key, 'text', {'text': content}, seq)
                     ctx.db.save_artifact(ctx.task_id, key, 'text', {'text': content}, seq)
-                    ctx.emit({'type': 'artifact', 'artifact_key': key,
+                    ctx.emit({'type': 'artifact', 'slot': key,
                               'content_type': 'text', 'seq': seq, 'value': {'text': content}})
                     LOG.info(f'[SubAgent] auto-saved missing artifact key={key!r} for task={ctx.task_id}')
                 except Exception as save_err:

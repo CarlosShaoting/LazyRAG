@@ -16,8 +16,11 @@ import (
 	"lazymind/core/preference"
 	"lazymind/core/resourcechange"
 	"lazymind/core/resourceupdate"
+	"lazymind/core/scheduler"
 	"lazymind/core/skill"
 	"lazymind/core/subagent"
+	"lazymind/core/taskcenter"
+	"lazymind/core/userprefs"
 	"lazymind/core/wordgroup"
 
 	"github.com/gorilla/mux"
@@ -37,6 +40,13 @@ func registerAllRoutes(r *mux.Router) {
 	handleAPI(r, "POST", "/datasets/{dataset}:unsetDefault", []string{"document.write"}, doc.UnsetDefault)
 	handleAPI(r, "GET", "/data-sources/local-fs-chat-setting", []string{"document.read"}, datasource.GetLocalFSChatSetting)
 	handleAPI(r, "PUT", "/data-sources/local-fs-chat-setting", []string{"document.write"}, datasource.SetLocalFSChatSetting)
+	handleAPI(r, "GET", "/data-sources/database-connections", []string{"document.read"}, datasource.ListDatabaseConnections)
+	handleAPI(r, "POST", "/data-sources/database-connections", []string{"document.write"}, datasource.CreateDatabaseConnection)
+	handleAPI(r, "POST", "/data-sources/database-connections/{connection}:check", []string{"document.write"}, datasource.CheckDatabaseConnection)
+	handleAPI(r, "GET", "/data-sources/database-connections/{connection}:secret", []string{"document.read"}, datasource.GetDatabaseConnectionSecret)
+	handleAPI(r, "GET", "/data-sources/database-connections/{connection}", []string{"document.read"}, datasource.GetDatabaseConnection)
+	handleAPI(r, "PATCH", "/data-sources/database-connections/{connection}", []string{"document.write"}, datasource.UpdateDatabaseConnection)
+	handleAPI(r, "DELETE", "/data-sources/database-connections/{connection}", []string{"document.write"}, datasource.DeleteDatabaseConnection)
 
 	// ----- Eval set metadata -----
 	handleAPI(r, "GET", "/eval-sets", []string{"document.read"}, evalset.ListEvalSets)
@@ -48,6 +58,7 @@ func registerAllRoutes(r *mux.Router) {
 	handleAPI(r, "POST", "/eval-sets:import", []string{"document.write"}, evalset.CreateEvalSetByImport)
 	handleAPI(r, "GET", "/eval-set-import-tasks/{task_id}", []string{"document.read"}, evalset.GetEvalSetImportTask)
 	handleAPI(r, "GET", "/eval-sets/{eval_set_id}/question-types", []string{"document.read"}, evalset.ListEvalSetQuestionTypes)
+	handleAPI(r, "GET", "/eval-sets/{eval_set_id}/items:invalidReferences", []string{"document.read"}, evalset.ListInvalidReferenceEvalSetItems)
 	handleAPI(r, "GET", "/eval-sets/{eval_set_id}/items", []string{"document.read"}, evalset.ListEvalSetItems)
 	handleAPI(r, "POST", "/eval-sets/{eval_set_id}/imports", []string{"document.write"}, evalset.AppendEvalSetImport)
 	handleAPI(r, "POST", "/eval-sets/{eval_set_id}/items", []string{"document.write"}, evalset.CreateEvalSetItem)
@@ -71,6 +82,7 @@ func registerAllRoutes(r *mux.Router) {
 	handleAPI(r, "POST", "/datasets/{dataset}/documents:batchUpdateTags", []string{"document.write"}, doc.BatchUpdateDocumentTags)
 	handleAPI(r, "POST", "/documents:listByDatasets", []string{"document.read"}, doc.ListDocumentsByDatasets)
 	handleAPI(r, "POST", "/documents:search", []string{"document.read"}, doc.SearchAllDocuments)
+	handleAPI(r, "POST", "/system-query/documents:aggregate", []string{"document.read"}, doc.AggregateDocuments)
 	handleAPI(r, "POST", "/datasets/{dataset}:batchDelete", []string{"document.write"}, doc.BatchDeleteDocument)
 	handleAPI(r, "GET", "/document/creators", []string{"document.read"}, doc.AllDocumentCreators)
 	handleAPI(r, "GET", "/document/tags", []string{"document.read"}, doc.AllDocumentTags)
@@ -150,31 +162,26 @@ func registerAllRoutes(r *mux.Router) {
 	handleAPI(r, "DELETE", "/agent/threads/{thread_id}:history", []string{"qa.write"}, agent.DeleteThreadHistory)
 	handleAPI(r, "GET", "/agent/threads/{thread_id}/rounds", []string{"qa.read"}, agent.ListThreadRounds)
 	handleAPI(r, "GET", "/agent/threads/{thread_id}/records", []string{"qa.read"}, agent.ListThreadRecords)
+	handleAPI(r, "GET", "/agent/threads/{thread_id}/results/{kind}:download", []string{"qa.read"}, agent.DownloadThreadResult)
 	handleAPI(r, "GET", "/agent/threads/{thread_id}/results/datasets", []string{"qa.read"}, agent.GetThreadResultDatasets)
 	handleAPI(r, "GET", "/agent/threads/{thread_id}/results/eval-reports", []string{"qa.read"}, agent.GetThreadResultEvalReports)
-	handleAPI(r, "GET", "/agent/threads/{thread_id}/results/eval-reports/{report_id}/bad-cases", []string{"qa.read"}, agent.GetThreadEvalReportBadCases)
 	handleAPI(r, "GET", "/agent/threads/{thread_id}/results/analysis-reports", []string{"qa.read"}, agent.GetThreadResultAnalysisReports)
 	handleAPI(r, "GET", "/agent/threads/{thread_id}/results/diffs", []string{"qa.read"}, agent.GetThreadResultDiffs)
 	handleAPI(r, "GET", "/agent/threads/{thread_id}/results/abtests", []string{"qa.read"}, agent.GetThreadResultAbtests)
-	handleAPI(r, "GET", "/agent/threads/{thread_id}/results/abtests/{abtest_id}/case-details", []string{"qa.read"}, agent.GetThreadABTestCaseDetails)
 	handleAPI(r, "GET", "/agent/threads/{thread_id}/flow-status", []string{"qa.read"}, agent.GetThreadFlowStatus)
 	handleAPI(r, "GET", "/agent/threads/{thread_id}/artifacts/{artifact_id}", []string{"qa.read"}, agent.GetThreadArtifact)
-	handleAPI(r, "GET", "/agent/threads/{thread_id}/results/traces/{trace_id}", []string{"qa.read"}, agent.GetThreadResultTrace)
-	handleAPI(r, "GET", "/agent/threads/{thread_id}/results/traces-compare", []string{"qa.read"}, agent.GetThreadResultTraceCompare)
 	handleAPI(r, "POST", "/agent/threads/{thread_id}:messages", []string{"qa.write"}, agent.StreamThreadMessages)
 	handleAPI(r, "POST", "/agent/threads/{thread_id}:start", []string{"qa.write"}, agent.StartThread)
 	handleAPI(r, "POST", "/agent/threads/{thread_id}:pause", []string{"qa.write"}, agent.PauseThread)
 	handleAPI(r, "POST", "/agent/threads/{thread_id}:cancel", []string{"qa.write"}, agent.CancelThread)
 	handleAPI(r, "POST", "/agent/threads/{thread_id}:retry", []string{"qa.write"}, agent.RetryThread)
 	handleAPI(r, "POST", "/agent/threads/{thread_id}:continue", []string{"qa.write"}, agent.ContinueThread)
-	handleAPI(r, "GET", "/agent/reports/{report_id}:content", []string{"qa.read"}, agent.GetReportContent)
-	handleAPI(r, "GET", "/agent/diffs/{apply_id}/{filename:.*}", []string{"qa.read"}, agent.GetDiffContent)
-	handleAPI(r, "POST", "/agent/files:content", []string{"qa.read"}, agent.GetAgentFileContent)
 
 	// ----- Conversation -----
 	handleAPI(r, "POST", "/conversations:chat", []string{"qa.write"}, chat.ChatConversations)
 	handleAPI(r, "POST", "/conversations:resumeChat", []string{"qa.write"}, chat.ResumeChat)
 	handleAPI(r, "POST", "/conversations:stopChatGeneration", []string{"qa.write"}, chat.StopChatGeneration)
+	handleAPI(r, "POST", "/conversations/{conversation_id}:stop", []string{"qa.write"}, chat.StopChatGeneration)
 	handleAPI(r, "GET", "/conversations/{conversation_id}:status", []string{"qa.read"}, chat.GetChatStatus)
 
 	// ----- SubAgent (Task Center) -----
@@ -191,14 +198,44 @@ func registerAllRoutes(r *mux.Router) {
 	handleAPI(r, "GET", "/plugins", []string{"qa.read"}, plugin.ListPlugins)
 	handleAPI(r, "GET", "/plugins/{plugin_id}", []string{"qa.read"}, plugin.GetPluginInfo)
 
-	// ----- Plugin Sessions -----
-	handleAPI(r, "GET", "/conversations/{conversation_id}/plugin-sessions", []string{"qa.read"}, plugin.ListConversationSessions)
+	// ----- Plugin Drafts (user-created plugin authoring) -----
+	handleAPI(r, "GET", "/plugin-drafts", []string{"qa.read"}, plugin.ListPluginDrafts)
+	handleAPI(r, "POST", "/plugin-drafts", []string{"qa.write"}, plugin.CreatePluginDraft)
+	handleAPI(r, "GET", "/plugin-drafts/{draft_id}", []string{"qa.read"}, plugin.GetPluginDraft)
+	handleAPI(r, "POST", "/plugin-drafts/{draft_id}:save", []string{"qa.write"}, plugin.SavePluginDraft)
+	handleAPI(r, "DELETE", "/plugin-drafts/{draft_id}", []string{"qa.write"}, plugin.DeletePluginDraft)
+
+	// ----- Task Center -----
+	handleAPI(r, "GET", "/task-center/tasks", []string{"qa.read"}, taskcenter.ListTasks)
+	handleAPI(r, "POST", "/task-center/tasks", []string{"qa.write"}, taskcenter.AddTaskHandler)
+	handleAPI(r, "GET", "/task-center/tasks/{task_id}", []string{"qa.read"}, taskcenter.GetTaskByID)
+	handleAPI(r, "POST", "/task-center/tasks/{task_id}:cancel", []string{"qa.write"}, taskcenter.CancelTaskByID)
+	handleAPI(r, "POST", "/task-center/tasks/{task_id}:remove", []string{"qa.write"}, taskcenter.RemoveTaskHandler)
+	handleAPI(r, "GET", "/task-center/schedules/{schedule_id}/tasks", []string{"qa.read"}, taskcenter.ListScheduleTasks)
+
+	// ----- Schedules -----
+	handleAPI(r, "GET", "/schedules", []string{"qa.read"}, scheduler.ListSchedulesHandler)
+	handleAPI(r, "POST", "/schedules", []string{"qa.write"}, scheduler.CreateScheduleHandler)
+	handleAPI(r, "PUT", "/schedules/{schedule_id}", []string{"qa.write"}, scheduler.UpdateScheduleHandler)
+	handleAPI(r, "POST", "/schedules/{schedule_id}:cancel", []string{"qa.write"}, scheduler.CancelScheduleHandler)
+	handleAPI(r, "POST", "/schedules/{schedule_id}:enable", []string{"qa.write"}, scheduler.EnableScheduleHandler)
+	handleAPI(r, "POST", "/schedules/{schedule_id}:run-now", []string{"qa.write"}, scheduler.RunNowHandler)
+
+	// ----- User Chat Settings (global plugin/subagent defaults) -----
+	handleAPI(r, "GET", "/user/chat-settings", []string{"qa.read"}, chat.GetChatSettings)
+	handleAPI(r, "PATCH", "/user/chat-settings", []string{"qa.write"}, chat.PatchChatSettings)
+	handleAPI(r, "GET", "/user/ui-preferences", []string{"qa.read"}, userprefs.GetUIPreferences)
+	handleAPI(r, "PATCH", "/user/ui-preferences", []string{"qa.write"}, userprefs.PatchUIPreferences)
+	handleAPI(r, "PATCH", "/conversations/{conversation_id}/plugin-settings", []string{"qa.write"}, chat.PatchConversationPluginSettings)
+
+	// ----- Plugin Sessions -----	handleAPI(r, "GET", "/conversations/{conversation_id}/plugin-sessions", []string{"qa.read"}, plugin.ListConversationSessions)
 	handleAPI(r, "GET", "/conversations/{conversation_id}/plugin-sessions:active", []string{"qa.read"}, plugin.GetActiveConversationSession)
 	handleAPI(r, "GET", "/conversations/{conversation_id}/plugin-sessions:latest", []string{"qa.read"}, plugin.GetLatestConversationSession)
 	handleAPI(r, "GET", "/plugin-sessions/{session_id}", []string{"qa.read"}, plugin.GetSessionDetail)
 	handleAPI(r, "GET", "/plugin-sessions/{session_id}/slots", []string{"qa.read"}, plugin.GetSessionSlots)
+	handleAPI(r, "GET", "/plugin-sessions/{session_id}/steps", []string{"qa.read"}, plugin.GetSessionSteps)
+	handleAPI(r, "GET", "/plugin-sessions/{session_id}/state-graph", []string{"qa.read"}, plugin.GetStateGraph)
 	handleAPI(r, "PATCH", "/plugin-sessions/{session_id}/slots/{slot_id}", []string{"qa.write"}, plugin.PatchSessionSlot)
-	handleAPI(r, "POST", "/plugin-sessions/{session_id}:advance", []string{"qa.write"}, plugin.AdvanceSession)
 	// Phase 3: slot item management.
 	// Stable list_index-based routes (preferred).
 	handleAPI(r, "DELETE", "/plugin-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}", []string{"qa.write"}, plugin.DeleteSlotItemByIndex)
@@ -212,6 +249,11 @@ func registerAllRoutes(r *mux.Router) {
 	// Phase 4: caption editing and manual item creation
 	handleAPI(r, "POST", "/plugin-sessions/{session_id}/slots/{slot_id}/items", []string{"qa.write"}, plugin.CreateSlotItem)
 	handleAPI(r, "POST", "/plugin-sessions/{session_id}/artifacts", []string{"qa.write"}, plugin.SaveArtifactByKey)
+	// Dismiss and restore plugin sessions.
+	handleAPI(r, "POST", "/plugin-sessions/{session_id}:dismiss", []string{"qa.write"}, plugin.DismissSessionHandler)
+	handleAPI(r, "POST", "/plugin-sessions/{session_id}:restore", []string{"qa.write"}, plugin.RestoreSessionHandler)
+	// List dismissed sessions for a conversation (used by restore UI).
+	handleAPI(r, "GET", "/conversations/{conversation_id}/dismissed-plugin-sessions", []string{"qa.read"}, plugin.ListDismissedSessionsHandler)
 	handleAPI(r, "GET", "/evolution/tasks", []string{"qa.read"}, resourceupdate.ListTasks)
 	handleAPI(r, "GET", "/evolution/tasks/{task_id}", []string{"qa.read"}, resourceupdate.GetTask)
 	handleAPI(r, "GET", "/skill-review-results", []string{"qa.read"}, resourceupdate.ListSkillReviewResults)
@@ -265,6 +307,7 @@ func registerAllRoutes(r *mux.Router) {
 	handleAPI(r, "GET", "/conversations", []string{"qa.read"}, chat.ListConversations)
 	handleAPI(r, "POST", "/conversations:setChatHistory", []string{"qa.write"}, chat.SetChatHistory)
 	handleAPI(r, "POST", "/conversations:feedBackChatHistory", []string{"qa.write"}, chat.FeedBackChatHistory)
+	handleAPI(r, "PATCH", "/conversations/{name}:ask-answers", []string{"qa.write"}, chat.SaveAskAnswers)
 
 	handleAPI(r, "GET", "/conversation:switchStatus", []string{"qa.read"}, chat.GetMultiAnswersSwitchStatus)
 	handleAPI(r, "POST", "/conversation:switchStatus", []string{"qa.write"}, chat.SetMultiAnswersSwitchStatus)

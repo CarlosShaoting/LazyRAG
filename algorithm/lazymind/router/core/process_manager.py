@@ -304,7 +304,7 @@ class ProcessManager:
             return
         try:
             proc.terminate()
-            await asyncio.sleep(2)
+            await asyncio.sleep(config['router_child_shutdown_grace'])
             if proc.poll() is None:
                 proc.kill()
         except Exception as exc:
@@ -354,7 +354,7 @@ class ProcessManager:
             timeout = config['router_startup_timeout']
         url = f'http://127.0.0.1:{port}/health'
         deadline = time.monotonic() + timeout
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=config['router_health_timeout']) as client:
             while time.monotonic() < deadline:
                 try:
                     resp = await client.get(url)

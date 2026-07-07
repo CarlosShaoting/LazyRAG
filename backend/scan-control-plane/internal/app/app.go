@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -48,6 +49,7 @@ type Components struct {
 	LocalFSDefaultAgentID             string
 	LocalFSPublicRoot                 string
 	AuthConnectionClient              feishu.AuthConnectionClient
+	AdminVerifier                     access.AdminVerifier
 	FeishuClient                      feishu.FeishuClient
 	TempObjectStore                   worker.TempObjectStore
 	JobQueue                          taskengine.JobQueue
@@ -133,27 +135,35 @@ func buildSQLComponents(cfg config.Config, opener DBOpener) (Components, error) 
 	if err != nil {
 		return Components{}, err
 	}
-	db, err := opener("postgres", cfg.DBDSN)
+	driver := strings.ToLower(strings.TrimSpace(cfg.DBDriver))
+	db, err := openConfiguredDB(cfg, opener)
 	if err != nil {
 		return Components{}, fmt.Errorf("open sql repository: %w", err)
 	}
-	bootstrapResult, err := dbbootstrap.Bootstrap(context.Background(), db, dbbootstrap.Options{
-		MigrationFile: cfg.DBMigrationFile,
-	})
-	if err != nil {
-		_ = db.Close()
-		return Components{}, err
+	repo := store.NewSQLRepositoryWithDriver(driver, db)
+	if driver == "sqlite" {
+		if err := repo.AutoMigrate(); err != nil {
+			_ = db.Close()
+			return Components{}, fmt.Errorf("migrate sqlite repository: %w", err)
+		}
+	} else {
+		bootstrapResult, err := dbbootstrap.Bootstrap(context.Background(), db, dbbootstrap.Options{
+			MigrationFile: cfg.DBMigrationFile,
+		})
+		if err != nil {
+			_ = db.Close()
+			return Components{}, err
+		}
+		if bootstrapResult.ResetLegacy {
+			fmt.Fprintf(os.Stdout, "scan-control-plane reset legacy database and applied migration %s\n", dbbootstrap.BaselineVersion)
+		} else if bootstrapResult.AppliedMigration {
+			fmt.Fprintf(os.Stdout, "scan-control-plane applied migration %s to empty database\n", dbbootstrap.BaselineVersion)
+		}
+		if err := applyRuntimeSchemaRepairs(db); err != nil {
+			_ = db.Close()
+			return Components{}, err
+		}
 	}
-	if bootstrapResult.ResetLegacy {
-		fmt.Fprintf(os.Stdout, "scan-control-plane reset legacy database and applied migration %s\n", dbbootstrap.BaselineVersion)
-	} else if bootstrapResult.AppliedMigration {
-		fmt.Fprintf(os.Stdout, "scan-control-plane applied migration %s to empty database\n", dbbootstrap.BaselineVersion)
-	}
-	if err := applyRuntimeSchemaRepairs(db); err != nil {
-		_ = db.Close()
-		return Components{}, err
-	}
-	repo := store.NewSQLRepository(db)
 	adapters.Repository = repo
 	adapters.JobQueue = taskengine.NewDBJobQueue(repo)
 	adapters.Scheduler = buildScheduleEngine(adapters, cfg)
@@ -175,6 +185,26 @@ func buildSQLComponents(cfg config.Config, opener DBOpener) (Components, error) 
 		adapters.TargetSearchCachePrewarmer = prewarmer
 	}
 	return adapters, nil
+}
+
+func openConfiguredDB(cfg config.Config, opener DBOpener) (*sql.DB, error) {
+	driver := strings.ToLower(strings.TrimSpace(cfg.DBDriver))
+	if driver == "sqlite" {
+		if err := os.MkdirAll(filepath.Dir(cfg.DBDSN), 0o755); err != nil {
+			return nil, err
+		}
+		dsn := cfg.DBDSN
+		if !strings.HasPrefix(dsn, "file:") {
+			dsn = "file:" + filepath.ToSlash(dsn)
+		}
+		db, err := opener("sqlite", dsn+"?_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)")
+		if err != nil {
+			return nil, err
+		}
+		db.SetMaxOpenConns(1)
+		return db, nil
+	}
+	return opener("postgres", cfg.DBDSN)
 }
 
 func applyRuntimeSchemaRepairs(db *sql.DB) error {
@@ -206,6 +236,10 @@ func buildAdapters(cfg config.Config) (Components, error) {
 	if err != nil {
 		return Components{}, err
 	}
+	adminVerifier, err := newAuthServiceAdminVerifier(cfg.AuthServiceBaseURL, nil)
+	if err != nil {
+		return Components{}, fmt.Errorf("configure auth service admin verifier: %w", err)
+	}
 	targetSearchCacheStore, err := buildTargetSearchCacheStore(cfg)
 	if err != nil {
 		return Components{}, err
@@ -221,6 +255,7 @@ func buildAdapters(cfg config.Config) (Components, error) {
 		LocalFSDefaultAgentID:             cfg.LocalFSDefaultAgentID,
 		LocalFSPublicRoot:                 cfg.LocalFSPublicRoot,
 		AuthConnectionClient:              auth,
+		AdminVerifier:                     adminVerifier,
 		FeishuClient:                      feishuClient,
 		TempObjectStore:                   temp,
 		TargetSearchCacheStore:            targetSearchCacheStore,
@@ -303,6 +338,7 @@ func newHandlerWithComponents(built Components) http.Handler {
 		server.WithAccessChecker(access.NewDefaultChecker(
 			repo,
 			access.WithAuthConnectionVerifier(newAuthConnectionVerifier(built.AuthConnectionClient)),
+			access.WithAdminVerifier(built.AdminVerifier),
 		)),
 		server.WithAgentStore(repo),
 		server.WithScheduleEngine(scheduler),
@@ -628,7 +664,13 @@ func buildCrawlWorker(built Components, cfg config.Config) (*crawl.RunOnceWorker
 		return nil, err
 	}
 	reducer := stateengine.NewDBStateReducer(built.Repository)
-	crawler := crawl.NewDefaultCrawlEngine(built.Repository, registry, built.Repository, reducer)
+	crawler := crawl.NewDefaultCrawlEngine(
+		built.Repository,
+		registry,
+		built.Repository,
+		reducer,
+		crawl.WithListRequestInterval(cfg.CrawlListRequestInterval),
+	)
 	scheduler := built.Scheduler
 	if scheduler == nil {
 		scheduler = buildScheduleEngine(built, cfg)

@@ -1,5 +1,5 @@
 # Code style: Python (flake8) + Go (gofmt). Mirrors algorithm/lazyllm Makefile pattern.
-.PHONY: help lint install-flake8 lint-python lint-go test test-hermetic test-hermetic-setup test-hermetic-check build up up-build up-build-local down clear reset-kb reset-all fresh-start compose-host-permissions file-watcher-dirs file-watcher-build file-watcher-run file-watcher-start file-watcher-stop desktop-stop-if-present
+.PHONY: help lint install-flake8 install-golangci-lint lint-python lint-go lint-state-backend-boundary test test-hermetic test-hermetic-setup test-hermetic-check build up up-build local-runtime-manager-build up-build-local down clear reset-kb reset-all fresh-start compose-host-permissions file-watcher-dirs file-watcher-build file-watcher-run file-watcher-start file-watcher-stop desktop-stop-if-present
 .DEFAULT_GOAL := help
 
 # Use legacy Docker builder by default to avoid pulling moby/buildkit:buildx-stable-1 from Docker Hub
@@ -11,8 +11,8 @@ GO ?= go
 LAZYMIND_LOCAL_PROFILE ?= linux-browser
 LAZYMIND_LOCAL_BIN ?= local/local-runtime-manager/lazymind-local
 LAZYMIND_LOCAL_GOCACHE ?= $(CURDIR)/.codex-gocache/go-build
-PROCESS_COMPOSE_BIN ?= local/bin/process-compose
-PROCESS_COMPOSE_PKG ?= github.com/f1bonacc1/process-compose@v1.116.0
+LAZYMIND_LOCAL_DOWN_TIMEOUT ?= 150s
+export LAZYMIND_LOCAL_MILVUS_DB_PATH ?= $(CURDIR)/.lazymind-local/stores/milvus/lazymind.db
 comma := ,
 
 # ---------------------------------------------------------------------------
@@ -64,7 +64,7 @@ _COMPOSE := DOCKER_BUILDKIT=$(DOCKER_BUILDKIT) docker compose $(_COMPOSE_PROJECT
 # Keep its writable roots under the compose volume root by default.
 # LAZYMIND_FILE_WATCHER_BASE_ROOT is exported as a compose-friendly path;
 # internal Makefile bookkeeping uses the resolved absolute path below.
-export LAZYMIND_FILE_WATCHER_BASE_ROOT ?= ./data/scan
+export LAZYMIND_FILE_WATCHER_BASE_ROOT ?= ./.lazymind-local/stores/scan/file-watcher
 LAZYMIND_FILE_WATCHER_BASE_ROOT_ABS := $(abspath $(LAZYMIND_FILE_WATCHER_BASE_ROOT))
 export LAZYMIND_FILE_WATCHER_MODE ?= container
 
@@ -168,7 +168,10 @@ export LAZYMIND_FRONTEND_PORT ?= 8090
 PYTHON_DIRS := algorithm backend evo
 
 # Go dirs to lint
-GO_DIRS := backend/core local/local-proxy
+GO_DIRS := backend/core local/local-proxy local/local-runtime-manager
+GO_MODULE_DIRS := backend/core backend/scan-control-plane backend/file-watcher local/local-proxy local/local-runtime-manager tests/backend/core
+GOLANGCI_LINT_VERSION ?= v2.12.2
+GOLANGCI_LINT ?= $(shell command -v golangci-lint 2>/dev/null || printf '%s/bin/golangci-lint' "$$($(GO) env GOPATH)")
 
 help:
 	@echo "LazyMind Make targets:"
@@ -207,15 +210,23 @@ help:
 
 # Require flake8 to be installed (e.g. in a venv). Do not auto pip-install to avoid PEP 668 errors.
 install-flake8:
-	@for pkg in flake8 flake8-quotes flake8-bugbear; do \
+	@for pkg in flake8 flake8-quotes flake8-bugbear flake8-tidy-imports; do \
 		case $$pkg in \
 			flake8) mod="flake8" ;; \
 			flake8-quotes) mod="flake8_quotes" ;; \
 			flake8-bugbear) mod="bugbear" ;; \
+			flake8-tidy-imports) mod="flake8_tidy_imports" ;; \
 		esac; \
 		$(PYTHON) -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('$$mod') else 1)" \
 			|| $(PIP) install $$pkg; \
 	done
+
+install-golangci-lint:
+	@if [ ! -x "$(GOLANGCI_LINT)" ]; then \
+		echo "Installing golangci-lint $(GOLANGCI_LINT_VERSION) to $(GOLANGCI_LINT)..."; \
+		mkdir -p "$$(dirname "$(GOLANGCI_LINT)")"; \
+		GOBIN="$$(dirname "$(GOLANGCI_LINT)")" $(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION); \
+	fi
 
 lint-python: install-flake8
 	@echo "🐍 Linting Python ($(PYTHON_DIRS))..."
@@ -231,7 +242,16 @@ lint-go:
 	fi
 	@echo "✅ Go fmt OK."
 
-lint: lint-python lint-go
+lint-state-backend-boundary: install-golangci-lint
+	@echo "🔒 Checking state backend Redis boundary..."
+	@set -e; for dir in $(GO_MODULE_DIRS); do \
+		if [ -f "$$dir/go.mod" ]; then \
+			(cd "$$dir" && "$(GOLANGCI_LINT)" run --config "$(CURDIR)/.golangci.yml" --enable-only depguard --tests=false ./...); \
+		fi; \
+	done
+	@echo "✅ State backend boundary OK."
+
+lint: lint-python lint-go lint-state-backend-boundary
 
 test:
 	@./tests/run-all.sh
@@ -290,14 +310,23 @@ build:
 
 compose-host-permissions:
 	@echo "🔐 Ensuring compose bind mounts are readable by containers..."
+	@dir="$(CURDIR)"; \
+	while [ "$$dir" != "/" ] && [ "$$dir" != "$(HOME)" ]; do \
+		echo "  parent execute: $$dir"; \
+		chmod a+x "$$dir" 2>/dev/null || true; \
+		dir="$$(dirname "$$dir")"; \
+	done
+	@echo "  repo root read/execute: ."
 	@chmod a+rx .
 	@for path in $(_COMPOSE_BIND_CRITICAL_READ_PATHS); do \
 		if [ -e "$$path" ]; then \
+			echo "  critical read: $$path"; \
 			chmod -R a+rX "$$path"; \
 		fi; \
 	done
 	@for path in $(_COMPOSE_BIND_BEST_EFFORT_READ_PATHS); do \
 		if [ -e "$$path" ]; then \
+			echo "  best-effort read: $$path"; \
 			chmod -R a+rX "$$path" 2>/dev/null || true; \
 		fi; \
 	done
@@ -387,7 +416,8 @@ up:
 down:
 	@$(MAKE) --no-print-directory file-watcher-stop
 	@if [ -x "$(LAZYMIND_LOCAL_BIN)" ]; then \
-		"$(LAZYMIND_LOCAL_BIN)" down --profile "$(LAZYMIND_LOCAL_PROFILE)" || true; \
+		timeout "$(LAZYMIND_LOCAL_DOWN_TIMEOUT)" "$(LAZYMIND_LOCAL_BIN)" down --profile "$(LAZYMIND_LOCAL_PROFILE)" || \
+			echo "⚠️  Local Runtime manager down timed out or failed; continuing cleanup"; \
 	else \
 		echo "ℹ️  No Local Runtime manager found; skipping"; \
 	fi
@@ -398,6 +428,7 @@ down:
 	@echo "🛑 Stopping default Cloud/Kong compose stack, if present..."
 	@$(_COMPOSE_DEFAULT) $(_CLEANUP_COMPOSE_PROFILES) $(_COMPOSE_DOWN_ACTION) \
 		$(_COMPOSE_DOWN_SERVICES) || true
+	@rm -f .lazymind-local/run/*.pid .lazymind-local/run/algorithm/*.pid .lazymind-local/run/pc-token 2>/dev/null || true
 
 up-build:
 	@if [ "$(LAZYMIND_FILE_WATCHER_MODE)" = "container" ]; then \
@@ -416,13 +447,11 @@ up-build:
 		echo "✅ file-watcher container enabled"; \
 	fi
 
-up-build-local:
-	@if [ ! -x "$(PROCESS_COMPOSE_BIN)" ]; then \
-		mkdir -p "$(dir $(PROCESS_COMPOSE_BIN))"; \
-		GOBIN="$(CURDIR)/local/bin" $(GO) install "$(PROCESS_COMPOSE_PKG)"; \
-	fi
+local-runtime-manager-build:
 	@mkdir -p "$(LAZYMIND_LOCAL_GOCACHE)"
 	@cd local/local-runtime-manager && GOCACHE="$(LAZYMIND_LOCAL_GOCACHE)" $(GO) build -buildvcs=false -o lazymind-local .
+
+up-build-local: local-runtime-manager-build
 	@"$(LAZYMIND_LOCAL_BIN)" up --profile "$(LAZYMIND_LOCAL_PROFILE)"
 
 clear:
@@ -439,7 +468,8 @@ clear:
 # ---------------------------------------------------------------------------
 # reset-kb: wipe knowledge-base data only (Milvus, OpenSearch, uploads, and
 #           KB-related PostgreSQL tables).  User accounts, auth tokens, Redis,
-#           conversations, and prompts are preserved.
+#           conversations, and prompts are preserved. Conversation KB selectors
+#           are cleared so old chats do not keep pointing at deleted KB ids.
 #
 # PostgreSQL tables cleared (core DB):
 #   datasets, default_datasets, documents, tasks, upload_sessions,
@@ -451,6 +481,7 @@ clear:
 # After this, run: make up LAZYMIND_RESET_ALGO_ON_STARTUP=true
 # ---------------------------------------------------------------------------
 _KB_VOLUMES := milvus-etcd milvus-minio milvus-data opensearch-data rag-uploads
+_ALL_VOLUMES := $(_KB_VOLUMES) pgdata redisdata sqlite-data
 
 # SQL run inside the running db container (or via docker run if db is stopped).
 # TRUNCATE … CASCADE handles FK dependencies automatically.
@@ -466,6 +497,13 @@ TRUNCATE TABLE
 CASCADE;
 endef
 export _RESET_KB_SQL_CORE
+
+define _RESET_KB_SQL_CONVERSATIONS
+UPDATE public.conversations
+SET search_config = '{}'
+WHERE search_config IS NOT NULL AND search_config::text <> '{}';
+endef
+export _RESET_KB_SQL_CONVERSATIONS
 
 # Drop all lazyllm-managed tables so SqlManager recreates them with the
 # latest schema on next startup.  Must be done via psql BEFORE processor-server
@@ -491,21 +529,38 @@ CASCADE;
 endef
 export _RESET_KB_SQL_APP
 
-reset-kb:
-	@if [ "$(LAZYMIND_FILE_WATCHER_MODE)" != "container" ]; then \
-		$(MAKE) --no-print-directory file-watcher-stop; \
+reset-kb: local-runtime-manager-build
+	@echo "🧹 Clearing Local Runtime KB state via local-runtime-manager..."
+	@timeout "$(LAZYMIND_LOCAL_DOWN_TIMEOUT)" "$(LAZYMIND_LOCAL_BIN)" reset --scope kb --profile "$(LAZYMIND_LOCAL_PROFILE)" || \
+		echo "⚠️  Local Runtime manager reset timed out or failed; continuing compose cleanup"
+	@echo "⏫ Starting PostgreSQL only for SQL cleanup..."
+	@$(_COMPOSE_LOCAL) $(_CLEANUP_COMPOSE_PROFILES) up -d db >/dev/null
+	@echo "⏳ Waiting for PostgreSQL readiness before SQL cleanup..."
+	@ready=0; \
+	for i in $$(seq 1 30); do \
+		if $(_COMPOSE_LOCAL) exec -T db psql -U root -d postgres -c 'SELECT 1' >/dev/null 2>&1; then \
+			echo "✅ PostgreSQL ready for SQL cleanup"; \
+			ready=1; \
+			break; \
+		fi; \
+		echo "  waiting for PostgreSQL ($$i/30)..."; \
+		sleep 1; \
+	done; \
+	if [ "$$ready" -ne 1 ]; then \
+		echo "⚠️  db did not become ready; SQL cleanup may be skipped"; \
 	fi
-	@echo "⏹  Stopping all services (keeping db running for SQL cleanup)..."
-	@$(_COMPOSE) $(_CLEANUP_COMPOSE_PROFILES) stop \
-		lazyllm-algo lazyllm-doc-server lazyllm-parse-server lazyllm-parse-worker \
-		chat core frontend kong 2>/dev/null || true
 	@echo "🗑  Clearing KB tables in PostgreSQL (core DB)..."
-	@$(_COMPOSE) exec -T db psql -U root -d core -c "$$_RESET_KB_SQL_CORE" 2>&1 || \
+	@$(_COMPOSE_LOCAL) exec -T db psql -U root -d core -c "$$_RESET_KB_SQL_CORE" 2>&1 || \
 		echo "⚠️  core DB not running or tables not found — skipping"
+	@echo "🧹 Clearing stale KB selectors from conversations..."
+	@$(_COMPOSE_LOCAL) exec -T db psql -U root -d core -c "$$_RESET_KB_SQL_CONVERSATIONS" 2>&1 || \
+		echo "⚠️  conversations table not available — skipping"
 	@echo "🗑  Dropping lazyllm schema tables in PostgreSQL (app DB)..."
-	@$(_COMPOSE) exec -T db psql -U root -d app -c "$$_RESET_KB_SQL_APP" 2>&1 || \
+	@$(_COMPOSE_LOCAL) exec -T db psql -U root -d app -c "$$_RESET_KB_SQL_APP" 2>&1 || \
 		echo "⚠️  app DB not running or tables not found — skipping"
-	@echo "⏹  Stopping remaining services..."
+	@echo "⏹  Stopping remaining local compose services..."
+	@$(_COMPOSE_LOCAL) $(_CLEANUP_COMPOSE_PROFILES) down 2>/dev/null || true
+	@echo "⏹  Stopping remaining default Cloud/Kong compose services..."
 	@$(_COMPOSE) $(_CLEANUP_COMPOSE_PROFILES) down 2>/dev/null || true
 	@echo "🗑  Removing KB volumes: $(_KB_VOLUMES)..."
 	@for vol in $(_KB_VOLUMES); do \
@@ -516,8 +571,6 @@ reset-kb:
 			echo "  skip $$vol (not found)"; \
 		fi; \
 	done
-	@echo "🗑  Removing local upload cache..."
-	@rm -rf data/core/uploads 2>/dev/null || true
 	@echo "✅ KB data cleared."
 
 # ---------------------------------------------------------------------------
@@ -526,10 +579,27 @@ reset-kb:
 # ---------------------------------------------------------------------------
 reset-all: reset-kb
 	@echo "🗑  Removing all remaining persistent volumes (pgdata, redisdata, caches)..."
+	@echo "⏹  Stopping local compose stack and removing local volumes..."
+	@$(_COMPOSE_LOCAL) $(_CLEANUP_COMPOSE_PROFILES) down -v 2>/dev/null || true
+	@echo "⏹  Stopping default Cloud/Kong compose stack and removing default volumes..."
 	@$(_COMPOSE) $(_CLEANUP_COMPOSE_PROFILES) down -v 2>/dev/null || true
+	@for vol in $(_ALL_VOLUMES); do \
+		matches="$$(docker volume ls -q | grep -E "(^|_)$${vol}$$" || true)"; \
+		if [ -z "$$matches" ]; then \
+			echo "  skip $$vol (not found)"; \
+		else \
+			for full in $$matches; do \
+				docker volume rm "$$full" >/dev/null 2>&1 && echo "  removed $$full" || echo "  skip $$full (in use?)"; \
+			done; \
+		fi; \
+	done
+	@echo "🧹 Clearing all Local Runtime persistent state via local-runtime-manager..."
+	@timeout "$(LAZYMIND_LOCAL_DOWN_TIMEOUT)" "$(LAZYMIND_LOCAL_BIN)" reset --scope all --profile "$(LAZYMIND_LOCAL_PROFILE)" || \
+		echo "⚠️  Local Runtime manager full reset timed out or failed; continuing Python cache cleanup"
 	@echo "🧹 Clearing Python cache..."
 	@find . -type d -name '__pycache__' ! -path '*/\.git/*' -exec rm -rf {} + 2>/dev/null || true
 	@find . -type f -name '*.pyc' ! -path '*/\.git/*' -delete 2>/dev/null || true
+	@echo "✅ Python cache cleared."
 	@echo "✅ Full reset done. All persistent data removed."
 
 # ---------------------------------------------------------------------------

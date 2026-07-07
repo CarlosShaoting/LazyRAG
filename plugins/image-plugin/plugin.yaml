@@ -9,10 +9,14 @@ description: >
   re-collection or re-enhancement of specific list items while keeping others.
 
 when_to_use: >
-  Call this tool whenever the user wants to generate, draw, create, paint, or
-  produce an image or picture — including requests like "画一张图", "帮我生成图片",
-  "draw a cat", "create an illustration", "生成漫画风格的图", or any similar
-  image-creation request.
+  ONLY call this tool when image generation is the user's PRIMARY and DIRECT intent —
+  i.e. the user explicitly asks to generate, draw, create, paint, or produce an image
+  or picture as the main goal of their request. Examples: "画一张图", "帮我生成图片",
+  "draw a cat", "create an illustration", "生成漫画风格的图".
+  Do NOT trigger this plugin if image generation is merely one sub-step within a larger
+  multi-step task the model has planned (e.g. "write a report and add an image" — the
+  primary intent is the report, not image generation). Do NOT trigger for text content,
+  quizzes, reports, summaries, or any non-visual task.
 
 tool_scripts:
   - path: scripts/tools.py
@@ -20,6 +24,7 @@ tool_scripts:
       - web_search_tool
       - image_search_tool
       - generate_image_tool
+      - enhance_image_tool
 
 steps:
   - id: analyze_subject
@@ -37,6 +42,35 @@ steps:
   - id: enhance_image
     label: Enhance Image
 
+slots:
+  - id: subject_analysis
+    label: Subject Analysis
+    type: text
+    cardinality: single
+    summary_max_chars: 300
+
+  - id: material_images
+    label: Reference Materials
+    type: image
+    cardinality: list
+    ordered: true
+
+  - id: prompt_used
+    label: Optimized Prompt
+    type: text
+    cardinality: single
+
+  - id: enhanced_image_output
+    label: Enhanced Images
+    type: image
+    cardinality: list
+    ordered: true
+
+  - id: image_output
+    label: Raw Image
+    type: image
+    cardinality: single
+
 ui:
   tabs:
     - id: analysis
@@ -44,50 +78,25 @@ ui:
       layout: list
       slots:
         - id: subject_analysis
-          label: Subject Analysis
-          type: text
-          cardinality: single
-          artifact_key: subject_analysis
-          summary_max_chars: 300
 
     - id: materials
       label: Materials
       layout: grid
       slots:
         - id: material_images
-          label: Reference Materials
-          type: image
-          cardinality: list
-          artifact_key: material_image
-          ordered: true
-          caption_key: material_image_caption
 
     - id: prompt
       label: Prompt
       layout: list
       slots:
         - id: prompt_used
-          label: Optimized Prompt
-          type: text
-          cardinality: single
-          artifact_key: optimized_prompt
 
     - id: result
       label: Result
       layout: horizontal
       slots:
         - id: enhanced_image_output
-          label: Enhanced Images
-          type: image
-          cardinality: list
-          artifact_key: enhanced_image_url
-          ordered: true
-
         - id: image_output
-          label: Raw Image
-          type: image
-          cardinality: single
-          artifact_key: generated_image_url
 
 i18n:
   zh-CN:

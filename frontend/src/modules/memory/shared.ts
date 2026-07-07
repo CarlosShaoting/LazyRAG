@@ -31,6 +31,7 @@ export interface StructuredAsset extends BaseAsset {
   category: string;
   tags: string[];
   parentId?: string;
+  parentSkillName?: string;
   fileExt?: string;
   isEnabled?: boolean;
   builtinSkillUid?: string;
@@ -46,6 +47,24 @@ export interface StructuredAsset extends BaseAsset {
   updateStatus?: string;
   nodeType?: string;
 }
+
+export type SkillViewMode = "installed" | "market" | "upload";
+export type SkillSourceFilter = "all" | "builtin" | "admin" | "personal";
+export type SkillMarketSourceFilter = "all" | "builtin" | "admin";
+
+export const resolveSkillSourceType = (
+  item: StructuredAsset,
+): "builtin" | "admin" | "personal" => {
+  if (item.originBuiltinSkillUid) {
+    return "builtin";
+  }
+  return "personal";
+};
+
+export const isSkillUpdatePendingForRecord = (record: StructuredAsset) =>
+  Boolean(record.hasPendingReviewResult) ||
+  Boolean(record.hasPendingReviewSuggestions) ||
+  Boolean(record.hasPendingRemoveSuggestion);
 
 export interface ExperienceAsset extends BaseAsset {
   title: string;

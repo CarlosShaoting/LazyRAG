@@ -21,7 +21,9 @@ interface SkillNode {
   content?: string;
   parent_id?: string;
   parent_skill_id?: string;
+  parent_skill_name?: string;
   parentSkillId?: string;
+  parentSkillName?: string;
   auto_evo?: boolean;
   is_locked?: boolean;
   is_enabled?: boolean;
@@ -57,6 +59,7 @@ export interface SkillAssetRecord {
   tags: string[];
   content: string;
   parentId?: string;
+  parentSkillName?: string;
   protect: boolean;
   autoEvo: boolean;
   isEnabled: boolean;
@@ -99,6 +102,7 @@ export interface ListSkillOptions {
   tags?: string[];
   page?: number;
   pageSize?: number;
+  excludeBuiltinTemplates?: boolean;
 }
 
 export interface SkillAssetListResult {
@@ -112,6 +116,20 @@ export interface ShareSkillPayload {
   targetUserIds: string[];
   targetGroupIds: string[];
   message?: string;
+}
+
+export interface SkillUpdatePayloadSource {
+  name?: string;
+  description?: string;
+  category?: string;
+  tags?: string[];
+  content?: string;
+  parentId?: string;
+  parentSkillName?: string;
+  autoEvo?: boolean;
+  isEnabled?: boolean;
+  fileExt?: string;
+  protect?: boolean;
 }
 
 export type SkillShareStatus =
@@ -263,6 +281,23 @@ const getObjectCandidate = (sources: Array<RawObject | null>, keys: string[]): R
   return toRawObject(value);
 };
 
+export const buildSkillUpdatePayload = (
+  skill: SkillUpdatePayloadSource,
+  overrides: RawObject = {},
+): RawObject => ({
+  auto_evo: Boolean(skill.autoEvo),
+  category: skill.category || "",
+  content: skill.content || "",
+  description: skill.description || "",
+  file_ext: skill.fileExt || "md",
+  is_enabled: skill.isEnabled ?? true,
+  name: skill.name || "",
+  parent_skill_id: skill.parentId || "",
+  parent_skill_name: skill.parentSkillName || "",
+  tags: skill.tags || [],
+  ...overrides,
+});
+
 const unwrapEnvelope = <T>(payload: unknown): T => {
   if (!payload || typeof payload !== "object") {
     return payload as T;
@@ -301,6 +336,7 @@ const normalizeSkillNode = (raw: SkillNode, parentId?: string): SkillAssetRecord
     tags: toStringArray(raw.tags),
     content: toStringValue(raw.content || ""),
     parentId: resolvedParentId || undefined,
+    parentSkillName: toStringValue(raw.parent_skill_name || raw.parentSkillName || ""),
     protect: toBoolean(raw.is_locked, false),
     autoEvo: toBoolean(raw.auto_evo, false),
     isEnabled: toBoolean(raw.is_enabled, true),
@@ -948,6 +984,9 @@ export async function listSkillAssetsPage(
   tags.forEach((item) => {
     params.append("tags", item);
   });
+  if (options.excludeBuiltinTemplates) {
+    params.set("exclude_builtin_templates", "true");
+  }
 
   const response = await axiosInstance.get(`${coreBasePath}/skills`, {
     params,
@@ -958,14 +997,16 @@ export async function listSkillAssetsPage(
   const rawEnvelope = toRawObject(response.data);
   const skillNodes = extractSkillList(payload);
   const flattened = flattenSkillNodes(skillNodes);
-  const enabledOnly = flattened.filter((item) => item.isEnabled !== false);
   const deduped = new Map<string, SkillAssetRecord>();
 
-  enabledOnly.forEach((item) => {
+  flattened.forEach((item) => {
     deduped.set(item.id, item);
   });
 
-  const records = Array.from(deduped.values());
+  let records = Array.from(deduped.values());
+  if (options.excludeBuiltinTemplates) {
+    records = records.filter((item) => !item.isBuiltinTemplate);
+  }
   const page = Math.max(1, toNumberValue(rawPayload?.page ?? rawEnvelope?.page, options.page ?? 1));
   const pageSize = Math.max(
     1,

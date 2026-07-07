@@ -31,6 +31,16 @@ export default defineConfig({
       "@": path.resolve(__dirname, "src"),
     },
   },
+  css: {
+    preprocessorOptions: {
+      scss: {
+        api: "modern-compiler",
+      },
+      sass: {
+        api: "modern-compiler",
+      },
+    },
+  },
   server: {
     port: 5173,
     proxy: {
@@ -44,5 +54,19 @@ export default defineConfig({
   },
   build: {
     outDir: "dist",
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          // Split monaco-editor into its own chunk to avoid bundling it with the main app.
+          // This also prevents Node.js OOM during Vite build by keeping chunk sizes manageable.
+          if (id.includes('monaco-editor')) {
+            return 'monaco-editor';
+          }
+          if (id.includes('@xyflow/react') || id.includes('@xyflow/')) {
+            return 'xyflow';
+          }
+        },
+      },
+    },
   },
 });

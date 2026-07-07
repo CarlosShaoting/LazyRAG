@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 
 	"lazymind/core/state"
@@ -411,8 +410,18 @@ func (p *IdleProcessor) ProcessEvent(ctx context.Context, eventID string) error 
 			return p.markEventFailed(tx, event.ID, now, "load_system_user_preference_failed", err.Error())
 		}
 
+		memoryContent, err := memoryReviewContentWithPendingDraft(ctx, tx, event.UserID, orm.ResourceUpdateResourceTypeMemory, memory.Content)
+		if err != nil {
+			cleanupSessionID = event.SessionID
+			return p.markEventFailed(tx, event.ID, now, "load_pending_memory_review_failed", err.Error())
+		}
 		userContent := evolution.FormatSystemUserPreferenceForChat(preference)
-		memoryTaskID, err := createIdleGenerateTask(ctx, tx, event, memory.ID, memory.Content, userContent, historyJSON, now)
+		userContent, err = memoryReviewContentWithPendingDraft(ctx, tx, event.UserID, orm.ResourceUpdateResourceTypeUserPreference, userContent)
+		if err != nil {
+			cleanupSessionID = event.SessionID
+			return p.markEventFailed(tx, event.ID, now, "load_pending_user_preference_review_failed", err.Error())
+		}
+		memoryTaskID, err := createIdleGenerateTask(ctx, tx, event, memory.ID, memoryContent, userContent, historyJSON, now)
 		if err != nil {
 			cleanupSessionID = event.SessionID
 			return p.markEventFailed(tx, event.ID, now, "create_memory_task_failed", err.Error())
@@ -513,6 +522,17 @@ func loadSystemUserPreferenceForIdle(ctx context.Context, db *gorm.DB, userID st
 	return row, err
 }
 
+func memoryReviewContentWithPendingDraft(ctx context.Context, db *gorm.DB, userID, target, currentContent string) (string, error) {
+	result, err := LatestPendingMemoryReviewResult(ctx, db, userID, target)
+	if err == nil {
+		return result.Content, nil
+	}
+	if errors.Is(err, errReviewNotFound) {
+		return currentContent, nil
+	}
+	return "", err
+}
+
 func createIdleGenerateTask(ctx context.Context, db *gorm.DB, event orm.ConversationIdleEvent, resourceID, memoryContent, userContent string, historyJSON json.RawMessage, now time.Time) (string, error) {
 	triggerID := fmt.Sprintf("%s:%s", strings.TrimSpace(event.EventID), "memory_review")
 	request := memoryGenerateRequestJSON{
@@ -606,42 +626,22 @@ func runIdleFallbackLoop(ctx context.Context, processor *IdleProcessor, interval
 	}
 }
 
-func runIdleRedisExpireNotifyLoop(ctx context.Context, store state.Store, processor *IdleProcessor) {
-	redisStore, ok := store.(interface{ RedisClient() *redis.Client })
+func runIdleExpiredKeyNotifyLoop(ctx context.Context, store state.Store, processor *IdleProcessor) {
+	notifier, ok := store.(state.ExpiredKeyNotifier)
 	if !ok || processor == nil {
 		return
 	}
-	rdb := redisStore.RedisClient()
-	if rdb == nil {
-		return
-	}
-	channel := fmt.Sprintf("__keyevent@%d__:expired", rdb.Options().DB)
-	for ctx.Err() == nil {
-		pubsub := rdb.Subscribe(ctx, channel)
-		msgCh := pubsub.Channel()
-		for {
-			select {
-			case <-ctx.Done():
-				_ = pubsub.Close()
-				return
-			case msg, ok := <-msgCh:
-				if !ok {
-					_ = pubsub.Close()
-					time.Sleep(time.Second)
-					goto reconnect
-				}
-				sessionID, ok := parseConversationIdleTTLKey(msg.Payload)
-				if !ok {
-					continue
-				}
-				if err := processor.ProcessLatestWaitingSession(ctx, sessionID); err != nil {
-					resourceUpdateWarn(logEventIdleRedisNotifyFailed, err).
-						Str("session_id", sessionID).
-						Msg(logEventIdleRedisNotifyFailed)
-				}
-			}
+	notifier.SubscribeExpiredKeys(ctx, func(key string) error {
+		sessionID, ok := parseConversationIdleTTLKey(key)
+		if !ok {
+			return nil
 		}
-	reconnect:
-		continue
-	}
+		if err := processor.ProcessLatestWaitingSession(ctx, sessionID); err != nil {
+			resourceUpdateWarn(logEventIdleExpiredKeyNotifyFailed, err).
+				Str("session_id", sessionID).
+				Msg(logEventIdleExpiredKeyNotifyFailed)
+			return err
+		}
+		return nil
+	})
 }

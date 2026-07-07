@@ -5,12 +5,15 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/lazymind/scan_control_plane/internal/access"
 	"github.com/lazymind/scan_control_plane/internal/config"
 	"github.com/lazymind/scan_control_plane/internal/coreclient"
 	"github.com/lazymind/scan_control_plane/internal/sourceengine/connector"
@@ -28,6 +31,7 @@ func TestBuildSelectsSQLRepositoryAndHTTPAdapters(t *testing.T) {
 	cfg := config.Config{
 		Address:                           "127.0.0.1",
 		Port:                              18080,
+		DBDriver:                          "postgres",
 		DBDSN:                             "postgres://scan-control-plane",
 		CoreBaseURL:                       "http://core.test",
 		DefaultDatasetAlgoID:              "general_algo",
@@ -74,6 +78,9 @@ func TestBuildSelectsSQLRepositoryAndHTTPAdapters(t *testing.T) {
 	if _, ok := built.AuthConnectionClient.(*feishu.HTTPAuthConnectionClient); !ok {
 		t.Fatalf("auth connection client = %T, want http", built.AuthConnectionClient)
 	}
+	if built.AdminVerifier == nil {
+		t.Fatalf("admin verifier is nil")
+	}
 	if _, ok := built.FeishuClient.(*feishu.DefaultFeishuAPIClient); !ok {
 		t.Fatalf("feishu client = %T, want http", built.FeishuClient)
 	}
@@ -101,6 +108,7 @@ func TestBuildRequiresSQLBoundariesBeforeOpeningDB(t *testing.T) {
 	_, err := Build(config.Config{
 		Address:                           "127.0.0.1",
 		Port:                              18080,
+		DBDriver:                          "postgres",
 		DBDSN:                             "postgres://scan-control-plane",
 		CoreBaseURL:                       "://bad-url",
 		DefaultDatasetAlgoID:              "general_algo",
@@ -129,12 +137,43 @@ func TestBuildRequiresSQLBoundariesBeforeOpeningDB(t *testing.T) {
 	}
 }
 
+func TestAuthServiceAdminVerifierUsesValidateEndpoint(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/authservice/auth/validate" {
+			http.Error(w, "unexpected validate request", http.StatusNotFound)
+			return
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer user-token" {
+			http.Error(w, "missing authorization", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"sub":"user-1","role":"system-admin","tenant_id":"tenant-1","permissions":[]}`))
+	}))
+	defer server.Close()
+
+	verifier, err := newAuthServiceAdminVerifier(server.URL, server.Client())
+	if err != nil {
+		t.Fatalf("new admin verifier: %v", err)
+	}
+	ok, err := verifier.IsAdmin(context.Background(), access.Actor{UserID: "user-1", Authorization: "Bearer user-token"})
+	if err != nil {
+		t.Fatalf("verify admin: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected realtime role to be admin")
+	}
+}
+
 func TestBuildMissingRequiredValueReturnsError(t *testing.T) {
 	t.Parallel()
 
 	_, err := Build(config.Config{
 		Address:                           "127.0.0.1",
 		Port:                              18080,
+		DBDriver:                          "postgres",
 		DBDSN:                             "postgres://scan-control-plane",
 		CoreBaseURL:                       "http://core.test",
 		DefaultDatasetAlgoID:              "general_algo",

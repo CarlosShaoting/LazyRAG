@@ -46,6 +46,11 @@ interface ToolManagementSectionProps {
 const DEFAULT_TOOL_PAGE_SIZE = 6;
 const TOOL_PAGE_SIZE_OPTIONS = [6, 12, 20, 50];
 
+const paginateRecords = <T,>(records: T[], page: number, pageSize: number) => {
+  const start = (page - 1) * pageSize;
+  return records.slice(start, start + pageSize);
+};
+
 const getMcpActionKey = (action: string, id: string) => `${action}:${id}`;
 const getMcpToolId = (tool: McpToolAsset) => tool.id || tool.name;
 const normalizeMcpTransportValue = (value?: string) =>
@@ -90,9 +95,16 @@ export default function ToolManagementSection({ view }: ToolManagementSectionPro
   const [mcpToolSaving, setMcpToolSaving] = useState(false);
   const [mcpForm] = Form.useForm<McpServerDraft>();
 
-  const listOptions = useMemo(
-    () => ({ keyword: query, page: currentPage, pageSize }),
-    [currentPage, pageSize, query],
+  const listOptions = useMemo(() => ({ keyword: query }), [query]);
+
+  const displayedToolAssets = useMemo(
+    () => paginateRecords(toolAssets, currentPage, pageSize),
+    [currentPage, pageSize, toolAssets],
+  );
+
+  const displayedMcpServers = useMemo(
+    () => paginateRecords(mcpServers, currentPage, pageSize),
+    [currentPage, mcpServers, pageSize],
   );
 
   const markToolActionLoading = useCallback((key: string, loading: boolean) => {
@@ -492,6 +504,8 @@ export default function ToolManagementSection({ view }: ToolManagementSectionPro
         <div className="model-provider-service-card-copy">
           <div className="model-provider-service-title-row">
             <h4>{server.name}</h4>
+          </div>
+          <div className="model-provider-managed-tool-status-row">
             <Tag className="model-provider-service-status" color={server.isVerified ? "blue" : "warning"}>
               {server.isVerified ? t("admin.memoryMcpVerified") : t("admin.memoryMcpUnverified")}
             </Tag>
@@ -559,7 +573,7 @@ export default function ToolManagementSection({ view }: ToolManagementSectionPro
 
   return (
     <section className="model-provider-service-category model-provider-tool-management-section">
-      <div className="model-provider-tool-management-head">
+      <div className="model-provider-service-category-top">
         <div className="model-provider-service-category-head model-provider-tool-category-title">
           <span>{view === "mcp" ? <CloudServerOutlined /> : <ToolOutlined />}</span>
           <div>
@@ -575,6 +589,25 @@ export default function ToolManagementSection({ view }: ToolManagementSectionPro
             </p>
           </div>
         </div>
+        <Input
+          allowClear
+          className="model-provider-category-search"
+          placeholder={
+            view === "mcp"
+              ? t("modelProvider.external.mcpToolSearchPlaceholder")
+              : t("modelProvider.external.toolSearchPlaceholder")
+          }
+          prefix={<SearchOutlined />}
+          value={searchInput}
+          onChange={(event) => {
+            const nextValue = event.target.value;
+            setSearchInput(nextValue);
+            submitSearch(nextValue);
+          }}
+          onPressEnter={(event) => {
+            submitSearch(event.currentTarget.value);
+          }}
+        />
         {view === "mcp" ? (
           <Button
             className="model-provider-tool-primary-button"
@@ -585,41 +618,6 @@ export default function ToolManagementSection({ view }: ToolManagementSectionPro
             {t("admin.memoryMcpCreateButton")}
           </Button>
         ) : null}
-      </div>
-
-      <div className="model-provider-tool-toolbar">
-        <Input
-          allowClear
-          className="model-provider-tool-search"
-          placeholder={
-            view === "mcp"
-              ? t("modelProvider.external.mcpToolSearchPlaceholder")
-              : t("modelProvider.external.toolSearchPlaceholder")
-          }
-          suffix={
-            <Tooltip title={t("common.search")}>
-              <Button
-                aria-label={t("common.search")}
-                className="model-provider-tool-search-button"
-                icon={<SearchOutlined />}
-                size="small"
-                type="text"
-                onClick={() => submitSearch(searchInput)}
-              />
-            </Tooltip>
-          }
-          value={searchInput}
-          onChange={(event) => {
-            const nextValue = event.target.value;
-            setSearchInput(nextValue);
-            if (!nextValue.trim()) {
-              submitSearch("");
-            }
-          }}
-          onPressEnter={(event) => {
-            submitSearch(event.currentTarget.value);
-          }}
-        />
       </div>
 
       <Spin spinning={view === "mcp" ? mcpLoading : toolLoading}>
@@ -633,8 +631,8 @@ export default function ToolManagementSection({ view }: ToolManagementSectionPro
         ) : (
           <div className="model-provider-service-grid model-provider-managed-tool-grid">
             {view === "mcp"
-              ? mcpServers.map((server) => renderMcpServerCard(server))
-              : toolAssets.map((tool) => renderBuiltInToolCard(tool))}
+              ? displayedMcpServers.map((server) => renderMcpServerCard(server))
+              : displayedToolAssets.map((tool) => renderBuiltInToolCard(tool))}
           </div>
         )}
       </Spin>

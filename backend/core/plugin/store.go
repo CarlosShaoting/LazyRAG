@@ -17,11 +17,13 @@ import (
 	"lazymind/core/common/orm"
 )
 
-// Session status constants.
+// Session status constants. Only three states are valid in the new state machine:
+// active (SubAgent running), waiting (awaiting user input), completed (session ended).
+// The "failed" and "interrupted" statuses are retired — they are now attributes of
+// individual sub_agent_tasks, not of the session itself.
 const (
 	SessionStatusActive    = "active"
 	SessionStatusCompleted = "completed"
-	SessionStatusFailed    = "failed"
 	SessionStatusWaiting   = "waiting"
 )
 
@@ -47,10 +49,10 @@ type CreateSessionInput struct {
 // CreateSession inserts a new plugin_sessions record.
 // It returns an error if an active session already exists for the conversation.
 func CreateSession(ctx context.Context, db *gorm.DB, in CreateSessionInput) (*orm.PluginSession, error) {
-	// Guard: at most one active session per conversation.
+	// Guard: at most one non-dismissed active session per conversation.
 	var count int64
 	if err := db.WithContext(ctx).Model(&orm.PluginSession{}).
-		Where("conversation_id = ? AND status = ?", in.ConversationID, SessionStatusActive).
+		Where("conversation_id = ? AND status = ? AND dismissed = false", in.ConversationID, SessionStatusActive).
 		Count(&count).Error; err != nil {
 		return nil, err
 	}
@@ -77,12 +79,12 @@ func CreateSession(ctx context.Context, db *gorm.DB, in CreateSessionInput) (*or
 }
 
 // GetActiveSession returns the in-progress plugin session for a conversation, or nil if none.
-// Only 'active' status is considered: used by HandlePluginStepCreated to guard against
-// duplicate cold-start sessions.
+// Only 'active' and non-dismissed sessions are considered: used by HandlePluginStepCreated
+// to guard against duplicate cold-start sessions.
 func GetActiveSession(ctx context.Context, db *gorm.DB, conversationID string) (*orm.PluginSession, error) {
 	var s orm.PluginSession
 	err := db.WithContext(ctx).
-		Where("conversation_id = ? AND status = ?", conversationID, SessionStatusActive).
+		Where("conversation_id = ? AND status = ? AND dismissed = false", conversationID, SessionStatusActive).
 		Order("created_at DESC").
 		First(&s).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -94,12 +96,13 @@ func GetActiveSession(ctx context.Context, db *gorm.DB, conversationID string) (
 	return &s, nil
 }
 
-// GetLatestSession returns the most recent plugin session for a conversation regardless of status,
-// or nil if none exists. Used by the frontend to always show session output even after completion.
+// GetLatestSession returns the most recent non-dismissed plugin session for a conversation,
+// or nil if none exists. Used by the frontend to show the current active session.
+// Dismissed sessions are excluded so the frontend sees a clean state after dismissal.
 func GetLatestSession(ctx context.Context, db *gorm.DB, conversationID string) (*orm.PluginSession, error) {
 	var s orm.PluginSession
 	err := db.WithContext(ctx).
-		Where("conversation_id = ?", conversationID).
+		Where("conversation_id = ? AND dismissed = false", conversationID).
 		Order("created_at DESC").
 		First(&s).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -109,6 +112,126 @@ func GetLatestSession(ctx context.Context, db *gorm.DB, conversationID string) (
 		return nil, err
 	}
 	return &s, nil
+}
+
+// DismissSession marks a plugin session as dismissed, hiding it from all active-session
+// lookups. If the session has running steps, they are interrupted first. The status field
+// is preserved for audit purposes; only the dismissed flag is set.
+func DismissSession(ctx context.Context, db *gorm.DB, sessionID string) error {
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var s orm.PluginSession
+		if err := tx.Where("id = ? AND dismissed = false", sessionID).First(&s).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("session not found or already dismissed")
+			}
+			return err
+		}
+		// If active, mark running steps interrupted before dismissing.
+		if s.Status == SessionStatusActive {
+			if err := tx.Model(&orm.PluginSessionStep{}).
+				Where("session_id = ? AND status = ?", sessionID, StepStatusRunning).
+				Updates(map[string]any{"status": StepStatusInterrupted, "updated_at": time.Now().UTC()}).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Model(&orm.PluginSession{}).
+			Where("id = ?", sessionID).
+			Updates(map[string]any{"dismissed": true, "updated_at": time.Now().UTC()}).Error
+	})
+}
+
+// RestoreSession un-dismisses a previously dismissed session. Returns an error if another
+// non-dismissed active/waiting session already exists for the same conversation. If the
+// session was active before dismissal, it is restored to waiting (SubAgent was cancelled).
+func RestoreSession(ctx context.Context, db *gorm.DB, sessionID string) error {
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var s orm.PluginSession
+		if err := tx.Where("id = ? AND dismissed = true", sessionID).First(&s).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("session not found or not dismissed")
+			}
+			return err
+		}
+		// Guard: no other active/waiting session in this conversation.
+		var count int64
+		if err := tx.Model(&orm.PluginSession{}).
+			Where("conversation_id = ? AND dismissed = false AND status IN ?",
+				s.ConversationID, []string{SessionStatusActive, SessionStatusWaiting}).
+			Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			return fmt.Errorf("another active or waiting session exists for this conversation")
+		}
+		newStatus := s.Status
+		if newStatus == SessionStatusActive {
+			// SubAgent was cancelled at dismiss time; restore to waiting so the user can retry.
+			newStatus = SessionStatusWaiting
+		}
+		return tx.Model(&orm.PluginSession{}).
+			Where("id = ?", sessionID).
+			Updates(map[string]any{
+				"dismissed":  false,
+				"status":     newStatus,
+				"updated_at": time.Now().UTC(),
+			}).Error
+	})
+}
+
+// healStaleActiveSession repairs a session that is stuck in "active" state after a crash.
+// A step is considered orphaned (and safe to mark interrupted) only when its backing
+// sub_agent_task is already in a terminal state (succeeded/failed/interrupted/canceled) while
+// the plugin_session_step still shows "running". This avoids incorrectly interrupting steps
+// that are genuinely still executing.
+//
+// If all orphaned running steps are resolved and no real running steps remain, the session
+// is flipped from "active" to "waiting".
+//
+// A grace period (staleThreshold) is applied to the session's updated_at to avoid touching
+// sessions that just started.
+func healStaleActiveSession(ctx context.Context, db *gorm.DB, s *orm.PluginSession) {
+	const staleThreshold = 2 * time.Minute
+	if time.Since(s.UpdatedAt) < staleThreshold {
+		return
+	}
+
+	now := time.Now().UTC()
+
+	// Fix orphaned running steps: plugin_session_step is "running" but the backing
+	// sub_agent_task has already reached a terminal state. Sync the step status to
+	// match the task status exactly (succeeded/failed/interrupted/canceled).
+	result := db.WithContext(ctx).Exec(`
+		UPDATE plugin_session_steps pss
+		SET status = sat.status, updated_at = ?
+		FROM sub_agent_tasks sat
+		WHERE pss.session_id = ?
+		  AND pss.task_id = sat.id
+		  AND pss.status = 'running'
+		  AND sat.status IN ('succeeded', 'failed', 'interrupted', 'canceled')
+		`, now, s.ID)
+	orphansFixed := result.RowsAffected
+
+	// Count genuinely running steps remaining after the fix.
+	var realRunning int64
+	db.WithContext(ctx).Model(&orm.PluginSessionStep{}).
+		Where("session_id = ? AND status = ?", s.ID, StepStatusRunning).
+		Count(&realRunning)
+
+	if realRunning > 0 {
+		// Some steps are still backed by a genuinely running task — don't touch the session.
+		if orphansFixed > 0 {
+			fmt.Printf("[plugin] healStaleActiveSession: session %s fixed %d orphan step(s), %d still running\n",
+				s.ID, orphansFixed, realRunning)
+		}
+		return
+	}
+
+	// No genuinely running steps → flip session to waiting.
+	db.WithContext(ctx).Model(s).
+		Updates(map[string]any{"status": SessionStatusWaiting, "updated_at": now})
+	s.Status = SessionStatusWaiting
+	fmt.Printf("[plugin] healStaleActiveSession: session %s repaired active→waiting (orphans=%d)\n",
+		s.ID, orphansFixed)
 }
 
 // GetSession loads a session by ID.
@@ -120,11 +243,24 @@ func GetSession(ctx context.Context, db *gorm.DB, sessionID string) (*orm.Plugin
 	return &s, nil
 }
 
-// ListSessions returns sessions for a conversation ordered by creation time desc.
+// ListSessions returns non-dismissed sessions for a conversation ordered by creation time desc.
 func ListSessions(ctx context.Context, db *gorm.DB, conversationID string) ([]orm.PluginSession, error) {
 	var rows []orm.PluginSession
 	if err := db.WithContext(ctx).
-		Where("conversation_id = ?", conversationID).
+		Where("conversation_id = ? AND dismissed = false", conversationID).
+		Order("created_at DESC").
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// ListDismissedSessions returns dismissed sessions for a conversation ordered by creation time desc.
+// Used by the restore UI to enumerate sessions the user can bring back.
+func ListDismissedSessions(ctx context.Context, db *gorm.DB, conversationID string) ([]orm.PluginSession, error) {
+	var rows []orm.PluginSession
+	if err := db.WithContext(ctx).
+		Where("conversation_id = ? AND dismissed = true", conversationID).
 		Order("created_at DESC").
 		Find(&rows).Error; err != nil {
 		return nil, err
@@ -172,13 +308,19 @@ func CreateSessionStep(ctx context.Context, db *gorm.DB, sessionID, stepID, task
 }
 
 // UpdateStepStatus mirrors sub_agent_tasks.status changes into plugin_session_steps.
+// Terminal states (succeeded, interrupted) are never downgraded: once a step has been
+// interrupted by the user, a late EOF from the SubAgent stream must not reset it to failed.
 func UpdateStepStatus(ctx context.Context, db *gorm.DB, taskID, status string) error {
-	return db.WithContext(ctx).Model(&orm.PluginSessionStep{}).
-		Where("task_id = ?", taskID).
-		Updates(map[string]any{
-			"status":     status,
-			"updated_at": time.Now().UTC(),
-		}).Error
+	q := db.WithContext(ctx).Model(&orm.PluginSessionStep{}).
+		Where("task_id = ?", taskID)
+	if status == StepStatusFailed {
+		// Only write failed if the step is not already in a terminal state.
+		q = q.Where("status NOT IN ?", []string{StepStatusSucceeded, StepStatusInterrupted})
+	}
+	return q.Updates(map[string]any{
+		"status":     status,
+		"updated_at": time.Now().UTC(),
+	}).Error
 }
 
 // GetLatestStep returns the most recent execution instance of step_id within a session.
@@ -228,6 +370,33 @@ func ListSteps(ctx context.Context, db *gorm.DB, sessionID string) ([]orm.Plugin
 	return rows, nil
 }
 
+// ListStepIntents returns all step-level intent rows for a session.
+func ListStepIntents(ctx context.Context, db *gorm.DB, sessionID string) ([]orm.PluginStepIntent, error) {
+	var rows []orm.PluginStepIntent
+	if err := db.WithContext(ctx).
+		Where("session_id = ?", sessionID).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// IsEndStepLatest reports whether the most recently created step in the session has
+// step_id == "__end__". This is the canonical way to decide whether a session should be
+// considered completed vs. waiting: if the user rolls back by triggering a new step after
+// __end__, the __end__ record remains but is no longer the latest, so this returns false.
+func IsEndStepLatest(ctx context.Context, db *gorm.DB, sessionID string) (bool, error) {
+	var step orm.PluginSessionStep
+	err := db.WithContext(ctx).
+		Where("session_id = ?", sessionID).
+		Order("created_at DESC").
+		First(&step).Error
+	if err != nil {
+		return false, err
+	}
+	return step.StepID == "__end__", nil
+}
+
 // WriteSlotRevision inserts a new AI slot revision and manages the selected flag.
 // It resolves artifact_seq by querying the most-recent sub_agent_artifacts row for
 // (taskID, artifactKey) and storing its seq as a pointer — the value is never copied
@@ -249,7 +418,7 @@ func WriteSlotRevision(ctx context.Context, db *gorm.DB,
 	var finalListIndex *int
 
 	// Resolve artifact_seq: find the task_id for this step attempt, then pick
-	// the latest seq from sub_agent_artifacts for (task_id, artifact_key).
+	// the latest seq from sub_agent_artifacts for (task_id, slot).
 	// This is best-effort; a nil artifactSeq causes enrichSlots to fall back
 	// to content_snapshot (written later by OnSubAgentDoneSnapshot).
 	var artifactSeq *int
@@ -259,7 +428,7 @@ func WriteSlotRevision(ctx context.Context, db *gorm.DB,
 		First(&step).Error == nil {
 		var art orm.SubAgentArtifact
 		if db.WithContext(ctx).
-			Where("task_id = ? AND artifact_key = ?", step.TaskID, artifactKey).
+			Where("task_id = ? AND slot = ?", step.TaskID, artifactKey).
 			Order("seq DESC").
 			First(&art).Error == nil {
 			seq := art.Seq
@@ -328,7 +497,7 @@ func WriteSlotRevision(ctx context.Context, db *gorm.DB,
 			Selected:     true,
 			ChangeSource: "ai",
 			ArtifactSeq:  artifactSeq,
-			ArtifactKey:  artifactKey,
+			Slot:         artifactKey,
 			StepID:       stepID,
 			Attempt:      attempt,
 			CreatedAt:    now,
@@ -432,7 +601,7 @@ func WriteSlotRevisionWithSnapshot(ctx context.Context, db *gorm.DB,
 			Selected:        true,
 			ChangeSource:    src,
 			ContentSnapshot: contentSnapshot,
-			ArtifactKey:     artifactKey,
+			Slot:            artifactKey,
 			StepID:          stepID,
 			Attempt:         attempt,
 			CreatedAt:       now,
@@ -562,7 +731,7 @@ func ReorderSlot(ctx context.Context, db *gorm.DB,
 }
 
 // HideSlotItem logically deletes the revision at list_index and removes it from order_list.
-// It sets hidden=TRUE on all sub_agent_artifacts rows that share the same (task_id, artifact_key)
+// It sets hidden=TRUE on all sub_agent_artifacts rows that share the same (task_id, slot)
 // and are associated with this session/slot/list_index, and deselects all plugin_slot_revisions rows.
 func HideSlotItem(ctx context.Context, db *gorm.DB, sessionID, slotID string, listIndex int) error {
 	now := time.Now().UTC()
@@ -576,14 +745,14 @@ func HideSlotItem(ctx context.Context, db *gorm.DB, sessionID, slotID string, li
 
 		// Mark the corresponding sub_agent_artifacts rows as hidden.
 		// We collect the artifact_seq values recorded in plugin_slot_revisions for this
-		// list_index, then hide exactly those sub_agent_artifacts rows by (task_id, artifact_key, seq).
+		// list_index, then hide exactly those sub_agent_artifacts rows by (task_id, slot, seq).
 		// This avoids the old value-JSON matching approach which could incorrectly hide artifacts
 		// whose value happened to carry the same list_index number (a write-time ordinal, not the
 		// stable DB list_index).
 		type artifactRef struct {
-			taskID      string
-			artifactKey string
-			seq         int
+			taskID string
+			slot   string
+			seq    int
 		}
 		var refs []artifactRef
 		var revRows []orm.PluginSlotRevision
@@ -608,11 +777,11 @@ func HideSlotItem(ctx context.Context, db *gorm.DB, sessionID, slotID string, li
 			if tid == "" {
 				continue
 			}
-			refs = append(refs, artifactRef{taskID: tid, artifactKey: rev.ArtifactKey, seq: *rev.ArtifactSeq})
+			refs = append(refs, artifactRef{taskID: tid, slot: rev.Slot, seq: *rev.ArtifactSeq})
 		}
 		for _, ref := range refs {
 			if err := tx.Model(&orm.SubAgentArtifact{}).
-				Where("task_id = ? AND artifact_key = ? AND seq = ?", ref.taskID, ref.artifactKey, ref.seq).
+				Where("task_id = ? AND slot = ? AND seq = ?", ref.taskID, ref.slot, ref.seq).
 				Updates(map[string]any{"hidden": true}).Error; err != nil {
 				return err
 			}
@@ -894,7 +1063,7 @@ func WriteSlotRevisionWithHumanArtifact(
 	humanArt := &orm.PluginHumanArtifact{
 		ID:          artifactID,
 		SessionID:   sessionID,
-		ArtifactKey: artifactKey,
+		Slot:        artifactKey,
 		ContentType: contentType,
 		Value:       value,
 		Caption:     caption,
@@ -959,7 +1128,7 @@ func WriteSlotRevisionWithHumanArtifact(
 			Selected:        true,
 			ChangeSource:    "human",
 			HumanArtifactID: &artifactID,
-			ArtifactKey:     artifactKey,
+			Slot:            artifactKey,
 			StepID:          stepID,
 			Attempt:         attempt,
 			CreatedAt:       now,

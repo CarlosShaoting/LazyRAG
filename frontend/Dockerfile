@@ -4,6 +4,9 @@ WORKDIR /app
 
 ARG ALPINE_MIRROR=https://mirrors.aliyun.com/alpine
 ARG NPM_REGISTRY=https://registry.npmmirror.com
+ARG VITE_API_BASE_URL
+ARG VITE_LAZYMIND_MODE
+ARG VITE_HIDE_EVO
 ENV NPM_CONFIG_REGISTRY=${NPM_REGISTRY}
 
 RUN sed -i "s|https://dl-cdn.alpinelinux.org/alpine|${ALPINE_MIRROR}|g" /etc/apk/repositories \
@@ -14,7 +17,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 
 COPY . .
-RUN pnpm build
+RUN NODE_OPTIONS="--max-old-space-size=4096" pnpm build
 
 FROM ${DOCKER_MIRROR}nginx:alpine
 WORKDIR /usr/share/nginx/html

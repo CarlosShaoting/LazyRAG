@@ -13,8 +13,14 @@ type PluginSession struct {
 	PluginID         string `gorm:"column:plugin_id;type:varchar(64);not null"`
 	TriggerHistoryID string `gorm:"column:trigger_history_id;type:varchar(36)"`
 	// Status: active | completed | failed | waiting
-	Status        string    `gorm:"column:status;type:varchar(16);not null;default:active"`
-	CurrentStepID string    `gorm:"column:current_step_id;type:varchar(64)"`
+	Status        string `gorm:"column:status;type:varchar(16);not null;default:active"`
+	CurrentStepID string `gorm:"column:current_step_id;type:varchar(64)"`
+	// Dismissed marks that the user has explicitly removed this session.
+	// Orthogonal to Status: a dismissed session retains its last status for auditing
+	// but is excluded from all active-session lookups.
+	Dismissed bool `gorm:"column:dismissed;type:boolean;not null;default:false"`
+	// IntentContext stores the global constraint/intent for this session (JSON string).
+	IntentContext string    `gorm:"column:intent_context;type:text;not null;default:'{}'"`
 	CreateUserID  string    `gorm:"column:create_user_id;type:varchar(255);not null;default:''"`
 	CreatedAt     time.Time `gorm:"column:created_at;not null"`
 	UpdatedAt     time.Time `gorm:"column:updated_at;not null"`
@@ -43,7 +49,7 @@ func (PluginSessionStep) TableName() string { return "plugin_session_steps" }
 //
 // Value resolution (read path):
 //   - AI revision:    ArtifactSeq != nil → value comes from sub_agent_artifacts at
-//     (task_id via plugin_session_steps, artifact_key, seq=ArtifactSeq).
+//     (task_id via plugin_session_steps, slot, seq=ArtifactSeq).
 //   - Human revision: HumanArtifactID != nil → value comes from plugin_human_artifacts.
 //   - Legacy fallback: both nil → value comes from ContentSnapshot (pre-migration rows).
 type PluginSlotRevision struct {
@@ -65,7 +71,7 @@ type PluginSlotRevision struct {
 	ContentSnapshot json.RawMessage `gorm:"column:content_snapshot;type:jsonb"`
 	// ChangeSource distinguishes AI-generated ('ai') from human-edited ('human') revisions.
 	ChangeSource string    `gorm:"column:change_source;type:varchar(16);not null;default:'ai'"`
-	ArtifactKey  string    `gorm:"column:artifact_key;type:varchar(255);not null"`
+	Slot         string    `gorm:"column:slot;type:varchar(255);not null"`
 	StepID       string    `gorm:"column:step_id;type:varchar(64);not null"`
 	Attempt      int       `gorm:"column:attempt;not null"`
 	CreatedAt    time.Time `gorm:"column:created_at;not null"`
@@ -85,3 +91,28 @@ type PluginSlotOrder struct {
 }
 
 func (PluginSlotOrder) TableName() string { return "plugin_slot_order" }
+
+// PluginStepIntent stores step-level intent/constraints set by the user during a session.
+// There is at most one row per (session_id, step_id) pair; upserted on each update_intent call.
+type PluginStepIntent struct {
+	ID            string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	SessionID     string    `gorm:"column:session_id;type:varchar(36);not null;uniqueIndex:uk_plugin_step_intent,priority:1"`
+	StepID        string    `gorm:"column:step_id;type:varchar(64);not null;uniqueIndex:uk_plugin_step_intent,priority:2"`
+	IntentContext string    `gorm:"column:intent_context;type:text;not null;default:'{}'"`
+	UpdatedAt     time.Time `gorm:"column:updated_at;not null"`
+}
+
+func (PluginStepIntent) TableName() string { return "plugin_step_intents" }
+
+// PluginDraft stores user-created plugin draft content (YAML state machine definition).
+// Each draft is owned by the creating user and represents a work-in-progress plugin.
+type PluginDraft struct {
+	ID        string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	Name      string    `gorm:"column:name;type:varchar(255);not null;default:''"`
+	Content   string    `gorm:"column:content;type:text;not null;default:''"`
+	CreatedBy string    `gorm:"column:created_by;type:varchar(255);not null;default:''"`
+	CreatedAt time.Time `gorm:"column:created_at;not null"`
+	UpdatedAt time.Time `gorm:"column:updated_at;not null"`
+}
+
+func (PluginDraft) TableName() string { return "plugin_drafts" }
