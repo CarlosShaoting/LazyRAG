@@ -23,8 +23,12 @@ config.add('router_default_instance_count', int, 1, 'ROUTER_DEFAULT_INSTANCE_COU
 # Health checker
 config.add('router_health_interval', int, 10, 'ROUTER_HEALTH_INTERVAL',
            description='Interval in seconds between health checks of child processes.')
-config.add('router_health_max_failures', int, 3, 'ROUTER_HEALTH_MAX_FAILURES',
+config.add('router_health_timeout', float, 10.0, 'ROUTER_HEALTH_TIMEOUT',
+           description='Timeout in seconds for each child /health probe request.')
+config.add('router_health_max_failures', int, 5, 'ROUTER_HEALTH_MAX_FAILURES',
            description='Number of consecutive failures before marking a child process unhealthy.')
+config.add('router_child_shutdown_grace', int, 5, 'ROUTER_CHILD_SHUTDOWN_GRACE',
+           description='Seconds to wait after SIGTERM before SIGKILL on child restart.')
 config.add('router_heartbeat_interval', int, 10, 'ROUTER_HEARTBEAT_INTERVAL',
            description='Interval in seconds between router instance heartbeat updates.')
 config.add('router_instance_timeout', int, 30, 'ROUTER_INSTANCE_TIMEOUT',

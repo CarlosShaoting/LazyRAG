@@ -26,7 +26,9 @@ if _algo not in sys.path:
 _ROUTER_CONFIG_DEFAULTS: dict = {
     'router_registry_refresh_interval': 5,
     'router_health_interval': 10,
-    'router_health_max_failures': 3,
+    'router_health_timeout': 10.0,
+    'router_health_max_failures': 5,
+    'router_child_shutdown_grace': 5,
     'router_heartbeat_interval': 10,
     'router_instance_timeout': 30,
     'router_startup_timeout': 30,
