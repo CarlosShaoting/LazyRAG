@@ -5,12 +5,12 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Optional
 
-import httpx
 from sqlalchemy import delete, select
 
 from lazymind.config import config
 import lazymind.router.config  # noqa: F401 — registers router config keys
 from lazymind.router.config import resolve_host
+from lazymind.router.core.port_probe import is_tcp_port_open
 from lazymind.router.db.client import AsyncSessionLocal, HeartbeatSessionLocal
 from lazymind.router.db.models import RouterChildProcess, RouterInstance
 
@@ -176,14 +176,7 @@ class HealthChecker:
                     )
 
     async def _probe_child(self, port: int) -> None:
-        url = f'http://127.0.0.1:{port}/health'
-        healthy = False
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(url)
-            healthy = resp.status_code < 500
-        except Exception:
-            healthy = False
+        healthy = await is_tcp_port_open('127.0.0.1', port)
 
         if healthy:
             self._failure_counts[port] = 0

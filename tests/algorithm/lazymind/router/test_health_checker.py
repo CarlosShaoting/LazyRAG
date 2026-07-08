@@ -2,7 +2,7 @@
 Tests for HealthChecker: health probing, failure counting, restart scheduling,
 heartbeat update, and dead-instance cleanup.
 
-All network calls and subprocess interactions are mocked.
+All port checks and subprocess interactions are mocked.
 """
 from __future__ import annotations
 
@@ -37,18 +37,6 @@ def _mock_registry() -> MagicMock:
     return reg
 
 
-def _http_ok() -> MagicMock:
-    resp = MagicMock()
-    resp.status_code = 200
-    return resp
-
-
-def _http_error() -> MagicMock:
-    resp = MagicMock()
-    resp.status_code = 500
-    return resp
-
-
 async def _seed_child(session_factory, instance_id: str, port: int,
                       status: str = 'healthy', algo_id: str = 'algo_v1') -> None:
     async with session_factory() as s:
@@ -66,20 +54,14 @@ async def _seed_child(session_factory, instance_id: str, port: int,
 
 @pytest.mark.asyncio
 async def test_probe_healthy_resets_failure_count(session_factory):
-    """When /health returns 200, failure counter resets and status is set to healthy."""
+    """When the TCP port is reachable, failure counter resets and status is healthy."""
     await _seed_child(session_factory, 'inst-1', 18000, status='healthy')
 
     pm = _mock_pm()
     registry = _mock_registry()
     hc = HealthChecker(pm, registry)
 
-    mock_resp = _http_ok()
-    mock_client = AsyncMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
-    mock_client.get = AsyncMock(return_value=mock_resp)
-
-    with patch('httpx.AsyncClient', return_value=mock_client), \
+    with patch('lazymind.router.core.health_checker.is_tcp_port_open', AsyncMock(return_value=True)), \
          patch('lazymind.router.core.health_checker.resolve_host', return_value='127.0.0.1'):
         # Seed a pre-existing failure count
         hc._failure_counts[18000] = 2
@@ -98,7 +80,7 @@ async def test_probe_failure_increments_count_and_evicts(session_factory):
     registry = _mock_registry()
     hc = HealthChecker(pm, registry)
 
-    with patch('httpx.AsyncClient', side_effect=Exception('Connection refused')), \
+    with patch('lazymind.router.core.health_checker.is_tcp_port_open', AsyncMock(return_value=False)), \
          patch('lazymind.router.core.health_checker.resolve_host', return_value='127.0.0.1'):
         await hc._probe_child(18000)
 
@@ -119,7 +101,7 @@ async def test_probe_max_failures_triggers_restart(session_factory):
     max_failures = config['router_health_max_failures']
     hc._failure_counts[18000] = max_failures - 1
 
-    with patch('httpx.AsyncClient', side_effect=Exception('down')), \
+    with patch('lazymind.router.core.health_checker.is_tcp_port_open', AsyncMock(return_value=False)), \
          patch('lazymind.router.core.health_checker.resolve_host', return_value='127.0.0.1'):
 
         # Replace _deferred_restart with an AsyncMock so we can spy on scheduling
@@ -153,37 +135,13 @@ async def test_deferred_restart_calls_process_manager(session_factory):
     registry = _mock_registry()
     hc = HealthChecker(pm, registry)
 
-    with patch('httpx.AsyncClient', side_effect=Exception('down')), \
-         patch('lazymind.router.core.health_checker.resolve_host', return_value='127.0.0.1'):
+    with patch('lazymind.router.core.health_checker.resolve_host', return_value='127.0.0.1'):
         with patch('asyncio.sleep', new_callable=AsyncMock):
             await hc._deferred_restart(18000, delay=0)
 
     pm.restart_instance.assert_awaited_once_with('127.0.0.1', 18000)
     registry.refresh.assert_awaited_once()
     assert hc._failure_counts.get(18000, -1) == 0
-
-
-@pytest.mark.asyncio
-async def test_probe_http_500_counts_as_failure(session_factory):
-    """A /health response with status_code >= 500 is treated as a failure."""
-    await _seed_child(session_factory, 'inst-1', 18000)
-
-    pm = _mock_pm()
-    registry = _mock_registry()
-    hc = HealthChecker(pm, registry)
-
-    mock_resp = _http_error()
-    mock_client = AsyncMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
-    mock_client.get = AsyncMock(return_value=mock_resp)
-
-    with patch('httpx.AsyncClient', return_value=mock_client), \
-         patch('lazymind.router.core.health_checker.resolve_host', return_value='127.0.0.1'):
-        await hc._probe_child(18000)
-
-    assert hc._failure_counts[18000] == 1
-    registry.evict_instance.assert_called_once()
 
 
 # ── Heartbeat ─────────────────────────────────────────────────────────────────

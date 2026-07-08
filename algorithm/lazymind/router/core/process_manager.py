@@ -9,7 +9,6 @@ import time
 import uuid
 from typing import Optional
 
-import httpx
 from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -17,6 +16,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from lazymind.config import config
 import lazymind.router.config  # noqa: F401 — registers router config keys
 from lazymind.router.config import resolve_host
+from lazymind.router.core.port_probe import is_tcp_port_open
 from lazymind.router.db.client import AsyncSessionLocal
 from lazymind.router.db.models import (
     RouterAlgorithm,
@@ -352,27 +352,21 @@ class ProcessManager:
     async def _wait_until_healthy(self, port: int, timeout: int = -1) -> bool:
         if timeout < 0:
             timeout = config['router_startup_timeout']
-        url = f'http://127.0.0.1:{port}/health'
         deadline = time.monotonic() + timeout
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            while time.monotonic() < deadline:
-                try:
-                    resp = await client.get(url)
-                    if resp.status_code < 500:
-                        async with AsyncSessionLocal() as session:
-                            await session.execute(
-                                RouterChildProcess.__table__.update()
-                                .where(
-                                    RouterChildProcess.host == self._host,
-                                    RouterChildProcess.port == port,
-                                )
-                                .values(status='healthy')
-                            )
-                            await session.commit()
-                        return True
-                except Exception:
-                    pass
-                await asyncio.sleep(1)
+        while time.monotonic() < deadline:
+            if await is_tcp_port_open('127.0.0.1', port):
+                async with AsyncSessionLocal() as session:
+                    await session.execute(
+                        RouterChildProcess.__table__.update()
+                        .where(
+                            RouterChildProcess.host == self._host,
+                            RouterChildProcess.port == port,
+                        )
+                        .values(status='healthy')
+                    )
+                    await session.commit()
+                return True
+            await asyncio.sleep(1)
         logger.warning('Child process on port %d did not become healthy within %ds', port, timeout)
         return False
 

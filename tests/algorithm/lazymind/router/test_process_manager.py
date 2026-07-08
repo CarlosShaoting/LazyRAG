@@ -235,7 +235,7 @@ async def test_restart_instance_ignores_remote_host(pm):
 
 @pytest.mark.asyncio
 async def test_wait_all_healthy_marks_healthy_in_db(pm, session_factory):
-    """_wait_until_healthy() marks the DB record healthy when /health returns 200."""
+    """_wait_until_healthy() marks the DB record healthy when the TCP port opens."""
     async with session_factory() as s:
         async with s.begin():
             s.add(RouterAlgorithm(id='algo_v1', name='v1', code_path='/tmp', config={}, status='active'))
@@ -248,15 +248,7 @@ async def test_wait_all_healthy_marks_healthy_in_db(pm, session_factory):
 
     pm._host = '127.0.0.1'
 
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-
-    mock_client = AsyncMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
-    mock_client.get = AsyncMock(return_value=mock_response)
-
-    with patch('httpx.AsyncClient', return_value=mock_client):
+    with patch('lazymind.router.core.process_manager.is_tcp_port_open', AsyncMock(return_value=True)):
         await pm.wait_all_healthy([18000], timeout=5)
 
     async with session_factory() as s:
