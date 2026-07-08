@@ -25,6 +25,10 @@ config.add('router_health_interval', int, 10, 'ROUTER_HEALTH_INTERVAL',
            description='Interval in seconds between health checks of child processes.')
 config.add('router_health_max_failures', int, 3, 'ROUTER_HEALTH_MAX_FAILURES',
            description='Number of consecutive failures before marking a child process unhealthy.')
+config.add('router_readiness_max_failures', int, 3, 'ROUTER_READINESS_MAX_FAILURES',
+           description='Number of consecutive readiness (HTTP) failures before marking a child process unready.')
+config.add('router_readiness_restart_failures', int, 10, 'ROUTER_READINESS_RESTART_FAILURES',
+           description='Number of consecutive readiness failures before escalating to process restart.')
 config.add('router_heartbeat_interval', int, 10, 'ROUTER_HEARTBEAT_INTERVAL',
            description='Interval in seconds between router instance heartbeat updates.')
 config.add('router_instance_timeout', int, 30, 'ROUTER_INSTANCE_TIMEOUT',

@@ -5,6 +5,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Optional
 
+import httpx
 from sqlalchemy import delete, select
 
 from lazymind.config import config
@@ -38,8 +39,10 @@ class HealthChecker:
     def __init__(self, process_manager: ProcessManager, registry: GlobalRegistry) -> None:
         self._pm = process_manager
         self._registry = registry
-        # port -> consecutive failure count
+        # port -> consecutive liveness (TCP) failure count
         self._failure_counts: dict[int, int] = {}
+        # port -> consecutive readiness (HTTP) failure count
+        self._readiness_failure_counts: dict[int, int] = {}
         # port -> asyncio.Task for pending restart
         self._restart_tasks: dict[int, asyncio.Task] = {}
 
@@ -176,32 +179,74 @@ class HealthChecker:
                     )
 
     async def _probe_child(self, port: int) -> None:
-        healthy = await is_tcp_port_open('127.0.0.1', port)
-
-        if healthy:
+        liveness_ok = await is_tcp_port_open('127.0.0.1', port)
+        if liveness_ok:
             self._failure_counts[port] = 0
-            await self._update_child_status(port, 'healthy', failures=0)
         else:
-            count = self._failure_counts.get(port, 0) + 1
-            self._failure_counts[port] = count
+            liveness_failures = self._failure_counts.get(port, 0) + 1
+            self._failure_counts[port] = liveness_failures
+            self._readiness_failure_counts[port] = 0
             logger.warning('Child on port %d failed health check (%d/%d)', port,
-                           count, config['router_health_max_failures'])
+                           liveness_failures, config['router_health_max_failures'])
 
             # Evict from registry immediately on first failure so no traffic is
             # sent to a potentially-dead instance while we wait for the threshold.
             self._registry.evict_instance(resolve_host(), port)
 
-            if count >= config['router_health_max_failures']:
-                await self._update_child_status(port, 'unhealthy', failures=count)
+            if liveness_failures >= config['router_health_max_failures']:
+                await self._update_child_status(port, 'unhealthy', failures=liveness_failures)
                 # Trigger restart if not already pending
                 if port not in self._restart_tasks or self._restart_tasks[port].done():
-                    backoff_idx = min(count - config['router_health_max_failures'], len(_BACKOFF_SCHEDULE) - 1)
+                    backoff_idx = min(liveness_failures - config['router_health_max_failures'], len(_BACKOFF_SCHEDULE) - 1)
                     delay = _BACKOFF_SCHEDULE[backoff_idx]
                     self._restart_tasks[port] = asyncio.create_task(
                         self._deferred_restart(port, delay)
                     )
             else:
-                await self._update_child_status(port, None, failures=count)
+                await self._update_child_status(port, None, failures=liveness_failures)
+            return
+
+        readiness_ok = await self._probe_readiness_http(port)
+        if readiness_ok:
+            self._readiness_failure_counts[port] = 0
+            await self._update_child_status(port, 'healthy', failures=0)
+            return
+
+        readiness_failures = self._readiness_failure_counts.get(port, 0) + 1
+        self._readiness_failure_counts[port] = readiness_failures
+        logger.warning(
+            'Child on port %d failed readiness probe (%d/%d)',
+            port, readiness_failures, config['router_readiness_restart_failures'],
+        )
+        # Readiness failure means do not route traffic to this instance.
+        self._registry.evict_instance(resolve_host(), port)
+
+        if readiness_failures >= config['router_readiness_restart_failures']:
+            await self._update_child_status(port, 'unhealthy', failures=readiness_failures)
+            if port not in self._restart_tasks or self._restart_tasks[port].done():
+                backoff_idx = min(
+                    readiness_failures - config['router_readiness_restart_failures'],
+                    len(_BACKOFF_SCHEDULE) - 1,
+                )
+                delay = _BACKOFF_SCHEDULE[backoff_idx]
+                self._restart_tasks[port] = asyncio.create_task(
+                    self._deferred_restart(port, delay)
+                )
+            return
+
+        if readiness_failures >= config['router_readiness_max_failures']:
+            await self._update_child_status(port, 'unhealthy', failures=readiness_failures)
+        else:
+            await self._update_child_status(port, None, failures=readiness_failures)
+
+    async def _probe_readiness_http(self, port: int) -> bool:
+        url = f'http://127.0.0.1:{port}/health'
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                response = await client.get(url)
+            return response.status_code < 500
+        except Exception:
+            return False
 
     async def _deferred_restart(self, port: int, delay: float) -> None:
         logger.info('Scheduling restart for port %d in %.0fs', port, delay)
@@ -209,6 +254,7 @@ class HealthChecker:
         try:
             await self._pm.restart_instance(resolve_host(), port)
             self._failure_counts[port] = 0
+            self._readiness_failure_counts[port] = 0
             logger.info('Restarted child process on port %d', port)
             # Immediately refresh registry so the recovered instance gets traffic again
             await self._registry.refresh()

@@ -54,7 +54,7 @@ async def _seed_child(session_factory, instance_id: str, port: int,
 
 @pytest.mark.asyncio
 async def test_probe_healthy_resets_failure_count(session_factory):
-    """When the TCP port is reachable, failure counter resets and status is healthy."""
+    """When TCP and readiness are both healthy, failure counters reset."""
     await _seed_child(session_factory, 'inst-1', 18000, status='healthy')
 
     pm = _mock_pm()
@@ -62,18 +62,21 @@ async def test_probe_healthy_resets_failure_count(session_factory):
     hc = HealthChecker(pm, registry)
 
     with patch('lazymind.router.core.health_checker.is_tcp_port_open', AsyncMock(return_value=True)), \
+         patch.object(hc, '_probe_readiness_http', AsyncMock(return_value=True)), \
          patch('lazymind.router.core.health_checker.resolve_host', return_value='127.0.0.1'):
         # Seed a pre-existing failure count
         hc._failure_counts[18000] = 2
+        hc._readiness_failure_counts[18000] = 2
         await hc._probe_child(18000)
 
     assert hc._failure_counts[18000] == 0
+    assert hc._readiness_failure_counts[18000] == 0
     registry.evict_instance.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_probe_failure_increments_count_and_evicts(session_factory):
-    """On first failure, evict_instance is called immediately."""
+    """On first liveness failure, evict_instance is called immediately."""
     await _seed_child(session_factory, 'inst-1', 18000)
 
     pm = _mock_pm()
@@ -90,7 +93,7 @@ async def test_probe_failure_increments_count_and_evicts(session_factory):
 
 @pytest.mark.asyncio
 async def test_probe_max_failures_triggers_restart(session_factory):
-    """After reaching router_health_max_failures, a deferred restart is scheduled."""
+    """After reaching liveness max failures, a deferred restart is scheduled."""
     await _seed_child(session_factory, 'inst-1', 18000)
 
     pm = _mock_pm()
@@ -126,6 +129,52 @@ async def test_probe_max_failures_triggers_restart(session_factory):
     assert hc._failure_counts[18000] == max_failures
     # Verify port is now tracked as unhealthy
     assert 18000 in hc._restart_tasks or hc._failure_counts[18000] >= max_failures
+
+
+@pytest.mark.asyncio
+async def test_readiness_failure_evicts_without_immediate_restart(session_factory):
+    """Readiness failures evict traffic first, and do not restart immediately."""
+    await _seed_child(session_factory, 'inst-1', 18000)
+    pm = _mock_pm()
+    registry = _mock_registry()
+    hc = HealthChecker(pm, registry)
+
+    with patch('lazymind.router.core.health_checker.is_tcp_port_open', AsyncMock(return_value=True)), \
+         patch.object(hc, '_probe_readiness_http', AsyncMock(return_value=False)), \
+         patch('lazymind.router.core.health_checker.resolve_host', return_value='127.0.0.1'):
+        await hc._probe_child(18000)
+
+    assert hc._failure_counts[18000] == 0
+    assert hc._readiness_failure_counts[18000] == 1
+    registry.evict_instance.assert_called_once_with('127.0.0.1', 18000)
+    assert 18000 not in hc._restart_tasks
+
+
+@pytest.mark.asyncio
+async def test_readiness_restart_after_escalation_threshold(session_factory):
+    """Readiness failure should restart after readiness restart threshold."""
+    await _seed_child(session_factory, 'inst-1', 18000)
+    pm = _mock_pm()
+    registry = _mock_registry()
+    hc = HealthChecker(pm, registry)
+
+    from lazymind.config import config
+    threshold = config['router_readiness_restart_failures']
+    hc._readiness_failure_counts[18000] = threshold - 1
+
+    with patch('lazymind.router.core.health_checker.is_tcp_port_open', AsyncMock(return_value=True)), \
+         patch.object(hc, '_probe_readiness_http', AsyncMock(return_value=False)), \
+         patch('lazymind.router.core.health_checker.resolve_host', return_value='127.0.0.1'):
+        hc._deferred_restart = AsyncMock()
+        original_create_task = asyncio.create_task
+
+        def spy_create_task(_coro, **_kwargs):
+            return original_create_task(asyncio.sleep(0))
+
+        with patch('asyncio.create_task', side_effect=spy_create_task):
+            await hc._probe_child(18000)
+
+    assert hc._readiness_failure_counts[18000] == threshold
 
 
 @pytest.mark.asyncio
