@@ -8,21 +8,21 @@ describing what was produced and whether it meets the criteria below.
 - Acceptable when `subject_analysis` is saved (50+ words, user-facing natural language).
 - `subject_analysis` must NOT contain WORKFLOW:/NEXT_STEPS:/SKIP_STEPS: lines or step-id routing lists.
 - `workflow_routing` must be saved with WORKFLOW, NEXT_STEPS, and SKIP_STEPS on separate lines.
-- For WORKFLOW: KB_STYLE, knowledge-base text findings must be summarized inside `subject_analysis`.
-- KB image hits are optional (max 3, save URL directly); do NOT use vision_extractor in analyze_subject.
-- For CREATE_NEW or KB_STYLE, missing source photo or prompt at this step is expected; next step is `optimize_prompt`.
+- Analyze step is text-only planning. Do NOT call kb_search/web_search/image_search_tool here.
+- For CREATE_NEW / KB_STYLE / REFERENCE_GENERATE, next step is always `collect_materials`.
 - For REFERENCE_GENERATE, missing material_images at this step is expected; next step is `collect_materials`.
 - For FIND_AND_EDIT or EDIT_UPLOAD, missing raw source image or edit prompt is expected; next step is `collect_materials`.
-- Not acceptable when `image_output` or `prompt_used` were saved here (they belong in later steps).
+- Not acceptable when `material_images`, `image_output`, or `prompt_used` were saved here (they belong in later steps).
 - Not acceptable when the artifact is missing, too short, or routing metadata is missing from `workflow_routing`.
 - Not acceptable when filters.kb_id was set but subject_analysis omits KB style findings from kb_search.
 - After 2+ consecutive failures for this step, state that the step should not be retried again.
 
 ### collect_materials
-- This step runs for REFERENCE_GENERATE, FIND_AND_EDIT, or EDIT_UPLOAD.
-- For KB_STYLE or CREATE_NEW, this step should have been skipped.
+- This step runs for ALL workflows and is the only material/info collection step.
+- It may use kb_search and web_search (plus image_search_tool/validate_image_ref when needed).
 - For REFERENCE_GENERATE, 1–3 validated `material_images` must be saved (never more than 3); next step is `optimize_prompt`.
 - For FIND_AND_EDIT, 1–3 validated `material_images` must be saved (never more than 3); each URL must have passed `validate_image_ref`.
+- For CREATE_NEW / KB_STYLE, collecting 1–3 useful references is recommended before optimize_prompt.
 - For FIND_AND_EDIT or EDIT_UPLOAD, `image_output` must be saved; `prompt_used` is optional here — next step is `optimize_prompt` (or `enhance_image` if prompt_used was already saved).
 - `material_summary` should be saved with a brief Chinese summary of search/selection (what was found, which image was chosen, gaps).
 - Not acceptable when every candidate URL fails validation, no required artifacts were saved, or web tools are unavailable when they are required.

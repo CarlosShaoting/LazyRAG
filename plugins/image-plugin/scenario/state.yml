@@ -13,16 +13,12 @@ transitions:
       condition: "Cold start — always enter subject analysis first."
 
   analyze_subject:
-    - to: optimize_prompt
-      condition: "CREATE_NEW or KB_STYLE — analysis already contains all text/style guidance; skip material collection."
     - to: collect_materials
-      condition: "FIND_AND_EDIT or EDIT_UPLOAD — need to prepare a raw source image before editing."
+      condition: "After analysis, always collect materials first (kb/web/upload) before prompt optimization."
 
   collect_materials:
-    - to: enhance_image
-      condition: "FIND_AND_EDIT or EDIT_UPLOAD — raw image and edit instruction prepared; proceed to image_editor."
     - to: optimize_prompt
-      condition: "REFERENCE_GENERATE or collected refs for text-to-image — use material_images to build generation prompt."
+      condition: "Information/material collection completed — proceed to prompt optimization."
 
   optimize_prompt:
     - to: generate_image
@@ -43,7 +39,6 @@ transitions:
 steps:
   analyze_subject:
     label: Analyze Subject
-    route: choice
     prompt: |
       You are an expert art director and image analyst.
 
@@ -53,17 +48,16 @@ steps:
       {{runtime_instruction}}
 
       Your task:
-      1. If the system prompt lists user-uploaded images under "## User Uploaded Files",
-         call find_user_attachment(filename) only to confirm the file exists and to
-         route EDIT_UPLOAD — do NOT call vision_extractor or any VLM in this step.
-         Visual analysis of uploads belongs in collect_materials when needed.
+      1. This step is ANALYSIS ONLY.
+         Do NOT call any search tools, do NOT call kb_search, do NOT save any images.
+         Do NOT save material_images, image_output, prompt_used, or material_summary here.
       2. Identify the main subject(s) and sub-topics that require reference materials.
       3. Suggest a suitable artistic style (photorealistic, oil painting, anime, etc.).
       4. Note mood, lighting, and composition hints from the user text and any uploaded images.
       5. Classify the workflow internally (do NOT write routing fields into subject_analysis):
            - CREATE_NEW — brand-new image from scratch (text-to-image).
            - KB_STYLE — user wants style/content from a selected knowledge base as reference
-             (e.g. "根据知识库中的风格画图"). Call kb_search in this step when filters.kb_id is set.
+             (e.g. "根据知识库中的风格画图"). KB retrieval will be done in collect_materials.
            - REFERENCE_GENERATE — user wants to search/collect reference images first, then
              generate a **new** image inspired by those refs (text-to-image, NOT editing the found photo).
            - FIND_AND_EDIT — user asks to find/search an existing photo online, then edit it.
@@ -71,39 +65,27 @@ steps:
              edit that upload directly (not search the web for a new photo).
       6. If the runtime instruction mentions a selected knowledge base, filters.kb_id is set,
          or the user explicitly references 知识库 / knowledge base style, prefer WORKFLOW: KB_STYLE.
-      7. When filters.kb_id is set (or WORKFLOW is KB_STYLE), call kb_search with the
-         user's core subject/style query, then:
-           a. Extract visual style, color palette, composition, and subject cues from
-              **text hits only** — never call vision_extractor/multimodal on KB images.
-           b. Include those text findings inside subject_analysis (natural language only).
-           c. KB image URLs are optional references only. Save at most **3** (1–3 is enough):
-              save_artifact(key='material_images', content_type='image', value=<url from hit>).
-              Do NOT call validate_image_ref on KB images.
-      8. Save a **user-facing** analysis (shown in the Analysis tab):
+      7. Save a **user-facing** analysis (shown in the Analysis tab):
            save_artifact(key='subject_analysis', content_type='text', value=<analysis text>)
          Write 100–200 words in clear natural language (Chinese if the user wrote in Chinese).
          Cover: subject, style, mood/lighting/composition, and what will happen next in plain words
          (e.g. "将先联网搜索参考图，再优化编辑指令并编辑图片").
          Do NOT include machine routing lines such as WORKFLOW:, NEXT_STEPS:, SKIP_STEPS:,
          or comma-separated step ids — those belong in workflow_routing only.
-      9. Save **routing metadata** separately (for ChatAgent, not shown in the Analysis tab):
+      8. Save **routing metadata** separately (for ChatAgent, not shown in the Analysis tab):
            save_artifact(key='workflow_routing', content_type='text', value=<routing block>)
          Use exactly this format (3 lines):
            WORKFLOW: <CREATE_NEW|KB_STYLE|REFERENCE_GENERATE|FIND_AND_EDIT|EDIT_UPLOAD>
            NEXT_STEPS: <comma-separated step ids>
            SKIP_STEPS: <comma-separated step ids or none>
          Routing table:
-           KB_STYLE / CREATE_NEW → NEXT_STEPS: optimize_prompt,generate_image
-                                  SKIP_STEPS: collect_materials,enhance_image
-           REFERENCE_GENERATE    → NEXT_STEPS: collect_materials,optimize_prompt,generate_image
-                                  SKIP_STEPS: enhance_image
+           KB_STYLE / CREATE_NEW / REFERENCE_GENERATE → NEXT_STEPS: collect_materials,optimize_prompt,generate_image
+                                                       SKIP_STEPS: enhance_image
            FIND_AND_EDIT / EDIT_UPLOAD → NEXT_STEPS: collect_materials,optimize_prompt,enhance_image
                                         SKIP_STEPS: generate_image
-         Do NOT save image_output or prompt_used in this step.
+         Do NOT save image_output, prompt_used, material_images, or material_summary in this step.
 
       Stop after saving required artifacts only.
-    tools:
-      - kb
     outputs:
       - slot: subject_analysis
         content_type: text
@@ -111,20 +93,15 @@ steps:
       - slot: workflow_routing
         content_type: text
         required: true
-      - slot: material_images
-        content_type: image
-        required: false
     acceptance_criteria: |
       subject_analysis must be saved (50+ words), user-facing natural language only —
       no WORKFLOW:/NEXT_STEPS:/SKIP_STEPS: lines or step-id lists.
       workflow_routing must be saved with WORKFLOW, NEXT_STEPS, and SKIP_STEPS lines.
-      For KB_STYLE with a knowledge base: KB text findings belong in subject_analysis;
-      material_images optional (max 3). Do NOT call vision_extractor in this step.
-      Do NOT save image_output or prompt_used in this step.
+      Do NOT call kb_search/web_search/image_search_tool in this step.
+      Do NOT save material_images, image_output, prompt_used, or material_summary in this step.
 
   collect_materials:
     label: Collect Reference Materials
-    route: choice
     prompt: |
       You are a reference-material collection agent.
 
@@ -138,12 +115,13 @@ steps:
 
       Your task:
       0. Read WORKFLOW from workflow_routing (not from subject_analysis).
-         - REFERENCE_GENERATE: collect reference images for later text-to-image generation.
-         - FIND_AND_EDIT / EDIT_UPLOAD: prepare a raw source image for image_editor.
-         - KB_STYLE / CREATE_NEW: this step should be skipped; do not search or save placeholders.
-      - Do NOT call kb_search here — KB retrieval belongs in analyze_subject.
-      - For REFERENCE_GENERATE or FIND_AND_EDIT, call web_search once, then image_search_tool.
-        **Save only 1–3 validated images total** — stop as soon as you have enough.
+         - CREATE_NEW / KB_STYLE / REFERENCE_GENERATE: collect 1–3 reference images for prompt writing.
+         - FIND_AND_EDIT / EDIT_UPLOAD: prepare source image(s) for image editing.
+      - This is the ONLY step for external information/material collection.
+      - You may use BOTH kb_search and web_search in this step.
+      - For KB_STYLE (or when filters.kb_id is set), run kb_search first to collect style references.
+      - For web collection, call web_search, then image_search_tool.
+      - **Save only 1–3 validated images total** — stop as soon as you have enough.
       - If web_search is unavailable, fall back to wikipedia once, then continue.
       - If both web_search and wikipedia are unavailable, STOP with a failure note.
       - For web-sourced items, call image_search_tool, then validate candidates:
@@ -172,6 +150,7 @@ steps:
       - Follow any "Partial retry instruction" block for sort_order on list slots.
       - Stop after all required artifacts are saved.
     tools:
+      - kb
       - multimodal
       - web_search
       - wikipedia
@@ -196,8 +175,7 @@ steps:
         content_type: text
         required: false
     acceptance_criteria: |
-      KB_STYLE / CREATE_NEW should skip this step; do not web-search or save placeholders.
-      For REFERENCE_GENERATE: 1–3 validated material_images must be saved (never more than 3).
+      For CREATE_NEW / KB_STYLE / REFERENCE_GENERATE: 1–3 validated material_images should be saved (never more than 3).
       For FIND_AND_EDIT: 1–3 material_images and one image_output must be saved (never more than 3 images).
       For EDIT_UPLOAD: image_output must be saved from the user upload.
       material_summary should be saved with a concise description of search results and image selection.
