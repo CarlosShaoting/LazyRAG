@@ -37,11 +37,15 @@ function parseSelectedSlotText(session: PluginSession, slotKey: string, includeU
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   const latest = candidates[0];
   if (!latest) return '';
-  const raw = latest.artifact_value as Record<string, unknown> | undefined;
-  if (!raw) return '';
-  if (raw.text !== undefined) return String(raw.text);
-  if (raw.value !== undefined) return String(raw.value);
-  return '';
+  const raw = latest.artifact_value;
+  if (raw === null || raw === undefined) return '';
+  if (typeof raw === 'string') return raw;
+  if (typeof raw === 'object') {
+    const obj = raw as Record<string, unknown>;
+    if (obj.text !== undefined) return String(obj.text);
+    if (obj.value !== undefined) return String(obj.value);
+  }
+  return String(raw);
 }
 
 /** Latest _source_tool among selected image slots (newest first). */
@@ -910,7 +914,6 @@ export function PluginPanel({
   const [activeTabIdx, setActiveTabIdx] = React.useState(0);
   const [collapsed, setCollapsed] = useState(false);
   const fetchPluginUI = usePluginStore((s) => s.fetchPluginUI);
-  const pluginUIByPlugin = usePluginStore((s) => s.pluginUIByPlugin);
   const setFocusedTab = usePluginStore((s) => s.setFocusedTab);
   const setFocusedSortOrder = usePluginStore((s) => s.setFocusedSortOrder);
   // Focused tab id mirrored out of the session so polling refreshes don't
@@ -951,13 +954,13 @@ export function PluginPanel({
   useEffect(() => {
     if (!session?.plugin_id) return;
     const lang = i18n.language || '';
-    const cached = pluginUIByPlugin[`${session.plugin_id}:${lang}`];
+    const cached = usePluginStore.getState().pluginUIByPlugin[`${session.plugin_id}:${lang}`];
     if (cached) {
       setUI(cached);
     }
     // Always re-fetch once to avoid stale cached tab/slot layouts after plugin.yaml updates.
     fetchPluginUI(session.plugin_id).then(setUI);
-  }, [session?.plugin_id, fetchPluginUI, pluginUIByPlugin, i18n.language]);
+  }, [session?.plugin_id, fetchPluginUI, i18n.language]);
 
   // Restore the previously focused tab when UI loads.
   useEffect(() => {

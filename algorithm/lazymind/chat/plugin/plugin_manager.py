@@ -130,7 +130,7 @@ def _extract_emphasized_intent(user_input: str) -> str:
     picked: List[str] = []
     for c in clauses:
         if any(k in c for k in _INTENT_KEYWORDS):
-            cleaned = re.sub(r'^(请|你|请你|麻烦你)\s*', '', c).strip()
+            cleaned = re.sub(r'^(请你?|麻烦你|你)\s*', '', c).strip()
             if cleaned and cleaned not in picked:
                 picked.append(cleaned)
     # Also capture short "根据..." constraints if present.
@@ -225,7 +225,7 @@ def _trigger_plugin_step(
     latest_query = str(cfg.get('query') or '').strip()
     intent_source = latest_query or user_input
     intent_hint = _extract_emphasized_intent(intent_source)
-    if intent_hint and session_id:
+    if intent_hint and session_id and not is_cold_start:
         try:
             _write_agent_data('intent_updated', **{
                 'session_id': session_id,
