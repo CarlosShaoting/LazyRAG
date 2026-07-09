@@ -20,7 +20,6 @@ remember to list them explicitly.
 from __future__ import annotations
 
 import json
-import re
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -109,41 +108,6 @@ def _fetch_succeeded_steps(session_id: str) -> set:
         return set()
 
 
-_INTENT_KEYWORDS = (
-    '必须', '务必', '一定', '请确保', '不要', '不许', '禁止', '别', '只能', '重点', '尤其', '记得',
-)
-
-
-def _extract_emphasized_intent(user_input: str) -> str:
-    """Extract concise, user-emphasized constraints from the latest query.
-
-    Returns empty string when no obvious emphasis/constraint exists.
-    """
-    text = (user_input or '').strip()
-    if not text:
-        return ''
-    clauses = [
-        c.strip(' \t\r\n，,。.!！？；;:')
-        for c in re.split(r'[。！？；;\n]+', text)
-        if c and c.strip()
-    ]
-    picked: List[str] = []
-    for c in clauses:
-        if any(k in c for k in _INTENT_KEYWORDS):
-            cleaned = re.sub(r'^(请你?|麻烦你|你)\s*', '', c).strip()
-            if cleaned and cleaned not in picked:
-                picked.append(cleaned)
-    # Also capture short "根据..." constraints if present.
-    for m in re.finditer(r'根据[^，。；;\n]{2,28}', text):
-        frag = m.group(0).strip()
-        if frag and frag not in picked:
-            picked.append(frag)
-    if not picked:
-        return ''
-    # Keep concise for UI popover.
-    return '；'.join(picked[:2])[:120]
-
-
 def _agentic_config() -> Dict[str, Any]:
     try:
         return lazyllm.globals['agentic_config'] or {}
@@ -217,24 +181,6 @@ def _trigger_plugin_step(
         user_input = cfg.get('query', '').strip()
     if not user_input:
         raise ValueError('user_input must not be empty.')
-
-    # Update session-level intent only when the latest query has explicit emphasis.
-    # Prefer the raw turn query from runtime config (full user message), because
-    # some tool calls may pass a shortened user_input like "启动绘图插件".
-    # If no obvious emphasis exists, keep existing intent unchanged.
-    latest_query = str(cfg.get('query') or '').strip()
-    intent_source = latest_query or user_input
-    intent_hint = _extract_emphasized_intent(intent_source)
-    if intent_hint and session_id and not is_cold_start:
-        try:
-            _write_agent_data('intent_updated', **{
-                'session_id': session_id,
-                'scope': 'session',
-                'content': intent_hint,
-                'step_id': '',
-            })
-        except Exception:
-            pass
 
     sm = plugin_loader.get_state_machine(plugin_id)
     if sm is None:
@@ -776,8 +722,9 @@ def build_update_intent_tool() -> Any:
 
         Args:
             scope (str): 'session' for global or 'step' for step-specific constraint.
-            content (str): The intent/constraint description, in the user's own words from
-                the latest user query only. Do NOT carry forward unstated history context.
+            content (str): A concise model-generated summary of the user's emphasized
+                constraints in the latest query (not a full raw quote). If no explicit
+                constraints are present, do not call this tool.
             step_id (str, optional): Required when scope='step'.
 
         Returns:
@@ -1214,7 +1161,13 @@ def _build_mode_guidance(
     # --- Global decision rules (apply to both auto and dynamic modes) ---
     global_rules = (
         '\n\n## Step decision rules (READ BEFORE EVERY ACTION)\n\n'
-        '### Rule 1 — Intent-change detection (highest priority)\n'
+        '### Rule 0 — Intent capture from latest user query (highest priority)\n'
+        'At the beginning of each plugin turn, inspect ONLY the latest user query.\n'
+        'If it contains explicit constraints/emphasis (e.g. "必须/务必/一定/不要/不许/禁止/只能/根据..."),\n'
+        'you MUST call `update_intent(scope="session", content="<concise summary>")` FIRST,\n'
+        'before any step-advance tool call. Summarize 1-2 key constraints in concise Chinese.\n'
+        'If the latest query has no explicit new constraints, do NOT call update_intent.\n\n'
+        '### Rule 1 — Intent-change detection\n'
         'Before advancing any step, check whether the user is rejecting or changing\n'
         'the outcome of a step that has ALREADY SUCCEEDED. Signals include:\n'
         '  - Direct negation: "我不喜欢…", "换成…", "不要…", "重新…", "I don\'t like…"\n'
