@@ -20,6 +20,7 @@ remember to list them explicitly.
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -108,6 +109,41 @@ def _fetch_succeeded_steps(session_id: str) -> set:
         return set()
 
 
+_INTENT_KEYWORDS = (
+    '必须', '务必', '一定', '请确保', '不要', '不许', '禁止', '别', '只能', '重点', '尤其', '记得',
+)
+
+
+def _extract_emphasized_intent(user_input: str) -> str:
+    """Extract concise, user-emphasized constraints from the latest query.
+
+    Returns empty string when no obvious emphasis/constraint exists.
+    """
+    text = (user_input or '').strip()
+    if not text:
+        return ''
+    clauses = [
+        c.strip(' \t\r\n，,。.!！？；;:')
+        for c in re.split(r'[。！？；;\n]+', text)
+        if c and c.strip()
+    ]
+    picked: List[str] = []
+    for c in clauses:
+        if any(k in c for k in _INTENT_KEYWORDS):
+            cleaned = re.sub(r'^(请|你|请你|麻烦你)\s*', '', c).strip()
+            if cleaned and cleaned not in picked:
+                picked.append(cleaned)
+    # Also capture short "根据..." constraints if present.
+    for m in re.finditer(r'根据[^，。；;\n]{2,28}', text):
+        frag = m.group(0).strip()
+        if frag and frag not in picked:
+            picked.append(frag)
+    if not picked:
+        return ''
+    # Keep concise for UI popover.
+    return '；'.join(picked[:2])[:120]
+
+
 def _agentic_config() -> Dict[str, Any]:
     try:
         return lazyllm.globals['agentic_config'] or {}
@@ -181,6 +217,24 @@ def _trigger_plugin_step(
         user_input = cfg.get('query', '').strip()
     if not user_input:
         raise ValueError('user_input must not be empty.')
+
+    # Update session-level intent only when the latest query has explicit emphasis.
+    # Prefer the raw turn query from runtime config (full user message), because
+    # some tool calls may pass a shortened user_input like "启动绘图插件".
+    # If no obvious emphasis exists, keep existing intent unchanged.
+    latest_query = str(cfg.get('query') or '').strip()
+    intent_source = latest_query or user_input
+    intent_hint = _extract_emphasized_intent(intent_source)
+    if intent_hint and session_id:
+        try:
+            _write_agent_data('intent_updated', **{
+                'session_id': session_id,
+                'scope': 'session',
+                'content': intent_hint,
+                'step_id': '',
+            })
+        except Exception:
+            pass
 
     sm = plugin_loader.get_state_machine(plugin_id)
     if sm is None:
@@ -468,11 +522,12 @@ def build_cold_start_tools() -> List[Any]:
                 f'{tool_desc}\n\n'
                 'Args:\n'
                 '    user_input (str): A concise goal statement for the SubAgent that\n'
-                '        will execute this step.  Synthesise the key intent from the\n'
-                '        conversation — do NOT pass vague phrases like "继续", "请继续",\n'
-                '        or "continue".  Include: what the user wants to achieve, any\n'
-                '        style / quality constraints they mentioned, and relevant context\n'
-                '        from the chat history.  Example: "生成一张科幻风格的宇宙飞船插画，\n'
+                '        will execute this step. Use ONLY the latest user query in this turn;\n'
+                '        do NOT pass vague phrases like "继续", "请继续", or "continue".\n'
+                '        Include: what the user wants to achieve, and style / quality\n'
+                '        constraints explicitly mentioned in that query only.\n'
+                '        Do NOT inject prior-turn context unless the user explicitly repeats it.\n'
+                '        Example: "生成一张科幻风格的宇宙飞船插画，\n'
                 '        线条简洁，色调冷蓝，适合作为游戏启动画面背景".\n\n'
                 'Returns:\n'
                 '    Confirmation that the plugin was started.'
@@ -571,8 +626,9 @@ def build_advance_step_and_hand_off_tool(
         + choices_doc + '\n\n'
         'Args:\n'
         '    step_id (str): Step to advance to (see list above) or "__end__".\n'
-        '    user_input (str): Concise goal statement for the SubAgent — synthesise intent\n'
-        '        from the conversation.  Do NOT pass vague phrases like "继续" or "continue".\n'
+        '    user_input (str): Concise goal statement for the SubAgent based on the latest\n'
+        '        user query only. Do NOT pass vague phrases like "继续" or "continue", and\n'
+        '        do NOT include prior-turn context unless the user explicitly repeats it.\n'
         '    runtime_instruction (str, optional): Ephemeral directive for this run only.\n'
         '    partial_indices (dict, optional): Maps slot → list_index values to\n'
         '        overwrite (list-cardinality slots only).\n\n'
@@ -643,7 +699,7 @@ def build_advance_step_tool(
         + choices_doc + '\n\n'
         'Args:\n'
         '    step_id (str): Step to advance to (see list above).\n'
-        '    user_input (str): Concise goal statement for the SubAgent.\n'
+        '    user_input (str): Concise goal statement from the latest user query only.\n'
         '    runtime_instruction (str, optional): Ephemeral directive for this run.\n'
         '    partial_indices (dict, optional): List-slot overwrite indices.\n\n'
         'Returns:\n'
@@ -720,7 +776,8 @@ def build_update_intent_tool() -> Any:
 
         Args:
             scope (str): 'session' for global or 'step' for step-specific constraint.
-            content (str): The intent/constraint description, in the user's own words.
+            content (str): The intent/constraint description, in the user's own words from
+                the latest user query only. Do NOT carry forward unstated history context.
             step_id (str, optional): Required when scope='step'.
 
         Returns:

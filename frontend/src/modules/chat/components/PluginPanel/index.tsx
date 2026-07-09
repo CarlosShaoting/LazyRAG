@@ -30,6 +30,20 @@ function parseIntentText(raw?: string): string {
   }
 }
 
+/** Fallback: read latest selected text from a slot artifact. */
+function parseSelectedSlotText(session: PluginSession, slotKey: string, includeUnselected = false): string {
+  const candidates = (session.slots ?? [])
+    .filter((s) => s.slot === slotKey && (includeUnselected || s.selected))
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  const latest = candidates[0];
+  if (!latest) return '';
+  const raw = latest.artifact_value as Record<string, unknown> | undefined;
+  if (!raw) return '';
+  if (raw.text !== undefined) return String(raw.text);
+  if (raw.value !== undefined) return String(raw.value);
+  return '';
+}
+
 /** Latest _source_tool among selected image slots (newest first). */
 function getLatestSelectedImageSourceTool(session: PluginSession): string {
   const selectedImageSlots = (session.slots ?? []).filter(
@@ -56,7 +70,9 @@ function IntentPopover({
 }) {
   const { t } = useTranslation();
   const wrapRef = useRef<HTMLDivElement>(null);
-  const globalText = parseIntentText(session.intent_context);
+  const globalText =
+    parseIntentText(session.intent_context)
+    || parseSelectedSlotText(session, 'user_intent_summary', true);
   const stepIntents = (session.steps ?? [])
     .filter((s) => !!parseIntentText(s.intent_context))
     .map((s, idx) => ({
@@ -934,9 +950,12 @@ export function PluginPanel({
 
   useEffect(() => {
     if (!session?.plugin_id) return;
-    const lang = i18n.language || "";
+    const lang = i18n.language || '';
     const cached = pluginUIByPlugin[`${session.plugin_id}:${lang}`];
-    if (cached) { setUI(cached); return; }
+    if (cached) {
+      setUI(cached);
+    }
+    // Always re-fetch once to avoid stale cached tab/slot layouts after plugin.yaml updates.
     fetchPluginUI(session.plugin_id).then(setUI);
   }, [session?.plugin_id, fetchPluginUI, pluginUIByPlugin, i18n.language]);
 
@@ -979,9 +998,6 @@ export function PluginPanel({
 
   const tabs: TabDef[] = ui.tabs ?? [];
   const hasTabs = tabs.length > 0;
-
-  // Always show the intent button when a session exists.
-  // When no intent has been recorded yet the popover shows empty sections.
   const hasIntent = true;
 
   const showActions =
