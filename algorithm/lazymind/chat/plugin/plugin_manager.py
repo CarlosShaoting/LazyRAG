@@ -28,6 +28,31 @@ from lazyllm.tools.agent.base import _write_agent_data
 
 from lazymind.chat.plugin import plugin_loader
 
+_COLD_START_PLUGIN_PROMPT = (
+    '## Available Plugins\n'
+    'IMPORTANT: Only trigger a plugin when the capability matches the '
+    "user's PRIMARY and DIRECT intent — the main goal they are asking for "
+    'right now. Never trigger a plugin for a sub-step that the model has '
+    "internally decided is part of a larger multi-step plan. If the user's "
+    'request involves multiple steps and only one of those steps would use a '
+    'plugin, do NOT trigger the plugin. Never infer plugin intent from '
+    'indirect or implicit cues.\n'
+    'When a plugin does match the user\'s primary and direct intent, call '
+    'the matching `trigger_<plugin>_plugin` tool before using `ask_user`. '
+    'Do not ask clarification questions first just because optional details '
+    "are missing; pass the user's exact original request to the plugin so its "
+    'workflow can collect context or proceed with sensible defaults.\n\n'
+    'CRITICAL — explicit plugin start requests:\n'
+    'If the user explicitly asks to start, launch, or enable a plugin (e.g. '
+    '"启动绘图插件", "打开图片生成插件", "启动图片插件", "start the image plugin"), '
+    'you MUST call the matching `trigger_<plugin_id>_plugin` tool in this same '
+    'response before any other action. Do NOT reply with text only, do NOT call '
+    '`image_generator` / `image_editor` directly, and do NOT ask clarification '
+    'questions first. Pass the user\'s request as `user_input` (or repeat their '
+    'start phrase if they gave no further detail).\n'
+    'For the AI image plugin (`image-plugin`), call `trigger_image_plugin`.\n\n'
+)
+
 
 # ---------------------------------------------------------------------------
 # Framework tools always injected into every plugin step regardless of what
@@ -394,6 +419,13 @@ def _build_step_choices_doc(
                 '  If they belong to a choice node (route:choice), pick exactly ONE based on conditions.\n'
                 '  For steps annotated with [when: ...], only advance to that step if the condition holds.'
             )
+    # Self-retry: current_step is injected into all_reachable without a graph self-loop.
+    # Document it here so ChatAgent knows it can pass step_id=current_step to re-run.
+    if current_step and current_step not in {'__start__', '__end__'}:
+        label = step_labels.get(current_step, '')
+        suffix = f'  ({label})' if label else ''
+        lines.append('Retry (re-run current step):')
+        lines.append(f'  - {current_step}{suffix}  <- full or partial retry of this step')
     if rewind_steps:
         lines.append('Rewind (re-run a past step):')
         for s in rewind_steps:
@@ -468,6 +500,9 @@ def build_advance_step_and_hand_off_tool(
     rewind = list(rewind_steps or [])
     labels = step_labels or {}
     all_reachable = list(forward) + rewind
+    # Self-retry: is_reachable allows current_step → current_step even without a graph edge.
+    if current_step and current_step not in all_reachable:
+        all_reachable = [current_step] + all_reachable
 
     choices_doc = _build_step_choices_doc(forward, rewind, labels, plugin_id=plugin_id, current_step=current_step)
 
@@ -564,6 +599,8 @@ def build_advance_step_tool(
     rewind = list(rewind_steps or [])
     labels = step_labels or {}
     all_reachable = list(forward) + rewind
+    if current_step and current_step not in all_reachable:
+        all_reachable = [current_step] + all_reachable
 
     choices_doc = _build_step_choices_doc(forward, rewind, labels, plugin_id=plugin_id, current_step=current_step)
 
@@ -1002,19 +1039,7 @@ def resolve_plugin_injection(
                     for spec in (plugin_loader._registry or {}).values()
                 ]
                 plugin_system_prompt = (
-                    '## Available Plugins\n'
-                    'IMPORTANT: Only trigger a plugin when the capability matches the '
-                    'user\'s PRIMARY and DIRECT intent — the main goal they are asking for '
-                    'right now. Never trigger a plugin for a sub-step that the model has '
-                    'internally decided is part of a larger multi-step plan. If the user\'s '
-                    'request involves multiple steps and only one of those steps would use a '
-                    'plugin, do NOT trigger the plugin. Never infer plugin intent from '
-                    'indirect or implicit cues.\n'
-                    'When a plugin does match the user\'s primary and direct intent, call '
-                    'the matching `trigger_<plugin>_plugin` tool before using `ask_user`. '
-                    'Do not ask clarification questions first just because optional details '
-                    'are missing; pass the user\'s exact original request to the plugin so its '
-                    'workflow can collect context or proceed with sensible defaults.\n\n'
+                    _COLD_START_PLUGIN_PROMPT
                 ) + '\n\n---\n\n'.join(s for s in scenarios if s)
     else:
         # No plugin_context provided: still inject cold-start triggers
@@ -1026,19 +1051,7 @@ def resolve_plugin_injection(
                 for spec in (plugin_loader._registry or {}).values()
             ]
             plugin_system_prompt = (
-                '## Available Plugins\n'
-                'IMPORTANT: Only trigger a plugin when the capability matches the '
-                'user\'s PRIMARY and DIRECT intent — the main goal they are asking for '
-                'right now. Never trigger a plugin for a sub-step that the model has '
-                'internally decided is part of a larger multi-step plan. If the user\'s '
-                'request involves multiple steps and only one of those steps would use a '
-                'plugin, do NOT trigger the plugin. Never infer plugin intent from '
-                'indirect or implicit cues.\n'
-                'When a plugin does match the user\'s primary and direct intent, call '
-                'the matching `trigger_<plugin>_plugin` tool before using `ask_user`. '
-                'Do not ask clarification questions first just because optional details '
-                'are missing; pass the user\'s exact original request to the plugin so its '
-                'workflow can collect context or proceed with sensible defaults.\n\n'
+                _COLD_START_PLUGIN_PROMPT
             ) + '\n\n---\n\n'.join(s for s in scenarios if s)
 
     return plugin_tools, plugin_system_prompt, plugin_stop_tools, agentic_config_patch, plugin_artifact_context
