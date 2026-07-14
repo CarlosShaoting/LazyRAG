@@ -25,7 +25,9 @@ describing what was produced and whether it meets the criteria below.
 - For CREATE_NEW / KB_STYLE, collecting 1–3 useful references is recommended before optimize_prompt.
 - For CREATE_ANIMATED, material_images are optional (0–3) when the text description is already clear.
   If the user asked to find a photo first, save that photo as `image_output` (plus material_images).
-- For FIND_AND_EDIT, EDIT_UPLOAD, or ANIMATE_UPLOAD, `image_output` must be saved; `prompt_used` is optional here — next step is `optimize_prompt`.
+- For FIND_AND_EDIT, EDIT_UPLOAD, or ANIMATE_UPLOAD, `image_output` must be saved;
+  EDIT_UPLOAD / ANIMATE_UPLOAD must also save the same upload as `material_images`.
+  `prompt_used` is optional here — next step is `optimize_prompt`.
 - `material_summary` should be saved with a brief Chinese summary of search/selection (what was found, which image was chosen, gaps).
 - Not acceptable when every candidate URL fails validation, no required artifacts were saved, or web tools are unavailable when they are required.
 - After 2+ consecutive failures, state that the step should not be retried again.

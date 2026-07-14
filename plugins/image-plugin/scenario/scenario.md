@@ -66,7 +66,7 @@
 用户: [已上传一张图] 把这张图改成动态表情包
 
 1. trigger_image_plugin → analyze_subject — WORKFLOW: ANIMATE_UPLOAD
-2. advance_step(collect_materials) — find_user_attachment → 保存 image_output（首帧）
+2. advance_step(collect_materials) — find_user_attachment → 保存 material_images + image_output（同一上传图，首帧）
 3. advance_step(optimize_prompt) — 写运动描述，保持主体可识别
 4. advance_step(generate_image)
    — video_generator(urls=[首帧]) → video_to_gif
