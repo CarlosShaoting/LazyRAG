@@ -189,7 +189,7 @@ DEFAULT_TOOLS: list[ToolGroupConfig] = [
     ToolGroupConfig(
         name='video_generator',
         label='文生视频',
-        description='根据文字描述生成视频，可选首帧参考图',
+        description='根据文字描述生成视频，可选首帧参考图；同轮多次调用并行，视频侧最多同时3路',
         instance=video_generator,
         model_role='video_generator',
         capability_id='video_generation',
@@ -199,7 +199,7 @@ DEFAULT_TOOLS: list[ToolGroupConfig] = [
     ToolGroupConfig(
         name='video_to_gif',
         label='视频转GIF',
-        description='将本地视频转换为 GIF 动图',
+        description='将本地视频转换为 GIF 动图；同轮多次调用并行，GIF 侧最多同时3路',
         instance=video_to_gif,
         capability_id='video_to_gif',
         input_schema={'url': 'string'}, output_schema={'image': 'file'},

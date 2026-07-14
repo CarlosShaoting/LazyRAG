@@ -15,6 +15,31 @@ type repairDiagnostic struct {
 	Severity string `json:"severity"`
 }
 
+func isInternalSlot(pluginDoc map[string]any, slotID string) bool {
+	slots, ok := pluginDoc["slots"].([]any)
+	if !ok {
+		return false
+	}
+	for _, raw := range slots {
+		slot, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if fmt.Sprint(slot["id"]) != slotID {
+			continue
+		}
+		switch v := slot["internal"].(type) {
+		case bool:
+			return v
+		case string:
+			return strings.EqualFold(v, "true") || v == "1"
+		default:
+			return false
+		}
+	}
+	return false
+}
+
 func diagnosePlugin(pluginYAML, stateYAML, scenario, scriptsJSON string) []repairDiagnostic {
 	var pluginDoc, stateDoc map[string]any
 	var out []repairDiagnostic
@@ -59,10 +84,14 @@ func diagnosePlugin(pluginYAML, stateYAML, scenario, scriptsJSON string) []repai
 			}
 		}
 	}
-	for id := range slotIDs {
-		if !placedSlots[id] {
-			out = append(out, repairDiagnostic{"ui_slot_unplaced", "plugin.yaml.ui.tabs", "Declared slot is not placed in any UI tab: " + id, "error"})
+  for id := range slotIDs {
+		if placedSlots[id] {
+			continue
 		}
+		if isInternalSlot(pluginDoc, id) {
+			continue
+		}
+		out = append(out, repairDiagnostic{"ui_slot_unplaced", "plugin.yaml.ui.tabs", "Declared slot is not placed in any UI tab: " + id, "error"})
 	}
 	if steps, ok := pluginDoc["steps"].([]any); ok {
 		for _, raw := range steps {

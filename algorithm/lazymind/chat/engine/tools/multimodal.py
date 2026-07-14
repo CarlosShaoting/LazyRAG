@@ -156,6 +156,11 @@ def video_generator(
     for image-to-video. Generated files are relocated under
     ``shared_upload_dir/ai_generated/`` for signed static URLs.
 
+    To generate multiple videos (e.g. three stickers), emit multiple
+    ``video_generator`` tool calls in the **same** assistant turn; the runtime
+    executes them in parallel. Concurrent Seedance calls are capped at 3.
+    Do not call them one turn at a time when N>1.
+
     Args:
         prompt: Natural-language description of the video to generate.
         urls: Optional first-frame / reference image paths or signed static URLs.
@@ -194,6 +199,10 @@ def video_to_gif(
     Prefer short refs / ``local_path`` / ``video_url`` from tool results over
     inventing paths. Large videos should pass ``duration`` (and optionally
     ``start``) to keep the GIF small.
+
+    To convert multiple videos, emit multiple ``video_to_gif`` tool calls in
+    the **same** assistant turn; they run in parallel. Concurrent GIF
+    conversions are capped at 3.
 
     Args:
         url: Short video ref, local filesystem path, or ``/static-files/`` URL.

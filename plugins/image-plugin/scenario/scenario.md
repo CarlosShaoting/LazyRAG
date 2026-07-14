@@ -2,17 +2,17 @@
 
 ## 场景描述
 
-帮助用户生成、查找或编辑图片，以及生成 **动态表情包（GIF）**。工作流由 ChatAgent **动态路由**（dynamic 模式）。所有流程统一先分析，再进入素材收集，再优化 prompt，最后按工作流分支到生图或编辑。动态表情包仍走 **generate_image**（内部：`video_generator` → `video_to_gif`），然后直接结束。
+帮助用户生成、查找或编辑图片，以及生成 **动态表情包（GIF）**。工作流由 ChatAgent **动态路由**（dynamic 模式）。所有流程统一先分析，再进入素材收集，再优化 prompt，最后按工作流分支到生图或编辑。动态表情包仍走 **generate_image**（内部：并行 `video_generator` → 并行 `video_to_gif` → **串行 append** `save_artifact`），然后直接结束。
 
 步骤：
 
 1. **analyze_subject** — 仅做用户可读分析（`subject_analysis`）+ 内部路由（`workflow_routing`），**不调用工具**
 2. **collect_materials** — 统一信息收集入口（可 `kb_search` + `web_search`），搜集参考图 / 编辑底图 / 动画首帧
 3. **optimize_prompt** — 文生图 prompt、编辑指令，或视频运动 prompt
-4. **generate_image** — 文生图，或动画：对每个表情包执行 `video_generator`（约 5s）→ `video_to_gif`（24fps）；支持一次生成 N 个
+4. **generate_image** — 文生图，或动画：并行 N 次 `video_generator` → 并行 N 次 `video_to_gif` → 按 i 串行 append 保存（首次不传 sort_order）
 5. **enhance_image** — 图生图编辑（image_editor）
 
-结果 Tab 使用 **composite** 布局，按 `sort_order` 对齐行：`(原始图片 image_output, 动态 GIF gif_output)`。
+结果 Tab 使用 **composite** 布局：多 GIF 靠各 list slot **按相同顺序依次 append** 对齐行；`sort_order` 仅用于覆盖已有项：`(原始图片 image_output, 动态 GIF gif_output)`。
 
 ## 动态路由
 
@@ -36,15 +36,15 @@
 2. advance_step(collect_materials) — 可选参考图；描述已够清晰时可轻量收集
 3. advance_step(optimize_prompt) — 英文视频运动 prompt（贴纸风、可循环短动作）
 4. advance_step(generate_image)
-   — 解析 N=3；对 i=1..3：
-     video_generator → video_to_gif
-     保存 image_output(sort_order=i) 为原始图（同一张底图可重复）
-     保存 gif_output(sort_order=i) 为动图
+   — 解析 N=3；同一轮发出 3 次 video_generator（prompt 带 "Sticker i of 3"；视频侧最多同时 3 路）
+   — 下一轮发出 3 次 video_to_gif（同样并行）
+   — 按 i=1..3 **串行** append 保存（**不传** sort_order）：image_output / gif_output（可选 video_output），caption='Sticker i'
 5. advance_step("__end__")
 ```
 
-同一张底图做多个：collect 存 1 张 origin；generate 对同一 urls 调用 N 次。
-多张不同底图：collect 存 N 张 image_output（sort_order=1..N），generate 各用各的。
+同一张底图做多个：collect 存 1 张 origin；generate 在一次响应里对同一 urls 发出 N 次 video_generator。
+多张不同底图：collect 存 N 张 material；generate 在一次响应里用不同 urls 发出 N 次 video_generator。
+首次全量生成用依次 append 对齐行；局部重生成某一张时才传 sort_order 覆盖。
 
 ### CREATE_ANIMATED（联网找图再做 GIF）示例
 
@@ -56,7 +56,7 @@
 3. optimize_prompt — 运动 prompt，保持主体可识别
 4. generate_image
    — video_generator(urls=[首帧], duration=5) → video_to_gif
-   — 保留/写入 image_output(sort_order=1)；GIF 写入 gif_output(sort_order=1)
+   — 串行 append：保留已有 origin；gif_output 不传 sort_order（caption='Sticker 1'）
 5. __end__
 ```
 
@@ -70,7 +70,7 @@
 3. advance_step(optimize_prompt) — 写运动描述，保持主体可识别
 4. advance_step(generate_image)
    — video_generator(urls=[首帧]) → video_to_gif
-   — image_output 保留原始图；gif_output 存 GIF（勿把 GIF 写入 image_output）
+   — 串行 append：image_output 保留原始图；gif_output 存 GIF（不传 sort_order；勿把 GIF 写入 image_output）
 5. advance_step("__end__")
 ```
 

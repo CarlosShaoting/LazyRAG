@@ -135,10 +135,22 @@ ui:
         - id: image_output
         - id: gif_output
         - id: enhanced_image_output
+        - id: video_output
       composite_layout:
         - image_output
         - gif_output
         - enhanced_image_output
+        - video_output
+      composite_behavior:
+        hide_empty_columns: true
+        empty_column_scope: selected
+        mutually_exclusive:
+          - slots:
+              - gif_output
+              - enhanced_image_output
+            prefer:
+              - gif_output
+              - enhanced_image_output
 
 i18n:
   zh-CN:

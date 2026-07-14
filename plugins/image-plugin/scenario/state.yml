@@ -310,7 +310,8 @@ steps:
       6. Stop after saving. Do NOT save gif_output.
 
       === Animated sticker / 动态表情包 (CREATE_ANIMATED / ANIMATE_UPLOAD, or user asks for GIF) ===
-      Pipeline per sticker: video_generator → video_to_gif. Do NOT call image_generator.
+      Pipeline: parallel video_generator → parallel video_to_gif → **sequential** save_artifact.
+      Do NOT call image_generator. Do NOT use any *_batch tools.
       Do NOT overwrite origins with GIFs — origins stay in image_output; GIFs go to gif_output.
 
       Count N (how many stickers):
@@ -322,28 +323,41 @@ steps:
           for all N stickers.
         - Else text-only (no urls) for all N.
 
-      For each i in 1..N (1-based sort_order):
-        1. Call video_generator exactly once:
-             prompt=<prompt_used> (optionally append a short variation hint for i when N>1),
-             urls=[origin_i] when an origin exists,
-             resolution='480p', duration=5, ratio='1:1'
-        2. If video_generator fails, STOP with a concise failure note (partial saves OK).
-        3. Take video `local_path` (preferred) or `video_url`.
-        4. Optionally save:
-             save_artifact(key='video_output', content_type='file',
-                           value=<video path>, source_tool='video_generator', sort_order=i)
-        5. Call video_to_gif once: url=<video local_path>, fps=24, width=360
-        6. If video_to_gif fails, STOP with a concise failure note.
-        7. If this sticker has an origin image, save/ensure origin in image_output:
-             save_artifact(key='image_output', content_type='image',
-                           value=<origin local_path or url>, sort_order=i)
-           Do NOT save the GIF into image_output.
-        8. Save the GIF:
-             save_artifact(key='gif_output', content_type='image',
-                           value=<gif local_path or image_url>, source_tool='video_to_gif',
-                           sort_order=i)
+      Step A — parallel video generation (ONE assistant turn, N tool_calls):
+        Emit N separate `video_generator` calls in a single response (not sequential turns).
+        Seedance concurrency is capped at 3 inside the tool.
+        Each call MUST mark its index in the prompt, e.g. prepend "Sticker i of N: "
+        (i is 1-based). Optionally add a short motion variation when N>1.
+        Args per call: prompt=<marked prompt_used>, urls=[origin_i] when origin exists,
+        resolution='480p', duration=5, ratio='1:1'.
+        Do NOT save_artifact in this turn.
+
+      Step B — parallel GIF conversion (NEXT assistant turn, N tool_calls):
+        Emit N separate `video_to_gif` calls in ONE turn.
+        Map each video result to the same sticker index used in Step A
+        (match by tool-call order / "Sticker i of N" mark — keep a stable i→video path table).
+        Each: url=<video local_path for sticker i>, fps=24, width=360.
+        Do NOT save_artifact in this turn.
+
+      Step C — sequential saves (AFTER all GIFs return; NEVER parallel save_artifact):
+        Walk i = 1..N in ascending order. For each successful sticker i, call save_artifact
+        **one at a time** (wait for each confirmation before the next).
+        First full generation of this step (list empty / regenerating all):
+          **omit sort_order** so each list slot appends in the same order 1..N.
+        Partial retry only (user asked to redo sticker k while others already exist):
+          pass sort_order=k to overwrite that row only.
+        Per sticker i (caption MUST include the index, e.g. caption='Sticker i'):
+          1. optional: save_artifact(key='video_output', content_type='file',
+               value=<video path>, source_tool='video_generator', caption='Sticker i')
+          2. if origin exists: save_artifact(key='image_output', content_type='image',
+               value=<origin>, caption='Sticker i')  — NEVER put GIF into image_output
+          3. save_artifact(key='gif_output', content_type='image',
+               value=<gif path>, source_tool='video_to_gif', caption='Sticker i')
+        Saving in the same i-order across slots keeps composite rows aligned.
+        If some generate/gif calls fail, save only successful stickers in index order
+        (partial saves OK) and STOP with a concise note.
       Prefer quoting image_markdown from tool results verbatim.
-      Stop after all N pairs are saved (matching sort_order on image_output + gif_output).
+      Stop after sequential saves finish for all successful stickers.
     tools:
       - image_generator
       - video_generator
@@ -367,10 +381,12 @@ steps:
         content_type: file
         required: false
     acceptance_criteria: |
-      Still workflows: image_output must be saved (sort_order=1).
-      Animated workflows: for each sticker i=1..N, gif_output must be saved with sort_order=i
-      after video_generator → video_to_gif. When an origin exists, image_output must also be
-      saved with the same sort_order=i (origin still, NOT the GIF). Never put GIF into image_output.
+      Still workflows: image_output must be saved (sort_order=1 only for overwrite / still path).
+      Animated workflows: gif_output must exist for each successful sticker after
+      video_generator → video_to_gif → sequential append saves (omit sort_order on first full run).
+      When an origin exists, image_output must also be appended in the SAME order as gif_output
+      (origin still, NOT the GIF). Never put GIF into image_output.
+      Use sort_order=N only when overwriting an existing list row on partial retry.
       N is taken from the user request (default 1).
 
   enhance_image:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import threading
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -28,6 +29,10 @@ _DEFAULT_GIF_FPS = 10
 _DEFAULT_GIF_WIDTH = 480
 _VIDEO_SUFFIXES = ('.mp4', '.webm', '.mov', '.mkv', '.avi', '.m4v')
 _UPLOAD_SUBDIR = 'ai_generated'
+# Cap concurrent Seedance / ffmpeg calls when the agent emits many tool_calls in one turn.
+_VIDEO_MAX_PARALLEL = 3
+_VIDEO_SEMAPHORE = threading.Semaphore(_VIDEO_MAX_PARALLEL)
+_GIF_SEMAPHORE = threading.Semaphore(_VIDEO_MAX_PARALLEL)
 
 
 def _agentic_priority() -> int:
@@ -93,24 +98,25 @@ def run_video_model(
     if files:
         call_kwargs['files'] = files
 
-    model = AutoModel(model=role)
-    raw = model(text, stream_output=False, **call_kwargs)
-    temp_paths = _parse_generated_files(raw)
-    if not temp_paths:
-        raise ValueError('model returned no generated video files')
-    paths = [_relocate_generated_video_to_upload(path) for path in temp_paths]
-    _register_generated_image_paths(paths)
-    videos = [_build_video_payload(path, label=basename_from_path(path)) for path in paths]
-    primary = videos[0]
-    return {
-        'success': True,
-        'prompt': text,
-        'resolution': res,
-        'duration': dur,
-        'ratio': aspect,
-        'videos': videos,
-        **primary,
-    }
+    with _VIDEO_SEMAPHORE:
+        model = AutoModel(model=role)
+        raw = model(text, stream_output=False, **call_kwargs)
+        temp_paths = _parse_generated_files(raw)
+        if not temp_paths:
+            raise ValueError('model returned no generated video files')
+        paths = [_relocate_generated_video_to_upload(path) for path in temp_paths]
+        _register_generated_image_paths(paths)
+        videos = [_build_video_payload(path, label=basename_from_path(path)) for path in paths]
+        primary = videos[0]
+        return {
+            'success': True,
+            'prompt': text,
+            'resolution': res,
+            'duration': dur,
+            'ratio': aspect,
+            'videos': videos,
+            **primary,
+        }
 
 
 def resolve_tool_video_path(path_or_ref: str) -> str:
@@ -162,35 +168,36 @@ def run_video_to_gif(
         input_opts.extend(['-t', str(float(duration))])
     input_opts.extend(['-i', str(src)])
 
-    try:
-        gen = subprocess.run(
-            [*input_opts, '-vf', f'{vf},palettegen=stats_mode=diff', str(palette)],
-            capture_output=True, text=True, timeout=300)
-        if gen.returncode != 0 or not palette.is_file():
-            err = (gen.stderr or gen.stdout or '').strip() or f'exit={gen.returncode}'
-            raise RuntimeError(f'ffmpeg palettegen failed: {err}')
+    with _GIF_SEMAPHORE:
+        try:
+            gen = subprocess.run(
+                [*input_opts, '-vf', f'{vf},palettegen=stats_mode=diff', str(palette)],
+                capture_output=True, text=True, timeout=300)
+            if gen.returncode != 0 or not palette.is_file():
+                err = (gen.stderr or gen.stdout or '').strip() or f'exit={gen.returncode}'
+                raise RuntimeError(f'ffmpeg palettegen failed: {err}')
 
-        use = subprocess.run(
-            [*input_opts, '-i', str(palette),
-             '-lavfi', f'{vf}[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5',
-             '-an', str(dest)],
-            capture_output=True, text=True, timeout=300)
-        if use.returncode != 0 or not dest.is_file():
-            err = (use.stderr or use.stdout or '').strip() or f'exit={use.returncode}'
-            raise RuntimeError(f'ffmpeg paletteuse failed: {err}')
-    finally:
-        if palette.exists():
-            palette.unlink(missing_ok=True)
+            use = subprocess.run(
+                [*input_opts, '-i', str(palette),
+                 '-lavfi', f'{vf}[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5',
+                 '-an', str(dest)],
+                capture_output=True, text=True, timeout=300)
+            if use.returncode != 0 or not dest.is_file():
+                err = (use.stderr or use.stdout or '').strip() or f'exit={use.returncode}'
+                raise RuntimeError(f'ffmpeg paletteuse failed: {err}')
+        finally:
+            if palette.exists():
+                palette.unlink(missing_ok=True)
 
-    local_path = str(dest)
-    _register_generated_image_paths([local_path])
-    payload = _build_image_payload(local_path, label=basename_from_path(local_path) or 'converted gif')
-    return {
-        'success': True,
-        'source': str(src),
-        'fps': out_fps,
-        'width': out_width,
-        'start': start,
-        'duration': duration,
-        **payload,
-    }
+        local_path = str(dest)
+        _register_generated_image_paths([local_path])
+        payload = _build_image_payload(local_path, label=basename_from_path(local_path) or 'converted gif')
+        return {
+            'success': True,
+            'source': str(src),
+            'fps': out_fps,
+            'width': out_width,
+            'start': start,
+            'duration': duration,
+            **payload,
+        }

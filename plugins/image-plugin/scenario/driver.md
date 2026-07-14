@@ -41,10 +41,15 @@ describing what was produced and whether it meets the criteria below.
 ### generate_image
 - Acceptable when required outputs for the workflow are saved.
 - For CREATE_NEW / KB_STYLE / REFERENCE_GENERATE: still image via `image_generator` into `image_output` (sort_order=1).
-- For CREATE_ANIMATED / ANIMATE_UPLOAD: for each sticker i=1..N, run `video_generator` then `video_to_gif`;
-  save GIF as `gif_output` with sort_order=i; when an origin exists save it as `image_output` with the same sort_order (never put GIF into image_output).
+- For CREATE_ANIMATED / ANIMATE_UPLOAD: in one turn emit N parallel `video_generator`
+  tool_calls (each prompt marked "Sticker i of N"; video side capped at 3 concurrent),
+  then in the next turn emit N parallel `video_to_gif` tool_calls; afterward
+  **sequentially** append artifacts in i-order (**omit sort_order** on first full run;
+  use sort_order=k only on partial retry to overwrite row k). Save GIF as `gif_output`;
+  when an origin exists append the same origin into `image_output` in the same order
+  (never put GIF into image_output). Use caption='Sticker i' on saves.
 - N comes from the user request (e.g. 三个→3), default 1.
-- `video_output` is optional.
+- `video_output` is optional; when saved it may appear in the Result tab (empty columns are hidden).
 - Not acceptable when generation/tools failed, GIF was saved into `image_output`, or animated flow produced no `gif_output`.
 
 ### enhance_image
