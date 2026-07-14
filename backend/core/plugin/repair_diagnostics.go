@@ -84,7 +84,7 @@ func diagnosePlugin(pluginYAML, stateYAML, scenario, scriptsJSON string) []repai
 			}
 		}
 	}
-  for id := range slotIDs {
+	for id := range slotIDs {
 		if placedSlots[id] {
 			continue
 		}
@@ -136,7 +136,10 @@ func diagnosePlugin(pluginYAML, stateYAML, scenario, scriptsJSON string) []repai
 	return out
 }
 
-func diagnosticsJSON(items []repairDiagnostic) string { b, _ := json.Marshal(items); return string(b) }
+func diagnosticsJSON(items []repairDiagnostic) string {
+	b, _ := json.Marshal(items)
+	return string(b)
+}
 func hasDiagnosticErrors(items []repairDiagnostic) bool {
 	for _, item := range items {
 		if item.Severity == "error" {
