@@ -9,16 +9,18 @@ from lazyllm.components.formatter import encode_query_with_filepaths
 from lazymind.chat.engine.tools.infra import tool_error, tool_success
 from lazymind.chat.engine.tools.infra.image_generation_support import (
     _DEFAULT_BATCH_SIZE,
+    _DEFAULT_IMAGE_SIZE,
+    _resolve_source_image_paths,
+    resolve_tool_image_path,
+    run_image_model,
+)
+from lazymind.chat.engine.tools.infra.video_generation_support import (
     _DEFAULT_GIF_FPS,
     _DEFAULT_GIF_WIDTH,
-    _DEFAULT_IMAGE_SIZE,
     _DEFAULT_VIDEO_DURATION,
     _DEFAULT_VIDEO_RATIO,
     _DEFAULT_VIDEO_RESOLUTION,
-    _resolve_source_image_paths,
-    resolve_tool_image_path,
     resolve_tool_video_path,
-    run_image_model,
     run_video_model,
     run_video_to_gif,
 )
