@@ -433,10 +433,29 @@ function CompositeSlotGrid({
   onFocusSortOrder?: (sortOrder: number | undefined) => void;
 }) {
   const rows = getCompositeRows(tab, session);
-  const columns = buildColumns(tab);
+  let columns = buildColumns(tab);
+
+  // image-plugin result: prefer (origin, gif) pairs; fall back to edit/still columns.
+  if (session.plugin_id === 'image-plugin' && tab.id === 'result') {
+    const selected = (session.slots ?? []).filter((s) => s.selected);
+    const hasGif = selected.some((s) => s.slot === 'gif_output');
+    const hasEnhanced = selected.some((s) => s.slot === 'enhanced_image_output');
+    const allowed = hasGif
+      ? new Set(['image_output', 'gif_output'])
+      : hasEnhanced
+        ? new Set(['image_output', 'enhanced_image_output'])
+        : new Set(['image_output']);
+    columns = columns.filter((col) => {
+      if (typeof col.slotId !== 'string') return true;
+      return allowed.has(col.slotId);
+    });
+    if (columns.length === 0) {
+      columns = buildColumns(tab);
+    }
+  }
 
   // Compute total weight for flex proportions.
-  const totalWeight = columns.reduce((s, c) => s + c.weight, 0);
+  const totalWeight = columns.reduce((s, c) => s + c.weight, 0) || 1;
 
   if (rows.length === 0) {
     return (
@@ -783,9 +802,12 @@ function TabSlotGrid({
     if (session.plugin_id !== 'image-plugin' || tab.id !== 'result') {
       return slotDefs;
     }
-    const selectedImageSlots = (session.slots ?? []).filter(
-      (s) => s.selected && s.content_type === 'image',
-    );
+    const selectedSlots = (session.slots ?? []).filter((s) => s.selected);
+    const hasGif = selectedSlots.some((s) => s.slot === 'gif_output');
+    if (hasGif) {
+      return slotDefs.filter((s) => s.id === 'image_output' || s.id === 'gif_output');
+    }
+    const selectedImageSlots = selectedSlots.filter((s) => s.content_type === 'image');
     if (!selectedImageSlots.length) {
       return slotDefs;
     }

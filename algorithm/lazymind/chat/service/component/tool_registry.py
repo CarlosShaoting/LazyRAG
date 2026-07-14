@@ -32,6 +32,8 @@ from lazymind.chat.engine.tools import (
     read_memory,
     SkillEditorToolGroup,
     url_fetch,
+    video_generator,
+    video_to_gif,
     vision_extractor,
     vocab_learn,
 )
@@ -183,6 +185,24 @@ DEFAULT_TOOLS: list[ToolGroupConfig] = [
         instance=image_editor,
         model_role='image_editor',
         capability_id='image_editing',
+    ),
+    ToolGroupConfig(
+        name='video_generator',
+        label='文生视频',
+        description='根据文字描述生成视频，可选首帧参考图',
+        instance=video_generator,
+        model_role='video_generator',
+        capability_id='video_generation',
+        input_schema={'prompt': 'string'}, output_schema={'video': 'file'},
+        required_config=['video_generator_model'],
+    ),
+    ToolGroupConfig(
+        name='video_to_gif',
+        label='视频转GIF',
+        description='将本地视频转换为 GIF 动图',
+        instance=video_to_gif,
+        capability_id='video_to_gif',
+        input_schema={'url': 'string'}, output_schema={'image': 'file'},
     ),
     ToolGroupConfig(
         name='vocab_learn',
