@@ -96,7 +96,7 @@
 用户: 找一张哈兰德的照片，给他衣服上加上红色的王老吉三个字
 
 1. trigger_image_plugin → analyze_subject
-2. advance_step(collect_materials) — 搜图并保存 image_output（底图）
+2. advance_step(collect_materials) — 搜图并保存 raw_source_image（底图）+ material_images
 3. advance_step(optimize_prompt) — 写英文编辑指令 prompt_used
 4. advance_step(enhance_image) — image_editor 编辑
 ```

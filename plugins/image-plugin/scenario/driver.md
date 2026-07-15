@@ -12,7 +12,7 @@ describing what was produced and whether it meets the criteria below.
 - For CREATE_NEW / KB_STYLE / REFERENCE_GENERATE / CREATE_ANIMATED / ANIMATE_UPLOAD, next step is always `collect_materials`.
 - For REFERENCE_GENERATE, missing material_images at this step is expected; next step is `collect_materials`.
 - For FIND_AND_EDIT, EDIT_UPLOAD, or ANIMATE_UPLOAD, missing raw source image or edit/motion prompt is expected; next step is `collect_materials`.
-- Not acceptable when `material_images`, `image_output`, or `prompt_used` were saved here (they belong in later steps).
+- Not acceptable when `material_images`, `raw_source_image`, `image_output`, or `prompt_used` were saved here (they belong in later steps).
 - Not acceptable when the artifact is missing, too short, or routing metadata is missing from `workflow_routing`.
 - Not acceptable when filters.kb_id was set but subject_analysis omits KB style findings from kb_search.
 - After 2+ consecutive failures for this step, state that the step should not be retried again.
@@ -25,8 +25,9 @@ describing what was produced and whether it meets the criteria below.
 - For CREATE_NEW / KB_STYLE, collecting 1–3 useful references is recommended before optimize_prompt.
 - For CREATE_ANIMATED, material_images are optional (0–3) when the text description is already clear.
   If the user asked to find a photo first, save that photo as `image_output` (plus material_images).
-- For FIND_AND_EDIT, EDIT_UPLOAD, or ANIMATE_UPLOAD, `image_output` must be saved;
-  EDIT_UPLOAD / ANIMATE_UPLOAD must also save the same upload as `material_images`.
+- For FIND_AND_EDIT / EDIT_UPLOAD, `raw_source_image` must be saved;
+  EDIT_UPLOAD must also save the same upload as `material_images`.
+- For ANIMATE_UPLOAD, `image_output` must be saved and the same upload as `material_images`.
   `prompt_used` is optional here — next step is `optimize_prompt`.
 - `material_summary` should be saved with a brief Chinese summary of search/selection (what was found, which image was chosen, gaps).
 - Not acceptable when every candidate URL fails validation, no required artifacts were saved, or web tools are unavailable when they are required.
@@ -35,14 +36,14 @@ describing what was produced and whether it meets the criteria below.
 ### optimize_prompt
 - Acceptable when `prompt_used` is saved in English.
 - For CREATE_NEW / KB_STYLE / REFERENCE_GENERATE: generation prompt of at least 30 words; next step is `generate_image`.
-- For FIND_AND_EDIT / EDIT_UPLOAD: clear edit instruction when `image_output` is available; next step is `enhance_image`.
+- For FIND_AND_EDIT / EDIT_UPLOAD: clear edit instruction when `raw_source_image` is available; next step is `enhance_image`.
 - For CREATE_ANIMATED / ANIMATE_UPLOAD: clear English **video motion** prompt; next step is `generate_image`.
 - Not acceptable when the artifact is missing, too short, or not in English.
 - After 2+ consecutive failures, state that the step should not be retried again.
 
 ### generate_image
 - Acceptable when required outputs for the workflow are saved.
-- For CREATE_NEW / KB_STYLE / REFERENCE_GENERATE: still image via `image_generator` into `image_output` (sort_order=1).
+- For CREATE_NEW / KB_STYLE / REFERENCE_GENERATE: still image via `image_generator` into `generated_image_output` (sort_order=1).
 - For CREATE_ANIMATED / ANIMATE_UPLOAD: in one turn emit N parallel `video_generator`
   tool_calls (each prompt marked "Sticker i of N"; video side capped at 3 concurrent),
   then in the next turn emit N parallel `video_to_gif` tool_calls; afterward

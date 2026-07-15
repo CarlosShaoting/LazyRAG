@@ -140,10 +140,11 @@ function AutoSlotGrid({
   onRefresh?: () => void;
   onReference?: (slot: SlotRevision) => void;
 }) {
+  const { t } = useTranslation();
   if (!session.slots || session.slots.length === 0) {
     return (
       <div className='plugin-panel__empty' role='status' aria-live='polite'>
-        <span>Waiting for results…</span>
+        <span>{t('chat.pluginWaitingForResults')}</span>
       </div>
     );
   }
@@ -502,6 +503,7 @@ function CompositeSlotGrid({
   onReference?: (slot: SlotRevision) => void;
   onFocusSortOrder?: (sortOrder: number | undefined) => void;
 }) {
+  const { t } = useTranslation();
   const rows = getCompositeRows(tab, session);
   const columns = filterColumnsByVisibleSlots(
     buildColumns(tab),
@@ -514,7 +516,7 @@ function CompositeSlotGrid({
   if (rows.length === 0) {
     return (
       <div className='plugin-panel__empty' role='status' aria-live='polite'>
-        <span>Waiting for results…</span>
+        <span>{t('chat.pluginWaitingForResults')}</span>
       </div>
     );
   }
@@ -528,7 +530,7 @@ function CompositeSlotGrid({
           onClick={() => onFocusSortOrder?.(sortOrder)}
           role='button'
           tabIndex={0}
-          aria-label={`行 ${sortOrder}`}
+          aria-label={t('chat.pluginRowAria', { index: sortOrder })}
         >
           {columns.map((col, colIdx) => {
             const flexBasis = `${(col.weight / totalWeight) * 100}%`;
@@ -761,7 +763,7 @@ function SortableImageList({
               onClick={() => onFocusSortOrder?.(rev.sort_order)}
               role='button'
               tabIndex={0}
-              aria-label={`图片 ${listIndex}`}
+              aria-label={t('chat.pluginImageAria', { index: listIndex })}
               className={`plugin-panel__image-list-item${dragSrcIdx.current === idx ? ' plugin-panel__image-list-item--dragging' : ''}`}
             >
               <SlotRenderer
@@ -788,8 +790,8 @@ function SortableImageList({
         <button
           className='plugin-panel__image-add-card'
           onClick={onAddItem}
-          title='新增附件'
-          aria-label='新增附件'
+          title={t('chat.pluginAddAttachment')}
+          aria-label={t('chat.pluginAddAttachment')}
           type='button'
         >
           <span className='plugin-panel__image-add-card-icon'>+</span>
@@ -909,7 +911,7 @@ function TabSlotGrid({
                   onClick={() => onFocusSortOrder?.(rev.sort_order)}
                   role='button'
                   tabIndex={0}
-                  aria-label={`内容项 ${rev.sort_order ?? ''}`}
+                  aria-label={t('chat.pluginContentItemAria', { index: rev.sort_order ?? '' })}
                 >
                   <SlotRenderer
                     slot={rev}
@@ -1031,7 +1033,7 @@ export function PluginPanel({
       <div
         className='plugin-panel plugin-panel--loading'
         role='status'
-        aria-label='Loading plugin panel'
+        aria-label={t('chat.pluginPanelLoading')}
       />
     );
   }
@@ -1054,9 +1056,16 @@ export function PluginPanel({
   // A failed step cannot be checkpoint-resumed — the SubAgent exited uncleanly and there is
   // no valid checkpoint to restore. Only "重试" (full restart) is meaningful in this case.
   // Note: "interrupted" steps CAN be resumed via checkpoint, so only "failed" is blocked.
-  const currentStepStatus = session.steps
-    ?.filter((s) => s.step_id === session.current_step_id)
-    ?.sort((a, b) => b.attempt - a.attempt)[0]?.status;
+  const authoritativeCurrent = session.projection?.current ?? [];
+  const currentStepStatus = authoritativeCurrent
+    .map((id) => session.projection?.nodes?.[id]?.execution)
+    .find((status) => status === 'failed')
+    ?? (session.current_step_id
+      ? session.steps
+        ?.filter((s) => s.step_id === session.current_step_id && s.validity !== 'stale')
+        ?.sort((a, b) => b.attempt - a.attempt)[0]?.status
+      : undefined);
+  const effectivePast = new Set(session.projection?.past ?? []);
   const continueDisabled = buttonsDisabled || currentStepStatus === 'failed';
 
   function handleContinue() {
@@ -1079,7 +1088,7 @@ export function PluginPanel({
     <div
       className={`plugin-panel plugin-panel--${displayStatus}${collapsed ? ' plugin-panel--collapsed' : ''}`}
       data-session-id={session.session_id}
-      aria-label='Plugin Panel'
+      aria-label={t('chat.pluginPanelTitle')}
     >
       {/* Header */}
       <div className='plugin-panel__header'>
@@ -1087,10 +1096,10 @@ export function PluginPanel({
           <span className='plugin-panel__title'>{session.plugin_id}</span>
           <span
             className={`plugin-panel__status plugin-panel__status--${displayStatus}`}
-            aria-label={`Status: ${t(STATUS_KEY[displayStatus] ?? displayStatus)}`}
+            aria-label={t('chat.pluginStatusAria', { status: t(STATUS_KEY[displayStatus] ?? displayStatus) })}
             onClick={() => session && setStateGraphOpen(true)}
             style={{ cursor: 'pointer' }}
-            title='查看工作流图'
+            title={t('chat.pluginViewWorkflow')}
             role='button'
             tabIndex={0}
             onKeyDown={(e) => e.key === 'Enter' && session && setStateGraphOpen(true)}
@@ -1236,7 +1245,7 @@ export function PluginPanel({
 
       {/* Footer */}
       {!collapsed && showActions && (
-        <div className='plugin-panel__footer' role='group' aria-label='Session controls'>
+        <div className='plugin-panel__footer' role='group' aria-label={t('chat.pluginSessionControls')}>
           {displayStatus === 'active' && onStop && (
             <button
               type='button'
@@ -1281,7 +1290,11 @@ export function PluginPanel({
             <div style={{ flex: '1 1 100%', display: 'flex', flexDirection: 'column', gap: 6 }}>
               <span style={{ fontSize: 12, color: '#6b7280', fontWeight: 500 }}>{t('chat.pluginRollbackLabel')}</span>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {session.steps.map((step) => (
+                {session.steps
+                  .filter((step, index, all) => effectivePast.has(step.step_id)
+                    && step.validity !== 'stale'
+                    && all.findIndex((candidate) => candidate.step_id === step.step_id && candidate.validity !== 'stale') === index)
+                  .map((step) => (
                   <button
                     key={`${step.step_id}-${step.attempt}`}
                     type='button'

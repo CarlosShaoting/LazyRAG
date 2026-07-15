@@ -66,6 +66,11 @@ slots:
     cardinality: single
     summary_max_chars: 200
 
+  - id: edit_route
+    label: Edit Route Token
+    type: text
+    cardinality: single
+
   - id: material_images
     label: Reference Materials
     type: image
@@ -89,8 +94,19 @@ slots:
     cardinality: list
     ordered: true
 
+  - id: raw_source_image
+    label: Raw Source Image
+    type: image
+    cardinality: single
+
+  - id: generated_image_output
+    label: Generated Image
+    type: image
+    cardinality: list
+    ordered: true
+
   - id: image_output
-    label: Raw Image
+    label: Origin Image
     type: image
     cardinality: list
     ordered: true
@@ -121,6 +137,7 @@ ui:
       slots:
         - id: material_images
         - id: material_summary
+        - id: raw_source_image
 
     - id: prompt
       label: Prompt
@@ -132,11 +149,13 @@ ui:
       label: Result
       layout: composite
       slots:
+        - id: generated_image_output
         - id: image_output
         - id: gif_output
         - id: enhanced_image_output
         - id: video_output
       composite_layout:
+        - generated_image_output
         - image_output
         - gif_output
         - enhanced_image_output
@@ -170,7 +189,9 @@ i18n:
       subject_analysis: {label: 主体分析}
       material_images: {label: 参考素材}
       material_summary: {label: 材料摘要}
+      raw_source_image: {label: 原始底图}
       prompt_used: {label: 优化后的提示词}
+      generated_image_output: {label: 生成图片}
       enhanced_image_output: {label: 增强图片}
       image_output: {label: 原始图片}
       gif_output: {label: 动态 GIF}
