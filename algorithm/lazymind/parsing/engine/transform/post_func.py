@@ -368,15 +368,11 @@ class ImageNodeLoader(ModuleBase):
             return True
         return bool(_extract_image_path(node))
 
-    def _extract_layout_metadata(self, node: DocNode, image_path: str) -> dict:
+    def _extract_layout_metadata(self, node: DocNode) -> dict:
         metadata = node.metadata or {}
         bbox = copy.deepcopy(metadata.get('bbox', [0, 0, 0, 0]))
         page = metadata.get('page', 0)
         node_type = metadata.get('type', 'image')
-        LOG.info(
-            f'[ImageNodeLoader] inherit node layout image_path={image_path}, '
-            f'page={page}, bbox={bbox}, type={node_type}'
-        )
         return {
             'page': page,
             'bbox': bbox,
@@ -434,7 +430,7 @@ class ImageNodeLoader(ModuleBase):
                         'file_type': 'image',
                         'is_pure_image': True,
                     }
-                    metadata.update(self._extract_layout_metadata(node, image_path))
+                    metadata.update(self._extract_layout_metadata(node))
                     image_nodes.append(ImageDocNode(
                         image_path=normalized_path,
                         metadata=metadata,
