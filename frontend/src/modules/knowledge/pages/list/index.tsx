@@ -755,7 +755,7 @@ const KnowledgePage: FC = () => {
             return relArr?.[0];
           }
           if (
-            ["pdf", "docx", "doc", "pptx"].includes(
+            ["pdf", "docx", "doc", "pptx", "pptm"].includes(
               rel_path?.split(".")?.at(-1) ?? "",
             )
           ) {
