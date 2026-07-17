@@ -37,7 +37,6 @@ const (
 	googleSearchAcceptedMsg    = "Google Custom Search API key accepted"
 	bochaSearchAcceptedMsg     = "Bocha Search API key accepted"
 	sciverseSearchAcceptedMsg  = "Sciverse API key accepted"
-	doubaoModelsAcceptedMsg    = "Doubao API key accepted"
 )
 
 var sciverseDefaultMetaFields = []string{
@@ -123,75 +122,7 @@ func doProviderGroupCheck(ctx context.Context, category, providerName, baseURL, 
 	if usesSearchCloudServiceCheck(category, providerName) {
 		return doSearchCloudServiceCheck(ctx, providerName, baseURL, apiKey)
 	}
-	// Doubao does not require every model service to be enabled; validating via chat
-	// can fail when only multimodal services are activated. List models instead.
-	if isDoubaoProvider(providerName) {
-		return doDoubaoModelsCheck(ctx, providerName, baseURL, apiKey)
-	}
 	return doCheck(ctx, category, providerName, baseURL, apiKey, model)
-}
-
-func isDoubaoProvider(providerName string) bool {
-	switch normalizeProviderName(providerName) {
-	case "doubao", "volcengine", "volc", "ark":
-		return true
-	default:
-		return false
-	}
-}
-
-// doubaoModelsEndpoint builds GET {base_url}/models for Ark API key validation.
-func doubaoModelsEndpoint(baseURL string) string {
-	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
-	if strings.HasSuffix(base, "/models") {
-		return base
-	}
-	return common.JoinURL(base, "models")
-}
-
-// doDoubaoModelsCheck validates a Doubao/Ark API key with GET /models
-// (Authorization: Bearer <key>), without invoking a chat completion.
-func doDoubaoModelsCheck(ctx context.Context, providerName, baseURL, apiKey string) (*modelCheckResponse, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, doubaoModelsEndpoint(baseURL), nil)
-	if err != nil {
-		return &modelCheckResponse{Success: false, Message: safeCheckMessage(err.Error(), apiKey)}, nil
-	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-
-	resp, err := (&http.Client{Timeout: cloudServiceCheckTimeout}).Do(req)
-	if err != nil {
-		return &modelCheckResponse{
-			Success: false,
-			Message: safeCheckMessage(err.Error(), apiKey),
-			Source:  providerName,
-			URL:     baseURL,
-		}, nil
-	}
-	defer resp.Body.Close()
-
-	respBytes, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
-	if err != nil {
-		return &modelCheckResponse{
-			Success: false,
-			Message: safeCheckMessage(err.Error(), apiKey),
-			Source:  providerName,
-			URL:     baseURL,
-		}, nil
-	}
-	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
-		return &modelCheckResponse{
-			Success: true,
-			Message: doubaoModelsAcceptedMsg,
-			Source:  providerName,
-			URL:     baseURL,
-		}, nil
-	}
-	return &modelCheckResponse{
-		Success: false,
-		Message: cloudServiceCheckFailureMessage(resp.StatusCode, respBytes, apiKey),
-		Source:  providerName,
-		URL:     baseURL,
-	}, nil
 }
 
 func isSupportedOCRCloudProvider(providerName string) bool {
