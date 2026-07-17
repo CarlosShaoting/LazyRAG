@@ -49,6 +49,7 @@ def _coerce_url_list(urls: Optional[Union[str, List[str]]]) -> Optional[List[str
             return [str(item).strip() for item in parsed if str(item or '').strip()] or None
     return [text]
 
+
 _VISION_EXTRACT_DEFAULT_INSTRUCTION = (
     'Describe the image in plain text. Include visible text, objects, charts, and any '
     'details that would help answer follow-up questions about this image.'
