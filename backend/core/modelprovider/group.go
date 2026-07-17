@@ -353,7 +353,7 @@ func UpdateGroup(w http.ResponseWriter, r *http.Request) {
 		if effectiveAPIKey == "" {
 			updates["is_verified"] = true
 		} else {
-			checkResult, checkErr := doCheck(r.Context(), parent.Category, parent.Name, baseURL, effectiveAPIKey, "")
+			checkResult, checkErr := doProviderGroupCheck(r.Context(), parent.Category, parent.Name, baseURL, effectiveAPIKey, "")
 			if checkErr != nil || !checkResult.Success {
 				msg := "verification failed"
 				if checkResult != nil {
@@ -530,6 +530,7 @@ var sensenovaNewPlatformModelNames = map[string]bool{
 	"deepseek-v4-flash":        true,
 	"glm-5.2":                  true,
 	"sensenova-6.7-flash-lite": true,
+	"sensenova-u1-fast":        true,
 }
 
 // seedGroupModelsFromDefaults inserts user_model_provider_group_models from default_models when the group's
@@ -563,7 +564,7 @@ func seedGroupModelsFromDefaults(
 		return err
 	}
 
-	// For the new SenseNova platform, seed only the 3 specific models (loaded from DB).
+	// For the new SenseNova platform, seed only the Token Plan model subset (loaded from DB).
 	// For all other providers / URLs, match the base URL against the catalog default.
 	if useNewPlatform {
 		// seed only the new-platform-specific models from default_models
@@ -608,6 +609,150 @@ func seedGroupModelsFromDefaults(
 		return nil
 	}
 	return tx.WithContext(ctx).CreateInBatches(&batch, 100).Error
+}
+
+func syncMissingGroupModelsFromDefaults(
+	tx *gorm.DB,
+	ctx context.Context,
+	group *orm.UserModelProviderGroup,
+	parent *orm.UserModelProvider,
+	modelType, userID, userName string,
+	now time.Time,
+) error {
+	if !parent.HasCapability("has_models") {
+		return nil
+	}
+
+	useNewPlatform := strings.EqualFold(parent.Name, "SenseNova") &&
+		normalizeBaseURLForCompare(group.BaseURL) == normalizeBaseURLForCompare(sensenovaNewPlatformBaseURL)
+
+	var catalog orm.DefaultModelProvider
+	err := tx.WithContext(ctx).
+		Where("id = ? AND deleted_at IS NULL", parent.DefaultModelProviderID).
+		Take(&catalog).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+	if !useNewPlatform &&
+		normalizeBaseURLForCompare(group.BaseURL) != normalizeBaseURLForCompare(catalog.BaseURL) {
+		return nil
+	}
+
+	query := tx.WithContext(ctx).
+		Where("default_model_provider_id = ? AND deleted_at IS NULL", parent.DefaultModelProviderID)
+	if modelType != "" {
+		query = query.Where("model_type = ?", modelType)
+	}
+	var defs []orm.DefaultModel
+	if err := query.Find(&defs).Error; err != nil {
+		return err
+	}
+	if len(defs) == 0 {
+		return nil
+	}
+
+	var existing []orm.UserModelProviderGroupModel
+	if err := tx.WithContext(ctx).
+		Where("user_model_provider_group_id = ? AND create_user_id = ?", group.ID, userID).
+		Find(&existing).Error; err != nil {
+		return err
+	}
+	existingNames := make(map[string]struct{}, len(existing))
+	for i := range existing {
+		existingNames[existing[i].Name] = struct{}{}
+	}
+
+	if strings.TrimSpace(userName) == "" {
+		userName = group.CreateUserName
+	}
+	batch := make([]orm.UserModelProviderGroupModel, 0, len(defs))
+	for _, d := range defs {
+		if useNewPlatform && !sensenovaNewPlatformModelNames[d.Name] {
+			continue
+		}
+		if _, ok := existingNames[d.Name]; ok {
+			continue
+		}
+		batch = append(batch, orm.UserModelProviderGroupModel{
+			ID:                       common.GenerateID(),
+			UserModelProviderID:      parent.ID,
+			UserModelProviderGroupID: group.ID,
+			ProviderName:             d.ProviderName,
+			Name:                     d.Name,
+			ModelType:                d.ModelType,
+			MaxInputTokens:           d.MaxInputTokens,
+			IsDefault:                true,
+			BaseModel: orm.BaseModel{
+				CreateUserID:   userID,
+				CreateUserName: userName,
+				CreatedAt:      now,
+				UpdatedAt:      now,
+				DeletedAt:      nil,
+			},
+		})
+	}
+	if len(batch) == 0 {
+		return nil
+	}
+	return tx.WithContext(ctx).CreateInBatches(&batch, 100).Error
+}
+
+func syncMissingUserDefaultModels(ctx context.Context, db *gorm.DB, userID, userName, modelType string) error {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return nil
+	}
+
+	var groups []orm.UserModelProviderGroup
+	if err := db.WithContext(ctx).
+		Model(&orm.UserModelProviderGroup{}).
+		Select("user_model_provider_groups.*").
+		Joins("JOIN user_model_providers ON user_model_providers.id = user_model_provider_groups.user_model_provider_id AND user_model_providers.deleted_at IS NULL AND user_model_providers.capabilities LIKE '%has_models%'").
+		Where("user_model_provider_groups.create_user_id = ? AND user_model_provider_groups.deleted_at IS NULL AND user_model_provider_groups.is_verified = ?", userID, true).
+		Find(&groups).Error; err != nil {
+		return err
+	}
+	if len(groups) == 0 {
+		return nil
+	}
+
+	parentIDs := make([]string, 0, len(groups))
+	seenParent := make(map[string]struct{}, len(groups))
+	for i := range groups {
+		if _, ok := seenParent[groups[i].UserModelProviderID]; ok {
+			continue
+		}
+		seenParent[groups[i].UserModelProviderID] = struct{}{}
+		parentIDs = append(parentIDs, groups[i].UserModelProviderID)
+	}
+
+	var parents []orm.UserModelProvider
+	if err := db.WithContext(ctx).
+		Where("id IN ? AND create_user_id = ? AND deleted_at IS NULL", parentIDs, userID).
+		Find(&parents).Error; err != nil {
+		return err
+	}
+	parentByID := make(map[string]orm.UserModelProvider, len(parents))
+	for i := range parents {
+		parentByID[parents[i].ID] = parents[i]
+	}
+
+	now := time.Now().UTC()
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for i := range groups {
+			parent, ok := parentByID[groups[i].UserModelProviderID]
+			if !ok {
+				continue
+			}
+			if err := syncMissingGroupModelsFromDefaults(tx, ctx, &groups[i], &parent, modelType, userID, userName, now); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // isDefaultBaseURL reports whether the given base_url matches the catalog default for the provider.

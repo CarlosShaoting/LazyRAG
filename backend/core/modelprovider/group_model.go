@@ -254,6 +254,7 @@ func ListUserModelsByModelType(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userID := strings.TrimSpace(store.UserID(r))
+	userName := strings.TrimSpace(store.UserName(r))
 	if userID == "" {
 		common.ReplyErr(w, "missing X-User-Id", http.StatusBadRequest)
 		return
@@ -269,6 +270,10 @@ func ListUserModelsByModelType(w http.ResponseWriter, r *http.Request) {
 	// Translate runtime_models.yaml role key (e.g. "evo_llm") to the lazyllm
 	// technical type (e.g. "llm") stored in user_model_provider_group_models.
 	dbModelType := resolveModelType(r.Context(), modelType)
+	if err := syncMissingUserDefaultModels(r.Context(), db, userID, userName, dbModelType); err != nil {
+		common.ReplyErr(w, "sync default models failed", http.StatusInternalServerError)
+		return
+	}
 
 	q := db.WithContext(r.Context()).
 		Joins("JOIN user_model_providers ON user_model_providers.id = user_model_provider_group_models.user_model_provider_id AND user_model_providers.deleted_at IS NULL AND user_model_providers.capabilities LIKE '%has_models%'").

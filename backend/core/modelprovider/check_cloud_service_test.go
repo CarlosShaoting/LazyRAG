@@ -279,3 +279,77 @@ func TestCloudServiceCheckRejectsAuthFailure(t *testing.T) {
 		t.Fatal("expected auth-looking bad request to fail")
 	}
 }
+
+func TestDoDoubaoModelsCheckUsesModelsListEndpoint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+		if r.URL.Path != "/api/v3/models" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
+			t.Fatalf("unexpected authorization header: %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"doubao-seed-1-6-251015","object":"model"}]}`))
+	}))
+	defer server.Close()
+
+	result, err := doDoubaoModelsCheck(t.Context(), "Doubao", server.URL+"/api/v3/", "test-key")
+	if err != nil {
+		t.Fatalf("doDoubaoModelsCheck error: %v", err)
+	}
+	if result == nil || !result.Success {
+		t.Fatalf("expected success, got %+v", result)
+	}
+	if result.Message != doubaoModelsAcceptedMsg {
+		t.Fatalf("unexpected message: %q", result.Message)
+	}
+}
+
+func TestDoDoubaoModelsCheckRejectsAuthFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"code":"AuthenticationError","message":"The API key format is incorrect.","type":"Unauthorized"}}`))
+	}))
+	defer server.Close()
+
+	result, err := doDoubaoModelsCheck(t.Context(), "Doubao", server.URL+"/api/v3/", "bad-key")
+	if err != nil {
+		t.Fatalf("doDoubaoModelsCheck error: %v", err)
+	}
+	if result == nil || result.Success {
+		t.Fatalf("expected auth failure, got %+v", result)
+	}
+	if !strings.Contains(strings.ToLower(result.Message), "api key") &&
+		!strings.Contains(result.Message, "AuthenticationError") &&
+		!strings.Contains(result.Message, "Unauthorized") {
+		t.Fatalf("expected auth error message, got %q", result.Message)
+	}
+}
+
+func TestDoProviderGroupCheckRoutesDoubaoToModelsEndpoint(t *testing.T) {
+	var hitModels bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v3/models" {
+			hitModels = true
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"object":"list","data":[]}`))
+			return
+		}
+		t.Fatalf("unexpected path routed through chat check: %s", r.URL.Path)
+	}))
+	defer server.Close()
+
+	result, err := doProviderGroupCheck(t.Context(), "model", "Doubao", server.URL+"/api/v3/", "test-key", "")
+	if err != nil {
+		t.Fatalf("doProviderGroupCheck error: %v", err)
+	}
+	if !hitModels {
+		t.Fatal("expected Doubao check to hit /models")
+	}
+	if result == nil || !result.Success {
+		t.Fatalf("expected success, got %+v", result)
+	}
+}
