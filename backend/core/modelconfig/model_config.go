@@ -57,8 +57,8 @@ func LoadLLMConfig(ctx context.Context, db *gorm.DB, userID string) (map[string]
 				"m.provider_name, "+
 				"m.name AS model_name, "+
 				"g.base_url, "+
-			"g.api_key, "+
-			"m.max_input_tokens",
+				"g.api_key, "+
+				"m.max_input_tokens",
 		).
 		Joins(
 			"JOIN user_model_provider_group_models m ON "+
@@ -93,8 +93,8 @@ func LoadLLMConfig(ctx context.Context, db *gorm.DB, userID string) (map[string]
 				"m.provider_name, "+
 				"m.name AS model_name, "+
 				"g.base_url, "+
-			"g.api_key, "+
-			"m.max_input_tokens",
+				"g.api_key, "+
+				"m.max_input_tokens",
 		).
 		Joins(
 			"JOIN user_model_provider_group_models m ON "+
