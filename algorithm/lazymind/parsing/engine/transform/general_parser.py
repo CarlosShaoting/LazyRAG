@@ -127,10 +127,6 @@ class GeneralParser(NodeTransform):
                 max_length,
                 _EMBED_CHUNK_LENGTH_BY_MAX_INPUT_TOKENS.get(max_input_tokens, max_length),
             )
-        LOG.info(
-            f'[EMBED_CHUNK_SIZE] group=block configured_max_length={self._max_length} '
-            f'embed_max_input_tokens={max_input_tokens} effective_max_length={max_length}'
-        )
 
         ppl = pipeline(self._image_path_transform, lambda text: self._split(text, max_length=max_length))
         content = ppl(document.text or '')
