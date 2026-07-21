@@ -2,6 +2,7 @@ import re
 
 import pytest
 from lazyllm.tools.rag import DocNode
+from lazyllm.tools.rag.doc_node import MetadataMode
 
 from lazymind.parsing.engine.transform import general_parser as general_parser_module
 from lazymind.parsing.engine.transform.general_parser import GeneralParser, is_url
@@ -45,6 +46,33 @@ def test_split_prefers_separator_and_force_splits_long_parts():
     assert parser._split('') == []
 
 
+def test_forward_reduces_chunk_size_for_selected_embedding_limit(monkeypatch):
+    parser = GeneralParser(max_length=2048, split_by='\n')
+    monkeypatch.setattr(general_parser_module, '_runtime_embed_max_input_tokens', lambda: 512)
+
+    chunks = parser.forward(DocNode(text='a' * 769))
+
+    assert [len(chunk.text) for chunk in chunks] == [384, 384, 1]
+
+
+def test_forward_uses_fixed_chunk_size_for_2048_token_embedding(monkeypatch):
+    parser = GeneralParser(max_length=2048, split_by='\n')
+    monkeypatch.setattr(general_parser_module, '_runtime_embed_max_input_tokens', lambda: 2048)
+
+    chunks = parser.forward(DocNode(text='a' * 1921))
+
+    assert [len(chunk.text) for chunk in chunks] == [1920, 1]
+
+
+def test_forward_uses_default_chunk_size_without_embedding_limit(monkeypatch):
+    parser = GeneralParser(max_length=2048, split_by='\n')
+    monkeypatch.setattr(general_parser_module, '_runtime_embed_max_input_tokens', lambda: None)
+
+    chunks = parser.forward(DocNode(text='a' * 2048))
+
+    assert [len(chunk.text) for chunk in chunks] == [2048]
+
+
 def test_general_parser_rejects_invalid_constructor_args():
     with pytest.raises(AssertionError, match='max_length'):
         GeneralParser(max_length=0)
@@ -73,3 +101,22 @@ def test_forward_transforms_images_splits_and_copies_metadata(monkeypatch):
     assert chunks[0].metadata['nested'] is not metadata['nested']
     assert chunks[0].global_metadata == global_metadata
     assert chunks[0].global_metadata is not global_metadata
+
+
+def test_forward_inherits_parent_metadata_exclusions(monkeypatch):
+    monkeypatch.setattr(general_parser_module, 'IMAGE_PREFIX', '/assets/images/')
+    parser = GeneralParser(max_length=12, split_by='\n')
+    node = DocNode(
+        text='first chunk\nsecond chunk',
+        metadata={'file_name': 'doc.pdf', 'page': 1, 'bbox': [0, 0, 1, 1], 'lines': [{'content': 'x'}]},
+    )
+    node.excluded_embed_metadata_keys = ['page', 'bbox', 'lines']
+    node.excluded_llm_metadata_keys = ['page', 'bbox', 'lines']
+
+    chunks = parser.forward(node)
+
+    assert len(chunks) == 2
+    for chunk in chunks:
+        assert set(chunk.excluded_embed_metadata_keys) == {'page', 'bbox', 'lines'}
+        assert set(chunk.excluded_llm_metadata_keys) == {'page', 'bbox', 'lines'}
+        assert chunk.get_text(MetadataMode.EMBED) == 'file_name: doc.pdf\n\n' + chunk.text
