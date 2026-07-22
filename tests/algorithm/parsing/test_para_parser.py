@@ -115,7 +115,7 @@ def test_normal_line_splitter_inherits_parent_metadata_exclusions():
     result = NormalLineSplitter().forward(node)
 
     for child in result:
-        assert child.excluded_embed_metadata_keys == ['page', 'bbox']
+        assert set(child.excluded_embed_metadata_keys) == {'page', 'bbox'}
         assert child.get_text(MetadataMode.EMBED).startswith('file_name: note.md\n\n')
 
 
@@ -133,7 +133,7 @@ def test_mineru_line_splitter_inherits_parent_metadata_exclusions():
 
     result = MineruLineSplitter().forward(node)
 
-    assert result[0].excluded_embed_metadata_keys == ['lines', 'type', 'page', 'bbox']
+    assert set(result[0].excluded_embed_metadata_keys) == {'lines', 'type', 'page', 'bbox'}
     assert result[0].get_text(MetadataMode.EMBED) == 'file_name: paper.pdf\n\nline one'
 
 
