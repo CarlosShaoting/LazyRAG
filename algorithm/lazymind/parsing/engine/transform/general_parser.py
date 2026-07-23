@@ -81,40 +81,89 @@ class GeneralParser(NodeTransform):
             return f'![{alt_text}]({url})'
         return IMAGE_PATTERN.sub(_replace, text)
 
+    def _rfind_sentence_end(self, window: str) -> int:
+        '''Return index of the last sentence-ending . / 。, or -1.
+
+        '.' only counts when it ends the window or is followed by whitespace,
+        so decimals (2.5) and extensions (.png) are ignored.
+        '''
+        best = window.rfind('。')
+        pos = -1
+        start = 0
+        while True:
+            idx = window.find('.', start)
+            if idx < 0:
+                break
+            nxt = window[idx + 1] if idx + 1 < len(window) else ''
+            if nxt == '' or nxt.isspace():
+                pos = idx
+            start = idx + 1
+        return max(best, pos)
+
+    def _split_back_to_period(self, text: str, max_length: int) -> List[str]:
+        '''Split overlong text, cutting back to the previous sentence end when possible.'''
+        chunks: List[str] = []
+        start = 0
+        n = len(text)
+        while start < n:
+            end = min(start + max_length, n)
+            if end >= n:
+                chunks.append(text[start:])
+                break
+            window = text[start:end]
+            sent = self._rfind_sentence_end(window)
+            cut = sent + 1 if sent >= 0 else max_length
+            chunks.append(text[start:start + cut])
+            start += cut
+        return chunks
+
     def _split(self, text: str, max_length: int | None = None) -> List[str]:
         if not text:
             return []
         max_length = max_length or self._max_length
         if len(text) <= max_length:
             return [text]
-        result_chunks = []
-        parts = text.split(self._split_by)
 
-        current_chunk = []
-        current_len = 0
-        for part in parts:
-            part_len = len(part)
-            if part_len > max_length:
-                if current_chunk:
-                    result_chunks.append(self._split_by.join(current_chunk))
-                    current_chunk = []
-                    current_len = 0
-                for i in range(0, part_len, max_length):
-                    result_chunks.append(part[i:i + max_length])
+        result_chunks: List[str] = []
+        buf = ''
+        for part in text.split(self._split_by):
+            if len(part) > max_length and not buf:
+                result_chunks.extend(self._split_back_to_period(part, max_length))
                 continue
-            add_sep = self._len_split if current_chunk else 0
-            if current_len + part_len + add_sep > max_length:
-                if current_chunk:
-                    result_chunks.append(self._split_by.join(current_chunk))
-                current_chunk = [part]
-                current_len = part_len
+
+            candidate = part if not buf else f'{buf}{self._split_by}{part}'
+            if len(candidate) <= max_length:
+                buf = candidate
+                continue
+
+            # Overflow across \\n: prefer sentence end inside the max_length window so we
+            # do not close on a mid-sentence wrap like "shared\\nexperts."
+            window = candidate[:max_length]
+            sent = self._rfind_sentence_end(window)
+            if sent >= 0:
+                result_chunks.append(candidate[:sent + 1])
+                remainder = candidate[sent + 1:]
+                if remainder.startswith(self._split_by):
+                    remainder = remainder[self._len_split:]
+                if len(remainder) > max_length:
+                    pieces = self._split_back_to_period(remainder, max_length)
+                    result_chunks.extend(pieces[:-1])
+                    buf = pieces[-1]
+                else:
+                    buf = remainder
+            elif buf:
+                result_chunks.append(buf)
+                buf = part
             else:
-                if current_chunk:
-                    current_len += self._len_split
-                current_chunk.append(part)
-                current_len += part_len
-        if current_chunk:
-            result_chunks.append(self._split_by.join(current_chunk))
+                pieces = self._split_back_to_period(candidate, max_length)
+                result_chunks.extend(pieces[:-1])
+                buf = pieces[-1]
+
+        if buf:
+            if len(buf) > max_length:
+                result_chunks.extend(self._split_back_to_period(buf, max_length))
+            else:
+                result_chunks.append(buf)
         return result_chunks
 
     def forward(self, document: DocNode, **kwargs) -> List[DocNode]:

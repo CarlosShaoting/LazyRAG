@@ -38,12 +38,52 @@ def test_image_path_transform_prefixes_only_relative_paths(monkeypatch):
     assert image_urls == ['/assets/images/tables/a.png', 'https://example.test/b.png', 'lazyllm://image/c.png']
 
 
-def test_split_prefers_separator_and_force_splits_long_parts():
+def test_split_prefers_separator_and_hard_splits_long_parts():
     parser = GeneralParser(max_length=6, split_by='\n')
 
     assert parser._split('aa\nbbb\nc') == ['aa\nbbb', 'c']
     assert parser._split('abcdefgh') == ['abcdef', 'gh']
     assert parser._split('') == []
+
+
+def test_split_back_to_period():
+    parser = GeneralParser(max_length=20, split_by='\n')
+
+    assert parser._split('一二三四五六七八九十。后面还有很多文字内容继续写下去吧') == [
+        '一二三四五六七八九十。',
+        '后面还有很多文字内容继续写下去吧',
+    ]
+    assert parser._split('Sentence one. Sentence two continues with more words here.') == [
+        'Sentence one.',
+        ' Sentence two contin',
+        'ues with more words ',
+        'here.',
+    ]
+
+    text = ('前' * 12) + '。' + ('后' * 15)
+    assert parser._split(text) == [('前' * 12) + '。', '后' * 15]
+
+    # Early period is still used; no minimum-cut guard.
+    early = '短。' + ('后' * 20)
+    assert GeneralParser(max_length=10, split_by='\n')._split(early) == [
+        '短。',
+        '后' * 10,
+        '后' * 10,
+    ]
+
+
+def test_split_backs_to_period_across_newline_wrap():
+    # PDF/OCR often wraps mid-sentence with \\n; do not close the chunk there.
+    parser = GeneralParser(max_length=80, split_by='\n')
+    text = (
+        'Intro sentence. Unlike Qwen2.5-MoE, the Qwen3-MoE design excludes shared\n'
+        'experts. Following text stays here.'
+    )
+
+    chunks = parser._split(text)
+
+    assert not any(chunk.rstrip().endswith('shared') for chunk in chunks)
+    assert any('shared\nexperts.' in chunk for chunk in chunks)
 
 
 def test_forward_reduces_chunk_size_for_selected_embedding_limit(monkeypatch):
