@@ -427,6 +427,7 @@ function InnerTabsCell({
   sortOrder,
   onRefresh,
   onReference,
+  hideImageMutationActions,
 }: {
   tabsNode: InnerTabsNode;
   tab: TabDef;
@@ -435,6 +436,7 @@ function InnerTabsCell({
   sortOrder: number;
   onRefresh?: () => void;
   onReference?: (slot: SlotRevision) => void;
+  hideImageMutationActions?: boolean;
 }) {
   const [activeIdx, setActiveIdx] = useState(0);
 
@@ -475,6 +477,7 @@ function InnerTabsCell({
                 revisionCount={rev.revision_count}
                 onRefresh={onRefresh}
                 onReference={onReference}
+                hideImageMutationActions={hideImageMutationActions}
               />
             ) : (
               <div className='composite-cell__empty'>—</div>
@@ -509,6 +512,7 @@ function CompositeSlotGrid({
     buildColumns(tab),
     resolveVisibleSlotIds(tab, session),
   );
+  const hideImageMutationActions = tab.id === 'result';
 
   // Compute total weight for flex proportions.
   const totalWeight = columns.reduce((s, c) => s + c.weight, 0) || 1;
@@ -549,6 +553,7 @@ function CompositeSlotGrid({
                     sortOrder={sortOrder}
                     onRefresh={onRefresh}
                     onReference={onReference}
+                    hideImageMutationActions={hideImageMutationActions}
                   />
                 </div>
               );
@@ -574,6 +579,7 @@ function CompositeSlotGrid({
                     revisionCount={rev.revision_count}
                     onRefresh={onRefresh}
                     onReference={onReference}
+                    hideImageMutationActions={hideImageMutationActions}
                   />
                 ) : (
                   <div className='composite-grid__cell-empty'>—</div>
