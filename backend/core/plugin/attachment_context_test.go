@@ -41,3 +41,21 @@ func TestHistoryFilesFromConversation(t *testing.T) {
 		t.Fatalf("history files = %#v", got)
 	}
 }
+
+func TestHistoryFilesFromParentAgentic(t *testing.T) {
+	got := historyFilesFromParentAgentic(map[string]any{
+		"history_files_per_turn": map[string]any{
+			"2": []any{"/runtime/uploads/dog.jpg", ""},
+		},
+	})
+	if len(got) != 1 || len(got["2"]) != 1 || got["2"][0] != "/runtime/uploads/dog.jpg" {
+		t.Fatalf("history files from parent map = %#v", got)
+	}
+
+	got = historyFilesFromParentAgentic(map[string]any{
+		"files": []any{"/runtime/uploads/cat.jpg"},
+	})
+	if len(got) != 1 || len(got["1"]) != 1 || got["1"][0] != "/runtime/uploads/cat.jpg" {
+		t.Fatalf("history files from parent files = %#v", got)
+	}
+}
