@@ -97,7 +97,6 @@ func TestResolveCustomFFmpegPathAcceptsDirectory(t *testing.T) {
 	}
 }
 
-
 func TestExtractFFmpegTarXZ(t *testing.T) {
 	root := t.TempDir()
 	archivePath := filepath.Join(root, "ffmpeg.tar.xz")
