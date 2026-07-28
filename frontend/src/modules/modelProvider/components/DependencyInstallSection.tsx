@@ -30,7 +30,8 @@ import {
 } from "../api/systemDependencies";
 import { getLocalizedErrorMessage } from "@/components/request";
 import { isDesktopRuntime, isLocalRuntime } from "@/runtime/mode";
-import { restartRuntime, selectExecutable } from "@/runtime/desktopBridge";
+import { selectExecutable } from "@/runtime/desktopBridge";
+
 
 const DEPENDENCY_ICON_DATA_URL =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAC50lEQVR4Ab3XAWQbURjA8UxUTVRVVc3URAxUVQ0xw1A1lUxVTUVNTRXD1ExNMUVRRcwwU0UBM1ynqmaoICZmZqIqqioiIiIOERMR8fa/+nCk70muZ/jty/Luvu97L/dek4BS6tb/FD+I9yGEQdy+cQMxKxaUhCMYwwTvTRMX41b8FbZ4vQsLaZyihAZS1zbApf0kGeaCexjHYyzw/kviCnGQcWcmH5BFHjZaUD34GuCfZUn0GSckzxILqKCONpQbxbPEPdeYF98wEJBlUV2zrooWb1g8hWFntXtuAGU0PRW2ruIPDDnFvTRQQUMz1o4dxIzPAH7hjlPY3cAqjlGGMrBR0xXHDo4Nsz8jjkphAAHX/nxnKF4jgW0Y/4Rtw3ORQ5gVmiVPktfBjgYY/K65+S8qhuJfsG7YgnlyR4hRdo9NLGGg2wZavG8qfoJVQ/ECxhGFDdVbA2Y/sWQoXnYVr0L52cApn2VC91DKqkUxhSKUnw3kkTA8FzU8pMFJYgHKzwYqSJC8YCg+w8N23zVz3xqoI4GcZryBJwjjAsq3BhhrEF/gt26rcs0CMUKU4v410MQaUoaZL2IMZ1B+NtDGJixdc4ysSHFZHf8aaCOJfd35L19Q7uKP5pqWtwYsUJj4XnO+t/EGQ8ho/viUyLnpdQUO0Xkz2GJt4gaGkdYtM9dNEOe7bkC+kqWxjdeGmW9hBGntzCkuOVd7aaBP4jPD+Z7EEI4040VMyorO8drWNBDqaEBummWwrkmexbyh+CWmZBJzmjwtbCB43Qo8QhXKg3Pn+JXfCU+dg0lzXYaP6DkxhmmEA1J8gtkXPRa/oGhE8iyjAdUN7tsNyPF56aW4HLthV/Fmj9+S95wGPiKHImw0uujciVlEEMSK+T59A+5nIIRRRBiYIs5giVmu8f9t+SV0iDTeYlAe3DX3rvHcgFdyFD8g2SxxGevYwT6OkME5qmjB3cC6pgH/yEfUj5D8qA0To3B2y8g/W3EFMEBZY/QAAAAASUVORK5CYII=";
@@ -97,21 +98,6 @@ export default function DependencyInstallSection() {
     return title.includes(normalizedSearchValue) || summary.includes(normalizedSearchValue);
   }, [normalizedSearchValue, t]);
 
-  const restartHint = t("modelProvider.external.dependencyRestartHint");
-
-  const applyRuntimeRestart = useCallback(async () => {
-    if (!isDesktopRuntime()) {
-      message.info(restartHint);
-      return;
-    }
-    const result = await restartRuntime();
-    if (!result.ok) {
-      message.warning(t("modelProvider.external.dependencyRestartFailed"));
-      return;
-    }
-    message.success(t("modelProvider.external.dependencyRestartStarted"));
-  }, [restartHint, t]);
-
   const handleSaveCustomPath = async () => {
     const trimmed = customPath.trim();
     if (!trimmed) {
@@ -124,7 +110,6 @@ export default function DependencyInstallSection() {
       setStatus(next);
       setModalOpen(false);
       message.success(t("modelProvider.external.dependencySaved"));
-      await applyRuntimeRestart();
     } catch (error) {
       message.error(getLocalizedErrorMessage(error) || t("modelProvider.external.dependencySaveFailed"));
     } finally {
@@ -138,7 +123,6 @@ export default function DependencyInstallSection() {
       const next = await installFFmpegDependency();
       setStatus(next);
       message.success(t("modelProvider.external.dependencyInstallSuccess"));
-      await applyRuntimeRestart();
     } catch (error) {
       message.error(getLocalizedErrorMessage(error) || t("modelProvider.external.dependencyInstallFailed"));
     } finally {

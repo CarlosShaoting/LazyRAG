@@ -84,7 +84,7 @@ func resolvePaths(runtimeRoot string, cfg FFmpegConfig) (ffmpegPath, ffprobePath
 	cfg = normalizeFFmpegConfig(cfg, runtimeRoot)
 	switch cfg.Source {
 	case FFmpegSourceCustom:
-		ffmpegPath = findExecutable(cfg.CustomPath)
+		ffmpegPath = resolveCustomFFmpegPath(cfg.CustomPath)
 		if ffmpegPath == "" {
 			return "", "", string(FFmpegSourceCustom)
 		}
@@ -125,7 +125,7 @@ func UpdateFFmpegConfig(runtimeRoot string, source FFmpegSource, customPath stri
 	cfg.FFmpeg.CustomPath = strings.TrimSpace(customPath)
 	cfg.FFmpeg = normalizeFFmpegConfig(cfg.FFmpeg, runtimeRoot)
 	if source == FFmpegSourceCustom {
-		execPath := findExecutable(cfg.FFmpeg.CustomPath)
+		execPath := resolveCustomFFmpegPath(cfg.FFmpeg.CustomPath)
 		if execPath == "" {
 			return FFmpegStatus{}, fmt.Errorf("ffmpeg executable not found: %s", customPath)
 		}
@@ -422,6 +422,24 @@ func binariesInDir(dir string) (string, string) {
 	ffmpegPath := findExecutable(filepath.Join(dir, ffmpegName))
 	ffprobePath := findExecutable(filepath.Join(dir, ffprobeName))
 	return ffmpegPath, ffprobePath
+}
+
+// resolveCustomFFmpegPath accepts either the ffmpeg binary path or a directory
+// that contains ffmpeg (+ ffprobe). UI users often paste the bin folder.
+func resolveCustomFFmpegPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	if execPath := findExecutable(path); execPath != "" {
+		return execPath
+	}
+	info, err := os.Stat(path)
+	if err != nil || !info.IsDir() {
+		return ""
+	}
+	ffmpegPath, _ := binariesInDir(path)
+	return ffmpegPath
 }
 
 func siblingProbe(ffmpegPath string) string {

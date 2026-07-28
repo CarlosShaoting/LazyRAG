@@ -46,7 +46,13 @@ func loadFFmpegBinDirForRuntime(paths RuntimePaths) string {
 	switch strings.TrimSpace(cfg.FFmpeg.Source) {
 	case "custom":
 		customPath := strings.TrimSpace(cfg.FFmpeg.CustomPath)
-		if customPath == "" || !fileExists(customPath) {
+		if customPath == "" {
+			return ""
+		}
+		if info, err := os.Stat(customPath); err == nil && info.IsDir() {
+			return firstExistingFFmpegBinDir([]string{customPath})
+		}
+		if !fileExists(customPath) {
 			return ""
 		}
 		return filepath.Dir(customPath)

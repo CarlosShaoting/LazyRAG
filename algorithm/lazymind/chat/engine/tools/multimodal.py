@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -27,6 +26,7 @@ from lazymind.chat.engine.tools.infra.video_generation_support import (
     run_video_model,
     run_video_to_gif,
 )
+from lazymind.common.ffmpeg_deps import resolve_ffmpeg_binaries
 
 
 def _coerce_url_list(urls: Optional[Union[str, List[str]]]) -> Optional[List[str]]:
@@ -259,7 +259,8 @@ def video_to_gif(
     raw = str(url or '').strip()
     if not raw:
         return tool_error('video_to_gif', 'url is required')
-    if not shutil.which('ffmpeg') or not shutil.which('ffprobe'):
+    ffmpeg_path, ffprobe_path = resolve_ffmpeg_binaries()
+    if not ffmpeg_path or not ffprobe_path:
         return tool_error(
             'video_to_gif',
             (

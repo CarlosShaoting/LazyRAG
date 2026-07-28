@@ -63,19 +63,40 @@ func TestDetectFFmpegNonLocalDefaultsEnabled(t *testing.T) {
 	}
 }
 
-func TestResolvePathsDoesNotScanPATH(t *testing.T) {
+func TestResolveCustomFFmpegPathAcceptsDirectory(t *testing.T) {
 	t.Setenv("LAZYMIND_RUNTIME_MODE", "local")
 	root := t.TempDir()
-	cfg := defaultConfig(root)
-	cfg.FFmpeg.Source = FFmpegSourceAuto
-	ffmpegPath, ffprobePath, source := resolvePaths(root, cfg.FFmpeg)
-	if ffmpegPath != "" || ffprobePath != "" {
-		t.Fatalf("unexpected path scan result ffmpeg=%q ffprobe=%q", ffmpegPath, ffprobePath)
+	binDir := filepath.Join(root, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
 	}
-	if source != string(FFmpegSourceAuto) {
-		t.Fatalf("source = %q, want auto", source)
+	ffmpegName, ffprobeName := ffmpegBinaryNames()
+	ffmpegPath := filepath.Join(binDir, ffmpegName)
+	ffprobePath := filepath.Join(binDir, ffprobeName)
+	for _, path := range []string{ffmpegPath, ffprobePath} {
+		if err := os.WriteFile(path, []byte(filepath.Base(path)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got := resolveCustomFFmpegPath(binDir)
+	absWant, _ := filepath.Abs(ffmpegPath)
+	if got != absWant {
+		t.Fatalf("resolveCustomFFmpegPath(dir) = %q, want %q", got, absWant)
+	}
+
+	status, err := UpdateFFmpegConfig(root, FFmpegSourceCustom, binDir)
+	if err != nil {
+		t.Fatalf("UpdateFFmpegConfig: %v", err)
+	}
+	if !status.Installed {
+		t.Fatal("expected installed after saving directory path")
+	}
+	if status.FFmpegPath != absWant {
+		t.Fatalf("status.FFmpegPath = %q, want %q", status.FFmpegPath, absWant)
 	}
 }
+
 
 func TestExtractFFmpegTarXZ(t *testing.T) {
 	root := t.TempDir()
