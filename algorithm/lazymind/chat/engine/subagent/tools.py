@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from typing import Any, Dict, List, Literal, Optional
+from urllib.parse import urlparse
 
 from lazymind.chat.engine.attachment_reader import (
     is_chat_attachment_file,
@@ -1026,12 +1027,20 @@ def _resolve_attachment(
     if not files and not history_files_per_turn:
         return None, 'No attached files found in this conversation.'
 
+    def _display_name(path: str) -> str:
+        raw = str(path or '')
+        if raw.lower().startswith(('http://', 'https://')):
+            parsed = urlparse(raw)
+            base = os.path.basename(parsed.path)
+            return base or raw
+        return os.path.basename(raw)
+
     def _dedupe_turn(paths: List[str]) -> List[tuple[str, str]]:
         """Return (display_name, abs_path) pairs with intra-turn dedup (no size)."""
         seen: Dict[str, int] = {}
         result: List[tuple[str, str]] = []
         for path in paths:
-            base = os.path.basename(path)
+            base = _display_name(path)
             name_no_ext, ext = os.path.splitext(base)
             if base not in seen:
                 seen[base] = 0
@@ -1298,7 +1307,8 @@ def find_user_attachment(filename: str, turn: Optional[int] = None) -> Dict[str,
     matched, err = _resolve_attachment(filename, turn)
     if err:
         return tool_success('find_user_attachment', {'status': 'error', 'message': err})
-    if not os.path.exists(matched):
+    is_remote = str(matched or '').lower().startswith(('http://', 'https://'))
+    if not is_remote and not os.path.exists(matched):
         return tool_success('find_user_attachment', {
             'status': 'error',
             'message': f"File '{os.path.basename(matched)}' was found in the index but is no longer on disk.",
@@ -1306,30 +1316,33 @@ def find_user_attachment(filename: str, turn: Optional[int] = None) -> Dict[str,
 
     # Try to get a signed URL from Go /static-files:sign.
     signed_url: Optional[str] = None
-    try:
-        import httpx
-        from lazymind.config import config as _cfg
-        core_url = str(_cfg['core_api_url']).rstrip('/')
-        resp = httpx.post(
-            f'{core_url}/static-files:sign',
-            json={'path': matched},
-            timeout=3.0,
-        )
-        if resp.status_code == 200:
-            signed_url = resp.json().get('data', {}).get('url') or resp.json().get('url')
-    except Exception:
-        pass
+    if not is_remote:
+        try:
+            import httpx
+            from lazymind.config import config as _cfg
+            core_url = str(_cfg['core_api_url']).rstrip('/')
+            resp = httpx.post(
+                f'{core_url}/static-files:sign',
+                json={'path': matched},
+                timeout=3.0,
+            )
+            if resp.status_code == 200:
+                signed_url = resp.json().get('data', {}).get('url') or resp.json().get('url')
+        except Exception:
+            pass
 
+    display_name = os.path.basename(urlparse(matched).path) if is_remote else os.path.basename(matched)
     result: Dict[str, Any] = {
         'status': 'ok',
-        'filename': os.path.basename(matched),
+        'filename': display_name or matched,
         'path': matched,
     }
     if signed_url:
         result['url'] = signed_url
     else:
-        result['url'] = matched  # fallback to local path
-        result['message'] = 'Signed URL unavailable; use the local path instead.'
+        result['url'] = matched
+        if not is_remote:
+            result['message'] = 'Signed URL unavailable; use the local path instead.'
     return tool_success('find_user_attachment', result)
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -258,6 +259,20 @@ def video_to_gif(
     raw = str(url or '').strip()
     if not raw:
         return tool_error('video_to_gif', 'url is required')
+    if not shutil.which('ffmpeg') or not shutil.which('ffprobe'):
+        return tool_error(
+            'video_to_gif',
+            (
+                'FFMPEG_DEPENDENCY_MISSING: Animated GIF output requires FFmpeg. '
+                'The generated video remains available.'
+            ),
+            error_type='MissingDependency',
+            meta={
+                'dependency': 'ffmpeg',
+                'settings_path': '/model-providers/tools#ffmpeg-dependency',
+                'fallback': 'video',
+            },
+        )
     local_path = resolve_tool_video_path(raw)
     if not local_path:
         raise ValueError(f'video file not found: {raw}')

@@ -683,10 +683,6 @@ func filesPerTurnMap(histories []orm.ChatHistory, currentFiles any, currentSeq i
 			if uri == "" {
 				continue
 			}
-			lower := strings.ToLower(uri)
-			if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
-				continue
-			}
 			out[seqKey] = append(out[seqKey], uri)
 		}
 	}

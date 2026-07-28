@@ -103,6 +103,7 @@
   "2000728": { "en-US": "Reparse execution failed", "zh-CN": "解析执行失败" },
   "2000729": { "en-US": "Parsing service is unavailable", "zh-CN": "解析服务不可用" },
   "2000730": { "en-US": "Parsing timed out", "zh-CN": "解析超时" },
+  "2000731": { "en-US": "FFmpeg was not detected. Configure or install FFmpeg, then retry", "zh-CN": "未检测到 FFmpeg，请先配置或安装 FFmpeg 后重试" },
   "2000801": { "en-US": "action_list must be a non-empty array", "zh-CN": "action_list 必须是非空数组" },
   "2000802": { "en-US": "apply_id and filename required", "zh-CN": "缺少 apply_id 和 filename" },
   "2000803": { "en-US": "at least 2 group_ids required", "zh-CN": "至少需要 2 个 group_id" },

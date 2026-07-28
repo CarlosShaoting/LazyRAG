@@ -481,6 +481,9 @@ func launchPluginAttempt(
 	}
 
 	// Create sub_agent_tasks record.
+	if len(params.HistoryFilesPerTurn) == 0 {
+		params.HistoryFilesPerTurn = historyFilesFromConversation(db, convID)
+	}
 	rawParamsMap := map[string]any{
 		"plugin_id":     pluginID,
 		"step_id":       stepID,
