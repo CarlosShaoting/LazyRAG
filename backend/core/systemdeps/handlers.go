@@ -16,6 +16,10 @@ type ffmpegUpdateRequest struct {
 }
 
 func GetFFmpegDependency(w http.ResponseWriter, r *http.Request) {
+	if !IsLocalRuntime() {
+		common.ReplyOK(w, systemEnabledStatus())
+		return
+	}
 	runtimeRoot, err := RuntimeRootFromEnv()
 	if err != nil {
 		common.ReplyErr(w, "local runtime root is not configured", http.StatusServiceUnavailable)
@@ -34,6 +38,10 @@ func CheckFFmpegDependency(w http.ResponseWriter, r *http.Request) {
 }
 
 func UpdateFFmpegDependency(w http.ResponseWriter, r *http.Request) {
+	if !IsLocalRuntime() {
+		common.ReplyErr(w, "ffmpeg dependency settings are only supported in local/desktop runtime", http.StatusForbidden)
+		return
+	}
 	runtimeRoot, err := RuntimeRootFromEnv()
 	if err != nil {
 		common.ReplyErr(w, "local runtime root is not configured", http.StatusServiceUnavailable)
@@ -46,9 +54,9 @@ func UpdateFFmpegDependency(w http.ResponseWriter, r *http.Request) {
 	}
 	source := FFmpegSource(strings.TrimSpace(req.Source))
 	switch source {
-	case FFmpegSourceAuto, FFmpegSourceCustom, FFmpegSourceBundled:
+	case FFmpegSourceCustom, FFmpegSourceBundled:
 	default:
-		common.ReplyErr(w, "source must be auto, custom, or bundled", http.StatusBadRequest)
+		common.ReplyErr(w, "source must be custom or bundled", http.StatusBadRequest)
 		return
 	}
 	if source == FFmpegSourceCustom && strings.TrimSpace(req.CustomPath) == "" {

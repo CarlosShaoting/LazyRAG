@@ -437,7 +437,6 @@ const enUS = {
       dependencyCustomPathPlaceholder: "e.g. /opt/homebrew/bin/ffmpeg or C:\\ffmpeg\\bin\\ffmpeg.exe",
       dependencyBrowseAction: "Browse",
       dependencySavePathAction: "Save path",
-      dependencyUseAutoAction: "Use auto detect",
       dependencyRecheckAction: "Re-check",
       dependencyDetected: "Detected ffmpeg={{ffmpeg}}, ffprobe={{ffprobe}}",
       dependencyLoadFailed: "Failed to load dependency status",

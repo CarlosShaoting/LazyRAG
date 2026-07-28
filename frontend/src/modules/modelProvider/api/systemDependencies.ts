@@ -1,7 +1,7 @@
 import { BASE_URL, axiosInstance } from "@/components/request";
 import { unwrapApiData } from "@/modules/dataSource/api/unwrap";
 
-export type FFmpegDependencySource = "auto" | "custom" | "bundled" | "path";
+export type FFmpegDependencySource = "custom" | "bundled" | "system" | "auto";
 
 export interface FFmpegDependencyStatus {
   installed: boolean;
@@ -30,7 +30,7 @@ export async function getFFmpegDependencyStatus() {
 }
 
 export async function updateFFmpegDependency(payload: {
-  source: "auto" | "custom" | "bundled";
+  source: "custom" | "bundled";
   customPath?: string;
 }) {
   const response = await axiosInstance.put<

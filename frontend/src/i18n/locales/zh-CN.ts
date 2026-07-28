@@ -406,7 +406,6 @@ const zhCN = {
       dependencyCustomPathPlaceholder: "例如 /opt/homebrew/bin/ffmpeg 或 C:\\ffmpeg\\bin\\ffmpeg.exe",
       dependencyBrowseAction: "选择文件",
       dependencySavePathAction: "保存路径",
-      dependencyUseAutoAction: "改用自动检测",
       dependencyRecheckAction: "重新检测",
       dependencyDetected: "已检测到 ffmpeg={{ffmpeg}}，ffprobe={{ffprobe}}",
       dependencyLoadFailed: "加载依赖状态失败",

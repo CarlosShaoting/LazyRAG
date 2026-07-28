@@ -918,6 +918,8 @@ def _auto_flush_drafts(ctx: 'SubAgentContext', db: 'SubAgentDB') -> None:
 def _coerce_str_list(value: Any) -> List[str]:
     if isinstance(value, list):
         return [str(v) for v in value if str(v).strip()]
+    if isinstance(value, (bytes, bytearray)):
+        value = value.decode('utf-8')
     if isinstance(value, str):
         try:
             parsed = json.loads(value)
@@ -931,6 +933,8 @@ def _coerce_str_list(value: Any) -> List[str]:
 def _coerce_dict(value: Any) -> Dict[str, Any]:
     if isinstance(value, dict):
         return value
+    if isinstance(value, (bytes, bytearray)):
+        value = value.decode('utf-8')
     if isinstance(value, str):
         try:
             parsed = json.loads(value)

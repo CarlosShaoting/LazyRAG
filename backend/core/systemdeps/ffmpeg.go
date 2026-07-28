@@ -32,6 +32,9 @@ type FFmpegStatus struct {
 }
 
 func DetectFFmpeg(runtimeRoot string) (FFmpegStatus, error) {
+	if !IsLocalRuntime() {
+		return systemEnabledStatus(), nil
+	}
 	cfg, err := LoadConfig(runtimeRoot)
 	if err != nil {
 		return FFmpegStatus{}, err
@@ -39,11 +42,24 @@ func DetectFFmpeg(runtimeRoot string) (FFmpegStatus, error) {
 	return buildStatus(runtimeRoot, cfg), nil
 }
 
+func systemEnabledStatus() FFmpegStatus {
+	return FFmpegStatus{
+		Installed:        true,
+		Source:           "system",
+		AffectedFeatures: []string{"video_to_gif", "mp4_parsing"},
+		RuntimeLocal:     false,
+		InstallSupported: false,
+	}
+}
+
 func buildStatus(runtimeRoot string, cfg DependenciesConfig) FFmpegStatus {
+	if !IsLocalRuntime() {
+		return systemEnabledStatus()
+	}
 	status := FFmpegStatus{
 		AffectedFeatures: []string{"video_to_gif", "mp4_parsing"},
-		RuntimeLocal:     IsLocalRuntime(),
-		InstallSupported: IsLocalRuntime(),
+		RuntimeLocal:     true,
+		InstallSupported: true,
 		CustomPath:       cfg.FFmpeg.CustomPath,
 		BundledBinDir:    cfg.FFmpeg.BundledBinDir,
 		Source:           string(cfg.FFmpeg.Source),
@@ -60,7 +76,7 @@ func buildStatus(runtimeRoot string, cfg DependenciesConfig) FFmpegStatus {
 		status.Message = "ffprobe was not found next to the configured ffmpeg binary"
 		return status
 	}
-	status.Message = "ffmpeg is not installed or not on PATH for the local runtime"
+	status.Message = "ffmpeg is not installed for the local runtime"
 	return status
 }
 
@@ -78,13 +94,11 @@ func resolvePaths(runtimeRoot string, cfg FFmpegConfig) (ffmpegPath, ffprobePath
 		ffmpegPath, ffprobePath = binariesInDir(cfg.BundledBinDir)
 		return ffmpegPath, ffprobePath, string(FFmpegSourceBundled)
 	default:
-		if ffmpegPath, ffprobePath = binariesInDir(cfg.BundledBinDir); ffmpegPath != "" && ffprobePath != "" {
-			return ffmpegPath, ffprobePath, string(FFmpegSourceBundled)
-		}
-		ffmpegPath = findOnPath("ffmpeg")
-		ffprobePath = findOnPath("ffprobe")
+		// Legacy "auto" configs only look at the LazyMind bundled install.
+		// Do not scan PATH — local users must install bundled or pick a custom path.
+		ffmpegPath, ffprobePath = binariesInDir(cfg.BundledBinDir)
 		if ffmpegPath != "" && ffprobePath != "" {
-			return ffmpegPath, ffprobePath, "path"
+			return ffmpegPath, ffprobePath, string(FFmpegSourceBundled)
 		}
 		return "", "", string(FFmpegSourceAuto)
 	}
@@ -438,12 +452,4 @@ func findExecutable(path string) string {
 		return path
 	}
 	return abs
-}
-
-func findOnPath(name string) string {
-	path, err := exec.LookPath(name)
-	if err != nil {
-		return ""
-	}
-	return path
 }

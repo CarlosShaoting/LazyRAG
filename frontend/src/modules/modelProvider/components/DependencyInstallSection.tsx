@@ -132,20 +132,6 @@ export default function DependencyInstallSection() {
     }
   };
 
-  const handleUseAuto = async () => {
-    setSaving(true);
-    try {
-      const next = await updateFFmpegDependency({ source: "auto" });
-      setStatus(next);
-      message.success(t("modelProvider.external.dependencySaved"));
-      await applyRuntimeRestart();
-    } catch (error) {
-      message.error(getLocalizedErrorMessage(error) || t("modelProvider.external.dependencySaveFailed"));
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const handleInstallBundled = async () => {
     setInstalling(true);
     try {
@@ -339,9 +325,6 @@ export default function DependencyInstallSection() {
             <Space style={{ marginTop: 12 }}>
               <Button loading={saving} onClick={() => void handleSaveCustomPath()} type="primary">
                 {t("modelProvider.external.dependencySavePathAction")}
-              </Button>
-              <Button loading={saving} onClick={() => void handleUseAuto()}>
-                {t("modelProvider.external.dependencyUseAutoAction")}
               </Button>
             </Space>
           </div>

@@ -46,6 +46,37 @@ func TestSaveAndLoadFFmpegConfig(t *testing.T) {
 	}
 }
 
+func TestDetectFFmpegNonLocalDefaultsEnabled(t *testing.T) {
+	t.Setenv("LAZYMIND_RUNTIME_MODE", "cloud")
+	status, err := DetectFFmpeg(t.TempDir())
+	if err != nil {
+		t.Fatalf("DetectFFmpeg: %v", err)
+	}
+	if !status.Installed {
+		t.Fatal("expected non-local runtime to treat ffmpeg as enabled")
+	}
+	if status.Source != "system" {
+		t.Fatalf("source = %q, want system", status.Source)
+	}
+	if status.InstallSupported {
+		t.Fatal("expected installSupported=false outside local runtime")
+	}
+}
+
+func TestResolvePathsDoesNotScanPATH(t *testing.T) {
+	t.Setenv("LAZYMIND_RUNTIME_MODE", "local")
+	root := t.TempDir()
+	cfg := defaultConfig(root)
+	cfg.FFmpeg.Source = FFmpegSourceAuto
+	ffmpegPath, ffprobePath, source := resolvePaths(root, cfg.FFmpeg)
+	if ffmpegPath != "" || ffprobePath != "" {
+		t.Fatalf("unexpected path scan result ffmpeg=%q ffprobe=%q", ffmpegPath, ffprobePath)
+	}
+	if source != string(FFmpegSourceAuto) {
+		t.Fatalf("source = %q, want auto", source)
+	}
+}
+
 func TestExtractFFmpegTarXZ(t *testing.T) {
 	root := t.TempDir()
 	archivePath := filepath.Join(root, "ffmpeg.tar.xz")
