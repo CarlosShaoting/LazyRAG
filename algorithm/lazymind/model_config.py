@@ -170,6 +170,8 @@ _MODEL_CONFIG_ROLE_ALIASES: Dict[str, str] = {
     'image_editing': 'image_editor',
     'text2video': 'video_generator',
 }
+
+
 def _normalize_model_config(model_config: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if not model_config:
         return model_config
