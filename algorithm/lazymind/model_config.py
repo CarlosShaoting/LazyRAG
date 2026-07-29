@@ -37,19 +37,7 @@ def is_model_role_available(role: str, *, config_path: Optional[str] = None) -> 
     Static roles (source != dynamic) are available when declared in runtime_models.
     Dynamic roles additionally require inject_model_config to have supplied that role.
     '''
-    entry = _role_entry(load_model_config(config_path or get_config_path()).get(role))
-    if not entry:
-        return False
-    if (entry.get('source') or '').lower() != 'dynamic':
-        return True
-    import lazyllm
-    dynamic_cfg = lazyllm.globals['config'].get('dynamic_model_configs') or {}
-    buckets = dynamic_cfg.get(role) or {}
-    return any(
-        (v.get('source') or v.get('model') or v.get('url'))
-        for v in buckets.values()
-        if isinstance(v, dict)
-    )
+    return _is_role_available_without_fallback(role, config_path=config_path)
 
 
 def get_config_path() -> str:
@@ -170,6 +158,24 @@ _MODEL_CONFIG_ROLE_ALIASES: Dict[str, str] = {
     'image_editing': 'image_editor',
     'text2video': 'video_generator',
 }
+def _is_role_available_without_fallback(
+    role: str,
+    *,
+    config_path: Optional[str] = None,
+) -> bool:
+    entry = _role_entry(load_model_config(config_path or get_config_path()).get(role))
+    if not entry:
+        return False
+    if (entry.get('source') or '').lower() != 'dynamic':
+        return True
+    import lazyllm
+    dynamic_cfg = lazyllm.globals['config'].get('dynamic_model_configs') or {}
+    buckets = dynamic_cfg.get(role) or {}
+    return any(
+        (v.get('source') or v.get('model') or v.get('url'))
+        for v in buckets.values()
+        if isinstance(v, dict)
+    )
 
 
 def _normalize_model_config(model_config: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -181,6 +187,31 @@ def _normalize_model_config(model_config: Optional[Dict[str, Any]]) -> Optional[
         if target in normalized:
             continue
         normalized[target] = role_cfg
+    return _mirror_image_roles(normalized)
+
+
+def _clone_role_cfg_with_type(role_cfg: Any, role_type: str) -> Any:
+    if not isinstance(role_cfg, dict):
+        return role_cfg
+    mirrored = dict(role_cfg)
+    mirrored['type'] = role_type
+    return mirrored
+
+
+def _mirror_image_roles(model_config: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = dict(model_config)
+    has_generator = 'image_generator' in normalized
+    has_editor = 'image_editor' in normalized
+    if has_generator and not has_editor:
+        normalized['image_editor'] = _clone_role_cfg_with_type(
+            normalized['image_generator'],
+            'image_editing',
+        )
+    elif has_editor and not has_generator:
+        normalized['image_generator'] = _clone_role_cfg_with_type(
+            normalized['image_editor'],
+            'text2image',
+        )
     return normalized
 
 
