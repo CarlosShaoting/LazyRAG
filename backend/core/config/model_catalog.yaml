@@ -197,7 +197,7 @@ model_providers:
         - name: doubao-seedream-4-0-250828
           type: image_editing
         - name: doubao-seedream-3-0-t2i-250415
-          type: image_editing
+          type: text2image
         - name: doubao-seedance-2-0
           type: text2video
         - name: doubao-seedance-2-0-fast
