@@ -298,7 +298,7 @@ func BuildLLMConfig(rows []SelectedRuntimeModel) map[string]any {
 	for _, row := range rows {
 		cfg := map[string]any{
 			"source":   strings.ToLower(strings.TrimSpace(row.ProviderName)),
-			"model":    row.ModelName,
+			"model":    stripEditableModelSuffix(row.ModelName),
 			"base_url": row.BaseURL,
 			"api_key":  row.APIKey,
 		}
@@ -311,6 +311,16 @@ func BuildLLMConfig(rows []SelectedRuntimeModel) map[string]any {
 		return nil
 	}
 	return out
+}
+
+const editableModelSuffix = "(可编辑)"
+
+func stripEditableModelSuffix(modelName string) string {
+	name := strings.TrimSpace(modelName)
+	if strings.HasSuffix(name, editableModelSuffix) {
+		return strings.TrimSpace(strings.TrimSuffix(name, editableModelSuffix))
+	}
+	return name
 }
 
 func SummarizeLLMConfigForLog(config map[string]any) string {
