@@ -1,0 +1,139 @@
+id: ppt-plugin
+name: AI PPT Planner
+preflight_disabled: true
+description: >
+  Plan a presentation from a user request, collect useful source material,
+  then generate free-form HTML slides via the plugin runtime (SenseNova-derived
+  subset under runtime/). Preview shows HTML pages in a flippable composite
+  workspace with speaker notes below. PPTX export is UI-only (Export button).
+
+when_to_use: >
+  Trigger this plugin when the user explicitly asks to use the PPT plugin, or
+  when the user wants to create, plan, draft, or revise a multi-slide
+  presentation/deck/PPT. Use it for requests such as "make a PPT", "generate a
+  presentation", "帮我做一个路演 PPT", or "做一份汇报幻灯片".
+  Do not trigger for simple one-off explanations, ordinary image generation,
+  ordinary long-form writing, or requests that only ask to preview an uploaded
+  PowerPoint file.
+
+tool_scripts:
+  - path: scripts/tools.py
+    functions:
+      - ppt_search_web_images
+      - ppt_register_material_images
+      - ppt_attach_material_images
+      - ppt_init_deck
+      - ppt_find_deck
+      - ppt_run_stage
+      - ppt_list_pages
+      - ppt_publish_pages
+      - ppt_read_page_html
+
+steps:
+  - id: analyze_requirements
+    label: Analyze Requirements
+  - id: collect_materials
+    label: Collect Materials
+  - id: generate_ppt
+    label: Generate PPT
+
+slots:
+  - id: requirement_analysis
+    label: Requirement Analysis
+    type: text
+    cardinality: single
+    summary_max_chars: 600
+
+  - id: uploaded_materials
+    label: Uploaded Materials
+    type: file
+    cardinality: list
+    ordered: true
+    external: true
+    allow_manual_add: true
+
+  - id: material_summary
+    label: Material Summary
+    type: text
+    cardinality: single
+    summary_max_chars: 700
+
+  - id: material_images
+    label: Material Images
+    type: text
+    cardinality: single
+    summary_max_chars: 800
+
+  - id: preview_html
+    label: Slide
+    type: text
+    cardinality: list
+    ordered: true
+    summary_max_chars: 500
+
+  - id: preview_notes
+    label: Speaker Notes
+    type: text
+    cardinality: list
+    ordered: true
+    summary_max_chars: 1200
+
+ui:
+  slots:
+    preview_html:
+      widgetType: html-slide
+      maxHeight: 520
+    preview_notes:
+      widgetType: text-markdown
+      maxHeight: 200
+
+  tabs:
+    - id: analysis
+      step_id: analyze_requirements
+      label: Analysis
+      layout: list
+      slots:
+        - id: requirement_analysis
+
+    - id: materials
+      step_id: collect_materials
+      label: Materials
+      layout: list
+      slots:
+        - id: uploaded_materials
+        - id: material_summary
+        - id: material_images
+
+    - id: composite_preview
+      step_id: generate_ppt
+      label: Slides
+      layout: composite
+      composite_tab_position: left
+      slots:
+        - id: preview_html
+        - id: preview_notes
+      composite_layout:
+        direction: column
+        children:
+          - slot: preview_html
+            weight: 3
+          - slot: preview_notes
+            weight: 1
+
+i18n:
+  zh-CN:
+    name: AI PPT 规划
+    steps:
+      analyze_requirements: {label: 需求分析}
+      collect_materials: {label: 收集素材}
+      generate_ppt: {label: 生成PPT}
+    tabs:
+      analysis: {label: 分析}
+      materials: {label: 素材}
+      composite_preview: {label: 幻灯片}
+    slots:
+      requirement_analysis: {label: 需求分析}
+      material_summary: {label: 素材摘要}
+      material_images: {label: 素材图片}
+      preview_html: {label: 幻灯片}
+      preview_notes: {label: 讲稿}

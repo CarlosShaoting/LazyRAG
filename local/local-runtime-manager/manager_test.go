@@ -568,7 +568,7 @@ func TestProcessComposeGeneratedConfigContainsOnlyHostProcesses(t *testing.T) {
 	}
 }
 
-func TestInstallerWarmupGeneratesCompleteProcessGraph(t *testing.T) {
+func TestInstallerWarmupGeneratesReducedProcessGraph(t *testing.T) {
 	repo := t.TempDir()
 	writeComposeFixture(t, repo)
 	cfg, paths, err := NewRuntimeConfigWithOptions(RuntimeConfigOptions{
@@ -594,17 +594,19 @@ func TestInstallerWarmupGeneratesCompleteProcessGraph(t *testing.T) {
 		channelGatewayProcessName,
 		coreProcessName,
 		frontendProcessName,
-		scanControlPlaneProcessName,
-		fileWatcherProcessName,
 		milvusLiteProcessName,
 		processorServerProcessName,
-		processorWorkerProcessName,
 		algoProcessName,
 		docServerProcessName,
 		chatProcessName,
 	} {
 		if _, ok := parsed.Processes[name]; !ok {
 			t.Fatalf("warmup graph missing process %s", name)
+		}
+	}
+	for _, name := range []string{fileWatcherProcessName, scanControlPlaneProcessName, processorWorkerProcessName} {
+		if _, ok := parsed.Processes[name]; ok {
+			t.Fatalf("warmup graph unexpectedly contains process %s", name)
 		}
 	}
 	for name, process := range parsed.Processes {
@@ -616,7 +618,7 @@ func TestInstallerWarmupGeneratesCompleteProcessGraph(t *testing.T) {
 	}
 }
 
-func TestInstallerWarmupCreatesFileWatcherImportDirectory(t *testing.T) {
+func TestInstallerWarmupDoesNotCreateFileWatcherImportDirectory(t *testing.T) {
 	repo := t.TempDir()
 	writeComposeFixture(t, repo)
 	cfg, paths, err := NewRuntimeConfigWithOptions(RuntimeConfigOptions{
@@ -631,8 +633,8 @@ func TestInstallerWarmupCreatesFileWatcherImportDirectory(t *testing.T) {
 	if err := ensureRuntimeDirs(cfg, paths); err != nil {
 		t.Fatalf("ensure runtime dirs: %v", err)
 	}
-	if info, err := os.Stat(cfg.FileWatcher.WatchHostDir); err != nil || !info.IsDir() {
-		t.Fatalf("warmup did not create file watcher import directory %q: %v", cfg.FileWatcher.WatchHostDir, err)
+	if _, err := os.Stat(cfg.FileWatcher.WatchHostDir); !os.IsNotExist(err) {
+		t.Fatalf("warmup touched file watcher import directory %q: %v", cfg.FileWatcher.WatchHostDir, err)
 	}
 }
 

@@ -911,7 +911,7 @@ const ChatInput = forwardRef<ChatInputImperativeProps, ChatInputProps>(
       setPolishingSuggestionKey(suggestion.key);
       try {
         const response = await PromptServiceApi().promptServicePolishPrompt({
-          promptPolishOpenAPIRequest: {
+          promptPolishRequest: {
             content: normalizedPrompt,
             user_instruct: t(suggestion.templateKey, { prompt: "" }).trim(),
           },
