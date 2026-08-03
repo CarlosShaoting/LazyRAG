@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lazymind.ai/contracts/workflow/v1/contract-bundle.schema.json",
+  "title": "Workflow Contract Fixture v1",
+  "oneOf": [
+    { "$ref": "#/$defs/toolEnvelope" },
+    { "$ref": "#/$defs/goldenScenario" }
+  ],
+  "$defs": {
+    "toolEnvelope": {
+      "type": "object",
+      "required": ["contract_version", "request_id", "ok"],
+      "properties": {
+        "contract_version": { "const": "workflow.v1" },
+        "request_id": { "type": "string", "minLength": 1 },
+        "ok": { "type": "boolean" },
+        "result": { "type": "object" },
+        "error": { "$ref": "#/$defs/error" }
+      },
+      "allOf": [
+        { "if": { "properties": { "ok": { "const": true } } }, "then": { "required": ["result"], "not": { "required": ["error"] } } },
+        { "if": { "properties": { "ok": { "const": false } } }, "then": { "required": ["error"], "not": { "required": ["result"] } } }
+      ],
+      "additionalProperties": false
+    },
+    "error": {
+      "type": "object",
+      "required": ["code", "message", "retryable"],
+      "properties": {
+        "code": { "enum": ["WORKFLOW_NOT_FOUND", "SESSION_NOT_FOUND", "STEP_NOT_READY", "VERSION_CONFLICT", "INVALID_TRANSITION", "ATTEMPT_LEASE_LOST", "ATTEMPT_TERMINAL", "ARTIFACT_CONFLICT", "PERMISSION_DENIED", "CONTRACT_VERSION_UNSUPPORTED", "PREPARATION_EXPIRED", "SCHEMA_CAPABILITY_UNAVAILABLE"] },
+        "message": { "type": "string" },
+        "retryable": { "type": "boolean" },
+        "details": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "attempt": {
+      "type": "object",
+      "required": ["attempt_id", "step_id", "status", "operation", "attempt_no"],
+      "properties": {
+        "attempt_id": { "type": "string" }, "step_id": { "type": "string" },
+        "status": { "enum": ["queued", "running", "succeeded", "failed", "interrupted", "cancelled"] },
+        "operation": { "enum": ["execute", "retry", "rewind"] },
+        "attempt_no": { "type": "integer", "minimum": 1 },
+        "partial_selector": { "type": ["array", "null"], "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "artifact": {
+      "type": "object",
+      "required": ["artifact_id", "slot", "revision", "producer_attempt_id", "stale"],
+      "properties": {
+        "artifact_id": { "type": "string" }, "slot": { "type": "string" },
+        "revision": { "type": "integer", "minimum": 1 }, "producer_attempt_id": { "type": "string" },
+        "stale": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "event": {
+      "type": "object",
+      "required": ["cursor", "type", "entity_id"],
+      "properties": {
+        "cursor": { "type": "integer", "minimum": 1 },
+        "type": { "enum": ["workflow.snapshot", "workflow.patch", "step.patch", "attempt.patch", "artifact.upsert"] },
+        "entity_id": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "goldenScenario": {
+      "type": "object",
+      "required": ["contract_version", "scenario", "input", "projection", "attempts", "artifacts", "events"],
+      "properties": {
+        "contract_version": { "const": "workflow.v1" }, "scenario": { "type": "string" },
+        "input": { "type": "object" }, "projection": { "type": "object", "required": ["session_id", "status", "ready_steps", "state_version"] },
+        "attempts": { "type": "array", "items": { "$ref": "#/$defs/attempt" } },
+        "artifacts": { "type": "array", "items": { "$ref": "#/$defs/artifact" } },
+        "events": { "type": "array", "items": { "$ref": "#/$defs/event" } }
+      },
+      "additionalProperties": false
+    }
+  }
+}
