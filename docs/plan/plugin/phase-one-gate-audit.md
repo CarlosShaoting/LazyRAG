@@ -78,9 +78,9 @@ is checked and linked to executable evidence.
 
 ## PR 10 — deterministic Workflow authoring
 
-- [ ] Fixed Skill snapshot and draft file APIs are public and versioned.
-- [ ] Diagnostics and publication gates are deterministic and model-free.
-- [ ] LazyMind generation and static fixtures use the same validation/publish path.
+- [x] Fixed Skill snapshot and draft file APIs are public and versioned.
+- [x] Diagnostics and publication gates are deterministic and model-free.
+- [x] LazyMind generation and static fixtures use the same validation/publish path.
 
 ## PR 11 — phase-one acceptance
 
