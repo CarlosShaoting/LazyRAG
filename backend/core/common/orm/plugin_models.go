@@ -98,9 +98,44 @@ type WorkflowAttemptInputBinding struct {
 	MaterialRevisionID string    `gorm:"column:material_revision_id;type:varchar(36);not null;index"`
 	BindAs             string    `gorm:"column:bind_as;type:varchar(64);not null;default:''"`
 	CreatedAt          time.Time `gorm:"column:created_at;not null"`
+	SourceType         string    `gorm:"column:source_type;type:varchar(32);not null;default:'artifact'"`
+	SourceID           string    `gorm:"column:source_id;type:varchar(128);not null;default:''"`
+	SourceRevision     string    `gorm:"column:source_revision;type:varchar(64);not null;default:''"`
+	ContentHash        string    `gorm:"column:content_hash;type:varchar(80);not null;default:''"`
 }
 
 func (WorkflowAttemptInputBinding) TableName() string { return "plugin_attempt_input_bindings" }
+
+// WorkflowInputResource is immutable Host-neutral input content.
+type WorkflowInputResource struct {
+	ID          string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	OwnerUserID string    `gorm:"column:owner_user_id;type:varchar(255);not null;index"`
+	Name        string    `gorm:"column:name;type:varchar(255);not null"`
+	MimeType    string    `gorm:"column:mime_type;type:varchar(255);not null"`
+	Size        int64     `gorm:"column:size;not null"`
+	ContentHash string    `gorm:"column:content_hash;type:varchar(80);not null;index"`
+	Revision    int64     `gorm:"column:revision;not null;default:1"`
+	Content     []byte    `gorm:"column:content;type:blob;not null"`
+	CreatedAt   time.Time `gorm:"column:created_at;not null"`
+}
+
+func (WorkflowInputResource) TableName() string { return "workflow_input_resources" }
+
+// WorkflowInputBinding pins a resource revision for one Session material.
+type WorkflowInputBinding struct {
+	ID                 string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	WorkflowSessionID  string    `gorm:"column:workflow_session_id;type:varchar(36);not null;index"`
+	MaterialID         string    `gorm:"column:material_id;type:varchar(64);not null"`
+	ResourceType       string    `gorm:"column:resource_type;type:varchar(32);not null"`
+	ResourceID         string    `gorm:"column:resource_id;type:varchar(36);not null;index"`
+	ResourceRevision   int64     `gorm:"column:resource_revision;not null"`
+	ContentHash        string    `gorm:"column:content_hash;type:varchar(80);not null"`
+	Validity           string    `gorm:"column:validity;type:varchar(16);not null;default:'effective'"`
+	CreatedByCommandID string    `gorm:"column:created_by_command_id;type:varchar(64);not null"`
+	CreatedAt          time.Time `gorm:"column:created_at;not null"`
+}
+
+func (WorkflowInputBinding) TableName() string { return "workflow_input_bindings" }
 
 type WorkflowRouteDecision struct {
 	ID              string          `gorm:"column:id;type:varchar(36);primaryKey"`

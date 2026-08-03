@@ -12,3 +12,6 @@ type Event = orm.WorkflowEvent
 // Command stores a facade result. Existing plugin_transition_commands remain
 // untouched because legacy binaries continue to own that compatibility table.
 type Command = orm.WorkflowCommand
+
+type InputResource = orm.WorkflowInputResource
+type InputBinding = orm.WorkflowInputBinding
