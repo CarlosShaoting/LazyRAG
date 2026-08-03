@@ -1,0 +1,9 @@
+version: workflow.v1
+profile: codex
+advance_tools: [advance_step]
+parallel_ready_steps: true
+approval: platform
+handoff: false
+driver: false
+synthetic_turn: false
+
