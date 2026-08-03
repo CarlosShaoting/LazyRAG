@@ -4,7 +4,11 @@ advance_tools: [advance_step, advance_step_and_handoff]
 parallel_ready_steps: true
 approval: ask_user
 handoff: true
+handoff_requires_durable_supervisor: true
 driver: true
 stop_tool: true
 synthetic_turn: true
-
+shadow_authority: legacy
+write_tools: true
+executor: lazymind
+advance_mode: profile_policy

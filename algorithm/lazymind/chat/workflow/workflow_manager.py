@@ -2119,7 +2119,9 @@ def resolve_workflow_injection(
                 }
                 observe(shadow_projection, {
                     'profile': 'lazymind',
-                    'advance_tools': ['advance_step', 'advance_step_and_hand_off'],
+                    # The Host adapter still registers the historical hand_off
+                    # alias; shadow policy evaluates the canonical v1 protocol.
+                    'advance_tools': ['advance_step', 'advance_step_and_handoff'],
                     'parallel_ready_steps': True,
                     'handoff': True,
                 }, cfg, source='active_session_prompt')
