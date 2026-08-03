@@ -24,12 +24,12 @@ is checked and linked to executable evidence.
 
 ## PR 3 — shared Skill and Host Profiles
 
-- [ ] Existing prompt rules have a source-to-policy mapping ledger.
-- [ ] Skill covers discovery, preflight, readiness, parallelism, review, retry/rewind targeting, resume, Artifact and authoring.
-- [ ] Default, LazyMind and Codex profiles cover every Host capability in the contract.
-- [ ] LazyMind production prompt assembly loads the Skill in shadow mode.
-- [ ] Shadow trace is structured, metered and keeps the legacy decision authoritative.
-- [ ] Recorded golden decisions meet the declared equivalence threshold.
+- [x] Existing prompt rules have a source-to-policy mapping ledger.
+- [x] Skill covers discovery, preflight, readiness, parallelism, review, retry/rewind targeting, resume, Artifact and authoring.
+- [x] Default, LazyMind and Codex profiles cover every Host capability in the contract.
+- [x] LazyMind production prompt assembly loads the Skill in shadow mode.
+- [x] Shadow trace is structured, metered and keeps the legacy decision authoritative.
+- [x] Recorded golden decisions meet the declared equivalence threshold.
 
 ## PR 4 — Core Workflow Tool facade
 

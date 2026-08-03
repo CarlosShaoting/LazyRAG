@@ -32,7 +32,10 @@ def _legacy_decision(projection: Mapping[str, Any], profile: Mapping[str, Any]) 
     wait = bool({'continuous', 'run_all', 'boundary'} & intents) or all(
         approval.get(item) == 'not_required' for item in targets
     )
-    tool = 'advance_step' if wait or not profile.get('handoff') else 'advance_step_and_hand_off'
+    # The legacy prompt still exposes the historical ``hand_off`` spelling.
+    # Normalize it to the versioned public protocol name before comparison so
+    # shadow equivalence measures decisions, not a temporary Host adapter alias.
+    tool = 'advance_step' if wait or not profile.get('handoff') else 'advance_step_and_handoff'
     return Decision('advance', tool, targets[0], targets, 'legacy_prompt_policy')
 
 
