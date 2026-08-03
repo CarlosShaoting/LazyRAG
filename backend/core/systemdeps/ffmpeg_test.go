@@ -2,6 +2,8 @@ package systemdeps
 
 import (
 	"archive/tar"
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -145,5 +147,69 @@ func TestExtractFFmpegTarXZ(t *testing.T) {
 		if string(content) != name {
 			t.Fatalf("%s content = %q, want %q", name, content, name)
 		}
+	}
+}
+
+func TestFFmpegDownloadsUseAliyunMirrors(t *testing.T) {
+	tests := []struct {
+		name      string
+		goos      string
+		goarch    string
+		urls      []string
+		checksums []string
+	}{
+		{
+			name:   "windows x64",
+			goos:   "windows",
+			goarch: "amd64",
+			urls: []string{
+				aliyunFFmpegBaseURL + "lazymind-ffmpeg-windows-x64-20260803.zip",
+			},
+			checksums: []string{windowsX64FFmpegSHA},
+		},
+		{
+			name:   "macOS Apple Silicon via Rosetta",
+			goos:   "darwin",
+			goarch: "arm64",
+			urls: []string{
+				aliyunFFmpegBaseURL + "lazymind-ffmpeg-darwin-x64-8.1.2.zip",
+				aliyunFFmpegBaseURL + "lazymind-ffprobe-darwin-x64-8.1.2.zip",
+			},
+			checksums: []string{darwinX64FFmpegSHA, darwinX64FFprobeSHA},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			downloads, err := ffmpegDownloadsFor(tt.goos, tt.goarch)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(downloads) != len(tt.urls) {
+				t.Fatalf("downloads = %d, want %d", len(downloads), len(tt.urls))
+			}
+			for index, download := range downloads {
+				if download.url != tt.urls[index] {
+					t.Fatalf("download[%d].url = %q, want %q", index, download.url, tt.urls[index])
+				}
+				if download.sha256 != tt.checksums[index] {
+					t.Fatalf("download[%d].sha256 = %q, want %q", index, download.sha256, tt.checksums[index])
+				}
+			}
+		})
+	}
+}
+
+func TestVerifyFFmpegArchiveChecksum(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ffmpeg.zip")
+	content := []byte("ffmpeg archive")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expected := fmt.Sprintf("%x", sha256.Sum256(content))
+	if err := verifyFFmpegArchiveChecksum(path, expected); err != nil {
+		t.Fatalf("verifyFFmpegArchiveChecksum: %v", err)
+	}
+	if err := verifyFFmpegArchiveChecksum(path, "deadbeef"); err == nil {
+		t.Fatal("expected checksum mismatch")
 	}
 }
