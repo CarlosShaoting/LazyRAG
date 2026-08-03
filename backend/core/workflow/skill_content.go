@@ -1,4 +1,4 @@
-package plugin
+package workflow
 
 import (
 	"context"
@@ -17,9 +17,9 @@ import (
 
 const builtinSkillIDPrefix = "builtin:"
 
-var errPluginSourceSkillNotFound = errors.New("plugin source skill not found")
+var errWorkflowSourceSkillNotFound = errors.New("plugin source skill not found")
 
-type pluginBuiltinSkillManifest struct {
+type workflowBuiltinSkillManifest struct {
 	UID      string
 	Category string
 	DirName  string
@@ -35,7 +35,7 @@ type skillPackageFile struct {
 	Content  string `json:"content,omitempty"`
 }
 
-type pluginSourceSkillSnapshot struct {
+type workflowSourceSkillSnapshot struct {
 	SkillID    string             `json:"skill_id"`
 	Name       string             `json:"name"`
 	RevisionID string             `json:"revision_id"`
@@ -44,7 +44,7 @@ type pluginSourceSkillSnapshot struct {
 	Files      []skillPackageFile `json:"files"`
 }
 
-func (s pluginSourceSkillSnapshot) skillMD() string {
+func (s workflowSourceSkillSnapshot) skillMD() string {
 	for _, file := range s.Files {
 		if file.Path == "SKILL.md" {
 			return file.Content
@@ -53,7 +53,7 @@ func (s pluginSourceSkillSnapshot) skillMD() string {
 	return ""
 }
 
-var pluginBuiltinSkillManifests = []pluginBuiltinSkillManifest{
+var workflowBuiltinSkillManifests = []workflowBuiltinSkillManifest{
 	{UID: "bsk_01JZ7Q3YF6Q2Z4HM9V8K7D1R3P", Category: "research", DirName: "deep-research"},
 	{UID: "bsk_01JZ7Q4AJ1X9N5B2C8M6T0W3EY", Category: "review", DirName: "single-document-review"},
 	{UID: "bsk_01JZ7Q4RPN6K3Y8V1D5H2A9S0B", Category: "review", DirName: "systematic-document-and-literature-review"},
@@ -61,16 +61,16 @@ var pluginBuiltinSkillManifests = []pluginBuiltinSkillManifest{
 	{UID: "bsk_01K0M8SCV7PAPERSEARCH9Q2X3A4B", Category: "search", DirName: "sciverse-paper-search"},
 }
 
-func isPluginSourceSkillNotFound(err error) bool {
-	return errors.Is(err, errPluginSourceSkillNotFound) || errors.Is(err, gorm.ErrRecordNotFound)
+func isWorkflowSourceSkillNotFound(err error) bool {
+	return errors.Is(err, errWorkflowSourceSkillNotFound) || errors.Is(err, gorm.ErrRecordNotFound)
 }
 
-// loadPluginSourceSkill reads normal skills from the v2 revision store. Legacy
+// loadWorkflowSourceSkill reads normal skills from the v2 revision store. Legacy
 // builtin template IDs are resolved locally because skillv2 does not expose a
 // function-level reader for templates that have not been installed yet.
-func loadPluginSourceSkill(ctx context.Context, db *gorm.DB, userID, skillID string) (pluginSourceSkillSnapshot, error) {
+func loadWorkflowSourceSkill(ctx context.Context, db *gorm.DB, userID, skillID string) (workflowSourceSkillSnapshot, error) {
 	if strings.HasPrefix(skillID, builtinSkillIDPrefix) {
-		return loadPluginBuiltinSkillPackage(skillID)
+		return loadWorkflowBuiltinSkillPackage(skillID)
 	}
 
 	var skill struct {
@@ -78,18 +78,18 @@ func loadPluginSourceSkill(ctx context.Context, db *gorm.DB, userID, skillID str
 		HeadRevisionID *string
 	}
 	if err := db.WithContext(ctx).Table("skills").Select("skill_name, head_revision_id").Where("id=? AND owner_user_id=? AND deleted_at IS NULL", skillID, userID).Take(&skill).Error; err != nil {
-		return pluginSourceSkillSnapshot{}, err
+		return workflowSourceSkillSnapshot{}, err
 	}
 	if skill.HeadRevisionID == nil || *skill.HeadRevisionID == "" {
-		return pluginSourceSkillSnapshot{}, errPluginSourceSkillNotFound
+		return workflowSourceSkillSnapshot{}, errWorkflowSourceSkillNotFound
 	}
-	return loadPluginSourceSkillRevision(ctx, db, userID, skillID, *skill.HeadRevisionID)
+	return loadWorkflowSourceSkillRevision(ctx, db, userID, skillID, *skill.HeadRevisionID)
 }
 
-func loadPluginSourceSkillRevision(ctx context.Context, db *gorm.DB, userID, skillID, revisionID string) (pluginSourceSkillSnapshot, error) {
+func loadWorkflowSourceSkillRevision(ctx context.Context, db *gorm.DB, userID, skillID, revisionID string) (workflowSourceSkillSnapshot, error) {
 	var skill struct{ SkillName string }
 	if err := db.WithContext(ctx).Table("skills").Select("skill_name").Where("id=? AND owner_user_id=? AND deleted_at IS NULL", skillID, userID).Take(&skill).Error; err != nil {
-		return pluginSourceSkillSnapshot{}, err
+		return workflowSourceSkillSnapshot{}, err
 	}
 	var revision struct {
 		ID         string
@@ -98,7 +98,7 @@ func loadPluginSourceSkillRevision(ctx context.Context, db *gorm.DB, userID, ski
 	}
 	if err := db.WithContext(ctx).Table("skill_revisions").Select("id, revision_no, tree_hash").
 		Where("id = ? AND skill_id = ?", revisionID, skillID).Take(&revision).Error; err != nil {
-		return pluginSourceSkillSnapshot{}, err
+		return workflowSourceSkillSnapshot{}, err
 	}
 	var entries []struct {
 		Path           string
@@ -110,9 +110,9 @@ func loadPluginSourceSkillRevision(ctx context.Context, db *gorm.DB, userID, ski
 	if err := db.WithContext(ctx).Table("skill_revision_entries").
 		Select(`path, blob_hash, size, mime, file_type, "binary"`).
 		Where("revision_id = ? AND entry_type = ?", revision.ID, "file").Order("path ASC").Scan(&entries).Error; err != nil {
-		return pluginSourceSkillSnapshot{}, err
+		return workflowSourceSkillSnapshot{}, err
 	}
-	snapshot := pluginSourceSkillSnapshot{SkillID: skillID, Name: skill.SkillName, RevisionID: revision.ID, RevisionNo: revision.RevisionNo, TreeHash: revision.TreeHash}
+	snapshot := workflowSourceSkillSnapshot{SkillID: skillID, Name: skill.SkillName, RevisionID: revision.ID, RevisionNo: revision.RevisionNo, TreeHash: revision.TreeHash}
 	for _, entry := range entries {
 		file := skillPackageFile{Path: entry.Path, Size: entry.Size, Mime: entry.Mime, FileType: entry.FileType, Binary: entry.Binary}
 		if entry.BlobHash != nil {
@@ -120,7 +120,7 @@ func loadPluginSourceSkillRevision(ctx context.Context, db *gorm.DB, userID, ski
 			if !entry.Binary {
 				var blob struct{ Content []byte }
 				if err := db.WithContext(ctx).Table("skill_blobs").Select("content").Where("hash = ?", *entry.BlobHash).Take(&blob).Error; err != nil {
-					return pluginSourceSkillSnapshot{}, err
+					return workflowSourceSkillSnapshot{}, err
 				}
 				file.Content = string(blob.Content)
 			}
@@ -128,24 +128,24 @@ func loadPluginSourceSkillRevision(ctx context.Context, db *gorm.DB, userID, ski
 		snapshot.Files = append(snapshot.Files, file)
 	}
 	if strings.TrimSpace(snapshot.skillMD()) == "" {
-		return pluginSourceSkillSnapshot{}, errPluginSourceSkillNotFound
+		return workflowSourceSkillSnapshot{}, errWorkflowSourceSkillNotFound
 	}
 	return snapshot, nil
 }
 
-func loadPluginBuiltinSkillPackage(templateID string) (pluginSourceSkillSnapshot, error) {
-	content, name, err := loadPluginBuiltinSkill(templateID)
+func loadWorkflowBuiltinSkillPackage(templateID string) (workflowSourceSkillSnapshot, error) {
+	content, name, err := loadWorkflowBuiltinSkill(templateID)
 	if err != nil {
-		return pluginSourceSkillSnapshot{}, err
+		return workflowSourceSkillSnapshot{}, err
 	}
 	id := strings.TrimPrefix(templateID, builtinSkillIDPrefix)
 	uid := strings.SplitN(id, ":", 2)[0]
-	manifest, ok := pluginBuiltinManifest(uid)
+	manifest, ok := workflowBuiltinManifest(uid)
 	if !ok {
-		return pluginSourceSkillSnapshot{}, errPluginSourceSkillNotFound
+		return workflowSourceSkillSnapshot{}, errWorkflowSourceSkillNotFound
 	}
-	base := filepath.Join(pluginBuiltinSkillsRoot(), manifest.Category, manifest.DirName)
-	snapshot := pluginSourceSkillSnapshot{SkillID: templateID, Name: name, RevisionID: "builtin:" + uid}
+	base := filepath.Join(workflowBuiltinSkillsRoot(), manifest.Category, manifest.DirName)
+	snapshot := workflowSourceSkillSnapshot{SkillID: templateID, Name: name, RevisionID: "builtin:" + uid}
 	err = filepath.Walk(base, func(path string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -165,7 +165,7 @@ func loadPluginBuiltinSkillPackage(templateID string) (pluginSourceSkillSnapshot
 		return nil
 	})
 	if err != nil {
-		return pluginSourceSkillSnapshot{}, err
+		return workflowSourceSkillSnapshot{}, err
 	}
 	if len(snapshot.Files) == 0 {
 		snapshot.Files = []skillPackageFile{{Path: "SKILL.md", Content: content, Size: int64(len(content))}}
@@ -182,17 +182,17 @@ func loadPluginBuiltinSkillPackage(templateID string) (pluginSourceSkillSnapshot
 	return snapshot, nil
 }
 
-func loadPluginBuiltinSkill(templateID string) (string, string, error) {
+func loadWorkflowBuiltinSkill(templateID string) (string, string, error) {
 	id := strings.TrimPrefix(templateID, builtinSkillIDPrefix)
 	uid, relativePath := id, "SKILL.md"
 	if index := strings.IndexByte(id, ':'); index >= 0 {
 		uid, relativePath = id[:index], id[index+1:]
 	}
-	manifest, ok := pluginBuiltinManifest(uid)
+	manifest, ok := workflowBuiltinManifest(uid)
 	if !ok || relativePath == "" {
-		return "", "", errPluginSourceSkillNotFound
+		return "", "", errWorkflowSourceSkillNotFound
 	}
-	root := pluginBuiltinSkillsRoot()
+	root := workflowBuiltinSkillsRoot()
 	if root == "" {
 		return "", "", fmt.Errorf("builtin skills root not found")
 	}
@@ -200,11 +200,11 @@ func loadPluginBuiltinSkill(templateID string) (string, string, error) {
 	target := filepath.Clean(filepath.Join(base, filepath.FromSlash(relativePath)))
 	rel, err := filepath.Rel(base, target)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", "", errPluginSourceSkillNotFound
+		return "", "", errWorkflowSourceSkillNotFound
 	}
 	data, err := os.ReadFile(target)
 	if errors.Is(err, os.ErrNotExist) {
-		return "", "", errPluginSourceSkillNotFound
+		return "", "", errWorkflowSourceSkillNotFound
 	}
 	if err != nil {
 		return "", "", err
@@ -216,16 +216,16 @@ func loadPluginBuiltinSkill(templateID string) (string, string, error) {
 	return string(data), name, nil
 }
 
-func pluginBuiltinManifest(uid string) (pluginBuiltinSkillManifest, bool) {
-	for _, manifest := range pluginBuiltinSkillManifests {
+func workflowBuiltinManifest(uid string) (workflowBuiltinSkillManifest, bool) {
+	for _, manifest := range workflowBuiltinSkillManifests {
 		if manifest.UID == uid {
 			return manifest, true
 		}
 	}
-	return pluginBuiltinSkillManifest{}, false
+	return workflowBuiltinSkillManifest{}, false
 }
 
-func pluginBuiltinSkillsRoot() string {
+func workflowBuiltinSkillsRoot() string {
 	if value := strings.TrimSpace(os.Getenv("LAZYMIND_BUILTIN_SKILLS_DIR")); value != "" {
 		return value
 	}

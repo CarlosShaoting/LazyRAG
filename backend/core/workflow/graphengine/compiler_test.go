@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-const validPlugin = `
+const validWorkflow = `
 id: graph-test
 slots:
   - {id: seed, external: true}
@@ -46,7 +46,7 @@ steps:
 `
 
 func TestCompileArbitraryDAGAndProjectBlockedMerge(t *testing.T) {
-	result := Compile(validPlugin, validState, "", ProfilePublish)
+	result := Compile(validWorkflow, validState, "", ProfilePublish)
 	if !result.Valid {
 		t.Fatalf("expected valid graph, diagnostics=%#v", result.Diagnostics)
 	}
@@ -97,7 +97,7 @@ steps:
   e: {outputs: []}
   f: {outputs: [final]}
 `
-	result := Compile(validPlugin, state, "", ProfilePublish)
+	result := Compile(validWorkflow, state, "", ProfilePublish)
 	codes := map[string]bool{}
 	for _, diagnostic := range result.Diagnostics {
 		codes[diagnostic.Code] = true
@@ -151,7 +151,7 @@ func TestEvaluateOptionalPresentMaterialsWithoutBlocking(t *testing.T) {
 }
 
 func TestCompileUnifiedInputsPreservesAlternativesAndOptionalBindings(t *testing.T) {
-	pluginYAML := `
+	workflowYAML := `
 id: unified-inputs
 slots:
   - {id: outline, external: true}
@@ -175,7 +175,7 @@ steps:
       - {material: style, required: false}
     outputs: [{material: draft}]
 `
-	result := Compile(pluginYAML, stateYAML, "", ProfilePublish)
+	result := Compile(workflowYAML, stateYAML, "", ProfilePublish)
 	if !result.Valid {
 		t.Fatalf("expected unified inputs to compile, diagnostics=%#v", result.Diagnostics)
 	}
@@ -211,7 +211,7 @@ steps:
   e: {outputs: []}
   f: {outputs: [final]}
 `
-	result := Compile(validPlugin, state, "", ProfilePublish)
+	result := Compile(validWorkflow, state, "", ProfilePublish)
 	found := false
 	for _, diagnostic := range result.Diagnostics {
 		if diagnostic.Code == "E_OPTIONAL_ALTERNATIVES_UNSUPPORTED" {
@@ -286,7 +286,7 @@ func TestProjectionShowsStaleHistoryAndRouteWithoutMaskingNewEffectiveFacts(t *t
 }
 
 func TestProjectionCompletesOnlyAfterEveryEffectiveBranchEnds(t *testing.T) {
-	result := Compile(validPlugin, validState, "", ProfilePublish)
+	result := Compile(validWorkflow, validState, "", ProfilePublish)
 	if !result.Valid {
 		t.Fatalf("expected valid graph: %#v", result.Diagnostics)
 	}
@@ -393,21 +393,21 @@ steps:
 	}
 }
 
-func TestBundledPluginsCompileForRuntime(t *testing.T) {
-	for _, pluginID := range []string{"writer-plugin", "image-plugin"} {
-		root := filepath.Join("..", "..", "..", "..", "plugins", pluginID)
-		pluginYAML, err := os.ReadFile(filepath.Join(root, "plugin.yaml"))
+func TestBundledWorkflowsCompileForRuntime(t *testing.T) {
+	for _, workflowID := range []string{"writer-plugin", "image-plugin"} {
+		root := filepath.Join("..", "..", "..", "..", "plugins", workflowID)
+		workflowYAML, err := os.ReadFile(filepath.Join(root, "plugin.yaml"))
 		if err != nil {
-			t.Fatalf("read %s plugin: %v", pluginID, err)
+			t.Fatalf("read %s plugin: %v", workflowID, err)
 		}
 		stateYAML, err := os.ReadFile(filepath.Join(root, "scenario", "state.yml"))
 		if err != nil {
-			t.Fatalf("read %s state: %v", pluginID, err)
+			t.Fatalf("read %s state: %v", workflowID, err)
 		}
 		scenario, _ := os.ReadFile(filepath.Join(root, "scenario", "scenario.md"))
-		result := Compile(string(pluginYAML), string(stateYAML), string(scenario), ProfileRuntimeLoad)
+		result := Compile(string(workflowYAML), string(stateYAML), string(scenario), ProfileRuntimeLoad)
 		if !result.Valid {
-			t.Fatalf("bundled plugin %s must compile: %#v", pluginID, result.Diagnostics)
+			t.Fatalf("bundled plugin %s must compile: %#v", workflowID, result.Diagnostics)
 		}
 	}
 }

@@ -18,7 +18,7 @@ import (
 func setupChatSettingsTest(t *testing.T) {
 	t.Helper()
 	db := newPromptTestDB(t)
-	// Also migrate Conversation table for PatchConversationPluginSettings.
+	// Also migrate Conversation table for PatchConversationWorkflowSettings.
 	if err := db.AutoMigrate(&orm.Conversation{}); err != nil {
 		t.Fatalf("migrate conversation: %v", err)
 	}
@@ -118,8 +118,8 @@ func TestPatchChatSettings_NoFields(t *testing.T) {
 	}
 }
 
-// TestPatchChatSettings_InvalidPluginMode returns 400 for invalid mode.
-func TestPatchChatSettings_InvalidPluginMode(t *testing.T) {
+// TestPatchChatSettings_InvalidWorkflowMode returns 400 for invalid mode.
+func TestPatchChatSettings_InvalidWorkflowMode(t *testing.T) {
 	setupChatSettingsTest(t)
 	req := newSettingsRequest("PATCH", "/chat/settings", `{"plugin_mode":"invalid"}`, "user-1", nil)
 	w := httptest.NewRecorder()
@@ -130,8 +130,8 @@ func TestPatchChatSettings_InvalidPluginMode(t *testing.T) {
 	}
 }
 
-// TestPatchChatSettings_DisabledPluginModeWithWorkflow returns 409 conflict.
-func TestPatchChatSettings_DisabledPluginModeWithWorkflow(t *testing.T) {
+// TestPatchChatSettings_DisabledWorkflowModeWithWorkflow returns 409 conflict.
+func TestPatchChatSettings_DisabledWorkflowModeWithWorkflow(t *testing.T) {
 	setupChatSettingsTest(t)
 	// The handler type-checks enable_plugin as bool. Pass valid bool values.
 	req := newSettingsRequest("PATCH", "/chat/settings",
@@ -145,41 +145,41 @@ func TestPatchChatSettings_DisabledPluginModeWithWorkflow(t *testing.T) {
 	}
 }
 
-// --- PatchConversationPluginSettings ---
+// --- PatchConversationWorkflowSettings ---
 
-// TestPatchConversationPluginSettings_NoConversation returns 400.
-func TestPatchConversationPluginSettings_NoConversation(t *testing.T) {
+// TestPatchConversationWorkflowSettings_NoConversation returns 400.
+func TestPatchConversationWorkflowSettings_NoConversation(t *testing.T) {
 	setupChatSettingsTest(t)
 	req := newSettingsRequest("PATCH", "/chat/conversations//plugin_settings", `{}`, "user-1", nil)
 	w := httptest.NewRecorder()
-	PatchConversationPluginSettings(w, req)
+	PatchConversationWorkflowSettings(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status: got %d, want %d", w.Code, http.StatusBadRequest)
 	}
 }
 
-// TestPatchConversationPluginSettings_MissingUserID returns 401.
-func TestPatchConversationPluginSettings_MissingUserID(t *testing.T) {
+// TestPatchConversationWorkflowSettings_MissingUserID returns 401.
+func TestPatchConversationWorkflowSettings_MissingUserID(t *testing.T) {
 	setupChatSettingsTest(t)
 	vars := map[string]string{"conversation_id": "conv-1"}
 	req := newSettingsRequest("PATCH", "/chat/conversations/conv-1/plugin_settings", `{}`, "", vars)
 	w := httptest.NewRecorder()
-	PatchConversationPluginSettings(w, req)
+	PatchConversationWorkflowSettings(w, req)
 
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("status: got %d, want %d", w.Code, http.StatusUnauthorized)
 	}
 }
 
-// TestPatchConversationPluginSettings_InvalidPluginMode returns 400.
-func TestPatchConversationPluginSettings_InvalidPluginMode(t *testing.T) {
+// TestPatchConversationWorkflowSettings_InvalidWorkflowMode returns 400.
+func TestPatchConversationWorkflowSettings_InvalidWorkflowMode(t *testing.T) {
 	setupChatSettingsTest(t)
 	vars := map[string]string{"conversation_id": "conv-1"}
 	req := newSettingsRequest("PATCH", "/chat/conversations/conv-1/plugin_settings",
 		`{"plugin_mode":"bogus"}`, "user-1", vars)
 	w := httptest.NewRecorder()
-	PatchConversationPluginSettings(w, req)
+	PatchConversationWorkflowSettings(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status: got %d, want %d", w.Code, http.StatusBadRequest)

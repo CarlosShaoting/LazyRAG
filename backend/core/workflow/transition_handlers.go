@@ -1,4 +1,4 @@
-package plugin
+package workflow
 
 import (
 	"context"
@@ -14,9 +14,9 @@ import (
 	"gorm.io/gorm/clause"
 	"lazymind/core/common"
 	"lazymind/core/common/orm"
-	"lazymind/core/plugin/graphengine"
 	"lazymind/core/store"
 	"lazymind/core/subagent"
+	"lazymind/core/workflow/graphengine"
 )
 
 type transitionCommandRequest struct {
@@ -31,19 +31,19 @@ type transitionCommandRequest struct {
 	RuntimeInstruction   string              `json:"runtime_instruction"`
 	PartialIndices       map[string][]int    `json:"partial_indices"`
 	HandOff              bool                `json:"hand_off"`
-	PluginMode           string              `json:"plugin_mode"`
+	WorkflowMode         string              `json:"workflow_mode"`
 	ChatSessionID        string              `json:"chat_session_id"`
 	HistoryFilesPerTurn  map[string][]string `json:"history_files_per_turn"`
 	Filters              map[string]any      `json:"filters"`
 	LLMConfig            map[string]any      `json:"llm_config"`
 	ToolConfig           map[string]any      `json:"tool_config"`
 	ParentAgenticConfig  map[string]any      `json:"parent_agentic_config"`
-	PluginID             string              `json:"plugin_id"`
-	PluginRef            string              `json:"plugin_ref"`
-	PluginRevisionID     string              `json:"plugin_revision_id"`
-	PluginRevisionNo     int64               `json:"plugin_revision_no"`
-	PluginTreeHash       string              `json:"plugin_tree_hash"`
-	PluginRemoteRoot     string              `json:"plugin_remote_root"`
+	WorkflowID           string              `json:"workflow_id"`
+	WorkflowRef          string              `json:"workflow_ref"`
+	WorkflowRevisionID   string              `json:"workflow_revision_id"`
+	WorkflowRevisionNo   int64               `json:"workflow_revision_no"`
+	WorkflowTreeHash     string              `json:"workflow_tree_hash"`
+	WorkflowRemoteRoot   string              `json:"workflow_remote_root"`
 	ConversationID       string              `json:"conversation_id"`
 	TriggerHistoryID     string              `json:"trigger_history_id"`
 	UserID               string              `json:"user_id"`
@@ -116,7 +116,7 @@ func selectLLMChoiceRoutes(ctx context.Context, tx *gorm.DB, sessionID string, g
 	for _, target := range targets {
 		targetSet[target.TargetStepID] = true
 	}
-	var decisions []orm.PluginRouteDecision
+	var decisions []orm.WorkflowRouteDecision
 	if err := tx.WithContext(ctx).Where("session_id = ? AND validity = ?", sessionID, "effective").Find(&decisions).Error; err != nil {
 		return err
 	}
@@ -173,7 +173,7 @@ func selectLLMChoiceRoutes(ctx context.Context, tx *gorm.DB, sessionID string, g
 		}
 		activeJSON, _ := json.Marshal([]string{selected})
 		prunedJSON, _ := json.Marshal(pruned)
-		if err := tx.Model(&orm.PluginRouteDecision{}).Where("id = ?", decision.ID).Updates(map[string]any{
+		if err := tx.Model(&orm.WorkflowRouteDecision{}).Where("id = ?", decision.ID).Updates(map[string]any{
 			"activated_json": activeJSON,
 			"pruned_json":    prunedJSON,
 		}).Error; err != nil {
@@ -193,20 +193,20 @@ func commandTargetID(req transitionCommandRequest) string {
 	return req.TargetStepID
 }
 
-// PlanPluginSessionStart returns the same authoritative projection used by
-// StartPluginSession without creating a session or attempt. Python uses this
+// PlanWorkflowSessionStart returns the same authoritative projection used by
+// StartWorkflowSession without creating a session or attempt. Python uses this
 // to present only genuinely Ready entry steps to the model.
-func PlanPluginSessionStart(w http.ResponseWriter, r *http.Request) {
+func PlanWorkflowSessionStart(w http.ResponseWriter, r *http.Request) {
 	var req transitionCommandRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		common.ReplyErr(w, "invalid start plan", http.StatusBadRequest)
 		return
 	}
-	if req.PluginID == "" {
+	if req.WorkflowID == "" {
 		common.ReplyErr(w, "plugin_id is required", http.StatusUnprocessableEntity)
 		return
 	}
-	probe := &orm.PluginSession{PluginID: req.PluginID, PluginRevisionID: req.PluginRevisionID}
+	probe := &orm.WorkflowSession{WorkflowID: req.WorkflowID, WorkflowRevisionID: req.WorkflowRevisionID}
 	graph, err := loadSessionGraph(r.Context(), store.DB(), probe)
 	if err != nil {
 		common.ReplyErr(w, err.Error(), http.StatusUnprocessableEntity)
@@ -230,9 +230,9 @@ func externalMaterialFacts(graph *graphengine.CompiledStateGraph, supplied map[s
 	return materials
 }
 
-// StartPluginSession validates the first target with the same graph projector,
+// StartWorkflowSession validates the first target with the same graph projector,
 // then creates the session and task synchronously.
-func StartPluginSession(w http.ResponseWriter, r *http.Request) {
+func StartWorkflowSession(w http.ResponseWriter, r *http.Request) {
 	var req transitionCommandRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		common.ReplyErr(w, "invalid start command", http.StatusBadRequest)
@@ -250,7 +250,7 @@ func StartPluginSession(w http.ResponseWriter, r *http.Request) {
 		writeTransitionResponse(w, *existing, status)
 		return
 	}
-	if req.PluginID == "" || req.TargetStepID == "" || req.ConversationID == "" {
+	if req.WorkflowID == "" || req.TargetStepID == "" || req.ConversationID == "" {
 		response := transitionCommandResponse{Accepted: false, CommandID: req.CommandID, Error: &transitionError{Code: "INVALID_TARGET", Message: "plugin_id, conversation_id, and target_step_id are required"}}
 		_ = persistTransitionCommand(store.DB(), req, response, "rejected")
 		writeTransitionResponse(w, response, http.StatusUnprocessableEntity)
@@ -267,7 +267,7 @@ func StartPluginSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	probe := &orm.PluginSession{PluginID: req.PluginID, PluginRevisionID: req.PluginRevisionID}
+	probe := &orm.WorkflowSession{WorkflowID: req.WorkflowID, WorkflowRevisionID: req.WorkflowRevisionID}
 	graph, err := loadSessionGraph(r.Context(), store.DB(), probe)
 	if err != nil {
 		response := transitionCommandResponse{Accepted: false, CommandID: req.CommandID, Error: &transitionError{Code: "GRAPH_REVISION_MISMATCH", Message: err.Error()}}
@@ -296,7 +296,7 @@ func StartPluginSession(w http.ResponseWriter, r *http.Request) {
 		req.TaskID = uuid.NewString()
 	}
 	handOff := req.HandOff
-	params := PluginStepParams{PluginID: req.PluginID, PluginRef: req.PluginRef, RevisionID: req.PluginRevisionID, RevisionNo: req.PluginRevisionNo, TreeHash: req.PluginTreeHash, RemoteRoot: req.PluginRemoteRoot, StepID: req.TargetStepID, UserInput: req.UserInput, IsColdStart: true, HandOff: &handOff, PreflightID: req.PreflightID, ChatSessionID: req.ChatSessionID, PluginMode: req.PluginMode, UserID: req.UserID, HistoryFilesPerTurn: req.HistoryFilesPerTurn, Filters: req.Filters, ParentAgenticConfig: req.ParentAgenticConfig, RequiredOutputs: graph.Nodes[req.TargetStepID].RequiredOutputs}
+	params := WorkflowStepParams{WorkflowID: req.WorkflowID, WorkflowRef: req.WorkflowRef, RevisionID: req.WorkflowRevisionID, RevisionNo: req.WorkflowRevisionNo, TreeHash: req.WorkflowTreeHash, RemoteRoot: req.WorkflowRemoteRoot, StepID: req.TargetStepID, UserInput: req.UserInput, IsColdStart: true, HandOff: &handOff, PreflightID: req.PreflightID, ChatSessionID: req.ChatSessionID, WorkflowMode: req.WorkflowMode, UserID: req.UserID, HistoryFilesPerTurn: req.HistoryFilesPerTurn, Filters: req.Filters, ParentAgenticConfig: req.ParentAgenticConfig, RequiredOutputs: graph.Nodes[req.TargetStepID].RequiredOutputs}
 	nodeDef := graph.Nodes[req.TargetStepID]
 	inputKeys := graphengine.Materials(nodeDef.Input)
 	for _, optional := range nodeDef.OptionalInputs {
@@ -306,11 +306,11 @@ func StartPluginSession(w http.ResponseWriter, r *http.Request) {
 	var response transitionCommandResponse
 	launchErr := store.DB().Transaction(func(tx *gorm.DB) error {
 		var err error
-		sessionID, taskID, _, err = launchPluginAttempt(r.Context(), tx, store.State(), req.ConversationID, req.TriggerHistoryID, req.UserID, req.TaskID, req.PluginID+":"+req.TargetStepID, req.Objective, params, inputKeys, nodeDef.Outputs, req.LLMConfig, req.ToolConfig, false, false)
+		sessionID, taskID, _, err = launchWorkflowAttempt(r.Context(), tx, store.State(), req.ConversationID, req.TriggerHistoryID, req.UserID, req.TaskID, req.WorkflowID+":"+req.TargetStepID, req.Objective, params, inputKeys, nodeDef.Outputs, req.LLMConfig, req.ToolConfig, false, false)
 		if err != nil {
 			return err
 		}
-		if err := tx.Model(&orm.PluginSession{}).Where("id = ?", sessionID).Updates(map[string]any{"state_version": 1, "graph_hash": graph.GraphHash, "graph_schema_version": graph.SchemaVersion}).Error; err != nil {
+		if err := tx.Model(&orm.WorkflowSession{}).Where("id = ?", sessionID).Updates(map[string]any{"state_version": 1, "graph_hash": graph.GraphHash, "graph_schema_version": graph.SchemaVersion}).Error; err != nil {
 			return err
 		}
 		now := time.Now().UTC()
@@ -319,7 +319,7 @@ func StartPluginSession(w http.ResponseWriter, r *http.Request) {
 			revisionID := "psr_" + common.GenerateID()
 			revisionIDs[material.MaterialID] = revisionID
 			content, _ := json.Marshal(map[string]any{"value": req.ExternalMaterials[material.MaterialID], "source": "external"})
-			if err := tx.Create(&orm.PluginSlotRevision{ID: revisionID, SessionID: sessionID, SlotID: material.MaterialID, Revision: 1, Selected: true, ContentSnapshot: content, ChangeSource: "human", Slot: material.MaterialID, StepID: "__start__", Attempt: 0, Validity: "effective", CreatedAt: now}).Error; err != nil {
+			if err := tx.Create(&orm.WorkflowSlotRevision{ID: revisionID, SessionID: sessionID, SlotID: material.MaterialID, Revision: 1, Selected: true, ContentSnapshot: content, ChangeSource: "human", Slot: material.MaterialID, StepID: "__start__", Attempt: 0, Validity: "effective", CreatedAt: now}).Error; err != nil {
 				return err
 			}
 		}
@@ -332,7 +332,7 @@ func StartPluginSession(w http.ResponseWriter, r *http.Request) {
 		if err := persistRouteDecision(r.Context(), tx, sessionID, "__start__", "", startDecision.Activated, startDecision.Pruned, startDecision.Bypassed, startDecision.Witnesses, 1); err != nil {
 			return err
 		}
-		var attempt orm.PluginSessionStep
+		var attempt orm.WorkflowSessionStep
 		if err := tx.Where("task_id = ?", taskID).First(&attempt).Error; err != nil {
 			return err
 		}
@@ -343,11 +343,11 @@ func StartPluginSession(w http.ResponseWriter, r *http.Request) {
 			if revisionID == "" {
 				continue
 			}
-			if err := tx.Create(&orm.PluginAttemptInputBinding{ID: newAttemptInputBindingID(), SessionID: sessionID, AttemptID: attempt.ID, MaterialID: witness.MaterialID, MaterialRevisionID: revisionID, BindAs: witness.BindAs, CreatedAt: now}).Error; err != nil {
+			if err := tx.Create(&orm.WorkflowAttemptInputBinding{ID: newAttemptInputBindingID(), SessionID: sessionID, AttemptID: attempt.ID, MaterialID: witness.MaterialID, MaterialRevisionID: revisionID, BindAs: witness.BindAs, CreatedAt: now}).Error; err != nil {
 				return err
 			}
 		}
-		var session orm.PluginSession
+		var session orm.WorkflowSession
 		if err := tx.Where("id = ?", sessionID).First(&session).Error; err != nil {
 			return err
 		}
@@ -364,7 +364,7 @@ func StartPluginSession(w http.ResponseWriter, r *http.Request) {
 		writeTransitionResponse(w, response, http.StatusServiceUnavailable)
 		return
 	}
-	dispatchPluginAttemptRunner(store.DB(), store.State(), taskID)
+	dispatchWorkflowAttemptRunner(store.DB(), store.State(), taskID)
 	emitTaskCreatedConvEvent(r.Context(), taskID, sessionID, req.ConversationID)
 	writeTransitionResponse(w, response, http.StatusOK)
 }
@@ -403,14 +403,14 @@ func writeTransitionResponse(w http.ResponseWriter, response transitionCommandRe
 	common.ReplyOK(w, response)
 }
 
-func rejectTransition(commandID string, session *orm.PluginSession, projection graphengine.Projection, status int, code, message string, retryable bool, details map[string]any) *transitionRejection {
+func rejectTransition(commandID string, session *orm.WorkflowSession, projection graphengine.Projection, status int, code, message string, retryable bool, details map[string]any) *transitionRejection {
 	return &transitionRejection{status: status, response: transitionCommandResponse{Accepted: false, CommandID: commandID, SessionID: session.ID, StateVersion: session.StateVersion, Projection: projection, Error: &transitionError{Code: code, Message: message, Retryable: retryable, Details: details}}}
 }
 
 func persistTransitionCommand(db *gorm.DB, req transitionCommandRequest, response transitionCommandResponse, status string) error {
 	body, _ := json.Marshal(response)
 	now := time.Now().UTC()
-	row := orm.PluginTransitionCommand{CommandID: req.CommandID, SessionID: response.SessionID, Operation: req.Operation, TargetStepID: commandTargetID(req), Status: status, TaskID: response.TaskID, ExpectedStateVersion: req.ExpectedStateVersion, ResultingStateVersion: response.StateVersion, ResponseJSON: body, CreatedAt: now, UpdatedAt: now}
+	row := orm.WorkflowTransitionCommand{CommandID: req.CommandID, SessionID: response.SessionID, Operation: req.Operation, TargetStepID: commandTargetID(req), Status: status, TaskID: response.TaskID, ExpectedStateVersion: req.ExpectedStateVersion, ResultingStateVersion: response.StateVersion, ResponseJSON: body, CreatedAt: now, UpdatedAt: now}
 	return db.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "command_id"}}, DoUpdates: clause.AssignmentColumns([]string{"session_id", "operation", "status", "task_id", "resulting_state_version", "response_json", "updated_at"})}).Create(&row).Error
 }
 
@@ -418,13 +418,13 @@ func reserveTransitionCommand(db *gorm.DB, req transitionCommandRequest) (bool, 
 	pending := transitionCommandResponse{Accepted: false, CommandID: req.CommandID, Error: &transitionError{Code: "TRANSITION_RESULT_UNKNOWN", Message: "transition command is still being processed", Retryable: true}}
 	body, _ := json.Marshal(pending)
 	now := time.Now().UTC()
-	row := orm.PluginTransitionCommand{CommandID: req.CommandID, Operation: req.Operation, TargetStepID: commandTargetID(req), Status: "processing", ExpectedStateVersion: req.ExpectedStateVersion, ResponseJSON: body, CreatedAt: now, UpdatedAt: now}
+	row := orm.WorkflowTransitionCommand{CommandID: req.CommandID, Operation: req.Operation, TargetStepID: commandTargetID(req), Status: "processing", ExpectedStateVersion: req.ExpectedStateVersion, ResponseJSON: body, CreatedAt: now, UpdatedAt: now}
 	result := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&row)
 	return result.RowsAffected == 1, result.Error
 }
 
 func loadExistingTransition(db *gorm.DB, commandID string) (*transitionCommandResponse, bool) {
-	var row orm.PluginTransitionCommand
+	var row orm.WorkflowTransitionCommand
 	if err := db.Where("command_id = ?", commandID).First(&row).Error; err != nil {
 		return nil, false
 	}
@@ -435,9 +435,9 @@ func loadExistingTransition(db *gorm.DB, commandID string) (*transitionCommandRe
 	return &response, true
 }
 
-// TransitionPluginSession is the synchronous, idempotent Python -> Go admission
+// TransitionWorkflowSession is the synchronous, idempotent Python -> Go admission
 // boundary. A rejected command is returned immediately and never starts a task.
-func TransitionPluginSession(w http.ResponseWriter, r *http.Request) {
+func TransitionWorkflowSession(w http.ResponseWriter, r *http.Request) {
 	var req transitionCommandRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		common.ReplyErr(w, "invalid transition command", http.StatusBadRequest)
@@ -488,7 +488,7 @@ func TransitionPluginSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	var session orm.PluginSession
+	var session orm.WorkflowSession
 	var graph *graphengine.CompiledStateGraph
 	var reservedVersion int64
 	taskIDs := make([]string, 0, len(targets))
@@ -504,12 +504,12 @@ func TransitionPluginSession(w http.ResponseWriter, r *http.Request) {
 		graphErr := error(nil)
 		graph, graphErr = loadSessionGraph(r.Context(), tx, &session)
 		if graphErr != nil {
-			var changed *pluginDefinitionChangedError
+			var changed *workflowDefinitionChangedError
 			if errors.As(graphErr, &changed) {
 				fmt.Printf("[plugin.transition] rejected code=%s command=%s session=%s target=%s expected_hash=%s actual_hash=%s\n",
-					pluginDefinitionChangedCode, req.CommandID, session.ID, req.TargetStepID, changed.expected, changed.actual)
+					workflowDefinitionChangedCode, req.CommandID, session.ID, req.TargetStepID, changed.expected, changed.actual)
 				return rejectTransition(req.CommandID, &session, graphengine.Projection{}, http.StatusConflict,
-					pluginDefinitionChangedCode, changed.Error(), false,
+					workflowDefinitionChangedCode, changed.Error(), false,
 					map[string]any{"expected": changed.expected, "actual": changed.actual})
 			}
 			return graphErr
@@ -593,7 +593,7 @@ func TransitionPluginSession(w http.ResponseWriter, r *http.Request) {
 			return rejectTransition(req.CommandID, &session, projection, http.StatusConflict,
 				"BATCH_CHOICE_CONFLICT", choiceErr.Error(), false, map[string]any{"ready": projection.Ready})
 		}
-		update := tx.Model(&orm.PluginSession{}).Where("id = ? AND state_version = ?", session.ID, session.StateVersion).Updates(map[string]any{"state_version": gorm.Expr("state_version + 1"), "updated_at": time.Now().UTC()})
+		update := tx.Model(&orm.WorkflowSession{}).Where("id = ? AND state_version = ?", session.ID, session.StateVersion).Updates(map[string]any{"state_version": gorm.Expr("state_version + 1"), "updated_at": time.Now().UTC()})
 		if update.Error != nil {
 			return update.Error
 		}
@@ -610,17 +610,17 @@ func TransitionPluginSession(w http.ResponseWriter, r *http.Request) {
 			for _, optional := range nodeDef.OptionalInputs {
 				inputKeys = append(inputKeys, optional.Material)
 			}
-			params := PluginStepParams{PluginID: session.PluginID, PluginRef: session.PluginRef, RevisionID: session.PluginRevisionID, RevisionNo: session.PluginRevisionNo, TreeHash: session.PluginTreeHash, RemoteRoot: session.PluginRemoteRoot, StepID: target.TargetStepID, SessionID: session.ID, UserInput: target.UserInput, HandOff: &handOff, ChatSessionID: req.ChatSessionID, PluginMode: req.PluginMode, RetryHint: target.RuntimeInstruction, PartialIndices: target.PartialIndices, HistoryFilesPerTurn: req.HistoryFilesPerTurn, Filters: req.Filters, ParentAgenticConfig: req.ParentAgenticConfig, UserID: session.CreateUserID, RequiredOutputs: nodeDef.RequiredOutputs}
-			_, taskID, _, launchErr := launchPluginAttempt(r.Context(), tx, store.State(), session.ConversationID, session.TriggerHistoryID, session.CreateUserID, target.TaskID, session.PluginID+":"+target.TargetStepID, target.Objective, params, inputKeys, nodeDef.Outputs, req.LLMConfig, req.ToolConfig, false, false)
+			params := WorkflowStepParams{WorkflowID: session.WorkflowID, WorkflowRef: session.WorkflowRef, RevisionID: session.WorkflowRevisionID, RevisionNo: session.WorkflowRevisionNo, TreeHash: session.WorkflowTreeHash, RemoteRoot: session.WorkflowRemoteRoot, StepID: target.TargetStepID, SessionID: session.ID, UserInput: target.UserInput, HandOff: &handOff, ChatSessionID: req.ChatSessionID, WorkflowMode: req.WorkflowMode, RetryHint: target.RuntimeInstruction, PartialIndices: target.PartialIndices, HistoryFilesPerTurn: req.HistoryFilesPerTurn, Filters: req.Filters, ParentAgenticConfig: req.ParentAgenticConfig, UserID: session.CreateUserID, RequiredOutputs: nodeDef.RequiredOutputs}
+			_, taskID, _, launchErr := launchWorkflowAttempt(r.Context(), tx, store.State(), session.ConversationID, session.TriggerHistoryID, session.CreateUserID, target.TaskID, session.WorkflowID+":"+target.TargetStepID, target.Objective, params, inputKeys, nodeDef.Outputs, req.LLMConfig, req.ToolConfig, false, false)
 			if launchErr != nil {
 				return launchErr
 			}
-			var attempt orm.PluginSessionStep
+			var attempt orm.WorkflowSessionStep
 			if err := tx.Where("task_id = ?", taskID).First(&attempt).Error; err != nil {
 				return err
 			}
 			for _, witness := range evaluations[target.TargetStepID].Witnesses {
-				if err := tx.Create(&orm.PluginAttemptInputBinding{ID: newAttemptInputBindingID(), SessionID: session.ID, AttemptID: attempt.ID, MaterialID: witness.MaterialID, MaterialRevisionID: witness.RevisionID, BindAs: witness.BindAs, CreatedAt: now}).Error; err != nil {
+				if err := tx.Create(&orm.WorkflowAttemptInputBinding{ID: newAttemptInputBindingID(), SessionID: session.ID, AttemptID: attempt.ID, MaterialID: witness.MaterialID, MaterialRevisionID: witness.RevisionID, BindAs: witness.BindAs, CreatedAt: now}).Error; err != nil {
 					return err
 				}
 			}
@@ -647,7 +647,7 @@ func TransitionPluginSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, taskID := range taskIDs {
-		dispatchPluginAttemptRunner(store.DB(), store.State(), taskID)
+		dispatchWorkflowAttemptRunner(store.DB(), store.State(), taskID)
 		emitTaskCreatedConvEvent(r.Context(), taskID, session.ID, session.ConversationID)
 	}
 	writeTransitionResponse(w, response, http.StatusOK)
@@ -657,7 +657,7 @@ func TransitionPluginSession(w http.ResponseWriter, r *http.Request) {
 // tool. Selecting a target is sufficient; the authoritative effective attempt
 // determines whether this is a forward execution, retry, or rewind.
 func resolveAdvanceOperation(ctx context.Context, tx *gorm.DB, sessionID, target string) (string, error) {
-	var attempt orm.PluginSessionStep
+	var attempt orm.WorkflowSessionStep
 	err := tx.WithContext(ctx).Where("session_id = ? AND step_id = ? AND validity = ?", sessionID, target, "effective").Order("attempt DESC").First(&attempt).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return "execute", nil
@@ -675,8 +675,8 @@ func resolveAdvanceOperation(ctx context.Context, tx *gorm.DB, sessionID, target
 	}
 }
 
-func invalidateForOperation(ctx context.Context, tx *gorm.DB, session *orm.PluginSession, graph *graphengine.CompiledStateGraph, commandID, operation, target string) error {
-	var attempt orm.PluginSessionStep
+func invalidateForOperation(ctx context.Context, tx *gorm.DB, session *orm.WorkflowSession, graph *graphengine.CompiledStateGraph, commandID, operation, target string) error {
+	var attempt orm.WorkflowSessionStep
 	q := tx.Where("session_id = ? AND step_id = ? AND validity = ?", session.ID, target, "effective").Order("attempt DESC").First(&attempt)
 	if q.Error != nil {
 		code := "INVALID_REWIND"
@@ -691,7 +691,7 @@ func invalidateForOperation(ctx context.Context, tx *gorm.DB, session *orm.Plugi
 	if operation == "rewind" && attempt.Status != "succeeded" {
 		return rejectTransition(commandID, session, graphengine.Projection{}, http.StatusConflict, "INVALID_REWIND", "only succeeded attempts can be rewound", false, nil)
 	}
-	queue := []orm.PluginSessionStep{attempt}
+	queue := []orm.WorkflowSessionStep{attempt}
 	seen := map[string]bool{}
 	for len(queue) > 0 {
 		current := queue[0]
@@ -700,28 +700,28 @@ func invalidateForOperation(ctx context.Context, tx *gorm.DB, session *orm.Plugi
 			continue
 		}
 		seen[current.ID] = true
-		if err := tx.Model(&orm.PluginSessionStep{}).Where("id = ?", current.ID).Update("validity", "stale").Error; err != nil {
+		if err := tx.Model(&orm.WorkflowSessionStep{}).Where("id = ?", current.ID).Update("validity", "stale").Error; err != nil {
 			return err
 		}
-		var outputs []orm.PluginSlotRevision
+		var outputs []orm.WorkflowSlotRevision
 		if err := tx.Where("session_id = ? AND ((producer_attempt_id = ? AND producer_attempt_id != '') OR (step_id = ? AND attempt = ?))", session.ID, current.ID, current.StepID, current.Attempt).Find(&outputs).Error; err != nil {
 			return err
 		}
 		for _, output := range outputs {
-			if err := tx.Model(&orm.PluginSlotRevision{}).Where("id = ?", output.ID).Updates(map[string]any{"validity": "stale", "selected": false}).Error; err != nil {
+			if err := tx.Model(&orm.WorkflowSlotRevision{}).Where("id = ?", output.ID).Updates(map[string]any{"validity": "stale", "selected": false}).Error; err != nil {
 				return err
 			}
-			var bindings []orm.PluginAttemptInputBinding
+			var bindings []orm.WorkflowAttemptInputBinding
 			if err := tx.Where("material_revision_id = ?", output.ID).Find(&bindings).Error; err != nil {
 				return err
 			}
 			for _, binding := range bindings {
-				var consumer orm.PluginSessionStep
+				var consumer orm.WorkflowSessionStep
 				if tx.Where("id = ? AND validity = ?", binding.AttemptID, "effective").First(&consumer).Error == nil {
 					queue = append(queue, consumer)
 				}
 			}
-			var decisions []orm.PluginRouteDecision
+			var decisions []orm.WorkflowRouteDecision
 			if err := tx.Where("session_id = ? AND validity = ?", session.ID, "effective").Find(&decisions).Error; err != nil {
 				return err
 			}
@@ -739,13 +739,13 @@ func invalidateForOperation(ctx context.Context, tx *gorm.DB, session *orm.Plugi
 					if err := enqueueExclusiveRouteAttempts(tx, session.ID, decision, &queue); err != nil {
 						return err
 					}
-					if err := tx.Model(&orm.PluginRouteDecision{}).Where("id = ?", decision.ID).Update("validity", "stale").Error; err != nil {
+					if err := tx.Model(&orm.WorkflowRouteDecision{}).Where("id = ?", decision.ID).Update("validity", "stale").Error; err != nil {
 						return err
 					}
 				}
 			}
 		}
-		var sourceDecisions []orm.PluginRouteDecision
+		var sourceDecisions []orm.WorkflowRouteDecision
 		if err := tx.Where("session_id = ? AND source_attempt_id IN ? AND validity = ?", session.ID, []string{current.ID, current.TaskID}, "effective").Find(&sourceDecisions).Error; err != nil {
 			return err
 		}
@@ -753,7 +753,7 @@ func invalidateForOperation(ctx context.Context, tx *gorm.DB, session *orm.Plugi
 			if err := enqueueExclusiveRouteAttempts(tx, session.ID, decision, &queue); err != nil {
 				return err
 			}
-			if err := tx.Model(&orm.PluginRouteDecision{}).Where("id = ?", decision.ID).Update("validity", "stale").Error; err != nil {
+			if err := tx.Model(&orm.WorkflowRouteDecision{}).Where("id = ?", decision.ID).Update("validity", "stale").Error; err != nil {
 				return err
 			}
 		}
@@ -761,14 +761,14 @@ func invalidateForOperation(ctx context.Context, tx *gorm.DB, session *orm.Plugi
 	return nil
 }
 
-func enqueueExclusiveRouteAttempts(tx *gorm.DB, sessionID string, decision orm.PluginRouteDecision, queue *[]orm.PluginSessionStep) error {
+func enqueueExclusiveRouteAttempts(tx *gorm.DB, sessionID string, decision orm.WorkflowRouteDecision, queue *[]orm.WorkflowSessionStep) error {
 	var targets []string
 	_ = json.Unmarshal(decision.ActivatedJSON, &targets)
 	for _, target := range targets {
 		if target == "__end__" {
 			continue
 		}
-		var other []orm.PluginRouteDecision
+		var other []orm.WorkflowRouteDecision
 		if err := tx.Where("session_id = ? AND validity = ? AND id != ?", sessionID, "effective", decision.ID).Find(&other).Error; err != nil {
 			return err
 		}
@@ -789,7 +789,7 @@ func enqueueExclusiveRouteAttempts(tx *gorm.DB, sessionID string, decision orm.P
 		if stillActivated {
 			continue
 		}
-		var attempt orm.PluginSessionStep
+		var attempt orm.WorkflowSessionStep
 		query := tx.Where("session_id = ? AND step_id = ? AND validity = ?", sessionID, target, "effective").Order("attempt DESC").First(&attempt)
 		if query.Error == nil {
 			*queue = append(*queue, attempt)
@@ -811,7 +811,7 @@ func GetTransitionCommand(w http.ResponseWriter, r *http.Request) {
 // emitTaskCreatedConvEvent pushes a task_created event to the conversation-level
 // events channel so that the frontend TaskCenter panel receives the notification
 // and subscribes to the task's SSE stream for real-time status updates.
-// This is the graph-engine equivalent of the legacy handlePluginStepCreated path.
+// This is the graph-engine equivalent of the legacy handleWorkflowStepCreated path.
 func emitTaskCreatedConvEvent(ctx context.Context, taskID, sessionID, conversationID string) {
 	if subagent.EventHooks == nil || conversationID == "" || taskID == "" {
 		return

@@ -11,7 +11,7 @@ import (
 	"lazymind/core/acl"
 	"lazymind/core/common/orm"
 	"lazymind/core/evolution"
-	"lazymind/core/plugin"
+	"lazymind/core/workflow"
 )
 
 type chatMention struct {
@@ -24,14 +24,14 @@ type chatMention struct {
 }
 
 type resolvedChatMentions struct {
-	PluginRefs          []string
-	SkillNames          []string
-	KnowledgeBaseIDs    []string
-	ToolNames           []string
-	ExcludedToolNames   []string
-	ExcludedPluginRefs  []string
-	ConversationContext string
-	ResourceMentions    []map[string]string
+	WorkflowRefs         []string
+	SkillNames           []string
+	KnowledgeBaseIDs     []string
+	ToolNames            []string
+	ExcludedToolNames    []string
+	ExcludedWorkflowRefs []string
+	ConversationContext  string
+	ResourceMentions     []map[string]string
 }
 
 var mentionDenyWords = []string{
@@ -174,10 +174,10 @@ func applyChatMentions(ctx context.Context, db *gorm.DB, raw map[string]any, use
 		case "plugin":
 			if strings.HasPrefix(mention.ResourceID, "builtin:") {
 				if denied {
-					resolved.ExcludedPluginRefs = append(resolved.ExcludedPluginRefs, mention.ResourceID)
+					resolved.ExcludedWorkflowRefs = append(resolved.ExcludedWorkflowRefs, mention.ResourceID)
 					continue
 				}
-				resolved.PluginRefs = append(resolved.PluginRefs, mention.ResourceID)
+				resolved.WorkflowRefs = append(resolved.WorkflowRefs, mention.ResourceID)
 				resolved.ResourceMentions = append(resolved.ResourceMentions, map[string]string{
 					"resource_type": "plugin", "resource_ref": mention.ResourceID,
 					"display_name": mention.DisplayName,
@@ -185,15 +185,15 @@ func applyChatMentions(ctx context.Context, db *gorm.DB, raw map[string]any, use
 				continue
 			}
 			var count int64
-			if err := db.WithContext(ctx).Model(&orm.PluginResource{}).
+			if err := db.WithContext(ctx).Model(&orm.WorkflowResource{}).
 				Where("plugin_ref = ? AND status = 'active' AND (owner_user_id = ? OR owner_user_id = '')", mention.ResourceID, userID).Count(&count).Error; err != nil || count == 0 {
 				return query, resolved, fmt.Errorf("plugin mention is not accessible: %s", mention.ResourceID)
 			}
 			if denied {
-				resolved.ExcludedPluginRefs = append(resolved.ExcludedPluginRefs, mention.ResourceID)
+				resolved.ExcludedWorkflowRefs = append(resolved.ExcludedWorkflowRefs, mention.ResourceID)
 				continue
 			}
-			resolved.PluginRefs = append(resolved.PluginRefs, mention.ResourceID)
+			resolved.WorkflowRefs = append(resolved.WorkflowRefs, mention.ResourceID)
 			resolved.ResourceMentions = append(resolved.ResourceMentions, map[string]string{
 				"resource_type": "plugin", "resource_ref": mention.ResourceID,
 				"display_name": mention.DisplayName,
@@ -227,13 +227,13 @@ func applyChatMentions(ctx context.Context, db *gorm.DB, raw map[string]any, use
 }
 
 func applyExplicitResourceBindings(body map[string]any, mentions resolvedChatMentions) {
-	if len(mentions.SkillNames) == 0 && len(mentions.KnowledgeBaseIDs) == 0 && len(mentions.PluginRefs) == 0 {
+	if len(mentions.SkillNames) == 0 && len(mentions.KnowledgeBaseIDs) == 0 && len(mentions.WorkflowRefs) == 0 {
 		return
 	}
 	body["explicit_resource_bindings"] = map[string]any{
 		"skill_names":        mentions.SkillNames,
 		"knowledge_base_ids": mentions.KnowledgeBaseIDs,
-		"plugin_refs":        mentions.PluginRefs,
+		"plugin_refs":        mentions.WorkflowRefs,
 		"mentions":           mentions.ResourceMentions,
 	}
 }
@@ -308,7 +308,7 @@ func buildMentionResourceContext(ctx context.Context, db *gorm.DB, userID string
 				return true
 			}
 			var count int64
-			return db.WithContext(ctx).Model(&orm.PluginResource{}).Where("plugin_ref = ? AND status = 'active' AND (owner_user_id = ? OR owner_user_id = '')", mention.ResourceID, userID).Count(&count).Error == nil && count > 0
+			return db.WithContext(ctx).Model(&orm.WorkflowResource{}).Where("plugin_ref = ? AND status = 'active' AND (owner_user_id = ? OR owner_user_id = '')", mention.ResourceID, userID).Count(&count).Error == nil && count > 0
 		case "tool":
 			return toolIDs[mention.ResourceID]
 		case "conversation":
@@ -422,7 +422,7 @@ func applyMentionedTools(disabled []string, enabled []string) []string {
 	return out
 }
 
-func mergeMentionedPlugins(ctx context.Context, db *gorm.DB, userID string, refs []string, catalog []map[string]any) ([]map[string]any, []string, error) {
+func mergeMentionedWorkflows(ctx context.Context, db *gorm.DB, userID string, refs []string, catalog []map[string]any) ([]map[string]any, []string, error) {
 	if len(refs) == 0 {
 		return catalog, nil, nil
 	}
@@ -442,7 +442,7 @@ func mergeMentionedPlugins(ctx context.Context, db *gorm.DB, userID string, refs
 			continue
 		}
 		var row struct {
-			orm.PluginResource
+			orm.WorkflowResource
 			TreeHash string `gorm:"column:tree_hash"`
 		}
 		if err := db.WithContext(ctx).Table("plugins p").Select("p.*, pr.tree_hash").
@@ -450,14 +450,14 @@ func mergeMentionedPlugins(ctx context.Context, db *gorm.DB, userID string, refs
 			Where("p.plugin_ref=? AND p.status='active' AND (p.owner_user_id=? OR p.owner_user_id='')", ref, userID).Take(&row).Error; err != nil {
 			return nil, nil, fmt.Errorf("plugin mention is not accessible: %s", ref)
 		}
-		selected = append(selected, map[string]any{"plugin_ref": row.PluginRef, "plugin_id": row.PluginID, "name": row.Name, "description": row.Description, "when_to_use": row.WhenToUse, "source_type": row.SourceType, "remote_root": "remote://" + row.RelativeRoot, "revision_id": row.HeadRevisionID, "revision_no": row.Version, "tree_hash": row.TreeHash})
+		selected = append(selected, map[string]any{"plugin_ref": row.WorkflowRef, "plugin_id": row.WorkflowID, "name": row.Name, "description": row.Description, "when_to_use": row.WhenToUse, "source_type": row.SourceType, "remote_root": "remote://" + row.RelativeRoot, "revision_id": row.HeadRevisionID, "revision_no": row.Version, "tree_hash": row.TreeHash})
 	}
 	return selected, forcedBuiltins, nil
 }
 
-// applyPluginSelection is the single catalog/allowlist assembly path used by
+// applyWorkflowSelection is the single catalog/allowlist assembly path used by
 // both real chat execution and context preview/export.
-func applyPluginSelection(
+func applyWorkflowSelection(
 	ctx context.Context,
 	db *gorm.DB,
 	userID string,
@@ -477,7 +477,7 @@ func applyPluginSelection(
 		reqBody["disabled_builtin_plugins"] = []string{}
 		return nil
 	}
-	catalog, err := plugin.EnabledCatalog(db, userID)
+	catalog, err := workflow.EnabledCatalog(db, userID)
 	if err != nil {
 		return fmt.Errorf("load plugin catalog: %w", err)
 	}
@@ -492,13 +492,13 @@ func applyPluginSelection(
 		}
 	}
 	catalog = filteredCatalog
-	catalog, forcedBuiltins, err := mergeMentionedPlugins(
+	catalog, forcedBuiltins, err := mergeMentionedWorkflows(
 		ctx, db, userID, mentionedRefs, catalog,
 	)
 	if err != nil {
 		return err
 	}
-	disabledBuiltins, err := plugin.DisabledBuiltinPluginIDs(db, userID)
+	disabledBuiltins, err := workflow.DisabledBuiltinWorkflowIDs(db, userID)
 	if err != nil {
 		return fmt.Errorf("load builtin plugin settings: %w", err)
 	}
@@ -507,8 +507,8 @@ func applyPluginSelection(
 			disabledBuiltins = append(disabledBuiltins, strings.TrimPrefix(ref, "builtin:"))
 		}
 	}
-	if pluginContext, ok := reqBody["plugin_context"].(map[string]any); ok {
-		if excluded[fmt.Sprint(pluginContext["plugin_ref"])] {
+	if workflowContext, ok := reqBody["plugin_context"].(map[string]any); ok {
+		if excluded[fmt.Sprint(workflowContext["plugin_ref"])] {
 			reqBody["plugin_context"] = map[string]any{}
 		}
 	}

@@ -123,8 +123,8 @@ func TestBuildLazyChatRequestIncludesConversationIntent(t *testing.T) {
 	}
 }
 
-func TestPluginStepParamsFromEventParamsPreservesChatSessionID(t *testing.T) {
-	params := pluginStepParamsFromEventParams(map[string]any{
+func TestWorkflowStepParamsFromEventParamsPreservesChatSessionID(t *testing.T) {
+	params := workflowStepParamsFromEventParams(map[string]any{
 		"plugin_id":              "writer-plugin",
 		"step_id":                "generate_outline",
 		"session_id":             "ps-1",
@@ -138,7 +138,7 @@ func TestPluginStepParamsFromEventParamsPreservesChatSessionID(t *testing.T) {
 		"user_id":                "user-1",
 	})
 
-	if params.PluginID != "writer-plugin" || params.StepID != "generate_outline" || params.SessionID != "ps-1" {
+	if params.WorkflowID != "writer-plugin" || params.StepID != "generate_outline" || params.SessionID != "ps-1" {
 		t.Fatalf("unexpected basic params: %+v", params)
 	}
 	if params.ChatSessionID != "conv-1_123" {
@@ -978,8 +978,8 @@ func TestBuildLazyChatRequestMapsAllFields(t *testing.T) {
 	if len(req.Runtime.MCPConfig) != 1 {
 		t.Fatalf("expected mcp_config to be forwarded, got %#v", req.Runtime.MCPConfig)
 	}
-	if req.Plugin.EnablePlugin == nil || !*req.Plugin.EnablePlugin || req.Plugin.PluginContext["session_id"] != "plugin-session-1" {
-		t.Fatalf("unexpected plugin options: %#v", req.Plugin)
+	if req.Workflow.EnableWorkflow == nil || !*req.Workflow.EnableWorkflow || req.Workflow.WorkflowContext["session_id"] != "plugin-session-1" {
+		t.Fatalf("unexpected plugin options: %#v", req.Workflow)
 	}
 
 	payload, err := json.Marshal(req)
@@ -1110,7 +1110,7 @@ func TestFeedBackChatHistoryCancelsFeedback(t *testing.T) {
 	}
 }
 
-func TestPluginModeFromReqBody(t *testing.T) {
+func TestWorkflowModeFromReqBody(t *testing.T) {
 	tests := []struct {
 		name string
 		body map[string]any
@@ -1146,22 +1146,22 @@ func TestPluginModeFromReqBody(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := pluginModeFromReqBody(tc.body); got != tc.want {
-				t.Fatalf("pluginModeFromReqBody() = %q, want %q", got, tc.want)
+			if got := workflowModeFromReqBody(tc.body); got != tc.want {
+				t.Fatalf("workflowModeFromReqBody() = %q, want %q", got, tc.want)
 			}
 		})
 	}
 }
 
-func TestResolvePluginModeWithFallback(t *testing.T) {
+func TestResolveWorkflowModeWithFallback(t *testing.T) {
 	raw := map[string]any{"plugin_mode": "auto"}
 	reqBody := map[string]any{
 		"agentic_config": map[string]any{"plugin_mode": "dynamic"},
 	}
-	if got := resolvePluginModeWithFallback(raw, reqBody); got != "auto" {
+	if got := resolveWorkflowModeWithFallback(raw, reqBody); got != "auto" {
 		t.Fatalf("expected raw body to win, got %q", got)
 	}
-	if got := resolvePluginModeWithFallback(map[string]any{}, reqBody); got != "dynamic" {
+	if got := resolveWorkflowModeWithFallback(map[string]any{}, reqBody); got != "dynamic" {
 		t.Fatalf("expected agentic_config fallback, got %q", got)
 	}
 }

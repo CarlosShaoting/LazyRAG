@@ -1,4 +1,4 @@
-package plugin
+package workflow
 
 import (
 	"bytes"
@@ -19,7 +19,7 @@ import (
 	"lazymind/core/taskcenter"
 )
 
-var pluginOutboxDispatcherOnce sync.Once
+var workflowOutboxDispatcherOnce sync.Once
 
 // RegisterSubAgentHooks wires plugin lifecycle hooks into the subagent EventHooks.
 // Must be called once at application startup (after store is initialized).
@@ -32,69 +32,69 @@ func RegisterSubAgentHooks() {
 		db := store.DB()
 		stateStore := store.State()
 		if db != nil {
-			StopActivePluginSession(ctx, db, stateStore, convID)
+			StopActiveWorkflowSession(ctx, db, stateStore, convID)
 		}
 		go NotifyChatCancel(convID)
 	}
 }
 
-// RecoverPendingPluginRuns closes the accepted-but-not-started crash window.
+// RecoverPendingWorkflowRuns closes the accepted-but-not-started crash window.
 // Pending items are safe to claim once; dispatching items belonged to a worker
 // in the previous process and are made explicitly interrupted instead of being
 // silently retried or left running forever.
-func RecoverPendingPluginRuns() {
-	pluginOutboxDispatcherOnce.Do(func() {
-		recoverPluginRunOutboxOnce()
+func RecoverPendingWorkflowRuns() {
+	workflowOutboxDispatcherOnce.Do(func() {
+		recoverWorkflowRunOutboxOnce()
 		go func() {
 			ticker := time.NewTicker(2 * time.Second)
 			defer ticker.Stop()
 			for range ticker.C {
-				dispatchPendingPluginRuns()
+				dispatchPendingWorkflowRuns()
 			}
 		}()
 	})
 }
 
-func recoverPluginRunOutboxOnce() {
+func recoverWorkflowRunOutboxOnce() {
 	db := store.DB()
 	if db == nil {
 		return
 	}
 	ctx := context.Background()
-	var abandoned []orm.PluginRunOutbox
+	var abandoned []orm.WorkflowRunOutbox
 	if err := db.WithContext(ctx).Where("status = ?", "dispatching").Find(&abandoned).Error; err == nil {
 		for _, row := range abandoned {
 			reason := "plugin worker interrupted by backend restart"
 			_ = subagent.UpdateFinalStatus(ctx, db, row.TaskID, subagent.StatusInterrupted, reason)
 			_ = UpdateStepStatus(ctx, db, row.TaskID, StepStatusInterrupted)
-			if pctx := loadPluginChatContextFromDB(ctx, db, row.TaskID); pctx != nil {
+			if pctx := loadWorkflowChatContextFromDB(ctx, db, row.TaskID); pctx != nil {
 				_ = UpdateSessionStatus(ctx, db, pctx.SessionID, SessionStatusWaiting)
 			}
-			_ = db.Model(&orm.PluginRunOutbox{}).Where("task_id = ?", row.TaskID).
+			_ = db.Model(&orm.WorkflowRunOutbox{}).Where("task_id = ?", row.TaskID).
 				Updates(map[string]any{"status": "failed", "last_error": reason, "updated_at": time.Now().UTC()}).Error
 		}
 	}
-	dispatchPendingPluginRuns()
+	dispatchPendingWorkflowRuns()
 }
 
-func dispatchPendingPluginRuns() {
+func dispatchPendingWorkflowRuns() {
 	db := store.DB()
 	if db == nil {
 		return
 	}
 	ctx := context.Background()
-	var pending []orm.PluginRunOutbox
+	var pending []orm.WorkflowRunOutbox
 	if err := db.WithContext(ctx).Where("status = ?", "pending").Order("created_at ASC").Find(&pending).Error; err != nil {
 		return
 	}
 	for _, row := range pending {
-		dispatchPluginAttemptRunner(db, store.State(), row.TaskID)
+		dispatchWorkflowAttemptRunner(db, store.State(), row.TaskID)
 	}
 }
 
 // onArtifact is called by the subagent runner when any artifact is emitted.
 func onArtifact(ctx context.Context, db *gorm.DB, stateStore state.Store, taskID, artifactKey string) {
-	pctx := loadPluginChatContextFromDB(ctx, db, taskID)
+	pctx := loadWorkflowChatContextFromDB(ctx, db, taskID)
 	if pctx == nil {
 		return
 	}
@@ -103,9 +103,9 @@ func onArtifact(ctx context.Context, db *gorm.DB, stateStore state.Store, taskID
 		return
 	}
 	// Slot revision is now durable. Notify the conversation stream so the
-	// event-driven PluginPanel can refresh immediately without polling or waiting
+	// event-driven WorkflowPanel can refresh immediately without polling or waiting
 	// for the whole step to finish.
-	emitPluginArtifactUpdated(stateStore, pctx.ConvID, map[string]any{
+	emitWorkflowArtifactUpdated(stateStore, pctx.ConvID, map[string]any{
 		"session_id": pctx.SessionID,
 		"step_id":    pctx.StepID,
 		"slot_id":    rev.SlotID,
@@ -114,10 +114,10 @@ func onArtifact(ctx context.Context, db *gorm.DB, stateStore state.Store, taskID
 	})
 }
 
-// NotifyPluginArtifactUpdated publishes a durable slot change made outside the
+// NotifyWorkflowArtifactUpdated publishes a durable slot change made outside the
 // SubAgent artifact hook (for example a human edit, version selection, or rollback).
 // Event delivery is best-effort; the committed revision remains authoritative.
-func NotifyPluginArtifactUpdated(
+func NotifyWorkflowArtifactUpdated(
 	ctx context.Context,
 	db *gorm.DB,
 	sessionID, stepID, slotID, slot string,
@@ -143,10 +143,10 @@ func NotifyPluginArtifactUpdated(
 	if listIndex != nil {
 		payload["list_index"] = *listIndex
 	}
-	emitPluginArtifactUpdated(store.State(), session.ConversationID, payload)
+	emitWorkflowArtifactUpdated(store.State(), session.ConversationID, payload)
 }
 
-func emitPluginArtifactUpdated(stateStore state.Store, conversationID string, payload map[string]any) {
+func emitWorkflowArtifactUpdated(stateStore state.Store, conversationID string, payload map[string]any) {
 	if subagent.EventHooks == nil || conversationID == "" {
 		return
 	}
@@ -164,7 +164,7 @@ func onTerminalStatus(ctx context.Context, db *gorm.DB, stateStore state.Store, 
 	if status != subagent.StatusSucceeded && status != subagent.StatusFailed && status != subagent.StatusInterrupted {
 		return
 	}
-	pctx := loadPluginChatContextFromDB(ctx, db, taskID)
+	pctx := loadWorkflowChatContextFromDB(ctx, db, taskID)
 	if pctx == nil {
 		return
 	}
@@ -179,31 +179,31 @@ func onTerminalStatus(ctx context.Context, db *gorm.DB, stateStore state.Store, 
 	OnSubAgentDone(ctx, db, stateStore, taskID, status, message, onSSE, pctx)
 }
 
-// loadPluginChatContextFromDB loads the plugin context for a task from the database.
-func loadPluginChatContextFromDB(ctx context.Context, db *gorm.DB, taskID string) *PluginChatContext {
+// loadWorkflowChatContextFromDB loads the plugin context for a task from the database.
+func loadWorkflowChatContextFromDB(ctx context.Context, db *gorm.DB, taskID string) *WorkflowChatContext {
 	task, err := subagent.GetTask(ctx, db, taskID)
 	if err != nil || task == nil || task.AgentType != "plugin_step" {
 		return nil
 	}
 
-	var params PluginStepParams
+	var params WorkflowStepParams
 	if len(task.Params) > 0 {
 		if err := json.Unmarshal(task.Params, &params); err != nil {
-			fmt.Printf("[Plugin] failed to unmarshal params for task %s: %v\n", taskID, err)
+			fmt.Printf("[Workflow] failed to unmarshal params for task %s: %v\n", taskID, err)
 			return nil
 		}
 	}
-	if params.PluginID == "" || params.SessionID == "" {
+	if params.WorkflowID == "" || params.SessionID == "" {
 		return nil
 	}
 
-	return &PluginChatContext{
+	return &WorkflowChatContext{
 		SessionID:           params.SessionID,
-		PluginID:            params.PluginID,
+		WorkflowID:          params.WorkflowID,
 		StepID:              params.StepID,
 		ConvID:              task.ConversationID,
 		UserID:              task.CreateUserID,
-		PluginMode:          params.PluginMode,
+		WorkflowMode:        params.WorkflowMode,
 		ChatSessionID:       params.ChatSessionID,
 		TriggerHistoryID:    task.TriggerHistoryID,
 		HistoryFilesPerTurn: params.HistoryFilesPerTurn,
@@ -211,25 +211,25 @@ func loadPluginChatContextFromDB(ctx context.Context, db *gorm.DB, taskID string
 	}
 }
 
-// StopActivePluginSession marks all queued or running steps as interrupted and puts the session
+// StopActiveWorkflowSession marks all queued or running steps as interrupted and puts the session
 // into waiting status. Python task cancellation and UI notification use the generic
 // task lifecycle paths; no plugin-specific step completion queue is involved.
-func StopActivePluginSession(ctx context.Context, db *gorm.DB, stateStore state.Store, convID string) {
+func StopActiveWorkflowSession(ctx context.Context, db *gorm.DB, stateStore state.Store, convID string) {
 	session, err := GetActiveSession(ctx, db, convID)
 	if err != nil || session == nil {
 		return
 	}
-	stopPluginSession(ctx, db, stateStore, session)
+	stopWorkflowSession(ctx, db, stateStore, session)
 }
 
-// stopPluginSession cancels one specific session. Callers that already resolved a
+// stopWorkflowSession cancels one specific session. Callers that already resolved a
 // session must use this scoped form instead of looking it up again by conversation;
 // a conversation can retain an older waiting session next to a newer active one.
-func stopPluginSession(
+func stopWorkflowSession(
 	ctx context.Context,
 	db *gorm.DB,
 	stateStore state.Store,
-	session *orm.PluginSession,
+	session *orm.WorkflowSession,
 ) {
 	if session == nil || session.Status != SessionStatusActive {
 		return

@@ -98,13 +98,13 @@ type GenerateSkeletonRequest struct {
 
 // GenerateSkeletonResponse is the response body from Phase 1.
 type GenerateSkeletonResponse struct {
-	PluginYAML string `json:"plugin_yaml"`
+	WorkflowYAML string `json:"workflow_yaml"`
 }
 
 // GenerateStateMachineRequest is the request body for Phase 2.
 type GenerateStateMachineRequest struct {
 	Name             string         `json:"name"`
-	PluginYAML       string         `json:"plugin_yaml"`
+	WorkflowYAML     string         `json:"workflow_yaml"`
 	DesignBrief      string         `json:"design_brief,omitempty"`
 	WorkflowAnalysis string         `json:"workflow_analysis,omitempty"`
 	LLMConfig        map[string]any `json:"llm_config"`
@@ -112,15 +112,15 @@ type GenerateStateMachineRequest struct {
 
 // GenerateStateMachineResponse is the response body from Phase 2.
 type GenerateStateMachineResponse struct {
-	StateYAML  string   `json:"state_yaml"`
-	PluginYAML string   `json:"plugin_yaml"` // may be updated by slot repair
-	Warnings   []string `json:"warnings"`
+	StateYAML    string   `json:"state_yaml"`
+	WorkflowYAML string   `json:"workflow_yaml"` // may be updated by slot repair
+	Warnings     []string `json:"warnings"`
 }
 
 // GenerateScenarioScriptsRequest is the request body for Phase 3.
 type GenerateScenarioScriptsRequest struct {
 	Name          string            `json:"name"`
-	PluginYAML    string            `json:"plugin_yaml"`
+	WorkflowYAML  string            `json:"workflow_yaml"`
 	StateYAML     string            `json:"state_yaml"`
 	DesignBrief   string            `json:"design_brief,omitempty"`
 	SourceScripts map[string]string `json:"source_scripts,omitempty"`
@@ -187,7 +187,7 @@ func GenerateSkeleton(ctx context.Context, req GenerateSkeletonRequest) (*Genera
 		return nil, err
 	}
 	return &GenerateSkeletonResponse{
-		PluginYAML: extractStringField(raw, "plugin_yaml"),
+		WorkflowYAML: extractStringField(raw, "plugin_yaml"),
 	}, nil
 }
 
@@ -203,7 +203,7 @@ func GenerateStateMachine(ctx context.Context, req GenerateStateMachineRequest) 
 		StateYAML: extractStringField(raw, "state_yaml"),
 	}
 	// Phase 2 may return an updated plugin_yaml when slot repair was applied.
-	resp.PluginYAML = extractStringField(raw, "plugin_yaml")
+	resp.WorkflowYAML = extractStringField(raw, "plugin_yaml")
 	// Extract warnings list from response (may be absent for older Python versions).
 	if data, ok := raw["data"].(map[string]any); ok {
 		raw = data
@@ -251,21 +251,21 @@ const repairStateMachinePath = "/api/chat/generate_plugin/repair"
 
 // RepairStateMachineRequest is the request body for the repair endpoint.
 type RepairStateMachineRequest struct {
-	PluginYAML  string            `json:"plugin_yaml"`
-	StateYAML   string            `json:"state_yaml"`
-	RepairHint  string            `json:"repair_hint,omitempty"`
-	Warnings    []string          `json:"warnings,omitempty"`
-	Diagnostics []map[string]any  `json:"diagnostics,omitempty"`
-	Target      string            `json:"target,omitempty"` // 'statemachine' | 'ui' | 'scenario'
-	ScenarioMD  string            `json:"scenario_md,omitempty"`
-	Scripts     map[string]string `json:"scripts,omitempty"`
-	LLMConfig   map[string]any    `json:"llm_config"`
+	WorkflowYAML string            `json:"workflow_yaml"`
+	StateYAML    string            `json:"state_yaml"`
+	RepairHint   string            `json:"repair_hint,omitempty"`
+	Warnings     []string          `json:"warnings,omitempty"`
+	Diagnostics  []map[string]any  `json:"diagnostics,omitempty"`
+	Target       string            `json:"target,omitempty"` // 'statemachine' | 'ui' | 'scenario'
+	ScenarioMD   string            `json:"scenario_md,omitempty"`
+	Scripts      map[string]string `json:"scripts,omitempty"`
+	LLMConfig    map[string]any    `json:"llm_config"`
 }
 
 // RepairStateMachineResponse is the response body from the repair endpoint.
 type RepairStateMachineResponse struct {
 	StateYAML         string            `json:"state_yaml"`
-	PluginYAML        string            `json:"plugin_yaml"` // may be updated when slot repair was applied
+	WorkflowYAML      string            `json:"workflow_yaml"` // may be updated when slot repair was applied
 	RemainingWarnings []string          `json:"remaining_warnings"`
 	ScenarioMD        string            `json:"scenario_md"`
 	Scripts           map[string]string `json:"scripts"`
@@ -283,10 +283,10 @@ func RepairStateMachine(ctx context.Context, req RepairStateMachineRequest) (*Re
 		raw = data
 	}
 	resp := &RepairStateMachineResponse{
-		StateYAML:  extractStringField(raw, "state_yaml"),
-		PluginYAML: extractStringField(raw, "plugin_yaml"),
-		ScenarioMD: extractStringField(raw, "scenario_md"),
-		Scripts:    extractScripts(raw),
+		StateYAML:    extractStringField(raw, "state_yaml"),
+		WorkflowYAML: extractStringField(raw, "plugin_yaml"),
+		ScenarioMD:   extractStringField(raw, "scenario_md"),
+		Scripts:      extractScripts(raw),
 	}
 	if warnRaw, ok := raw["remaining_warnings"].([]any); ok {
 		for _, w := range warnRaw {
@@ -299,30 +299,30 @@ func RepairStateMachine(ctx context.Context, req RepairStateMachineRequest) (*Re
 }
 
 // ---------------------------------------------------------------------------
-// Plugin info polish
+// Workflow info polish
 // ---------------------------------------------------------------------------
 
-const polishPluginInfoPath = "/api/chat/generate_plugin/polish_info"
+const polishWorkflowInfoPath = "/api/chat/generate_plugin/polish_info"
 
-// PolishPluginInfoRequest matches the Python request body.
-type PolishPluginInfoRequest struct {
+// PolishWorkflowInfoRequest matches the Python request body.
+type PolishWorkflowInfoRequest struct {
 	Fields       map[string]string `json:"fields"`
 	TargetFields []string          `json:"target_fields"`
 	LLMConfig    map[string]any    `json:"llm_config"`
 }
 
-// PolishPluginInfoResponse holds the polished field values (only target_fields are populated).
-type PolishPluginInfoResponse struct {
+// PolishWorkflowInfoResponse holds the polished field values (only target_fields are populated).
+type PolishWorkflowInfoResponse struct {
 	Description *string `json:"description,omitempty"`
 	WhenToUse   *string `json:"when_to_use,omitempty"`
 	Overview    *string `json:"overview,omitempty"`
 	Notes       *string `json:"notes,omitempty"`
 }
 
-// PolishPluginInfo proxies to the Python polish_info endpoint.
-func PolishPluginInfo(ctx context.Context, req PolishPluginInfoRequest) (*PolishPluginInfoResponse, error) {
+// PolishWorkflowInfo proxies to the Python polish_info endpoint.
+func PolishWorkflowInfo(ctx context.Context, req PolishWorkflowInfoRequest) (*PolishWorkflowInfoResponse, error) {
 	req.LLMConfig = ensureLLMConfig(req.LLMConfig)
-	url := generateURL(polishPluginInfoPath)
+	url := generateURL(polishWorkflowInfoPath)
 	var raw map[string]any
 	if err := common.ApiPost(ctx, url, req, nil, &raw, generateTimeout); err != nil {
 		return nil, err
@@ -331,7 +331,7 @@ func PolishPluginInfo(ctx context.Context, req PolishPluginInfoRequest) (*Polish
 	if data, ok := raw["data"].(map[string]any); ok {
 		raw = data
 	}
-	resp := &PolishPluginInfoResponse{}
+	resp := &PolishWorkflowInfoResponse{}
 	if v, ok := raw["description"].(string); ok {
 		resp.Description = &v
 	}

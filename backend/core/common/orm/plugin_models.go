@@ -5,17 +5,17 @@ import (
 	"time"
 )
 
-// PluginSession represents one plugin workflow execution for a conversation.
+// WorkflowSession represents one plugin workflow execution for a conversation.
 // A conversation may have at most one active session at a time.
-type PluginSession struct {
+type WorkflowSession struct {
 	ID                 string `gorm:"column:id;type:varchar(36);primaryKey"`
 	ConversationID     string `gorm:"column:conversation_id;type:varchar(36);not null"`
-	PluginID           string `gorm:"column:plugin_id;type:varchar(64);not null"`
-	PluginRef          string `gorm:"column:plugin_ref;type:varchar(512);not null;default:''"`
-	PluginRevisionID   string `gorm:"column:plugin_revision_id;type:varchar(36);not null;default:''"`
-	PluginRevisionNo   int64  `gorm:"column:plugin_revision_no;not null;default:0"`
-	PluginTreeHash     string `gorm:"column:plugin_tree_hash;type:varchar(64);not null;default:''"`
-	PluginRemoteRoot   string `gorm:"column:plugin_remote_root;type:varchar(1024);not null;default:''"`
+	WorkflowID         string `gorm:"column:plugin_id;type:varchar(64);not null"`
+	WorkflowRef        string `gorm:"column:plugin_ref;type:varchar(512);not null;default:''"`
+	WorkflowRevisionID string `gorm:"column:plugin_revision_id;type:varchar(36);not null;default:''"`
+	WorkflowRevisionNo int64  `gorm:"column:plugin_revision_no;not null;default:0"`
+	WorkflowTreeHash   string `gorm:"column:plugin_tree_hash;type:varchar(64);not null;default:''"`
+	WorkflowRemoteRoot string `gorm:"column:plugin_remote_root;type:varchar(1024);not null;default:''"`
 	StateVersion       int64  `gorm:"column:state_version;not null;default:0"`
 	GraphHash          string `gorm:"column:graph_hash;type:varchar(64);not null;default:''"`
 	GraphSchemaVersion string `gorm:"column:graph_schema_version;type:varchar(16);not null;default:''"`
@@ -34,11 +34,11 @@ type PluginSession struct {
 	UpdatedAt     time.Time `gorm:"column:updated_at;not null"`
 }
 
-func (PluginSession) TableName() string { return "plugin_sessions" }
+func (WorkflowSession) TableName() string { return "plugin_sessions" }
 
-// PluginSessionStep tracks one step execution instance inside a plugin session.
+// WorkflowSessionStep tracks one step execution instance inside a plugin session.
 // Each record maps to exactly one sub_agent_tasks row (task_id == sub_agent_tasks.id).
-type PluginSessionStep struct {
+type WorkflowSessionStep struct {
 	ID        string `gorm:"column:id;type:varchar(36);primaryKey"`
 	SessionID string `gorm:"column:session_id;type:varchar(36);not null"`
 	StepID    string `gorm:"column:step_id;type:varchar(64);not null"`
@@ -51,9 +51,9 @@ type PluginSessionStep struct {
 	UpdatedAt time.Time `gorm:"column:updated_at;not null"`
 }
 
-func (PluginSessionStep) TableName() string { return "plugin_session_steps" }
+func (WorkflowSessionStep) TableName() string { return "plugin_session_steps" }
 
-// PluginSlotRevision records one artifact write into a plugin panel slot.
+// WorkflowSlotRevision records one artifact write into a plugin panel slot.
 // selected=true means this revision is the currently displayed version of the slot.
 //
 // Value resolution (read path):
@@ -61,7 +61,7 @@ func (PluginSessionStep) TableName() string { return "plugin_session_steps" }
 //     (task_id via plugin_session_steps, slot, seq=ArtifactSeq).
 //   - Human revision: HumanArtifactID != nil → value comes from plugin_human_artifacts.
 //   - Legacy fallback: both nil → value comes from ContentSnapshot (pre-migration rows).
-type PluginSlotRevision struct {
+type WorkflowSlotRevision struct {
 	ID        string `gorm:"column:id;type:varchar(36);primaryKey"`
 	SessionID string `gorm:"column:session_id;type:varchar(36);not null"`
 	SlotID    string `gorm:"column:slot_id;type:varchar(64);not null"`
@@ -88,9 +88,9 @@ type PluginSlotRevision struct {
 	CreatedAt         time.Time `gorm:"column:created_at;not null"`
 }
 
-func (PluginSlotRevision) TableName() string { return "plugin_slot_revisions" }
+func (WorkflowSlotRevision) TableName() string { return "plugin_slot_revisions" }
 
-type PluginAttemptInputBinding struct {
+type WorkflowAttemptInputBinding struct {
 	ID                 string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	SessionID          string    `gorm:"column:session_id;type:varchar(36);not null;index"`
 	AttemptID          string    `gorm:"column:attempt_id;type:varchar(36);not null;index"`
@@ -100,9 +100,9 @@ type PluginAttemptInputBinding struct {
 	CreatedAt          time.Time `gorm:"column:created_at;not null"`
 }
 
-func (PluginAttemptInputBinding) TableName() string { return "plugin_attempt_input_bindings" }
+func (WorkflowAttemptInputBinding) TableName() string { return "plugin_attempt_input_bindings" }
 
-type PluginRouteDecision struct {
+type WorkflowRouteDecision struct {
 	ID              string          `gorm:"column:id;type:varchar(36);primaryKey"`
 	SessionID       string          `gorm:"column:session_id;type:varchar(36);not null;index"`
 	FromStepID      string          `gorm:"column:from_step_id;type:varchar(64);not null"`
@@ -116,9 +116,9 @@ type PluginRouteDecision struct {
 	CreatedAt       time.Time       `gorm:"column:created_at;not null"`
 }
 
-func (PluginRouteDecision) TableName() string { return "plugin_route_decisions" }
+func (WorkflowRouteDecision) TableName() string { return "plugin_route_decisions" }
 
-type PluginTransitionCommand struct {
+type WorkflowTransitionCommand struct {
 	CommandID             string          `gorm:"column:command_id;type:varchar(36);primaryKey"`
 	SessionID             string          `gorm:"column:session_id;type:varchar(36);not null;default:'';index"`
 	Operation             string          `gorm:"column:operation;type:varchar(16);not null"`
@@ -132,11 +132,11 @@ type PluginTransitionCommand struct {
 	UpdatedAt             time.Time       `gorm:"column:updated_at;not null"`
 }
 
-func (PluginTransitionCommand) TableName() string { return "plugin_transition_commands" }
+func (WorkflowTransitionCommand) TableName() string { return "plugin_transition_commands" }
 
-// PluginRunOutbox makes an accepted Plugin transition durably dispatchable.
+// WorkflowRunOutbox makes an accepted Workflow transition durably dispatchable.
 // Payload contains the exact SubAgent RunRequest needed after a process restart.
-type PluginRunOutbox struct {
+type WorkflowRunOutbox struct {
 	TaskID    string          `gorm:"column:task_id;type:varchar(36);primaryKey"`
 	Payload   json.RawMessage `gorm:"column:payload;type:jsonb;not null"`
 	Status    string          `gorm:"column:status;type:varchar(16);not null;index"`
@@ -145,12 +145,12 @@ type PluginRunOutbox struct {
 	UpdatedAt time.Time       `gorm:"column:updated_at;not null"`
 }
 
-func (PluginRunOutbox) TableName() string { return "plugin_run_outbox" }
+func (WorkflowRunOutbox) TableName() string { return "plugin_run_outbox" }
 
-// PluginSlotOrder tracks the display ordering of list-cardinality slot items.
+// WorkflowSlotOrder tracks the display ordering of list-cardinality slot items.
 // order_list is a JSONB array of list_index values in display order (visible items only).
 // order_version is an optimistic-lock counter incremented on every reorder or delete.
-type PluginSlotOrder struct {
+type WorkflowSlotOrder struct {
 	SessionID    string          `gorm:"column:session_id;type:varchar(36);not null;primaryKey"`
 	SlotID       string          `gorm:"column:slot_id;type:varchar(64);not null;primaryKey"`
 	OrderList    json.RawMessage `gorm:"column:order_list;type:jsonb;not null;default:'[]'"`
@@ -158,11 +158,11 @@ type PluginSlotOrder struct {
 	UpdatedAt    time.Time       `gorm:"column:updated_at;not null"`
 }
 
-func (PluginSlotOrder) TableName() string { return "plugin_slot_order" }
+func (WorkflowSlotOrder) TableName() string { return "plugin_slot_order" }
 
-// PluginStepIntent stores step-level intent/constraints set by the user during a session.
+// WorkflowStepIntent stores step-level intent/constraints set by the user during a session.
 // There is at most one row per (session_id, step_id) pair; upserted on each intentwrite call.
-type PluginStepIntent struct {
+type WorkflowStepIntent struct {
 	ID            string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	SessionID     string    `gorm:"column:session_id;type:varchar(36);not null;uniqueIndex:uk_plugin_step_intent,priority:1"`
 	StepID        string    `gorm:"column:step_id;type:varchar(64);not null;uniqueIndex:uk_plugin_step_intent,priority:2"`
@@ -170,13 +170,13 @@ type PluginStepIntent struct {
 	UpdatedAt     time.Time `gorm:"column:updated_at;not null"`
 }
 
-func (PluginStepIntent) TableName() string { return "plugin_step_intents" }
+func (WorkflowStepIntent) TableName() string { return "plugin_step_intents" }
 
-// PluginDraft stores user-created plugin draft content.
+// WorkflowDraft stores user-created plugin draft content.
 // Each draft is owned by the creating user and represents a work-in-progress plugin.
 // The original Content column is kept for backward compatibility; readers should prefer
 // the split columns and fall back to Content when the split columns are empty.
-type PluginDraft struct {
+type WorkflowDraft struct {
 	ID        string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	Name      string    `gorm:"column:name;type:varchar(255);not null;default:''"`
 	Content   string    `gorm:"column:content;type:text;not null;default:''"`
@@ -192,8 +192,8 @@ type PluginDraft struct {
 	//   'state_done'   — Phase 2 complete (state.yml available); Phase 3 running
 	//   'done'         — All phases complete
 	//   'failed'       — A phase failed; see generate_error for details
-	PluginYAMLContent string `gorm:"column:plugin_yaml_content;type:text;not null;default:''"`
-	StateYAMLContent  string `gorm:"column:state_yaml_content;type:text;not null;default:''"`
+	WorkflowYAMLContent string `gorm:"column:plugin_yaml_content;type:text;not null;default:''"`
+	StateYAMLContent    string `gorm:"column:state_yaml_content;type:text;not null;default:''"`
 	// StateLayoutContent stores only the x-layout JSON (node positions/widths) extracted
 	// from state.yml. Separated so layout drag-saves never contend with AI writes.
 	// Saved with last-write-wins; no version check needed (single-user, AI never writes this).
@@ -206,7 +206,7 @@ type PluginDraft struct {
 	// GenerateWarning stores non-fatal warnings produced during generation (migration 20260709120000).
 	// Non-empty when GenerateStatus = 'done' but some fields were incomplete after retries.
 	GenerateWarning string `gorm:"column:generate_warning;type:text;not null;default:''"`
-	// Version is an optimistic-lock counter. SavePluginDraft increments it on every
+	// Version is an optimistic-lock counter. SaveWorkflowDraft increments it on every
 	// successful write to plugin_yaml_content or state_yaml_content and rejects saves
 	// that arrive with a stale version (returns 409 Conflict).
 	// AI generate_job writes bypass the version check (it only writes its own fields).
@@ -223,17 +223,17 @@ type PluginDraft struct {
 	// DesignBriefContent stores the Phase 0 design brief Markdown (migration 20260709140000).
 	// Empty for old drafts that were generated before Phase 0 was introduced.
 	DesignBriefContent string `gorm:"column:design_brief_content;type:text;not null;default:''"`
-	// PluginID mirrors the `id:` field inside PluginYAMLContent (migration 20260709150000).
-	// Kept in sync on every save that touches PluginYAMLContent.
+	// WorkflowID mirrors the `id:` field inside WorkflowYAMLContent (migration 20260709150000).
+	// Kept in sync on every save that touches WorkflowYAMLContent.
 	// A partial unique index (created_by, plugin_id) WHERE plugin_id != '' enforces
 	// per-user uniqueness while allowing legacy empty-string rows to coexist.
-	PluginID       string `gorm:"column:plugin_id;type:varchar(255);not null;default:'';uniqueIndex:idx_plugin_drafts_user_plugin_id,priority:2,where:plugin_id != ''"`
+	WorkflowID     string `gorm:"column:plugin_id;type:varchar(255);not null;default:'';uniqueIndex:idx_plugin_drafts_user_plugin_id,priority:2,where:plugin_id != ''"`
 	BaseRevisionID string `gorm:"column:base_revision_id;type:varchar(36);not null;default:''"`
 }
 
-func (PluginDraft) TableName() string { return "plugin_drafts" }
+func (WorkflowDraft) TableName() string { return "plugin_drafts" }
 
-type PluginGenerationAnalysis struct {
+type WorkflowGenerationAnalysis struct {
 	ID                    string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	DraftID               string    `gorm:"column:draft_id;type:varchar(36);not null;index:idx_plugin_generation_analyses_draft,priority:1"`
 	UserID                string    `gorm:"column:user_id;type:varchar(255);not null"`
@@ -255,33 +255,33 @@ type PluginGenerationAnalysis struct {
 	UpdatedAt             time.Time `gorm:"column:updated_at;not null"`
 }
 
-func (PluginGenerationAnalysis) TableName() string { return "plugin_generation_analyses" }
+func (WorkflowGenerationAnalysis) TableName() string { return "plugin_generation_analyses" }
 
-type PluginRepairRun struct {
-	ID                    string    `gorm:"column:id;type:varchar(36);primaryKey"`
-	DraftID               string    `gorm:"column:draft_id;type:varchar(36);not null;index:idx_plugin_repair_runs_draft,priority:1"`
-	UserID                string    `gorm:"column:user_id;type:varchar(255);not null"`
-	BasePluginRevisionID  string    `gorm:"column:base_plugin_revision_id;type:varchar(36);not null;default:''"`
-	DraftVersionBefore    int       `gorm:"column:draft_version_before;not null"`
-	Target                string    `gorm:"column:target;type:varchar(32);not null"`
-	Mode                  string    `gorm:"column:mode;type:varchar(32);not null"`
-	SourceAnalysisID      string    `gorm:"column:source_analysis_id;type:varchar(36);not null;default:''"`
-	SourceSkillRevisionID string    `gorm:"column:source_skill_revision_id;type:varchar(36);not null;default:''"`
-	RepairHint            string    `gorm:"column:repair_hint;type:text;not null;default:''"`
-	DiagnosticsBeforeJSON string    `gorm:"column:diagnostics_before_json;type:text;not null;default:'{}'"`
-	ChangesJSON           string    `gorm:"column:changes_json;type:text;not null;default:'{}'"`
-	DiagnosticsAfterJSON  string    `gorm:"column:diagnostics_after_json;type:text;not null;default:'{}'"`
-	Status                string    `gorm:"column:status;type:varchar(32);not null"`
-	CreatedAt             time.Time `gorm:"column:created_at;not null;index:idx_plugin_repair_runs_draft,priority:2"`
-	UpdatedAt             time.Time `gorm:"column:updated_at;not null"`
+type WorkflowRepairRun struct {
+	ID                     string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	DraftID                string    `gorm:"column:draft_id;type:varchar(36);not null;index:idx_plugin_repair_runs_draft,priority:1"`
+	UserID                 string    `gorm:"column:user_id;type:varchar(255);not null"`
+	BaseWorkflowRevisionID string    `gorm:"column:base_plugin_revision_id;type:varchar(36);not null;default:''"`
+	DraftVersionBefore     int       `gorm:"column:draft_version_before;not null"`
+	Target                 string    `gorm:"column:target;type:varchar(32);not null"`
+	Mode                   string    `gorm:"column:mode;type:varchar(32);not null"`
+	SourceAnalysisID       string    `gorm:"column:source_analysis_id;type:varchar(36);not null;default:''"`
+	SourceSkillRevisionID  string    `gorm:"column:source_skill_revision_id;type:varchar(36);not null;default:''"`
+	RepairHint             string    `gorm:"column:repair_hint;type:text;not null;default:''"`
+	DiagnosticsBeforeJSON  string    `gorm:"column:diagnostics_before_json;type:text;not null;default:'{}'"`
+	ChangesJSON            string    `gorm:"column:changes_json;type:text;not null;default:'{}'"`
+	DiagnosticsAfterJSON   string    `gorm:"column:diagnostics_after_json;type:text;not null;default:'{}'"`
+	Status                 string    `gorm:"column:status;type:varchar(32);not null"`
+	CreatedAt              time.Time `gorm:"column:created_at;not null;index:idx_plugin_repair_runs_draft,priority:2"`
+	UpdatedAt              time.Time `gorm:"column:updated_at;not null"`
 }
 
-func (PluginRepairRun) TableName() string { return "plugin_repair_runs" }
+func (WorkflowRepairRun) TableName() string { return "plugin_repair_runs" }
 
-type PluginResource struct {
+type WorkflowResource struct {
 	ID              string    `gorm:"column:id;type:varchar(36);primaryKey"`
-	PluginRef       string    `gorm:"column:plugin_ref;type:varchar(512);not null;uniqueIndex"`
-	PluginID        string    `gorm:"column:plugin_id;type:varchar(255);not null"`
+	WorkflowRef     string    `gorm:"column:plugin_ref;type:varchar(512);not null;uniqueIndex"`
+	WorkflowID      string    `gorm:"column:plugin_id;type:varchar(255);not null"`
 	OwnerUserID     string    `gorm:"column:owner_user_id;type:varchar(255);not null;index:idx_plugins_owner,priority:1"`
 	OwnerScope      string    `gorm:"column:owner_scope;type:varchar(128);not null"`
 	SourceType      string    `gorm:"column:source_type;type:varchar(16);not null;default:'user'"`
@@ -297,9 +297,9 @@ type PluginResource struct {
 	UpdatedAt       time.Time `gorm:"column:updated_at;not null"`
 }
 
-func (PluginResource) TableName() string { return "plugins" }
+func (WorkflowResource) TableName() string { return "plugins" }
 
-type PluginBlob struct {
+type WorkflowBlob struct {
 	Hash      string    `gorm:"column:hash;type:varchar(64);primaryKey"`
 	Size      int64     `gorm:"column:size;not null"`
 	Mime      string    `gorm:"column:mime;type:varchar(128)"`
@@ -309,11 +309,11 @@ type PluginBlob struct {
 	CreatedAt time.Time `gorm:"column:created_at;not null"`
 }
 
-func (PluginBlob) TableName() string { return "plugin_blobs" }
+func (WorkflowBlob) TableName() string { return "plugin_blobs" }
 
-type PluginRevision struct {
+type WorkflowRevision struct {
 	ID                 string          `gorm:"column:id;type:varchar(36);primaryKey"`
-	PluginResourceID   string          `gorm:"column:plugin_resource_id;type:varchar(36);not null;uniqueIndex:uk_plugin_revisions_resource_no,priority:1;index:idx_plugin_revisions_resource"`
+	WorkflowResourceID string          `gorm:"column:plugin_resource_id;type:varchar(36);not null;uniqueIndex:uk_plugin_revisions_resource_no,priority:1;index:idx_plugin_revisions_resource"`
 	ParentRevisionID   string          `gorm:"column:parent_revision_id;type:varchar(36)"`
 	RevisionNo         int64           `gorm:"column:revision_no;not null;uniqueIndex:uk_plugin_revisions_resource_no,priority:2"`
 	TreeHash           string          `gorm:"column:tree_hash;type:varchar(64);not null"`
@@ -325,9 +325,9 @@ type PluginRevision struct {
 	CreatedAt          time.Time       `gorm:"column:created_at;not null"`
 }
 
-func (PluginRevision) TableName() string { return "plugin_revisions" }
+func (WorkflowRevision) TableName() string { return "plugin_revisions" }
 
-type PluginRevisionEntry struct {
+type WorkflowRevisionEntry struct {
 	RevisionID string  `gorm:"column:revision_id;type:varchar(36);primaryKey"`
 	Path       string  `gorm:"column:path;type:varchar(1024);primaryKey"`
 	EntryType  string  `gorm:"column:entry_type;type:varchar(16);not null;default:'file'"`
@@ -339,13 +339,13 @@ type PluginRevisionEntry struct {
 	Mode       int     `gorm:"column:mode;not null;default:420"`
 }
 
-func (PluginRevisionEntry) TableName() string { return "plugin_revision_entries" }
+func (WorkflowRevisionEntry) TableName() string { return "plugin_revision_entries" }
 
-type UserPluginSetting struct {
-	UserID    string    `gorm:"column:user_id;type:varchar(255);primaryKey"`
-	PluginRef string    `gorm:"column:plugin_ref;type:varchar(512);primaryKey"`
-	Enabled   bool      `gorm:"column:enabled;not null;default:false"`
-	UpdatedAt time.Time `gorm:"column:updated_at;not null"`
+type UserWorkflowSetting struct {
+	UserID      string    `gorm:"column:user_id;type:varchar(255);primaryKey"`
+	WorkflowRef string    `gorm:"column:plugin_ref;type:varchar(512);primaryKey"`
+	Enabled     bool      `gorm:"column:enabled;not null;default:false"`
+	UpdatedAt   time.Time `gorm:"column:updated_at;not null"`
 }
 
-func (UserPluginSetting) TableName() string { return "user_plugin_settings" }
+func (UserWorkflowSetting) TableName() string { return "user_plugin_settings" }

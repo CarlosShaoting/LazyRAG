@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+"""Reject legacy Plugin domain names outside persistence compatibility syntax.  # noqa: Q000
+
+The workflow migration deliberately keeps physical ``plugin_*`` database names.
+Those names are allowed only where they are unambiguously used as SQL identifiers,
+GORM column/table mappings, or row-mapper aliases.  A whole file or directory is
+never exempt: public structs and JSON fields in a persistence adapter are scanned
+like every other source line.
+"""  # noqa: Q000
+
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable, Iterator, Sequence
+
+
+DEFAULT_ROOTS = (
+    "api",  # noqa: Q000
+    "algorithm/lazymind",  # noqa: Q000
+    "backend/core",  # noqa: Q000
+    "frontend/src",  # noqa: Q000
+)
+
+SCANNED_SUFFIXES = {
+    ".go", ".py", ".ts", ".tsx", ".js", ".jsx", ".json", ".yaml", ".yml",  # noqa: Q000
+}
+
+IGNORED_PARTS = {
+    ".git", "node_modules", "vendor", "__pycache__", "dist", "build",  # noqa: Q000
+}
+
+# Database identifiers are lower snake case with at least one underscore.  A
+# bare "plugin" is never a physical identifier and therefore is never allowed.  # noqa: Q000
+PHYSICAL_NAME = re.compile(r"\bplugin_[a-z][a-z0-9_]*\b")  # noqa: Q000
+LEGACY_DOMAIN = re.compile(
+    r"(?<![A-Za-z0-9])(?:Plugin[A-Za-z0-9_]*|plugin[A-Z][A-Za-z0-9_]*|"  # noqa: Q000
+    r"plugin[-_][A-Za-z0-9_-]+|/api/plugins(?:/|\b))"  # noqa: Q000
+)
+
+GO_PERSISTENCE = re.compile(
+    r"(?:gorm:\"[^\"]*(?:column|index|uniqueIndex):[^\"]*plugin_|"  # noqa: Q000
+    r"TableName\(\).*return\s+\"plugin_|"  # noqa: Q000
+    r"(?:Table|Column|Index|Constraint)\([^\n]*\"plugin_)"  # noqa: Q000
+)
+PYTHON_SQL = re.compile(
+    r"(?i)\b(?:from|join|into|update|table|column|index|constraint)\s+plugin_"  # noqa: Q000
+)
+SQL_IDENTIFIER = re.compile(
+    r"(?i)\b(?:create|alter|drop)\s+(?:table|index)\s+(?:if\s+(?:not\s+)?exists\s+)?plugin_"  # noqa: Q000
+    r"|\b(?:from|join|into|update|references)\s+plugin_"  # noqa: Q000
+    r"|\bplugin_[a-z0-9_]*\s+(?:varchar|text|uuid|jsonb?|integer|bigint|boolean|timestamp)\b"  # noqa: Q000
+)
+
+
+@dataclass(frozen=True)
+class Violation:
+    path: Path
+    line: int
+    column: int
+    token: str
+
+    def render(self, root: Path) -> str:
+        try:
+            path = self.path.relative_to(root)
+        except ValueError:
+            path = self.path
+        return f"{path}:{self.line}:{self.column}: legacy Workflow domain name {self.token!r}"  # noqa: Q000
+
+
+def _is_physical_name_allowed(path: Path, line: str, token: str, start: int) -> bool:
+    if not PHYSICAL_NAME.fullmatch(token):
+        return False
+    if path.suffix == ".sql":  # noqa: Q000
+        return bool(SQL_IDENTIFIER.search(line)) and not re.search(
+            r"(?i)\bAS\s+$", line[:start]  # noqa: Q000
+        )
+    if path.suffix == ".go":  # noqa: Q000
+        for match in re.finditer(r'gorm:\"[^\"]*\"', line):  # noqa: Q000
+            if match.start() <= start < match.end():
+                return True
+        table_return = re.search(r'TableName\(\).*return\s+\"([^\"]+)\"', line)  # noqa: Q000
+        return bool(table_return and table_return.start(1) <= start < table_return.end(1))
+    if path.suffix == ".py":  # noqa: Q000
+        return bool(PYTHON_SQL.search(line)) and not re.search(
+            r"(?i)\bAS\s+$", line[:start]  # noqa: Q000
+        )
+    return False
+
+
+def scan_file(path: Path) -> Iterator[Violation]:
+    try:
+        contents = path.read_text(encoding="utf-8")  # noqa: Q000
+    except UnicodeDecodeError:
+        return
+    for line_number, line in enumerate(contents.splitlines(), 1):
+        for match in LEGACY_DOMAIN.finditer(line):
+            token = match.group(0)
+            if _is_physical_name_allowed(path, line, token, match.start()):
+                continue
+            yield Violation(path, line_number, match.start() + 1, token)
+
+
+def iter_files(paths: Iterable[Path]) -> Iterator[Path]:
+    for path in paths:
+        if path.is_file():
+            if path.suffix in SCANNED_SUFFIXES or path.suffix == ".sql":  # noqa: Q000
+                yield path
+            continue
+        if not path.exists():
+            continue
+        for candidate in path.rglob("*"):  # noqa: Q000
+            if any(part in IGNORED_PARTS for part in candidate.parts):
+                continue
+            if candidate.is_file() and (
+                candidate.suffix in SCANNED_SUFFIXES or candidate.suffix == ".sql"  # noqa: Q000
+            ):
+                yield candidate
+
+
+def scan_paths(paths: Iterable[Path]) -> list[Violation]:
+    return [violation for path in iter_files(paths) for violation in scan_file(path)]
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("paths", nargs="*", help="files/directories; defaults to public product roots")  # noqa: Q000
+    parser.add_argument("--root", type=Path, default=Path.cwd(), help="repository root")  # noqa: Q000
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    root = args.root.resolve()
+    paths = [Path(item) for item in args.paths] if args.paths else [root / item for item in DEFAULT_ROOTS]
+    paths = [path if path.is_absolute() else root / path for path in paths]
+    violations = scan_paths(paths)
+    for violation in violations:
+        print(violation.render(root))
+    if violations:
+        print(f"workflow naming check failed: {len(violations)} violation(s)", file=sys.stderr)  # noqa: Q000
+        return 1
+    print("workflow naming check passed")  # noqa: Q000
+    return 0
+
+
+if __name__ == "__main__":  # noqa: Q000
+    raise SystemExit(main())

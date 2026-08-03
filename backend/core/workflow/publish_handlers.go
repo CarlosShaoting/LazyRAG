@@ -1,4 +1,4 @@
-package plugin
+package workflow
 
 import (
 	"crypto/sha256"
@@ -19,9 +19,9 @@ import (
 
 	"lazymind/core/common"
 	"lazymind/core/common/orm"
-	"lazymind/core/plugin/graphengine"
 	"lazymind/core/store"
 	"lazymind/core/versionfs"
+	"lazymind/core/workflow/graphengine"
 )
 
 var yamlScalarPattern = func(key string) *regexp.Regexp {
@@ -66,12 +66,12 @@ func mustIndexAfterLine(content, matched string) int {
 	return len(content)
 }
 
-func pluginFiles(d orm.PluginDraft) (map[string][]byte, error) {
-	if strings.TrimSpace(d.PluginYAMLContent) == "" || strings.TrimSpace(d.StateYAMLContent) == "" || strings.TrimSpace(d.ScenarioContent) == "" {
+func workflowFiles(d orm.WorkflowDraft) (map[string][]byte, error) {
+	if strings.TrimSpace(d.WorkflowYAMLContent) == "" || strings.TrimSpace(d.StateYAMLContent) == "" || strings.TrimSpace(d.ScenarioContent) == "" {
 		return nil, fmt.Errorf("plugin.yaml, state.yml and scenario.md are required")
 	}
 	files := map[string][]byte{
-		"plugin.yaml":          []byte(d.PluginYAMLContent),
+		"plugin.yaml":          []byte(d.WorkflowYAMLContent),
 		"scenario/state.yml":   []byte(d.StateYAMLContent),
 		"scenario/scenario.md": []byte(d.ScenarioContent),
 	}
@@ -99,7 +99,7 @@ func ownerScope(userID string) string {
 	return "u_" + hex.EncodeToString(sum[:6])
 }
 
-func pluginTreeHash(files map[string][]byte) string {
+func workflowTreeHash(files map[string][]byte) string {
 	entries := make(map[string]versionfs.Entry, len(files))
 	for p, body := range files {
 		sum := sha256.Sum256(body)
@@ -108,24 +108,24 @@ func pluginTreeHash(files map[string][]byte) string {
 	return versionfs.HashTree(entries)
 }
 
-// PublishPluginDraft commits the current draft as an immutable, content-addressed revision.
-func PublishPluginDraft(w http.ResponseWriter, r *http.Request) {
+// PublishWorkflowDraft commits the current draft as an immutable, content-addressed revision.
+func PublishWorkflowDraft(w http.ResponseWriter, r *http.Request) {
 	userID, draftID := common.UserID(r), common.PathVar(r, "draft_id")
 	if userID == "" {
 		common.ReplyErr(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	var d orm.PluginDraft
+	var d orm.WorkflowDraft
 	if err := store.DB().Where("id = ? AND created_by = ?", draftID, userID).First(&d).Error; err != nil {
 		common.ReplyErr(w, "not found", http.StatusNotFound)
 		return
 	}
-	files, err := pluginFiles(d)
+	files, err := workflowFiles(d)
 	if err != nil {
 		common.ReplyErr(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	compiled := graphengine.Compile(d.PluginYAMLContent, d.StateYAMLContent, d.ScenarioContent, graphengine.ProfilePublish)
+	compiled := graphengine.Compile(d.WorkflowYAMLContent, d.StateYAMLContent, d.ScenarioContent, graphengine.ProfilePublish)
 	if !compiled.Valid {
 		common.ReplyErrWithData(w, "plugin validation failed", compiled, http.StatusUnprocessableEntity)
 		return
@@ -138,31 +138,31 @@ func PublishPluginDraft(w http.ResponseWriter, r *http.Request) {
 		common.ReplyErr(w, "custom plugin scripts require the administrator publishing workflow", http.StatusForbidden)
 		return
 	}
-	pid := extractPluginID(d.PluginYAMLContent)
+	pid := extractWorkflowID(d.WorkflowYAMLContent)
 	if pid == "" {
 		common.ReplyErr(w, "plugin.yaml id required", http.StatusBadRequest)
 		return
 	}
 	ref, scope := "user:"+userID+":"+pid, ownerScope(userID)
-	var existing orm.PluginResource
+	var existing orm.WorkflowResource
 	if err := store.DB().Where("plugin_ref=?", ref).First(&existing).Error; err == nil {
 		baseRevisionID := d.BaseRevisionID
 		if baseRevisionID == "" {
 			baseRevisionID = existing.HeadRevisionID
 		}
-		var base orm.PluginRevision
-		if baseRevisionID != "" && store.DB().Where("id=? AND plugin_resource_id=?", baseRevisionID, existing.ID).First(&base).Error == nil && pluginTreeHash(files) == base.TreeHash {
+		var base orm.WorkflowRevision
+		if baseRevisionID != "" && store.DB().Where("id=? AND plugin_resource_id=?", baseRevisionID, existing.ID).First(&base).Error == nil && workflowTreeHash(files) == base.TreeHash {
 			common.ReplyErr(w, "plugin draft has no changes from its base revision", http.StatusConflict)
 			return
 		}
 	}
 	now := time.Now().UTC()
-	var out orm.PluginResource
+	var out orm.WorkflowResource
 	err = store.DB().Transaction(func(tx *gorm.DB) error {
-		var resource orm.PluginResource
+		var resource orm.WorkflowResource
 		err := tx.Where("plugin_ref = ?", ref).First(&resource).Error
 		if err == gorm.ErrRecordNotFound {
-			resource = orm.PluginResource{ID: uuid.NewString(), PluginRef: ref, PluginID: pid, OwnerUserID: userID, OwnerScope: scope, SourceType: d.SourceType, RelativeRoot: "plugins/" + scope + "/" + pid, Name: d.Name, Status: "active", CreatedAt: now, UpdatedAt: now}
+			resource = orm.WorkflowResource{ID: uuid.NewString(), WorkflowRef: ref, WorkflowID: pid, OwnerUserID: userID, OwnerScope: scope, SourceType: d.SourceType, RelativeRoot: "plugins/" + scope + "/" + pid, Name: d.Name, Status: "active", CreatedAt: now, UpdatedAt: now}
 			if resource.SourceType == "" {
 				resource.SourceType = "user"
 			}
@@ -183,11 +183,11 @@ func PublishPluginDraft(w http.ResponseWriter, r *http.Request) {
 		}
 		sort.Strings(paths)
 		versionEntries := make(map[string]versionfs.Entry, len(paths))
-		entries := make([]orm.PluginRevisionEntry, 0, len(paths))
+		entries := make([]orm.WorkflowRevisionEntry, 0, len(paths))
 		for _, p := range paths {
 			body, hash := files[p], hashes[p]
 			versionEntries[p] = versionfs.Entry{Path: p, EntryType: "file", BlobHash: hash, Size: int64(len(body)), Mode: 420}
-			blob := orm.PluginBlob{Hash: hash, Size: int64(len(body)), Mime: mime.TypeByExtension(filepath.Ext(p)), FileType: strings.TrimPrefix(filepath.Ext(p), "."), Content: body, CreatedAt: now}
+			blob := orm.WorkflowBlob{Hash: hash, Size: int64(len(body)), Mime: mime.TypeByExtension(filepath.Ext(p)), FileType: strings.TrimPrefix(filepath.Ext(p), "."), Content: body, CreatedAt: now}
 			if blob.Mime == "" {
 				blob.Mime = "text/plain"
 			}
@@ -198,16 +198,16 @@ func PublishPluginDraft(w http.ResponseWriter, r *http.Request) {
 				return err
 			}
 			h := hash
-			entries = append(entries, orm.PluginRevisionEntry{RevisionID: revID, Path: p, EntryType: "file", BlobHash: &h, Size: int64(len(body)), Mime: blob.Mime, FileType: blob.FileType, Mode: 420})
+			entries = append(entries, orm.WorkflowRevisionEntry{RevisionID: revID, Path: p, EntryType: "file", BlobHash: &h, Size: int64(len(body)), Mime: blob.Mime, FileType: blob.FileType, Mode: 420})
 		}
 		treeHash := versionfs.HashTree(versionEntries)
-		if err := tx.Create(&orm.PluginRevision{ID: revID, PluginResourceID: resource.ID, ParentRevisionID: parent, RevisionNo: next, TreeHash: treeHash, CompiledGraph: compiled.Graph.JSON(), GraphHash: compiled.GraphHash, GraphSchemaVersion: graphengine.SchemaVersion, Message: "publish plugin draft", CreatedBy: userID, CreatedAt: now}).Error; err != nil {
+		if err := tx.Create(&orm.WorkflowRevision{ID: revID, WorkflowResourceID: resource.ID, ParentRevisionID: parent, RevisionNo: next, TreeHash: treeHash, CompiledGraph: compiled.Graph.JSON(), GraphHash: compiled.GraphHash, GraphSchemaVersion: graphengine.SchemaVersion, Message: "publish plugin draft", CreatedBy: userID, CreatedAt: now}).Error; err != nil {
 			return err
 		}
 		if err := tx.Create(&entries).Error; err != nil {
 			return err
 		}
-		updates := map[string]any{"head_revision_id": revID, "version": next, "updated_at": now, "name": d.Name, "description": yamlScalar(d.PluginYAMLContent, "description"), "when_to_use": yamlScalar(d.PluginYAMLContent, "when_to_use"), "contains_scripts": len(files) > 3}
+		updates := map[string]any{"head_revision_id": revID, "version": next, "updated_at": now, "name": d.Name, "description": yamlScalar(d.WorkflowYAMLContent, "description"), "when_to_use": yamlScalar(d.WorkflowYAMLContent, "when_to_use"), "contains_scripts": len(files) > 3}
 		if err := tx.Model(&resource).Updates(updates).Error; err != nil {
 			return err
 		}
@@ -215,7 +215,7 @@ func PublishPluginDraft(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		if next == 1 {
-			if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&orm.UserPluginSetting{UserID: userID, PluginRef: ref, Enabled: false, UpdatedAt: now}).Error; err != nil {
+			if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&orm.UserWorkflowSetting{UserID: userID, WorkflowRef: ref, Enabled: false, UpdatedAt: now}).Error; err != nil {
 				return err
 			}
 		}
@@ -225,16 +225,16 @@ func PublishPluginDraft(w http.ResponseWriter, r *http.Request) {
 		common.ReplyErr(w, "publish failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	var setting orm.UserPluginSetting
-	enabled := store.DB().Where("user_id=? AND plugin_ref=?", userID, out.PluginRef).First(&setting).Error == nil && setting.Enabled
-	common.ReplyOK(w, map[string]any{"plugin_ref": out.PluginRef, "revision_id": out.HeadRevisionID, "revision_no": out.Version, "remote_root": "remote://" + out.RelativeRoot, "enabled": enabled})
+	var setting orm.UserWorkflowSetting
+	enabled := store.DB().Where("user_id=? AND plugin_ref=?", userID, out.WorkflowRef).First(&setting).Error == nil && setting.Enabled
+	common.ReplyOK(w, map[string]any{"plugin_ref": out.WorkflowRef, "revision_id": out.HeadRevisionID, "revision_no": out.Version, "remote_root": "remote://" + out.RelativeRoot, "enabled": enabled})
 }
 
-func scriptsApprovedForPublish(db *gorm.DB, draft orm.PluginDraft) bool {
+func scriptsApprovedForPublish(db *gorm.DB, draft orm.WorkflowDraft) bool {
 	if draft.SourceAnalysisID == "" {
 		return false
 	}
-	var analysis orm.PluginGenerationAnalysis
+	var analysis orm.WorkflowGenerationAnalysis
 	if db.Where("id=? AND draft_id=?", draft.SourceAnalysisID, draft.ID).First(&analysis).Error != nil {
 		return false
 	}
@@ -259,11 +259,11 @@ func scriptsApprovedForPublish(db *gorm.DB, draft orm.PluginDraft) bool {
 	return len(scripts) > 0
 }
 
-func frameworkToolsAvailableForPublish(db *gorm.DB, draft orm.PluginDraft) bool {
+func frameworkToolsAvailableForPublish(db *gorm.DB, draft orm.WorkflowDraft) bool {
 	if draft.SourceAnalysisID == "" {
 		return true
 	}
-	var analysis orm.PluginGenerationAnalysis
+	var analysis orm.WorkflowGenerationAnalysis
 	if db.Where("id=? AND draft_id=?", draft.SourceAnalysisID, draft.ID).First(&analysis).Error != nil {
 		return false
 	}
@@ -282,8 +282,8 @@ func frameworkToolsAvailableForPublish(db *gorm.DB, draft orm.PluginDraft) bool 
 	return true
 }
 
-func RollbackPlugin(w http.ResponseWriter, r *http.Request) {
-	userID, ref := common.UserID(r), pluginRefPathVar(r)
+func RollbackWorkflow(w http.ResponseWriter, r *http.Request) {
+	userID, ref := common.UserID(r), workflowRefPathVar(r)
 	var body struct {
 		RevisionID string `json:"revision_id"`
 	}
@@ -296,21 +296,21 @@ func RollbackPlugin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
-	var newRev orm.PluginRevision
+	var newRev orm.WorkflowRevision
 	err := store.DB().Transaction(func(tx *gorm.DB) error {
-		var p orm.PluginResource
+		var p orm.WorkflowResource
 		if err := tx.Where("plugin_ref=? AND owner_user_id=?", ref, userID).First(&p).Error; err != nil {
 			return err
 		}
-		var target orm.PluginRevision
+		var target orm.WorkflowRevision
 		if err := tx.Where("id=? AND plugin_resource_id=?", body.RevisionID, p.ID).First(&target).Error; err != nil {
 			return err
 		}
-		var entries []orm.PluginRevisionEntry
+		var entries []orm.WorkflowRevisionEntry
 		if err := tx.Where("revision_id=?", target.ID).Find(&entries).Error; err != nil {
 			return err
 		}
-		newRev = orm.PluginRevision{ID: uuid.NewString(), PluginResourceID: p.ID, ParentRevisionID: p.HeadRevisionID, RevisionNo: p.Version + 1, TreeHash: target.TreeHash, Message: "rollback to " + target.ID, CreatedBy: userID, CreatedAt: now}
+		newRev = orm.WorkflowRevision{ID: uuid.NewString(), WorkflowResourceID: p.ID, ParentRevisionID: p.HeadRevisionID, RevisionNo: p.Version + 1, TreeHash: target.TreeHash, Message: "rollback to " + target.ID, CreatedBy: userID, CreatedAt: now}
 		if err := tx.Create(&newRev).Error; err != nil {
 			return err
 		}
@@ -331,13 +331,13 @@ func RollbackPlugin(w http.ResponseWriter, r *http.Request) {
 	common.ReplyOK(w, map[string]any{"revision_id": newRev.ID, "revision_no": newRev.RevisionNo, "tree_hash": newRev.TreeHash})
 }
 
-func ArchivePlugin(w http.ResponseWriter, r *http.Request) {
-	userID, ref := common.UserID(r), pluginRefPathVar(r)
+func ArchiveWorkflow(w http.ResponseWriter, r *http.Request) {
+	userID, ref := common.UserID(r), workflowRefPathVar(r)
 	if userID == "" {
 		common.ReplyErr(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	res := store.DB().Model(&orm.PluginResource{}).Where("plugin_ref=? AND owner_user_id=?", ref, userID).Updates(map[string]any{"status": "archived", "updated_at": time.Now().UTC()})
+	res := store.DB().Model(&orm.WorkflowResource{}).Where("plugin_ref=? AND owner_user_id=?", ref, userID).Updates(map[string]any{"status": "archived", "updated_at": time.Now().UTC()})
 	if res.Error != nil {
 		common.ReplyErr(w, res.Error.Error(), http.StatusInternalServerError)
 		return

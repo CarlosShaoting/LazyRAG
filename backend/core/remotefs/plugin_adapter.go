@@ -13,19 +13,19 @@ import (
 	"lazymind/core/store"
 )
 
-type pluginFile struct {
-	orm.PluginRevisionEntry
+type workflowFile struct {
+	orm.WorkflowRevisionEntry
 	Content []byte
 }
 
-func isPluginPath(v string) bool { return v == "plugins" || strings.HasPrefix(v, "plugins/") }
+func isWorkflowPath(v string) bool { return v == "plugins" || strings.HasPrefix(v, "plugins/") }
 
-func (h *Handler) pluginResource(r *http.Request, raw string) (orm.PluginResource, string, error) {
+func (h *Handler) workflowResource(r *http.Request, raw string) (orm.WorkflowResource, string, error) {
 	parts := strings.Split(strings.Trim(raw, "/"), "/")
 	if len(parts) < 3 || parts[0] != "plugins" {
-		return orm.PluginResource{}, "", gorm.ErrRecordNotFound
+		return orm.WorkflowResource{}, "", gorm.ErrRecordNotFound
 	}
-	var resource orm.PluginResource
+	var resource orm.WorkflowResource
 	err := h.db.Where("relative_root = ? AND status <> 'revoked'", strings.Join(parts[:3], "/")).First(&resource).Error
 	if err != nil {
 		return resource, "", err
@@ -40,7 +40,7 @@ func (h *Handler) pluginResource(r *http.Request, raw string) (orm.PluginResourc
 	return resource, strings.Join(parts[3:], "/"), nil
 }
 
-func (h *Handler) pluginRevision(r *http.Request, resource orm.PluginResource) (string, error) {
+func (h *Handler) workflowRevision(r *http.Request, resource orm.WorkflowResource) (string, error) {
 	rev := strings.TrimSpace(r.URL.Query().Get("revision_id"))
 	if rev == "" {
 		rev = resource.HeadRevisionID
@@ -49,31 +49,31 @@ func (h *Handler) pluginRevision(r *http.Request, resource orm.PluginResource) (
 		return "", gorm.ErrRecordNotFound
 	}
 	var count int64
-	err := h.db.Model(&orm.PluginRevision{}).Where("id=? AND plugin_resource_id=?", rev, resource.ID).Count(&count).Error
+	err := h.db.Model(&orm.WorkflowRevision{}).Where("id=? AND plugin_resource_id=?", rev, resource.ID).Count(&count).Error
 	if err != nil || count != 1 {
 		return "", gorm.ErrRecordNotFound
 	}
 	return rev, nil
 }
 
-func (h *Handler) pluginFiles(r *http.Request, raw string) (orm.PluginResource, string, map[string]pluginFile, error) {
-	resource, rel, err := h.pluginResource(r, raw)
+func (h *Handler) workflowFiles(r *http.Request, raw string) (orm.WorkflowResource, string, map[string]workflowFile, error) {
+	resource, rel, err := h.workflowResource(r, raw)
 	if err != nil {
 		return resource, rel, nil, err
 	}
-	rev, err := h.pluginRevision(r, resource)
+	rev, err := h.workflowRevision(r, resource)
 	if err != nil {
 		return resource, rel, nil, err
 	}
-	var rows []orm.PluginRevisionEntry
+	var rows []orm.WorkflowRevisionEntry
 	if err = h.db.Where("revision_id=?", rev).Find(&rows).Error; err != nil {
 		return resource, rel, nil, err
 	}
-	out := map[string]pluginFile{}
+	out := map[string]workflowFile{}
 	for _, e := range rows {
-		f := pluginFile{PluginRevisionEntry: e}
+		f := workflowFile{WorkflowRevisionEntry: e}
 		if e.BlobHash != nil {
-			var b orm.PluginBlob
+			var b orm.WorkflowBlob
 			if err = h.db.Where("hash=?", *e.BlobHash).First(&b).Error; err != nil {
 				return resource, rel, nil, err
 			}
@@ -84,12 +84,12 @@ func (h *Handler) pluginFiles(r *http.Request, raw string) (orm.PluginResource, 
 	return resource, rel, out, nil
 }
 
-func (h *Handler) pluginList(w http.ResponseWriter, r *http.Request, raw string) {
+func (h *Handler) workflowList(w http.ResponseWriter, r *http.Request, raw string) {
 	if raw == "plugins" {
 		writeJSON(w, http.StatusOK, map[string]any{"items": []any{}})
 		return
 	}
-	_, rel, files, err := h.pluginFiles(r, raw)
+	_, rel, files, err := h.workflowFiles(r, raw)
 	if err != nil {
 		replyError(w, err)
 		return
@@ -124,8 +124,8 @@ func (h *Handler) pluginList(w http.ResponseWriter, r *http.Request, raw string)
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
-func (h *Handler) pluginInfo(w http.ResponseWriter, r *http.Request, raw string) {
-	_, rel, files, err := h.pluginFiles(r, raw)
+func (h *Handler) workflowInfo(w http.ResponseWriter, r *http.Request, raw string) {
+	_, rel, files, err := h.workflowFiles(r, raw)
 	if err != nil {
 		replyError(w, err)
 		return
@@ -144,12 +144,12 @@ func (h *Handler) pluginInfo(w http.ResponseWriter, r *http.Request, raw string)
 	replyError(w, gorm.ErrRecordNotFound)
 }
 
-func (h *Handler) pluginContent(w http.ResponseWriter, r *http.Request, raw string) {
+func (h *Handler) workflowContent(w http.ResponseWriter, r *http.Request, raw string) {
 	if r.Method != http.MethodGet {
 		httperr.Reply(w, "revision/plugin views are read-only", http.StatusBadRequest)
 		return
 	}
-	_, rel, files, err := h.pluginFiles(r, raw)
+	_, rel, files, err := h.workflowFiles(r, raw)
 	if err != nil {
 		replyError(w, err)
 		return

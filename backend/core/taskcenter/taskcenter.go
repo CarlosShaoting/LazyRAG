@@ -112,7 +112,7 @@ type taskResponse struct {
 	UserID            string          `json:"user_id"`
 	ConversationID    string          `json:"conversation_id"`
 	ConversationTitle string          `json:"conversation_title,omitempty"`
-	PluginSessionID   *string         `json:"plugin_session_id,omitempty"`
+	WorkflowSessionID *string         `json:"workflow_session_id,omitempty"`
 	TaskType          string          `json:"task_type"`
 	Title             *string         `json:"title,omitempty"`
 	Status            string          `json:"status"`
@@ -135,7 +135,7 @@ func toResponse(t orm.TaskCenterTask, conversationTitle string, scheduleName *st
 		UserID:            t.UserID,
 		ConversationID:    t.ConversationID,
 		ConversationTitle: conversationTitle,
-		PluginSessionID:   t.PluginSessionID,
+		WorkflowSessionID: t.WorkflowSessionID,
 		TaskType:          t.TaskType,
 		Title:             t.Title,
 		Status:            t.Status,
@@ -151,8 +151,8 @@ func toResponse(t orm.TaskCenterTask, conversationTitle string, scheduleName *st
 
 // ── step loading helpers ──────────────────────────────────────────────────────
 
-// loadStepsForPluginSession loads steps from plugin_session_steps for a given session.
-func loadStepsForPluginSession(ctx context.Context, db *gorm.DB, sessionID string) []stepInfo {
+// loadStepsForWorkflowSession loads steps from plugin_session_steps for a given session.
+func loadStepsForWorkflowSession(ctx context.Context, db *gorm.DB, sessionID string) []stepInfo {
 	type pssRow struct {
 		StepID string `gorm:"column:step_id"`
 		Status string `gorm:"column:status"`
@@ -233,7 +233,7 @@ func loadStepsForConversation(ctx context.Context, db *gorm.DB, convID string) [
 //
 // Decision tree (evaluated only when t.Status is non-terminal):
 //
-//  1. Plugin task (plugin_session_id set): derive from plugin_sessions.status.
+//  1. Workflow task (plugin_session_id set): derive from plugin_sessions.status.
 //  2. No plugin: rely on the persisted task status. Chat histories are written
 //     during streaming to preserve thinking progress, so their presence is not a
 //     completion signal.
@@ -247,14 +247,14 @@ func resolveTaskStatus(ctx context.Context, db *gorm.DB, t orm.TaskCenterTask) s
 	if t.Status == "waiting" || t.Status == "pending" {
 		return t.Status
 	}
-	if t.PluginSessionID != nil && *t.PluginSessionID != "" {
+	if t.WorkflowSessionID != nil && *t.WorkflowSessionID != "" {
 		var sess struct {
 			Status string `gorm:"column:status"`
 		}
 		if err := db.WithContext(ctx).
 			Table("plugin_sessions").
 			Select("status").
-			Where("id = ?", *t.PluginSessionID).
+			Where("id = ?", *t.WorkflowSessionID).
 			First(&sess).Error; err == nil {
 			switch sess.Status {
 			case "active":
@@ -419,8 +419,8 @@ func ListTasks(w http.ResponseWriter, r *http.Request) {
 	for _, resolvedItem := range resolved[offset:end] {
 		t := resolvedItem.task
 		var steps []stepInfo
-		if t.PluginSessionID != nil && *t.PluginSessionID != "" {
-			steps = loadStepsForPluginSession(r.Context(), db, *t.PluginSessionID)
+		if t.WorkflowSessionID != nil && *t.WorkflowSessionID != "" {
+			steps = loadStepsForWorkflowSession(r.Context(), db, *t.WorkflowSessionID)
 		} else {
 			steps = loadStepsForConversation(r.Context(), db, t.ConversationID)
 		}
@@ -474,8 +474,8 @@ func GetTaskByID(w http.ResponseWriter, r *http.Request) {
 	t.Status = effectiveStatus
 
 	var steps []stepInfo
-	if t.PluginSessionID != nil && *t.PluginSessionID != "" {
-		steps = loadStepsForPluginSession(r.Context(), db, *t.PluginSessionID)
+	if t.WorkflowSessionID != nil && *t.WorkflowSessionID != "" {
+		steps = loadStepsForWorkflowSession(r.Context(), db, *t.WorkflowSessionID)
 	} else {
 		steps = loadStepsForConversation(r.Context(), db, t.ConversationID)
 	}
@@ -730,8 +730,8 @@ func ListScheduleTasks(w http.ResponseWriter, r *http.Request) {
 		effectiveStatus := resolveTaskStatus(r.Context(), db, t)
 		t.Status = effectiveStatus
 		var steps []stepInfo
-		if t.PluginSessionID != nil && *t.PluginSessionID != "" {
-			steps = loadStepsForPluginSession(r.Context(), db, *t.PluginSessionID)
+		if t.WorkflowSessionID != nil && *t.WorkflowSessionID != "" {
+			steps = loadStepsForWorkflowSession(r.Context(), db, *t.WorkflowSessionID)
 		} else {
 			steps = loadStepsForConversation(r.Context(), db, t.ConversationID)
 		}

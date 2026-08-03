@@ -1,4 +1,4 @@
-package plugin
+package workflow
 
 import (
 	"crypto/sha256"
@@ -16,17 +16,17 @@ func TestScriptsApprovedForPublishRequiresMatchingAuditHash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&orm.PluginGenerationAnalysis{}); err != nil {
+	if err := db.AutoMigrate(&orm.WorkflowGenerationAnalysis{}); err != nil {
 		t.Fatal(err)
 	}
 	source := "def run(value):\n    return value\n"
 	sum := sha256.Sum256([]byte(source))
 	hash := hex.EncodeToString(sum[:])
-	analysis := orm.PluginGenerationAnalysis{ID: "a1", DraftID: "d1", ScriptReportJSON: `{"scripts/run.py":{"classification":"importable_tool","sha256":"` + hash + `"}}`}
+	analysis := orm.WorkflowGenerationAnalysis{ID: "a1", DraftID: "d1", ScriptReportJSON: `{"scripts/run.py":{"classification":"importable_tool","sha256":"` + hash + `"}}`}
 	if err := db.Create(&analysis).Error; err != nil {
 		t.Fatal(err)
 	}
-	draft := orm.PluginDraft{ID: "d1", SourceAnalysisID: "a1", ScriptsContent: `{"scripts/run.py":"def run(value):\n    return value\n"}`}
+	draft := orm.WorkflowDraft{ID: "d1", SourceAnalysisID: "a1", ScriptsContent: `{"scripts/run.py":"def run(value):\n    return value\n"}`}
 	if !scriptsApprovedForPublish(db, draft) {
 		t.Fatal("matching audited script should be publishable")
 	}
@@ -41,11 +41,11 @@ func TestFrameworkToolsAvailableForPublishRequiresAuditedAvailability(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&orm.PluginGenerationAnalysis{}); err != nil {
+	if err := db.AutoMigrate(&orm.WorkflowGenerationAnalysis{}); err != nil {
 		t.Fatal(err)
 	}
-	draft := orm.PluginDraft{ID: "d2", SourceAnalysisID: "a2"}
-	analysis := orm.PluginGenerationAnalysis{
+	draft := orm.WorkflowDraft{ID: "d2", SourceAnalysisID: "a2"}
+	analysis := orm.WorkflowGenerationAnalysis{
 		ID:                    "a2",
 		DraftID:               draft.ID,
 		ToolMappingReportJSON: `{"search":{"action":"replace","framework_tool":"web_search","available":true}}`,

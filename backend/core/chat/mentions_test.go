@@ -69,7 +69,7 @@ func TestApplyExplicitResourceBindingsIncludesOnlyCurrentMentions(t *testing.T) 
 	applyExplicitResourceBindings(body, resolvedChatMentions{
 		SkillNames:       []string{"video/ai-production"},
 		KnowledgeBaseIDs: []string{"kb-video"},
-		PluginRefs:       []string{"video/workflow"},
+		WorkflowRefs:     []string{"video/workflow"},
 		ResourceMentions: []map[string]string{{
 			"resource_type": "knowledge_base", "resource_ref": "kb-video",
 			"display_name": "视频资料库",
@@ -111,8 +111,8 @@ func TestBuildLazyChatRequestPropagatesExplicitResourceBindings(t *testing.T) {
 	if got := req.ExplicitResources.KnowledgeBaseIDs; len(got) != 1 || got[0] != "kb-video" {
 		t.Fatalf("KnowledgeBaseIDs = %#v", got)
 	}
-	if got := req.ExplicitResources.PluginRefs; len(got) != 1 || got[0] != "video/workflow" {
-		t.Fatalf("PluginRefs = %#v", got)
+	if got := req.ExplicitResources.WorkflowRefs; len(got) != 1 || got[0] != "video/workflow" {
+		t.Fatalf("WorkflowRefs = %#v", got)
 	}
 	if got := req.ExplicitResources.Mentions; len(got) != 1 || got[0]["resource_ref"] != "kb-video" {
 		t.Fatalf("Mentions = %#v", got)

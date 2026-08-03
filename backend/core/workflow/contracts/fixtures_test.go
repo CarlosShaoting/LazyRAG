@@ -47,7 +47,7 @@ func TestProductionBindingRejectsMissingSymbol(t *testing.T) {
 		t.Fatal("cannot locate fixture test")
 	}
 	root := filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "..", "..", ".."))
-	err := requireSymbol(root, "backend/core/plugin/eventloop_test.go", `func\s+TestDefinitelyMissingWorkflowScenario\s*\(`)
+	err := requireSymbol(root, "backend/core/workflow/eventloop_test.go", `func\s+TestDefinitelyMissingWorkflowScenario\s*\(`)
 	if err == nil {
 		t.Fatal("missing production symbol must fail contract binding")
 	}

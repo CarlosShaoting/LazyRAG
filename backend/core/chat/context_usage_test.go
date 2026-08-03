@@ -34,9 +34,9 @@ func TestPreviewQueryReadsTextInput(t *testing.T) {
 	}
 }
 
-func TestMentionedBuiltinPluginReplacesDefaultCatalog(t *testing.T) {
+func TestMentionedBuiltinWorkflowReplacesDefaultCatalog(t *testing.T) {
 	catalog := []map[string]any{{"plugin_ref": "plugin:default", "plugin_id": "default"}}
-	selected, builtins, err := mergeMentionedPlugins(
+	selected, builtins, err := mergeMentionedWorkflows(
 		t.Context(), nil, "user-1", []string{"builtin:image-plugin"}, catalog,
 	)
 	if err != nil {
