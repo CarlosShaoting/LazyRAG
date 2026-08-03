@@ -29,6 +29,7 @@ import (
 	"lazymind/core/userprefs"
 	"lazymind/core/wordgroup"
 	"lazymind/core/workflow"
+	workflowattempt "lazymind/core/workflow/attempt"
 	workflowcompat "lazymind/core/workflow/compat"
 	workflowfacade "lazymind/core/workflow/facade"
 	workflowstore "lazymind/core/workflow/store"
@@ -72,6 +73,13 @@ func handleAgentThreadAPI(r *mux.Router, method, path string, perms []string, h 
 // registerAllRoutes text OpenAPI text（text Job），text handleAPI textPermissiontext（text extract_api_permissions.py text Kong RBAC）。
 func registerAllRoutes(r *mux.Router) {
 	resourcefs.AutoEvoEnabledScanner = resourceupdate.ScanPendingResultsForResource
+	attemptHandler := workflowattempt.Handler{Service: workflowattempt.New(corestore.DB(), workflowattempt.Config{})}
+	handleAPI(r, "POST", "/internal/workflow-attempts:claim", nil, attemptHandler.Claim)
+	handleAPI(r, "POST", "/internal/workflow-attempts/{attempt_id}:heartbeat", nil, attemptHandler.Heartbeat)
+	handleAPI(r, "POST", "/internal/workflow-attempts/{attempt_id}:progress", nil, attemptHandler.Progress)
+	handleAPI(r, "POST", "/internal/workflow-attempts/{attempt_id}:complete", nil, attemptHandler.Complete)
+	handleAPI(r, "POST", "/internal/workflow-attempts/{attempt_id}:fail", nil, attemptHandler.Fail)
+	handleAPI(r, "POST", "/internal/workflow-attempts/{attempt_id}:cancel", nil, attemptHandler.Cancel)
 	workflowRepository := workflowstore.New(corestore.DB())
 	workflowFacade := workflowfacade.Handler{
 		Store:            workflowRepository,

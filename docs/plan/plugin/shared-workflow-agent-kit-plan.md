@@ -312,7 +312,7 @@ Codex 生成过程中只使用 Codex 模型；Core 只提供 Skill snapshot、�
 | [x] | [3 (#489 + completion #496)](https://github.com/LazyAGI/LazyMind/pull/496) | 创建共享 Workflow Skill、references 和 Host Profiles | LazyMind shadow load，决策 trace 可比较 |
 | [x] | [4 (#490 + completion #494)](https://github.com/LazyAGI/LazyMind/pull/494) | Core 增加 Agent-neutral Workflow Tool facade | 现有 internal API 仍兼容，公共契约可测试 |
 | [x] | [5 (#497)](https://github.com/LazyAGI/LazyMind/pull/497) | algorithm/chat 增加统一 Workflow Client | 移除分散的 HTTP payload 和 Workflow DB 查询 |
-| [ ] | 6 | 引入 queued Attempt 与 claim/report 协议 | FakeExecutor 可执行 Workflow |
+| [x] | [6 (#498)](https://github.com/LazyAGI/LazyMind/pull/498) | 引入 queued Attempt 与 claim/report 协议 | FakeExecutor 可执行 Workflow |
 | [ ] | 7 | 实现 LazyMindExecutor 和兼容 adapter | LazyMind SubAgent 通过新协议运行 |
 | [ ] | 8 | 移除 Core 到 `/api/subagent/run` 的固定依赖 | Runtime 与 LazyMind Executor 正式解耦 |
 | [ ] | 9 | 收敛 algorithm/chat prompt、Workflow manager 和 Driver adapter | 公共规则只来自共享 Skill |
