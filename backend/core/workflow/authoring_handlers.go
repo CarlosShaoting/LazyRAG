@@ -190,7 +190,8 @@ func UpdateAuthoringWorkflowDraftFile(w http.ResponseWriter, r *http.Request) {
 	}
 	files := map[string]string{body.Path: body.Content}
 	applyAuthoringFiles(&draft, files)
-	updates := map[string]any{"plugin_yaml_content": draft.WorkflowYAMLContent, "state_yaml_content": draft.StateYAMLContent, "scenario_content": draft.ScenarioContent, "state_layout_content": draft.StateLayoutContent, "scripts_content": draft.ScriptsContent, "plugin_id": extractWorkflowID(draft.WorkflowYAMLContent), "version": gorm.Expr("version + 1"), "updated_at": time.Now().UTC()}
+	// Use domain field names here; GORM owns the legacy physical-column mapping.
+	updates := map[string]any{"WorkflowYAMLContent": draft.WorkflowYAMLContent, "StateYAMLContent": draft.StateYAMLContent, "ScenarioContent": draft.ScenarioContent, "StateLayoutContent": draft.StateLayoutContent, "ScriptsContent": draft.ScriptsContent, "WorkflowID": extractWorkflowID(draft.WorkflowYAMLContent), "Version": gorm.Expr("version + 1"), "UpdatedAt": time.Now().UTC()}
 	result := store.DB().Model(&orm.WorkflowDraft{}).Where("id=? AND created_by=? AND version=?", draftID, userID, body.ExpectedVersion).Updates(updates)
 	if result.Error != nil {
 		common.ReplyErr(w, "save failed", http.StatusInternalServerError)
