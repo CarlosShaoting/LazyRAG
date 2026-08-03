@@ -1,0 +1,2 @@
+-- Intentionally empty. Workflow facade expansion is rolling-deployment safe;
+-- application rollback must not destructively remove data required by newer binaries.
