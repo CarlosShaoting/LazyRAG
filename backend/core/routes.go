@@ -332,6 +332,12 @@ func registerAllRoutes(r *mux.Router) {
 	handleAPI(r, "PATCH", "/conversations/{conversation_id}/workflow-settings", []string{"qa.write"}, chat.PatchConversationWorkflowSettings)
 
 	// ----- Workflow Sessions -----
+	handleAPI(r, "GET", "/workflow-authoring/v1/skill-context", []string{"qa.read"}, workflow.GetSkillConversionContext)
+	handleAPI(r, "POST", "/workflow-authoring/v1/drafts", []string{"qa.write"}, workflow.CreateAuthoringWorkflowDraft)
+	handleAPI(r, "PUT", "/workflow-authoring/v1/drafts/{draft_id}/files", []string{"qa.write"}, workflow.UpdateAuthoringWorkflowDraftFile)
+	handleAPI(r, "GET", "/workflow-authoring/v1/drafts/{draft_id}/diagnostics", []string{"qa.read"}, workflow.GetAuthoringWorkflowDiagnostics)
+	handleAPI(r, "POST", "/workflow-authoring/v1/drafts/{draft_id}:publish", []string{"qa.write"}, workflow.PublishAuthoringWorkflow)
+	handleAPI(r, "GET", "/workflow-authoring/v1/fixture", []string{"qa.read"}, workflow.GenerateAuthoringFixture)
 	handleAPI(r, "POST", "/workflow-input-resources", []string{"qa.write"}, workflowFacade.ImportInputResource)
 	handleAPI(r, "POST", "/workflow-preparations", []string{"qa.write"}, workflowFacade.Prepare)
 	handleAPI(r, "POST", "/workflow-preparations/{preparation_id}:consume", []string{"qa.write"}, workflowFacade.Consume)
