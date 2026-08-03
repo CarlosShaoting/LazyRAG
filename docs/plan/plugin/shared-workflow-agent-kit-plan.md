@@ -308,7 +308,7 @@ Codex 生成过程中只使用 Codex 模型；Core 只提供 Skill snapshot、�
 | 状态 | PR | 主要改动 | 可验证结果 |
 |---|---|---|---|
 | [x] | [1 (#487 + completion #492)](https://github.com/LazyAGI/LazyMind/pull/492) | 建立 Workflow Tool、Event、Attempt Context 契约和 golden fixtures | 当前行为被固定，所有新契约使用 Workflow 命名 |
-| [ ] | [2 (#488，退出条件未满足)](https://github.com/LazyAGI/LazyMind/pull/488) | 将代码、配置、工具和 UI 的领域命名从 Plugin 迁移为 Workflow，并在 Python/Go persistence adapter 映射旧数据库字段 | 业务层不再泄漏 Plugin 命名，旧数据无需迁移即可兼容读写 |
+| [x] | [2 (#488 + Go #493 + completion #495)](https://github.com/LazyAGI/LazyMind/pull/495) | 将代码、配置、工具和 UI 的领域命名从 Plugin 迁移为 Workflow，并在 Python/Go persistence adapter 映射旧数据库字段 | 业务层不再泄漏 Plugin 命名，旧数据无需迁移即可兼容读写 |
 | [ ] | [3 (#489，退出条件未满足)](https://github.com/LazyAGI/LazyMind/pull/489) | 创建共享 Workflow Skill、references 和 Host Profiles | LazyMind shadow load，决策 trace 可比较 |
 | [x] | [4 (#490 + completion #494)](https://github.com/LazyAGI/LazyMind/pull/494) | Core 增加 Agent-neutral Workflow Tool facade | 现有 internal API 仍兼容，公共契约可测试 |
 | [ ] | 5 | algorithm/chat 增加统一 Workflow Client | 移除分散的 HTTP payload 和 Workflow DB 查询 |
