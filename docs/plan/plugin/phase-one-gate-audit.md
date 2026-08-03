@@ -50,10 +50,10 @@ is checked and linked to executable evidence.
 
 ## PR 6 — queued Attempt protocol
 
-- [ ] Lease, heartbeat and fencing persistence are expand-only and capability gated.
-- [ ] Queued claim/progress/terminal protocol enforces ownership and terminal races.
-- [ ] Generic Workflow Outbox is isolated from the legacy worker domain.
-- [ ] FakeExecutor passes serial, parallel, crash reclaim and terminal race tests.
+- [x] Lease, heartbeat and fencing persistence are expand-only and capability gated.
+- [x] Queued claim/progress/terminal protocol enforces ownership and terminal races.
+- [x] Generic Workflow Outbox is isolated from the legacy worker domain.
+- [x] FakeExecutor passes serial, parallel, crash reclaim and terminal race tests.
 
 ## PR 7 — LazyMindExecutor
 
