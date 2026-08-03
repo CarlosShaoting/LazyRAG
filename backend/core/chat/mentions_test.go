@@ -85,8 +85,8 @@ func TestApplyExplicitResourceBindingsIncludesOnlyCurrentMentions(t *testing.T) 
 	if got := bindings["knowledge_base_ids"].([]string); len(got) != 1 || got[0] != "kb-video" {
 		t.Fatalf("knowledge_base_ids = %#v", got)
 	}
-	if got := bindings["plugin_refs"].([]string); len(got) != 1 || got[0] != "video/workflow" {
-		t.Fatalf("plugin_refs = %#v", got)
+	if got := bindings["workflow_refs"].([]string); len(got) != 1 || got[0] != "video/workflow" {
+		t.Fatalf("workflow_refs = %#v", got)
 	}
 	if got := bindings["mentions"].([]map[string]string); len(got) != 1 || got[0]["display_name"] != "视频资料库" {
 		t.Fatalf("mentions = %#v", got)
@@ -98,7 +98,7 @@ func TestBuildLazyChatRequestPropagatesExplicitResourceBindings(t *testing.T) {
 		"explicit_resource_bindings": map[string]any{
 			"skill_names":        []string{"video/ai-production"},
 			"knowledge_base_ids": []string{"kb-video"},
-			"plugin_refs":        []string{"video/workflow"},
+			"workflow_refs":      []string{"video/workflow"},
 			"mentions": []any{map[string]any{
 				"resource_type": "knowledge_base", "resource_ref": "kb-video",
 				"display_name": "视频资料库",

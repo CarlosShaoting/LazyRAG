@@ -62,8 +62,8 @@ _SELECTED_SLOT_REVISIONS_SQL = (
     '  psr.change_source, '
     '  psr.revision, '
     '  pss.task_id '
-    'FROM plugin_slot_revisions psr '
-    'LEFT JOIN plugin_session_steps pss '
+    'FROM workflow_slot_revisions psr '
+    'LEFT JOIN workflow_session_steps pss '
     '  ON pss.session_id = psr.session_id '
     '  AND pss.step_id   = psr.step_id '
     '  AND pss.attempt   = psr.attempt '
@@ -77,7 +77,7 @@ def _attach_sort_order(
     rows: List[Dict[str, Any]],
     order_lists: Dict[str, List[int]],
 ) -> List[Dict[str, Any]]:
-    """Attach 1-based sort_order from plugin_slot_order lists (works on SQLite and Postgres)."""
+    """Attach 1-based sort_order from workflow_slot_order lists (works on SQLite and Postgres)."""
     out: List[Dict[str, Any]] = []
     for row in rows:
         item = dict(row)
@@ -230,8 +230,8 @@ class SubAgentDB:
             ).mappings().all()
         return [r['slot'] for r in rows]
 
-    def load_plugin_session_steps(self, session_id: str) -> List[Dict[str, Any]]:
-        """Return plugin_session_steps rows for a session, ordered by attempt ASC.
+    def load_workflow_session_steps(self, session_id: str) -> List[Dict[str, Any]]:
+        """Return workflow_session_steps rows for a session, ordered by attempt ASC.
 
         Used by _enrich_objective_with_artifacts to find succeeded step task_ids.
         Returns empty list on any error.
@@ -241,7 +241,7 @@ class SubAgentDB:
                 rows = conn.execute(
                     text(
                         'SELECT step_id, task_id, status, attempt '
-                        'FROM plugin_session_steps '
+                        'FROM workflow_session_steps '
                         'WHERE session_id = :session_id '
                         'ORDER BY attempt ASC'
                     ),
@@ -289,7 +289,7 @@ class SubAgentDB:
             return []
 
     def load_selected_slot_artifacts_with_order(self, session_id: str) -> List[Dict[str, Any]]:
-        """Return selected slot revisions with sort_order derived from plugin_slot_order.
+        """Return selected slot revisions with sort_order derived from workflow_slot_order.
 
         sort_order is the 1-based position in the order_list JSON array for the slot.
         Falls back to list_index + 1 when no order row exists for the slot.
@@ -321,7 +321,7 @@ class SubAgentDB:
     def load_slot_artifact_by_sort_order(
         self, session_id: str, slot: str, sort_order: int
     ) -> Optional[Dict[str, Any]]:
-        """Resolve sort_order → list_index for a plugin session slot, then return the
+        """Resolve sort_order → list_index for a workflow session slot, then return the
         selected revision metadata (artifact_seq, human_artifact_id, content_snapshot,
         task_id, list_index).
 
@@ -347,8 +347,8 @@ class SubAgentDB:
                         '  psr.content_snapshot, '
                         '  psr.change_source, '
                         '  pss.task_id '
-                        'FROM plugin_slot_revisions psr '
-                        'LEFT JOIN plugin_session_steps pss '
+                        'FROM workflow_slot_revisions psr '
+                        'LEFT JOIN workflow_session_steps pss '
                         '  ON pss.session_id = psr.session_id '
                         '  AND pss.step_id   = psr.step_id '
                         '  AND pss.attempt   = psr.attempt '
@@ -372,9 +372,9 @@ class SubAgentDB:
     def load_bound_slot_artifacts(
         self, task_id: str, slot: str
     ) -> List[Dict[str, Any]]:
-        """Return the exact revisions frozen as inputs for a plugin step attempt.
+        """Return the exact revisions frozen as inputs for a workflow step attempt.
 
-        A plugin attempt records ``material_revision_id`` before its SubAgent task
+        A workflow attempt records ``material_revision_id`` before its SubAgent task
         starts. Reading through that binding prevents a later human edit or version
         selection from changing the inputs of an already-running attempt.
         """
@@ -392,14 +392,14 @@ class SubAgentDB:
                         '  psr.content_snapshot, '
                         '  psr.change_source, '
                         '  COALESCE(producer_exact.task_id, producer_legacy.task_id) AS task_id '
-                        'FROM plugin_attempt_input_bindings paib '
-                        'INNER JOIN plugin_session_steps consumer '
+                        'FROM workflow_attempt_input_bindings paib '
+                        'INNER JOIN workflow_session_steps consumer '
                         '  ON consumer.id = paib.attempt_id '
-                        'INNER JOIN plugin_slot_revisions psr '
+                        'INNER JOIN workflow_slot_revisions psr '
                         '  ON psr.id = paib.material_revision_id '
-                        'LEFT JOIN plugin_session_steps producer_exact '
+                        'LEFT JOIN workflow_session_steps producer_exact '
                         '  ON producer_exact.id = psr.producer_attempt_id '
-                        'LEFT JOIN plugin_session_steps producer_legacy '
+                        'LEFT JOIN workflow_session_steps producer_legacy '
                         '  ON producer_legacy.session_id = psr.session_id '
                         '  AND producer_legacy.step_id = psr.step_id '
                         '  AND producer_legacy.attempt = psr.attempt '
@@ -414,12 +414,12 @@ class SubAgentDB:
             return []
 
     def load_slot_order_list(self, session_id: str, slot: str) -> List[int]:
-        """Return list_index values in UI display order for a plugin slot."""
+        """Return list_index values in UI display order for a workflow slot."""
         try:
             with self._conn() as conn:
                 row = conn.execute(
                     text(
-                        'SELECT order_list FROM plugin_slot_order '
+                        'SELECT order_list FROM workflow_slot_order '
                         'WHERE session_id = :session_id AND slot_id = :slot'
                     ),
                     {'session_id': session_id, 'slot': slot},
@@ -436,7 +436,7 @@ class SubAgentDB:
     def resolve_slot_revision_value(
         self, row: Dict[str, Any]
     ) -> tuple:
-        """Resolve value and content_type from a plugin_slot_revisions row dict.
+        """Resolve value and content_type from a workflow_slot_revisions row dict.
 
         Returns (value, content_type) where value may be None if unresolvable.
         """
@@ -453,7 +453,7 @@ class SubAgentDB:
                 with self._conn() as conn:
                     ha = conn.execute(
                         text(
-                            'SELECT value, content_type FROM plugin_human_artifacts '
+                            'SELECT value, content_type FROM workflow_human_artifacts '
                             'WHERE id = :id'
                         ),
                         {'id': human_artifact_id},
@@ -515,10 +515,10 @@ class SubAgentDB:
             return []
 
     def load_selected_slot_artifacts(self, session_id: str) -> List[Dict[str, Any]]:
-        """Return the currently-selected slot values for a plugin session.
+        """Return the currently-selected slot values for a workflow session.
 
         Value resolution priority (mirrors enrichSlots in Go):
-          1. human_artifact_id IS NOT NULL → read from plugin_human_artifacts.
+          1. human_artifact_id IS NOT NULL → read from workflow_human_artifacts.
           2. artifact_seq IS NOT NULL      → read from sub_agent_artifacts by exact seq.
           3. content_snapshot IS NOT NULL  → legacy fallback for pre-migration rows.
 
@@ -536,8 +536,8 @@ class SubAgentDB:
                         '  psr.human_artifact_id, '
                         '  psr.content_snapshot, '
                         '  pss.task_id '
-                        'FROM plugin_slot_revisions psr '
-                        'LEFT JOIN plugin_session_steps pss '
+                        'FROM workflow_slot_revisions psr '
+                        'LEFT JOIN workflow_session_steps pss '
                         '  ON pss.session_id = psr.session_id '
                         '  AND pss.step_id   = psr.step_id '
                         '  AND pss.attempt   = psr.attempt '
@@ -557,11 +557,11 @@ class SubAgentDB:
                 task_id = r['task_id']
 
                 if human_artifact_id:
-                    # Human revision: read from plugin_human_artifacts.
+                    # Human revision: read from workflow_human_artifacts.
                     with self._conn() as conn2:
                         ha_row = conn2.execute(
                             text(
-                                'SELECT value, content_type FROM plugin_human_artifacts '
+                                'SELECT value, content_type FROM workflow_human_artifacts '
                                 'WHERE id = :id'
                             ),
                             {'id': human_artifact_id},
@@ -601,7 +601,7 @@ class SubAgentDB:
         except Exception:
             return []
 
-    def format_plugin_session_artifacts(self, session_id: str) -> List[str]:
+    def format_workflow_session_artifacts(self, session_id: str) -> List[str]:
         rows = self.load_selected_slot_artifacts_resolved_with_order(session_id)
         return _rows_to_artifact_summary(rows) if rows else []
 
@@ -627,7 +627,7 @@ class SubAgentDB:
         try:
             with self._conn() as conn:
                 row = conn.execute(
-                    text('SELECT intent_context FROM plugin_sessions WHERE id = :sid'),
+                    text('SELECT intent_context FROM workflow_sessions WHERE id = :sid'),
                     {'sid': session_id},
                 ).mappings().first()
             return _intent_text(row['intent_context']) if row else None
@@ -639,7 +639,7 @@ class SubAgentDB:
             with self._conn() as conn:
                 row = conn.execute(
                     text(
-                        'SELECT intent_context FROM plugin_step_intents '
+                        'SELECT intent_context FROM workflow_step_intents '
                         'WHERE session_id = :sid AND step_id = :step'
                     ),
                     {'sid': session_id, 'step': step_id},
@@ -716,8 +716,8 @@ class TaskQueryDB:
     def list_tasks_by_conversation(self, conv_id: str) -> List[Dict[str, Any]]:
         """Return all tasks for a conversation with their latest artifacts.
 
-        Tasks belonging to a dismissed plugin session are excluded so that the
-        ChatAgent cannot see or access their artifacts after the plugin is dismissed.
+        Tasks belonging to a dismissed workflow session are excluded so that the
+        ChatAgent cannot see or access their artifacts after the workflow is dismissed.
 
         Returns the same shape expected by _list_conversation_tasks / _resolve_task:
         task_id, id, title, agent_type, status, progress_pct, current_phase, summary,
@@ -732,13 +732,13 @@ class TaskQueryDB:
                         '       sat.summary, sat.seq_in_conversation, '
                         '       sat.output_slots, sat.params '
                         'FROM sub_agent_tasks sat '
-                        # Exclude tasks that belong to a dismissed plugin session.
-                        # plugin_step tasks are linked via plugin_session_steps;
-                        # non-plugin tasks have no matching row so they are always kept.
+                        # Exclude tasks that belong to a dismissed workflow session.
+                        # workflow_step tasks are linked via workflow_session_steps;
+                        # non-workflow tasks have no matching row so they are always kept.
                         'WHERE sat.conversation_id = :conv_id '
                         '  AND NOT EXISTS ( '
-                        '    SELECT 1 FROM plugin_session_steps pss '
-                        '    JOIN plugin_sessions ps ON ps.id = pss.session_id '
+                        '    SELECT 1 FROM workflow_session_steps pss '
+                        '    JOIN workflow_sessions ps ON ps.id = pss.session_id '
                         '    WHERE pss.task_id = sat.id AND ps.dismissed = TRUE '
                         '  ) '
                         'ORDER BY sat.seq_in_conversation ASC'
@@ -805,8 +805,8 @@ class TaskQueryDB:
             })
         return tasks
 
-    def format_plugin_session_artifacts(self, session_id: str) -> List[str]:
-        rows = self.load_plugin_session_slot_summary(session_id)
+    def format_workflow_session_artifacts(self, session_id: str) -> List[str]:
+        rows = self.load_workflow_session_slot_summary(session_id)
         return _rows_to_artifact_summary(rows) if rows else []
 
     def load_artifacts_for_tasks(self, task_ids: List[str]) -> List[Dict[str, Any]]:
@@ -853,9 +853,9 @@ class TaskQueryDB:
     def build_chat_agent_task_context(self, conv_id: str) -> str:
         """Build the ## Tasks system-prompt section for ChatAgent.
 
-        For each task in the conversation (plugin_step regardless of status,
+        For each task in the conversation (workflow_step regardless of status,
         ordinary tasks only when terminal):
-        - plugin_step → format_plugin_session_artifacts (plugin_slot_revisions)
+        - workflow_step → format_workflow_session_artifacts (workflow_slot_revisions)
         - ordinary    → format_task_artifacts (sub_agent_artifacts)
         Returns '' on any error or when there is nothing to show.
         """
@@ -871,9 +871,9 @@ class TaskQueryDB:
         for t in tasks:
             status = str(t.get('status') or '')
             agent_type = str(t.get('agent_type') or '')
-            # plugin_step tasks may still be running but have partial artifacts — always include.
+            # workflow_step tasks may still be running but have partial artifacts — always include.
             # Ordinary tasks only matter once they've reached a terminal state.
-            if agent_type != 'plugin_step' and status not in terminal:
+            if agent_type != 'workflow_step' and status not in terminal:
                 continue
             seq = t.get('seq_in_conversation', '')
             title = str(t.get('title') or '')
@@ -888,8 +888,8 @@ class TaskQueryDB:
             lines.append(header)
 
             agent_type = str(t.get('agent_type') or '')
-            if agent_type == 'plugin_step':
-                # Plugin step artifacts are already injected via _build_session_artifact_section.
+            if agent_type == 'workflow_step':
+                # Workflow step artifacts are already injected via _build_session_artifact_section.
                 # Only show progress summary here to avoid duplicate / misleading context.
                 art_lines = []
             else:
@@ -900,8 +900,8 @@ class TaskQueryDB:
             return ''
         return '\n'.join(lines)
 
-    def load_plugin_session_slot_summary(self, session_id: str) -> List[Dict[str, Any]]:
-        """Return selected slot artifacts for a plugin session, resolved with sort_order.
+    def load_workflow_session_slot_summary(self, session_id: str) -> List[Dict[str, Any]]:
+        """Return selected slot artifacts for a workflow session, resolved with sort_order.
 
         Returns a list of dicts with keys:
           slot, sort_order, content_type, value, is_human (bool)
@@ -925,7 +925,7 @@ class TaskQueryDB:
                 with self._conn() as conn2:
                     order_row = conn2.execute(
                         text(
-                            'SELECT order_list FROM plugin_slot_order '
+                            'SELECT order_list FROM workflow_slot_order '
                             'WHERE session_id = :session_id AND slot_id = :slot'
                         ),
                         {'session_id': session_id, 'slot': slot},
@@ -957,7 +957,7 @@ class TaskQueryDB:
                     with self._conn() as conn2:
                         ha = conn2.execute(
                             text(
-                                'SELECT value, content_type FROM plugin_human_artifacts '
+                                'SELECT value, content_type FROM workflow_human_artifacts '
                                 'WHERE id = :id'
                             ),
                             {'id': human_artifact_id},
@@ -1016,7 +1016,7 @@ class TaskQueryDB:
         try:
             with self._conn() as conn:
                 row = conn.execute(
-                    text('SELECT intent_context FROM plugin_sessions WHERE id = :sid'),
+                    text('SELECT intent_context FROM workflow_sessions WHERE id = :sid'),
                     {'sid': session_id},
                 ).mappings().first()
             if row is None:
@@ -1034,7 +1034,7 @@ class TaskQueryDB:
             with self._conn() as conn:
                 row = conn.execute(
                     text(
-                        'SELECT intent_context FROM plugin_step_intents '
+                        'SELECT intent_context FROM workflow_step_intents '
                         'WHERE session_id = :sid AND step_id = :step'
                     ),
                     {'sid': session_id, 'step': step_id},
@@ -1054,7 +1054,7 @@ class TaskQueryDB:
             with self._conn() as conn:
                 rows = conn.execute(
                     text(
-                        'SELECT step_id, intent_context FROM plugin_step_intents '
+                        'SELECT step_id, intent_context FROM workflow_step_intents '
                         'WHERE session_id = :sid'
                     ),
                     {'sid': session_id},
@@ -1079,7 +1079,7 @@ class TaskQueryDB:
                     text(
                         'SELECT sa.slot, sa.content_type, sa.value '
                         'FROM sub_agent_artifacts sa '
-                        'JOIN plugin_session_steps pss ON pss.task_id = sa.task_id '
+                        'JOIN workflow_session_steps pss ON pss.task_id = sa.task_id '
                         'WHERE pss.session_id = :sid AND pss.step_id = :step '
                         '  AND sa.hidden = FALSE '
                         'ORDER BY sa.slot, sa.seq DESC'
@@ -1104,7 +1104,7 @@ class TaskQueryDB:
 
 # ---------------------------------------------------------------------------
 # Shared artifact formatting utilities
-# Used by both SubAgent (runner.py) and ChatAgent (plugin_manager.py).
+# Used by both SubAgent (runner.py) and ChatAgent (workflow_manager.py).
 # ---------------------------------------------------------------------------
 
 _ARTIFACT_SUMMARY_LIMIT = 200  # chars for inline text/json preview

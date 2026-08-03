@@ -127,7 +127,7 @@ type ChatWorkflowOptions struct {
 	WorkflowContext          map[string]any   `json:"workflow_context,omitempty"`
 	Catalog                  []map[string]any `json:"catalog,omitempty"`
 	DisabledBuiltinWorkflows []string         `json:"disabled_builtin_plugins,omitempty"`
-	AllowedWorkflowRefs      []string         `json:"allowed_plugin_refs,omitempty"`
+	AllowedWorkflowRefs      []string         `json:"allowed_workflow_refs,omitempty"`
 }
 
 // LazyChatData text data text。
@@ -525,23 +525,23 @@ func buildLazyChatRequest(body map[string]any) *LazyChatRequest {
 			req.Runtime.MCPConfig = append(req.Runtime.MCPConfig, item)
 		}
 	}
-	if workflowContext, ok := body["plugin_context"].(map[string]any); ok && len(workflowContext) > 0 {
+	if workflowContext, ok := body["workflow_context"].(map[string]any); ok && len(workflowContext) > 0 {
 		req.Workflow.WorkflowContext = workflowContext
 	}
-	if catalog, ok := body["plugin_catalog"].([]map[string]any); ok {
+	if catalog, ok := body["workflow_catalog"].([]map[string]any); ok {
 		req.Workflow.Catalog = catalog
 	}
 	if ids, ok := body["disabled_builtin_plugins"].([]string); ok {
 		req.Workflow.DisabledBuiltinWorkflows = ids
 	}
-	if refs, ok := body["allowed_plugin_refs"].([]string); ok {
+	if refs, ok := body["allowed_workflow_refs"].([]string); ok {
 		req.Workflow.AllowedWorkflowRefs = refs
 	}
 	if bindings, ok := body["explicit_resource_bindings"].(map[string]any); ok {
 		req.ExplicitResources = ExplicitResourceBindings{
 			SkillNames:       stringSlice(bindings["skill_names"]),
 			KnowledgeBaseIDs: stringSlice(bindings["knowledge_base_ids"]),
-			WorkflowRefs:     stringSlice(bindings["plugin_refs"]),
+			WorkflowRefs:     stringSlice(bindings["workflow_refs"]),
 			Mentions:         stringMapSlice(bindings["mentions"]),
 		}
 	}

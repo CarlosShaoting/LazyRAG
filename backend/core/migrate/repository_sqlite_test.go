@@ -35,6 +35,9 @@ VALUES ('legacy-model','provider','Provider','Legacy','VLM','',CURRENT_TIMESTAMP
 	execMigrationFileForDriver(t, releaseDB, catalog.Modes[1].Aggregate.UpPath, "sqlite")
 	for _, migration := range catalog.Modes[1].Dev {
 		execMigrationFileForDriver(t, devDB, migration.UpPath, "sqlite")
+		if migration.FileVersion > catalog.Modes[1].Aggregate.Version {
+			execMigrationFileForDriver(t, releaseDB, migration.UpPath, "sqlite")
+		}
 	}
 
 	if release, dev := sqliteSchemaFingerprint(t, releaseDB), sqliteSchemaFingerprint(t, devDB); release != dev {

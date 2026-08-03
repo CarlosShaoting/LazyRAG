@@ -17,10 +17,10 @@ replay_projection = _MODULE.replay_projection
 def test_python_reads_all_workflow_golden_fixtures():
     root = Path(__file__).parents[2]
     fixtures = sorted(
-        (root / 'docs/plan/plugin/contracts/v1/golden').glob('*.json')
+        (root / 'docs/plan/workflow/contracts/v1/golden').glob('*.json')
     )
     manifest = read_baseline_manifest(
-        root / 'docs/plan/plugin/contracts/v1/baseline-manifest.json'
+        root / 'docs/plan/workflow/contracts/v1/baseline-manifest.json'
     )
     assert len(fixtures) == len(manifest.required_scenarios) + 1
     seen = set()
@@ -36,7 +36,7 @@ def test_python_reads_all_workflow_golden_fixtures():
 def test_advance_tools_share_transition_but_not_wait_semantics():
     root = Path(__file__).parents[2]
     manifest = read_baseline_manifest(
-        root / 'docs/plan/plugin/contracts/v1/baseline-manifest.json'
+        root / 'docs/plan/workflow/contracts/v1/baseline-manifest.json'
     )
     sync = manifest.tool_semantics['advance_step']
     handoff = manifest.tool_semantics['advance_step_and_hand_off']

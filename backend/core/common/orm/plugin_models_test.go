@@ -43,7 +43,7 @@ func TestWorkflowModelsRegisteredForLocalDDL(t *testing.T) {
 }
 
 func TestProductionModelListCreatesWorkflowSchemaOnSQLite(t *testing.T) {
-	db, err := Connect(DriverSQLite, filepath.Join(t.TempDir(), "plugin-schema.db"))
+	db, err := Connect(DriverSQLite, filepath.Join(t.TempDir(), "workflow-schema.db"))
 	if err != nil {
 		t.Fatalf("connect sqlite: %v", err)
 	}

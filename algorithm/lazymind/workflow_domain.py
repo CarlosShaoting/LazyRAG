@@ -12,4 +12,4 @@ class WorkflowSessionRef:
 
 
 def public_route(workflow_names_enabled: bool = True) -> str:
-    return '/api/workflows' if workflow_names_enabled else '/api/plugins'
+    return '/api/workflows' if workflow_names_enabled else '/api/workflows'

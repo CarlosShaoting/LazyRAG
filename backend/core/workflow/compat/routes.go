@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 )
 
 const LegacyRoutesEnv = "LAZYMIND_WORKFLOW_LEGACY_ROUTES"
@@ -47,6 +48,24 @@ func (m *RouteMetrics) Count(caller, route string) uint64 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.counts[caller+"|"+route]
+}
+
+// CanRemoveLegacyRoutes is the explicit deletion gate for compatibility
+// aliases. A zero count is meaningful only after a complete observation
+// window; deployments must also retain the feature flag for rollback until
+// the removal change has passed its own canary.
+func (m *RouteMetrics) CanRemoveLegacyRoutes(observedSince, now time.Time, minimumWindow time.Duration) bool {
+	if minimumWindow <= 0 || now.Sub(observedSince) < minimumWindow {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, count := range m.counts {
+		if count != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // Caller records an explicit caller header where available and a stable

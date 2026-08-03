@@ -62,7 +62,7 @@ func loadSessionGraph(ctx context.Context, db *gorm.DB, session *orm.WorkflowSes
 	}
 	// Compatibility path for built-ins and pre-v2 revisions. It is read-only;
 	// new publishes are required to persist a strict compiled graph.
-	upstream := common.JoinURL(common.ChatServiceEndpoint(), "/api/plugins/"+session.WorkflowID)
+	upstream := common.JoinURL(common.ChatServiceEndpoint(), "/api/workflows/"+session.WorkflowID)
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, upstream, nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

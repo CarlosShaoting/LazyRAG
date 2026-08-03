@@ -186,7 +186,7 @@ func applyChatMentions(ctx context.Context, db *gorm.DB, raw map[string]any, use
 			}
 			var count int64
 			if err := db.WithContext(ctx).Model(&orm.WorkflowResource{}).
-				Where("plugin_ref = ? AND status = 'active' AND (owner_user_id = ? OR owner_user_id = '')", mention.ResourceID, userID).Count(&count).Error; err != nil || count == 0 {
+				Where("plugin_ref = ? AND status = 'active' AND (owner_user_id = ? OR owner_user_id = '')", mention.ResourceID, userID).Count(&count).Error; err != nil || count == 0 { // workflow-naming: persistence
 				return query, resolved, fmt.Errorf("plugin mention is not accessible: %s", mention.ResourceID)
 			}
 			if denied {
@@ -233,7 +233,7 @@ func applyExplicitResourceBindings(body map[string]any, mentions resolvedChatMen
 	body["explicit_resource_bindings"] = map[string]any{
 		"skill_names":        mentions.SkillNames,
 		"knowledge_base_ids": mentions.KnowledgeBaseIDs,
-		"plugin_refs":        mentions.WorkflowRefs,
+		"workflow_refs":      mentions.WorkflowRefs,
 		"mentions":           mentions.ResourceMentions,
 	}
 }
@@ -308,7 +308,7 @@ func buildMentionResourceContext(ctx context.Context, db *gorm.DB, userID string
 				return true
 			}
 			var count int64
-			return db.WithContext(ctx).Model(&orm.WorkflowResource{}).Where("plugin_ref = ? AND status = 'active' AND (owner_user_id = ? OR owner_user_id = '')", mention.ResourceID, userID).Count(&count).Error == nil && count > 0
+			return db.WithContext(ctx).Model(&orm.WorkflowResource{}).Where("plugin_ref = ? AND status = 'active' AND (owner_user_id = ? OR owner_user_id = '')", mention.ResourceID, userID).Count(&count).Error == nil && count > 0 // workflow-naming: persistence
 		case "tool":
 			return toolIDs[mention.ResourceID]
 		case "conversation":
@@ -428,7 +428,7 @@ func mergeMentionedWorkflows(ctx context.Context, db *gorm.DB, userID string, re
 	}
 	byRef := map[string]map[string]any{}
 	for _, item := range catalog {
-		byRef[fmt.Sprint(item["plugin_ref"])] = item
+		byRef[fmt.Sprint(item["workflow_ref"])] = item
 	}
 	selected := make([]map[string]any, 0, len(refs))
 	var forcedBuiltins []string
@@ -447,10 +447,10 @@ func mergeMentionedWorkflows(ctx context.Context, db *gorm.DB, userID string, re
 		}
 		if err := db.WithContext(ctx).Table("plugins p").Select("p.*, pr.tree_hash").
 			Joins("JOIN plugin_revisions pr ON pr.id=p.head_revision_id").
-			Where("p.plugin_ref=? AND p.status='active' AND (p.owner_user_id=? OR p.owner_user_id='')", ref, userID).Take(&row).Error; err != nil {
+			Where("p.plugin_ref=? AND p.status='active' AND (p.owner_user_id=? OR p.owner_user_id='')", ref, userID).Take(&row).Error; err != nil { // workflow-naming: persistence
 			return nil, nil, fmt.Errorf("plugin mention is not accessible: %s", ref)
 		}
-		selected = append(selected, map[string]any{"plugin_ref": row.WorkflowRef, "plugin_id": row.WorkflowID, "name": row.Name, "description": row.Description, "when_to_use": row.WhenToUse, "source_type": row.SourceType, "remote_root": "remote://" + row.RelativeRoot, "revision_id": row.HeadRevisionID, "revision_no": row.Version, "tree_hash": row.TreeHash})
+		selected = append(selected, map[string]any{"workflow_ref": row.WorkflowRef, "workflow_id": row.WorkflowID, "name": row.Name, "description": row.Description, "when_to_use": row.WhenToUse, "source_type": row.SourceType, "remote_root": "remote://" + row.RelativeRoot, "revision_id": row.HeadRevisionID, "revision_no": row.Version, "tree_hash": row.TreeHash})
 	}
 	return selected, forcedBuiltins, nil
 }
@@ -470,10 +470,10 @@ func applyWorkflowSelection(
 	}
 	if len(mentionedRefs) > 0 {
 		reqBody["enable_plugin"] = true
-		reqBody["allowed_plugin_refs"] = mentionedRefs
+		reqBody["allowed_workflow_refs"] = mentionedRefs
 	}
 	if enabled, _ := reqBody["enable_plugin"].(bool); !enabled {
-		reqBody["plugin_catalog"] = []map[string]any{}
+		reqBody["workflow_catalog"] = []map[string]any{}
 		reqBody["disabled_builtin_plugins"] = []string{}
 		return nil
 	}
@@ -487,7 +487,7 @@ func applyWorkflowSelection(
 	}
 	filteredCatalog := catalog[:0]
 	for _, item := range catalog {
-		if !excluded[fmt.Sprint(item["plugin_ref"])] {
+		if !excluded[fmt.Sprint(item["workflow_ref"])] {
 			filteredCatalog = append(filteredCatalog, item)
 		}
 	}
@@ -507,12 +507,12 @@ func applyWorkflowSelection(
 			disabledBuiltins = append(disabledBuiltins, strings.TrimPrefix(ref, "builtin:"))
 		}
 	}
-	if workflowContext, ok := reqBody["plugin_context"].(map[string]any); ok {
-		if excluded[fmt.Sprint(workflowContext["plugin_ref"])] {
-			reqBody["plugin_context"] = map[string]any{}
+	if workflowContext, ok := reqBody["workflow_context"].(map[string]any); ok {
+		if excluded[fmt.Sprint(workflowContext["workflow_ref"])] {
+			reqBody["workflow_context"] = map[string]any{}
 		}
 	}
-	reqBody["plugin_catalog"] = catalog
+	reqBody["workflow_catalog"] = catalog
 	reqBody["disabled_builtin_plugins"] = applyMentionedTools(
 		disabledBuiltins, forcedBuiltins,
 	)

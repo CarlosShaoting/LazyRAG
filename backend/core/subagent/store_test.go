@@ -179,7 +179,7 @@ func TestLateRunnerEventsDoNotReviveInterruptedTask(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	if _, err := CreateTask(ctx, db.DB, CreateTaskInput{
-		TaskID: "stopped", ConversationID: "conv", AgentType: "plugin_step", Title: "stopped",
+		TaskID: "stopped", ConversationID: "conv", AgentType: "workflow_step", Title: "stopped",
 	}); err != nil {
 		t.Fatalf("create: %v", err)
 	}

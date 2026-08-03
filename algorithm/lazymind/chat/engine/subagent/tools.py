@@ -361,7 +361,7 @@ def _resolve_list_index_from_sort_order(
             cfg = lazyllm.globals.get('agentic_config') or {}
         except Exception:
             pass
-        session_id: str = cfg.get('plugin_session_id', '')
+        session_id: str = cfg.get('workflow_session_id', '')
         if not session_id:
             return None, None
         ctx = require_context()
@@ -393,7 +393,7 @@ def get_artifact(key: str, sort_order: Optional[int] = None, task_ref: Optional[
     Args:
         key (str): The artifact key to read.
         sort_order (int): Optional. 1-based display position within a list slot.
-            For plugin sessions: resolves via plugin_slot_order → fetches that specific
+            For workflow sessions: resolves via workflow_slot_order → fetches that specific
             selected revision (human or AI).
             For ordinary SubAgents: treated as seq, returns the artifact at that position.
             When omitted, returns all artifacts for this key (or the latest for single slots).
@@ -411,7 +411,7 @@ def get_artifact(key: str, sort_order: Optional[int] = None, task_ref: Optional[
     """
     ctx = require_context()
 
-    # Plugin session: resolve sort_order via DB lookup.
+    # Workflow session: resolve sort_order via DB lookup.
     try:
         import lazyllm
         cfg: Dict[str, Any] = {}
@@ -419,17 +419,17 @@ def get_artifact(key: str, sort_order: Optional[int] = None, task_ref: Optional[
             cfg = lazyllm.globals.get('agentic_config') or {}
         except Exception:
             pass
-        plugin_session_id: str = cfg.get('plugin_session_id', '')
+        workflow_session_id: str = cfg.get('workflow_session_id', '')
     except Exception:
-        plugin_session_id = ''
+        workflow_session_id = ''
 
-    bound_rows = ctx.db.load_bound_slot_artifacts(ctx.task_id, key) if plugin_session_id else []
+    bound_rows = ctx.db.load_bound_slot_artifacts(ctx.task_id, key) if workflow_session_id else []
     if bound_rows:
-        result = _get_bound_plugin_artifacts(ctx, key, bound_rows, sort_order)
-    elif plugin_session_id and sort_order is not None:
-        result = _get_plugin_artifact_by_sort_order(ctx, key, plugin_session_id, sort_order)
-    elif plugin_session_id and sort_order is None:
-        result = _get_plugin_artifact_all(ctx, key, plugin_session_id)
+        result = _get_bound_workflow_artifacts(ctx, key, bound_rows, sort_order)
+    elif workflow_session_id and sort_order is not None:
+        result = _get_workflow_artifact_by_sort_order(ctx, key, workflow_session_id, sort_order)
+    elif workflow_session_id and sort_order is None:
+        result = _get_workflow_artifact_all(ctx, key, workflow_session_id)
     elif sort_order is not None:
         # Ordinary SubAgent: read from sub_agent_artifacts.
         rows = ctx.local_artifacts(keys=[key]) or ctx.db.load_artifacts(ctx.task_id, keys=[key])
@@ -460,10 +460,10 @@ def _resolve_artifact_text(
 
     Resolution priority:
     1. Draft file (reflects latest patch_artifact edits in this step).
-    2. Exact revision frozen in the current plugin attempt's input binding.
-    3. Plugin session selected revision via load_slot_artifact_by_sort_order —
+    2. Exact revision frozen in the current workflow attempt's input binding.
+    3. Workflow session selected revision via load_slot_artifact_by_sort_order —
        this is the ONLY path that surfaces human-edited artifacts stored in
-       plugin_human_artifacts; must be checked before sub_agent_artifacts.
+       workflow_human_artifacts; must be checked before sub_agent_artifacts.
     4. Local in-memory cache (same step, sub_agent_artifacts).
     5. DB sub_agent_artifacts (previous steps).
 
@@ -474,7 +474,7 @@ def _resolve_artifact_text(
     if draft is not None:
         return draft[0], draft[1]
 
-    # 2. Plugin session: use the full resolution chain that knows about human edits.
+    # 2. Workflow session: use the full resolution chain that knows about human edits.
     try:
         import lazyllm
         cfg: Dict[str, Any] = {}
@@ -482,11 +482,11 @@ def _resolve_artifact_text(
             cfg = lazyllm.globals.get('agentic_config') or {}
         except Exception:
             pass
-        plugin_session_id: str = cfg.get('plugin_session_id', '')
+        workflow_session_id: str = cfg.get('workflow_session_id', '')
     except Exception:
-        plugin_session_id = ''
+        workflow_session_id = ''
 
-    if plugin_session_id:
+    if workflow_session_id:
         so = sort_order if sort_order is not None else 1
         bound_rows = ctx.db.load_bound_slot_artifacts(ctx.task_id, key)
         if bound_rows:
@@ -501,7 +501,7 @@ def _resolve_artifact_text(
                 original_type = value.get('type', 'text')
             return _extract_text_from_value(ctx, value, original_type), original_type
 
-        row = ctx.db.load_slot_artifact_by_sort_order(plugin_session_id, key, so)
+        row = ctx.db.load_slot_artifact_by_sort_order(workflow_session_id, key, so)
         if row is not None:
             value, content_type = ctx.db.resolve_slot_revision_value(row)
             if value is not None:
@@ -608,17 +608,17 @@ def _apply_line_range(
     })
 
 
-def _get_plugin_artifact_by_sort_order(
+def _get_workflow_artifact_by_sort_order(
     ctx: Any, key: str, session_id: str, sort_order: int
 ) -> Dict[str, Any]:
-    """Fetch a single plugin slot artifact by sort_order via DB resolve."""
+    """Fetch a single workflow slot artifact by sort_order via DB resolve."""
     row = ctx.db.load_slot_artifact_by_sort_order(session_id, key, sort_order)
     if row is None:
         return tool_success('get_artifact', {
             'status': 'empty',
             'message': (
                 f"No artifact found for key '{key}' at sort_order={sort_order} "
-                f'in plugin session {session_id}.'
+                f'in workflow session {session_id}.'
             ),
         })
 
@@ -637,7 +637,7 @@ def _get_plugin_artifact_by_sort_order(
     })
 
 
-def _get_bound_plugin_artifacts(
+def _get_bound_workflow_artifacts(
     ctx: Any,
     key: str,
     rows: list[Dict[str, Any]],
@@ -675,8 +675,8 @@ def _get_bound_plugin_artifacts(
     return tool_success('get_artifact', {'status': 'ok', 'key': key, 'artifacts': artifacts})
 
 
-def _get_plugin_artifact_all(ctx: Any, key: str, session_id: str) -> Dict[str, Any]:
-    """Return all selected revisions for a plugin slot key (sort_order=None)."""
+def _get_workflow_artifact_all(ctx: Any, key: str, session_id: str) -> Dict[str, Any]:
+    """Return all selected revisions for a workflow slot key (sort_order=None)."""
     resolved_rows = ctx.db.load_selected_slot_artifacts_resolved_with_order(session_id)
     artifacts = [
         {
@@ -691,7 +691,7 @@ def _get_plugin_artifact_all(ctx: Any, key: str, session_id: str) -> Dict[str, A
     if not artifacts:
         return tool_success('get_artifact', {
             'status': 'empty',
-            'message': f"No artifact found for key '{key}' in plugin session {session_id}.",
+            'message': f"No artifact found for key '{key}' in workflow session {session_id}.",
         })
     return tool_success('get_artifact', {'status': 'ok', 'key': key, 'artifacts': artifacts})
 
@@ -740,7 +740,7 @@ def patch_artifact(
     draft_result = ctx.read_draft(key, list_index)
     if draft_result is None:
         # Auto-initialize draft from latest committed artifact.
-        # Plugin sessions: this path also checks plugin_human_artifacts (human edits).
+        # Workflow sessions: this path also checks workflow_human_artifacts (human edits).
         text, original_type = _resolve_artifact_text(ctx, key, sort_order)
         if text is None:
             return tool_success('patch_artifact', {
@@ -1159,7 +1159,7 @@ def read_user_attachment(filename: str, turn: Optional[int] = None) -> Dict[str,
     Documents (pdf/doc/docx/pptx): OCR reader. Plain-text files: direct UTF-8 read.
     Images: vision-model text description.
     Do NOT call this just because a file is attached. For images used in visual tasks
-    (edit, plugin, image_generator), use find_user_attachment for path/url instead.
+    (edit, workflow, image_generator), use find_user_attachment for path/url instead.
     Call this when the user needs document text or a textual summary of image content.
 
     Args:
@@ -1348,7 +1348,7 @@ def find_user_attachment(filename: str, turn: Optional[int] = None) -> Dict[str,
     """Return path/url of a user-uploaded attachment without parsing it.
 
     Prefer this over read_user_attachment when you only need the file location: image
-    editing, plugins, vision_extractor, or passing an image path to other tools.
+    editing, workflows, vision_extractor, or passing an image path to other tools.
     Does not run OCR or vision description (fast).
 
     Args:
@@ -1392,10 +1392,10 @@ def find_user_attachment(filename: str, turn: Optional[int] = None) -> Dict[str,
 
 
 def find_artifact(slot: str, sort_order: Optional[int] = None) -> Dict[str, Any]:
-    """Return the accessible URL or local path of a plugin artifact.
+    """Return the accessible URL or local path of a workflow artifact.
 
-    Analogous to find_user_attachment but for plugin step outputs.
-    Reads session_id and plugin_id from agentic_config (same as save_artifacts / get_artifact).
+    Analogous to find_user_attachment but for workflow step outputs.
+    Reads session_id and workflow_id from agentic_config (same as save_artifacts / get_artifact).
 
     Args:
         slot (str): The slot id to look up (e.g. 'image_output').
@@ -1412,11 +1412,11 @@ def find_artifact(slot: str, sort_order: Optional[int] = None) -> Dict[str, Any]
     except Exception:
         cfg = {}
 
-    session_id: str = cfg.get('plugin_session_id', '')
+    session_id: str = cfg.get('workflow_session_id', '')
     if not session_id:
         return tool_success('find_artifact', {
             'status': 'error',
-            'message': 'No active plugin session found in agentic_config.',
+            'message': 'No active workflow session found in agentic_config.',
         })
 
     ctx = get_context()
@@ -1426,11 +1426,11 @@ def find_artifact(slot: str, sort_order: Optional[int] = None) -> Dict[str, Any]
             'message': 'find_artifact requires an active SubAgent context.',
         })
     if sort_order is not None:
-        result_dict = _get_plugin_artifact_by_sort_order(
+        result_dict = _get_workflow_artifact_by_sort_order(
             ctx, slot, session_id, sort_order,
         )
     else:
-        result_dict = _get_plugin_artifact_all(ctx, slot, session_id)
+        result_dict = _get_workflow_artifact_all(ctx, slot, session_id)
 
     # Unwrap inner result to extract the path.
     inner = result_dict.get('result', result_dict)

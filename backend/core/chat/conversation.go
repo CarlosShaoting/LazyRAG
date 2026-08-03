@@ -48,8 +48,8 @@ func applyBasicChatOnlyPolicy(reqBody map[string]any) {
 	agenticConfig["enable_subagent"] = false
 	reqBody["enable_plugin"] = false
 	reqBody["enable_subagent"] = false
-	reqBody["plugin_context"] = map[string]any{}
-	reqBody["plugin_catalog"] = []map[string]any{}
+	reqBody["workflow_context"] = map[string]any{}
+	reqBody["workflow_catalog"] = []map[string]any{}
 	reqBody["disabled_tools"] = mergeDisabledToolNames(
 		stringSliceFromAny(reqBody["disabled_tools"]),
 		[]string{"ask_user", "schedule", "task", "task_center"},
@@ -241,9 +241,9 @@ func ChatConversations(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Extract initial_plugin_settings from request body (only used on first message of a new conversation).
+	// Extract initial_workflow_settings from request body (only used on first message of a new conversation).
 	var initialWorkflowSettings map[string]any
-	if rawPS, ok := raw["initial_plugin_settings"].(map[string]any); ok {
+	if rawPS, ok := raw["initial_workflow_settings"].(map[string]any); ok {
 		initialWorkflowSettings = rawPS
 	}
 
@@ -307,13 +307,13 @@ func ChatConversations(w http.ResponseWriter, r *http.Request) {
 	if cnt, err := subagent.CountByConversation(r.Context(), db, convID); err == nil && cnt > 0 {
 		reqBody["has_subagents"] = true
 	}
-	// Reconcile plugin_context with the DB-authoritative active session.
+	// Reconcile workflow_context with the DB-authoritative active session.
 	// Rules:
-	//   1. No plugin_context from frontend → inject from DB if an active session exists.
-	//   2. Frontend sent plugin_context → cross-check with DB; overwrite any stale fields
+	//   1. No workflow_context from frontend → inject from DB if an active session exists.
+	//   2. Frontend sent workflow_context → cross-check with DB; overwrite any stale fields
 	//      so Python always receives the ground-truth session_id / current_step.
 	//
-	// Resolve plugin_mode with correct priority:
+	// Resolve workflow_mode with correct priority:
 	//   request body > conversation DB (loaded via applyChatRuntimeConfigs) > global default
 	// applyChatRuntimeConfigs is called later, so we first apply it to get DB-resolved values,
 	// then override with any explicit body value.
@@ -325,24 +325,24 @@ func ChatConversations(w http.ResponseWriter, r *http.Request) {
 	if basicChatOnly {
 		applyBasicChatOnlyPolicy(reqBody)
 	} else {
-		// resolveWorkflowModeWithFallback determines the effective plugin_mode for this request.
-		// It is injected into plugin_context (below) so Python can use it; it is not sent
-		// as a top-level reqBody field because Python reads it exclusively from plugin_context.
+		// resolveWorkflowModeWithFallback determines the effective workflow_mode for this request.
+		// It is injected into workflow_context (below) so Python can use it; it is not sent
+		// as a top-level reqBody field because Python reads it exclusively from workflow_context.
 		workflowMode := resolveWorkflowModeWithFallback(raw, reqBody)
-		existingWorkflowContext, _ := reqBody["plugin_context"].(map[string]any)
+		existingWorkflowContext, _ := reqBody["workflow_context"].(map[string]any)
 		if existingWorkflowContext == nil {
 			existingWorkflowContext = map[string]any{}
 		}
-		existingWorkflowContext["plugin_mode"] = workflowMode
-		reqBody["plugin_context"] = existingWorkflowContext
+		existingWorkflowContext["workflow_mode"] = workflowMode
+		reqBody["workflow_context"] = existingWorkflowContext
 		if preflight := loadWorkflowPreflightContext(r.Context(), db, convID); len(preflight) > 0 {
-			existing, _ := reqBody["plugin_context"].(map[string]any)
+			existing, _ := reqBody["workflow_context"].(map[string]any)
 			if existing == nil {
 				existing = map[string]any{}
 			}
-			existing["plugin_mode"] = workflowMode
-			existing["plugin_preflight"] = preflight
-			reqBody["plugin_context"] = existing
+			existing["workflow_mode"] = workflowMode
+			existing["workflow_preflight"] = preflight
+			reqBody["workflow_context"] = existing
 		}
 
 		// Promote enable_plugin and enable_subagent from agentic_config to top-level
@@ -364,17 +364,17 @@ func ChatConversations(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if activeSess, err := workflow.GetLatestSession(r.Context(), db, convID); err == nil && activeSess != nil {
-			existing, hasPC := reqBody["plugin_context"].(map[string]any)
+			existing, hasPC := reqBody["workflow_context"].(map[string]any)
 			if !hasPC || existing == nil {
 				// Case 1: inject from DB.
-				reqBody["plugin_context"] = map[string]any{
-					"session_id":   activeSess.ID,
-					"plugin_id":    activeSess.WorkflowID,
-					"current_step": activeSess.CurrentStepID,
-					"plugin_mode":  workflowMode,
-					"plugin_ref":   activeSess.WorkflowRef, "revision_id": activeSess.WorkflowRevisionID, "revision_no": activeSess.WorkflowRevisionNo, "tree_hash": activeSess.WorkflowTreeHash, "remote_root": activeSess.WorkflowRemoteRoot,
+				reqBody["workflow_context"] = map[string]any{
+					"session_id":    activeSess.ID,
+					"workflow_id":   activeSess.WorkflowID,
+					"current_step":  activeSess.CurrentStepID,
+					"workflow_mode": workflowMode,
+					"workflow_ref":  activeSess.WorkflowRef, "revision_id": activeSess.WorkflowRevisionID, "revision_no": activeSess.WorkflowRevisionNo, "tree_hash": activeSess.WorkflowTreeHash, "remote_root": activeSess.WorkflowRemoteRoot,
 				}
-				fmt.Printf("[PLUGIN_CONTEXT_INJECTED] conversation_id=%s session_id=%s plugin_id=%s current_step=%s plugin_mode=%s\n",
+				fmt.Printf("[PLUGIN_CONTEXT_INJECTED] conversation_id=%s session_id=%s workflow_id=%s current_step=%s workflow_mode=%s\n",
 					convID, activeSess.ID, activeSess.WorkflowID, activeSess.CurrentStepID, workflowMode)
 			} else {
 				// Case 2: validate/correct stale fields from frontend.
@@ -383,34 +383,34 @@ func ChatConversations(w http.ResponseWriter, r *http.Request) {
 					existing["session_id"] = activeSess.ID
 					stale = true
 				}
-				if pid, _ := existing["plugin_id"].(string); pid != activeSess.WorkflowID {
-					existing["plugin_id"] = activeSess.WorkflowID
+				if pid, _ := existing["workflow_id"].(string); pid != activeSess.WorkflowID {
+					existing["workflow_id"] = activeSess.WorkflowID
 					stale = true
 				}
 				if cs, _ := existing["current_step"].(string); cs != activeSess.CurrentStepID {
 					existing["current_step"] = activeSess.CurrentStepID
 					stale = true
 				}
-				existing["plugin_mode"] = workflowMode
-				existing["plugin_ref"] = activeSess.WorkflowRef
+				existing["workflow_mode"] = workflowMode
+				existing["workflow_ref"] = activeSess.WorkflowRef
 				existing["revision_id"] = activeSess.WorkflowRevisionID
 				existing["revision_no"] = activeSess.WorkflowRevisionNo
 				existing["tree_hash"] = activeSess.WorkflowTreeHash
 				existing["remote_root"] = activeSess.WorkflowRemoteRoot
 				if stale {
-					fmt.Printf("[PLUGIN_CONTEXT_CORRECTED] conversation_id=%s session_id=%s plugin_id=%s current_step=%s\n",
+					fmt.Printf("[PLUGIN_CONTEXT_CORRECTED] conversation_id=%s session_id=%s workflow_id=%s current_step=%s\n",
 						convID, activeSess.ID, activeSess.WorkflowID, activeSess.CurrentStepID)
 				}
 			}
-		} else if existing, hasPC := reqBody["plugin_context"].(map[string]any); hasPC {
-			// No active session in DB but frontend sent a plugin_context — clear it to avoid
+		} else if existing, hasPC := reqBody["workflow_context"].(map[string]any); hasPC {
+			// No active session in DB but frontend sent a workflow_context — clear it to avoid
 			// Python entering advance-step mode with a stale/non-existent session.
-			for _, key := range []string{"session_id", "plugin_id", "current_step", "plugin_ref", "revision_id", "revision_no", "tree_hash", "remote_root"} {
+			for _, key := range []string{"session_id", "workflow_id", "current_step", "workflow_ref", "revision_id", "revision_no", "tree_hash", "remote_root"} {
 				delete(existing, key)
 			}
-			existing["plugin_mode"] = workflowMode
-			reqBody["plugin_context"] = existing
-			if _, hasPreflight := existing["plugin_preflight"]; !hasPreflight {
+			existing["workflow_mode"] = workflowMode
+			reqBody["workflow_context"] = existing
+			if _, hasPreflight := existing["workflow_preflight"]; !hasPreflight {
 				fmt.Printf("[PLUGIN_CONTEXT_CLEARED] conversation_id=%s no active session in DB\n", convID)
 			}
 		}
@@ -1263,7 +1263,7 @@ func GetConversationDetail(w http.ResponseWriter, r *http.Request) {
 			"update_time":           c.UpdatedAt.UTC().Format(time.RFC3339),
 			"models":                models,
 			"enable_plugin":         c.EnableWorkflow,
-			"plugin_mode":           c.WorkflowMode,
+			"workflow_mode":         c.WorkflowMode,
 			"enable_subagent":       c.EnableSubagent,
 		},
 	})

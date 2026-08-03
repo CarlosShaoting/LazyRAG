@@ -227,7 +227,7 @@ func init() {
 	registerAdditionalErrorPattern("plugin revision %s has no compiled graph", "Workflow revision has no compiled graph", http.StatusInternalServerError, 2001820)
 	registerAdditionalError("plugin source skill not found", http.StatusNotFound, 2001821)
 	registerAdditionalError("plugin step was accepted but task lookup failed", http.StatusInternalServerError, 2001822)
-	registerAdditionalError("plugin_id or step_id missing", http.StatusInternalServerError, 2001823)
+	registerAdditionalError("workflow_id or step_id missing", http.StatusInternalServerError, 2001823)
 	registerAdditionalError("plugin.yaml, state.yml and scenario.md are required", http.StatusBadRequest, 2001824)
 	registerAdditionalError("precreate target document failed", http.StatusInternalServerError, 2001825)
 	registerAdditionalErrorPattern("provider %q requires non-empty %s and %s descriptions", "Provider descriptions must not be empty", http.StatusBadRequest, 2001826)

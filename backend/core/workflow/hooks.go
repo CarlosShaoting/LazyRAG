@@ -151,7 +151,7 @@ func emitWorkflowArtifactUpdated(stateStore state.Store, conversationID string, 
 		return
 	}
 	subagent.EventHooks.CallConversationEvent(
-		context.Background(), stateStore, conversationID, "", "plugin_artifact_updated", payload,
+		context.Background(), stateStore, conversationID, "", "workflow_artifact_updated", payload,
 	)
 }
 
@@ -182,7 +182,7 @@ func onTerminalStatus(ctx context.Context, db *gorm.DB, stateStore state.Store, 
 // loadWorkflowChatContextFromDB loads the plugin context for a task from the database.
 func loadWorkflowChatContextFromDB(ctx context.Context, db *gorm.DB, taskID string) *WorkflowChatContext {
 	task, err := subagent.GetTask(ctx, db, taskID)
-	if err != nil || task == nil || task.AgentType != "plugin_step" {
+	if err != nil || task == nil || task.AgentType != "workflow_step" {
 		return nil
 	}
 
@@ -213,7 +213,7 @@ func loadWorkflowChatContextFromDB(ctx context.Context, db *gorm.DB, taskID stri
 
 // StopActiveWorkflowSession marks all queued or running steps as interrupted and puts the session
 // into waiting status. Python task cancellation and UI notification use the generic
-// task lifecycle paths; no plugin-specific step completion queue is involved.
+// task lifecycle paths; no workflow-specific step completion queue is involved.
 func StopActiveWorkflowSession(ctx context.Context, db *gorm.DB, stateStore state.Store, convID string) {
 	session, err := GetActiveSession(ctx, db, convID)
 	if err != nil || session == nil {
@@ -248,14 +248,14 @@ func stopWorkflowSession(
 			continue
 		}
 		// Mark the task first. If a terminal completion won the race, preserve it
-		// and do not create a contradictory interrupted plugin-step projection.
+		// and do not create a contradictory interrupted workflow-step projection.
 		accepted, err := subagent.AcceptFinalStatus(
 			ctx, db, step.TaskID, subagent.StatusInterrupted, "stopped by user",
 		)
 		if err != nil || !accepted {
 			continue
 		}
-		// Mirror into plugin_session_steps.
+		// Mirror into workflow_session_steps.
 		_ = UpdateStepStatus(ctx, db, step.TaskID, StepStatusInterrupted)
 		// Notify Python to cancel the ReAct loop for this task.
 		go notifyTaskCancel(step.TaskID)

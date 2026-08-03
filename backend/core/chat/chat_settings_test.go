@@ -54,12 +54,12 @@ func TestGetChatSettings_ReturnsDefaults(t *testing.T) {
 	var resp common.APIResponse
 	json.NewDecoder(w.Body).Decode(&resp)
 	data, _ := resp.Data.(map[string]any)
-	// Defaults: enable_plugin=true, plugin_mode=dynamic, enable_subagent=true.
+	// Defaults: enable_plugin=true, workflow_mode=dynamic, enable_subagent=true.
 	if v, ok := data["enable_plugin"].(bool); !ok || !v {
 		t.Fatalf("enable_plugin: got %v, want true", data["enable_plugin"])
 	}
-	if v, ok := data["plugin_mode"].(string); !ok || v != "dynamic" {
-		t.Fatalf("plugin_mode: got %v, want dynamic", data["plugin_mode"])
+	if v, ok := data["workflow_mode"].(string); !ok || v != "dynamic" {
+		t.Fatalf("workflow_mode: got %v, want dynamic", data["workflow_mode"])
 	}
 }
 
@@ -79,7 +79,7 @@ func TestGetChatSettings_MissingUserID(t *testing.T) {
 func TestGetChatSettings_AfterPatch(t *testing.T) {
 	setupChatSettingsTest(t)
 	// First patch the settings.
-	req1 := newSettingsRequest("PATCH", "/chat/settings", `{"enable_plugin":false,"plugin_mode":"auto"}`, "user-patched", nil)
+	req1 := newSettingsRequest("PATCH", "/chat/settings", `{"enable_plugin":false,"workflow_mode":"auto"}`, "user-patched", nil)
 	w1 := httptest.NewRecorder()
 	PatchChatSettings(w1, req1)
 	if w1.Code != http.StatusOK {
@@ -99,8 +99,8 @@ func TestGetChatSettings_AfterPatch(t *testing.T) {
 	if v, ok := data["enable_plugin"].(bool); ok && v {
 		t.Fatalf("enable_plugin: expected false, got %v", v)
 	}
-	if v, ok := data["plugin_mode"].(string); ok && v != "auto" {
-		t.Fatalf("plugin_mode: expected auto, got %v", v)
+	if v, ok := data["workflow_mode"].(string); ok && v != "auto" {
+		t.Fatalf("workflow_mode: expected auto, got %v", v)
 	}
 }
 
@@ -121,7 +121,7 @@ func TestPatchChatSettings_NoFields(t *testing.T) {
 // TestPatchChatSettings_InvalidWorkflowMode returns 400 for invalid mode.
 func TestPatchChatSettings_InvalidWorkflowMode(t *testing.T) {
 	setupChatSettingsTest(t)
-	req := newSettingsRequest("PATCH", "/chat/settings", `{"plugin_mode":"invalid"}`, "user-1", nil)
+	req := newSettingsRequest("PATCH", "/chat/settings", `{"workflow_mode":"invalid"}`, "user-1", nil)
 	w := httptest.NewRecorder()
 	PatchChatSettings(w, req)
 
@@ -150,7 +150,7 @@ func TestPatchChatSettings_DisabledWorkflowModeWithWorkflow(t *testing.T) {
 // TestPatchConversationWorkflowSettings_NoConversation returns 400.
 func TestPatchConversationWorkflowSettings_NoConversation(t *testing.T) {
 	setupChatSettingsTest(t)
-	req := newSettingsRequest("PATCH", "/chat/conversations//plugin_settings", `{}`, "user-1", nil)
+	req := newSettingsRequest("PATCH", "/chat/conversations//workflow_settings", `{}`, "user-1", nil)
 	w := httptest.NewRecorder()
 	PatchConversationWorkflowSettings(w, req)
 
@@ -163,7 +163,7 @@ func TestPatchConversationWorkflowSettings_NoConversation(t *testing.T) {
 func TestPatchConversationWorkflowSettings_MissingUserID(t *testing.T) {
 	setupChatSettingsTest(t)
 	vars := map[string]string{"conversation_id": "conv-1"}
-	req := newSettingsRequest("PATCH", "/chat/conversations/conv-1/plugin_settings", `{}`, "", vars)
+	req := newSettingsRequest("PATCH", "/chat/conversations/conv-1/workflow_settings", `{}`, "", vars)
 	w := httptest.NewRecorder()
 	PatchConversationWorkflowSettings(w, req)
 
@@ -176,8 +176,8 @@ func TestPatchConversationWorkflowSettings_MissingUserID(t *testing.T) {
 func TestPatchConversationWorkflowSettings_InvalidWorkflowMode(t *testing.T) {
 	setupChatSettingsTest(t)
 	vars := map[string]string{"conversation_id": "conv-1"}
-	req := newSettingsRequest("PATCH", "/chat/conversations/conv-1/plugin_settings",
-		`{"plugin_mode":"bogus"}`, "user-1", vars)
+	req := newSettingsRequest("PATCH", "/chat/conversations/conv-1/workflow_settings",
+		`{"workflow_mode":"bogus"}`, "user-1", vars)
 	w := httptest.NewRecorder()
 	PatchConversationWorkflowSettings(w, req)
 

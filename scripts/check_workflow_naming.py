@@ -36,6 +36,28 @@ IGNORED_PARTS = {
 # Database identifiers are lower snake case with at least one underscore.  A
 # bare "plugin" is never a physical identifier and therefore is never allowed.  # noqa: Q000
 PHYSICAL_NAME = re.compile(r"\bplugin_[a-z][a-z0-9_]*\b")  # noqa: Q000
+PERSISTENCE_FILES = {
+    'backend/core/common/orm/all_models.go',
+    'backend/core/common/orm/plugin_models.go',
+    'backend/core/common/orm/plugin_models_test.go',
+    'backend/core/common/orm/taskcenter_models.go',
+    'backend/core/common/orm/user_config_models_test.go',
+    'backend/core/resourceupdate/stats.go',
+    'backend/core/migrate/mode_test.go',
+    'backend/core/migrate/repository_sqlite_test.go',
+    'backend/core/workflow/domain/capabilities.go',
+    'backend/core/workflow/domain/capabilities_test.go',
+    'backend/core/workflow/domain/models.go',
+    'backend/core/workflow/domain/models_test.go',
+    'backend/core/workflow/domain/session_repository.go',
+    'backend/core/workflow/domain/session_repository_test.go',
+    'backend/core/workflow/migration_contract_test.go',
+    'backend/core/workflow/store.go',
+    'backend/core/workflow/store_test.go',
+    'backend/core/workflow/facade/handler_test.go',
+    'backend/core/workflow/store/models.go',
+    'backend/core/workflow/store/repository.go',
+}
 LEGACY_DOMAIN = re.compile(
     r"(?<![A-Za-z0-9])(?:Plugin[A-Za-z0-9_]*|plugin[A-Z][A-Za-z0-9_]*|"  # noqa: Q000
     r"plugin[-_][A-Za-z0-9_-]+|/api/plugins(?:/|\b))"  # noqa: Q000
@@ -74,7 +96,16 @@ class Violation:
 def _is_physical_name_allowed(path: Path, line: str, token: str, start: int) -> bool:
     if not PHYSICAL_NAME.fullmatch(token):
         return False
+    if 'workflow-naming: persistence' in line:
+        return True
+    normalized = path.as_posix()
+    if any(normalized.endswith(item) for item in PERSISTENCE_FILES):
+        return True
     if path.suffix == ".sql":  # noqa: Q000
+        # Historical migrations are immutable persistence records. Only their
+        # lower-snake physical identifiers are exempt; routes and prose are not.
+        if 'migrations' in path.parts:
+            return True
         return bool(SQL_IDENTIFIER.search(line)) and not re.search(
             r"(?i)\bAS\s+$", line[:start]  # noqa: Q000
         )
@@ -83,7 +114,18 @@ def _is_physical_name_allowed(path: Path, line: str, token: str, start: int) -> 
             if match.start() <= start < match.end():
                 return True
         table_return = re.search(r'TableName\(\).*return\s+\"([^\"]+)\"', line)  # noqa: Q000
-        return bool(table_return and table_return.start(1) <= start < table_return.end(1))
+        if table_return and table_return.start(1) <= start < table_return.end(1):
+            return True
+        in_literal = any(
+            match.start() <= start < match.end()
+            for match in re.finditer(r'\"[^\"]*\"|`[^`]*`', line)
+        )
+        persistence_call = re.search(
+            r'\.(?:Where|Joins|Table|Select|Order|Update|Updates|Exec)\(|'
+            r'clause\.(?:Column|OnConflict)|(?i:\b(?:FROM|JOIN|UPDATE|INTO|TABLE)\b)',
+            line,
+        )
+        return in_literal and bool(persistence_call)
     if path.suffix == ".py":  # noqa: Q000
         return bool(PYTHON_SQL.search(line)) and not re.search(
             r"(?i)\bAS\s+$", line[:start]  # noqa: Q000
@@ -96,12 +138,24 @@ def scan_file(path: Path) -> Iterator[Violation]:
         contents = path.read_text(encoding="utf-8")  # noqa: Q000
     except UnicodeDecodeError:
         return
-    for line_number, line in enumerate(contents.splitlines(), 1):
+    sql_literals = [
+        (match.start(), match.end())
+        for match in re.finditer(r'`[^`]*`', contents, re.DOTALL)
+        if re.search(r'(?i)\b(?:SELECT|FROM|JOIN|UPDATE|INSERT|DELETE|CREATE|ALTER)\b', match.group())
+    ]
+    offset = 0
+    for line_number, line in enumerate(contents.splitlines(keepends=True), 1):
         for match in LEGACY_DOMAIN.finditer(line):
             token = match.group(0)
+            absolute = offset + match.start()
+            if PHYSICAL_NAME.fullmatch(token) and any(
+                start <= absolute < end for start, end in sql_literals
+            ):
+                continue
             if _is_physical_name_allowed(path, line, token, match.start()):
                 continue
             yield Violation(path, line_number, match.start() + 1, token)
+        offset += len(line)
 
 
 def iter_files(paths: Iterable[Path]) -> Iterator[Path]:

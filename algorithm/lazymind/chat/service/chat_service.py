@@ -254,12 +254,12 @@ def _should_register_ask_user(
     agentic_config: Dict[str, Any],
     disabled_tools: set[str] | None = None,
 ) -> bool:
-    """Respect explicit non-interactive requests and legacy auto plugin sessions."""
+    """Respect explicit non-interactive requests and legacy auto workflow sessions."""
     if 'ask_user' in (disabled_tools or set()):
         return False
     return not (
-        agentic_config.get('enable_plugin', True)
-        and agentic_config.get('plugin_mode') == 'auto'
+        agentic_config.get('enable_workflow', True)
+        and agentic_config.get('workflow_mode') == 'auto'
     )
 
 
@@ -272,11 +272,11 @@ def _task_profile_inputs(request: ChatRequest) -> dict[str, Any]:
         explicit_resources['knowledge_base_ids'] = (
             selected_kb_ids if isinstance(selected_kb_ids, list) else [selected_kb_ids]
         )
-    active_plugin_ref = str(
-        (request.plugin.plugin_context or {}).get('plugin_ref') or ''
+    active_workflow_ref = str(
+        (request.workflow.workflow_context or {}).get('workflow_ref') or ''
     ).strip()
-    if active_plugin_ref and not explicit_resources['plugin_refs']:
-        explicit_resources['plugin_refs'] = [active_plugin_ref]
+    if active_workflow_ref and not explicit_resources['workflow_refs']:
+        explicit_resources['workflow_refs'] = [active_workflow_ref]
     thinking_depth = (
         request.runtime.thinking_depth
         if request.runtime.thinking_depth in ('low', 'medium', 'high', 'max') else 'medium'
@@ -321,12 +321,12 @@ async def handle_chat(request: ChatRequest) -> Union[Dict[str, Any], StreamingRe
     if not provisional.routing_review_required:
         return await _handle_chat_impl(request, task_profile_override=provisional)
 
-    from lazymind.chat.plugin.plugin_manager import is_plugin_driver_turn
+    from lazymind.chat.workflow.workflow_manager import is_workflow_driver_turn
     raw_query = str(request.message.query or '')
     filter_query, _ = _normalize_cite_message_query_for_agent(raw_query)
     skip_sensitive_filter = (
         request.runtime.skip_sensitive_filter
-        or is_plugin_driver_turn(request.plugin.plugin_context)
+        or is_workflow_driver_turn(request.workflow.workflow_context)
         or request.runtime.context_usage_preview
         or request.runtime.context_prompt_export
     )
@@ -394,13 +394,13 @@ async def _handle_chat_impl(
     runtime = request.runtime
     personalization = request.personalization
     agent = request.agent
-    plugin = request.plugin
+    workflow = request.workflow
     explicit_resources = request.explicit_resource_bindings
-    from lazymind.chat.plugin.plugin_manager import (
+    from lazymind.chat.workflow.workflow_manager import (
         _build_chat_agent_task_context,
-        guard_plugin_agent_stream,
-        is_plugin_driver_turn,
-        resolve_plugin_injection,
+        guard_workflow_agent_stream,
+        is_workflow_driver_turn,
+        resolve_workflow_injection,
         update_intentwriter,
     )
 
@@ -411,7 +411,7 @@ async def _handle_chat_impl(
         f'[{summarize_model_config_for_log(runtime.llm_config)}]'
     )
     LOG.info(
-        f'[ChatServer] [PLUGIN_CONTEXT] [sid={conversation.session_id}] [plugin_context={plugin.plugin_context!r}]'
+        f'[ChatServer] [PLUGIN_CONTEXT] [sid={conversation.session_id}] [workflow_context={workflow.workflow_context!r}]'
     )
     LOG.info(
         f'[ChatServer] [TURN_SEQ] [sid={conversation.session_id}] '
@@ -427,7 +427,7 @@ async def _handle_chat_impl(
     if user_cited_context:
         cited_message_context = user_cited_context
     language_query = user_input.strip()
-    is_driver_turn = is_plugin_driver_turn(plugin.plugin_context)
+    is_driver_turn = is_workflow_driver_turn(workflow.workflow_context)
     skip_sensitive_filter = (
         runtime.skip_sensitive_filter
         or is_driver_turn
@@ -471,9 +471,9 @@ async def _handle_chat_impl(
         explicit_resource_payload['knowledge_base_ids'] = (
             selected_kb_ids if isinstance(selected_kb_ids, list) else [selected_kb_ids]
         )
-    active_plugin_ref = str((plugin.plugin_context or {}).get('plugin_ref') or '').strip()
-    if active_plugin_ref and not explicit_resource_payload['plugin_refs']:
-        explicit_resource_payload['plugin_refs'] = [active_plugin_ref]
+    active_workflow_ref = str((workflow.workflow_context or {}).get('workflow_ref') or '').strip()
+    if active_workflow_ref and not explicit_resource_payload['workflow_refs']:
+        explicit_resource_payload['workflow_refs'] = [active_workflow_ref]
 
     raw_history = list(message.history) if isinstance(message.history, list) else []
     agent_history = normalize_history_for_agent(raw_history)
@@ -503,15 +503,15 @@ async def _handle_chat_impl(
         'memory': personalization.memory or '',
         'user_preference': personalization.user_preference or '',
     }
-    # Inject per-conversation plugin flags from Go (resolved from conversations table).
-    # enable_plugin=None means "not set"; default to True so behaviour is unchanged
+    # Inject per-conversation workflow flags from Go (resolved from conversations table).
+    # enable_workflow=None means "not set"; default to True so behaviour is unchanged
     # for callers that do not yet pass the field.
-    if plugin.enable_plugin is not None:
-        agentic_config['enable_plugin'] = bool(plugin.enable_plugin)
+    if workflow.enable_workflow is not None:
+        agentic_config['enable_workflow'] = bool(workflow.enable_workflow)
     if agent.enable_subagent is not None:
         agentic_config['enable_subagent'] = bool(agent.enable_subagent)
-    # plugin_mode is consumed directly from plugin_context by resolve_plugin_injection
-    # (where it is only meaningful when enable_plugin=true); no need to store it in
+    # workflow_mode is consumed directly from workflow_context by resolve_workflow_injection
+    # (where it is only meaningful when enable_workflow=true); no need to store it in
     # agentic_config separately.
 
     # Use the authoritative current_turn_seq from Go; fall back to max(keys) only as a
@@ -585,54 +585,54 @@ async def _handle_chat_impl(
             )
             agentic_config['filters'] = effective_filters
 
-    excluded_plugin_refs = set(
-        task_profile.excluded_resources.plugin_refs if task_profile else ()
+    excluded_workflow_refs = set(
+        task_profile.excluded_resources.workflow_refs if task_profile else ()
     )
-    effective_plugin_context = plugin.plugin_context
-    if str((effective_plugin_context or {}).get('plugin_ref') or '') in excluded_plugin_refs:
-        effective_plugin_context = None
-    effective_plugin_catalog = [
-        item for item in plugin.catalog
-        if str(item.get('plugin_ref') or '') not in excluded_plugin_refs
+    effective_workflow_context = workflow.workflow_context
+    if str((effective_workflow_context or {}).get('workflow_ref') or '') in excluded_workflow_refs:
+        effective_workflow_context = None
+    effective_workflow_catalog = [
+        item for item in workflow.catalog
+        if str(item.get('workflow_ref') or '') not in excluded_workflow_refs
     ]
-    effective_allowed_plugin_refs = [
-        ref for ref in plugin.allowed_plugin_refs if ref not in excluded_plugin_refs
+    effective_allowed_workflow_refs = [
+        ref for ref in workflow.allowed_workflow_refs if ref not in excluded_workflow_refs
     ]
-    effective_disabled_builtin_plugins = list(plugin.disabled_builtin_plugins)
-    effective_disabled_builtin_plugins.extend(
-        ref.removeprefix('builtin:') for ref in excluded_plugin_refs
+    effective_disabled_builtin_workflows = list(workflow.disabled_builtin_workflows)
+    effective_disabled_builtin_workflows.extend(
+        ref.removeprefix('builtin:') for ref in excluded_workflow_refs
         if ref.startswith('builtin:')
     )
 
-    plugin_contribution = resolve_plugin_injection(
-        effective_plugin_context,
+    workflow_contribution = resolve_workflow_injection(
+        effective_workflow_context,
         conversation_id=conversation_id,
-        plugin_catalog=effective_plugin_catalog,
-        disabled_builtin_plugins=list(dict.fromkeys(effective_disabled_builtin_plugins)),
-        allowed_plugin_refs=effective_allowed_plugin_refs,
+        workflow_catalog=effective_workflow_catalog,
+        disabled_builtin_workflows=list(dict.fromkeys(effective_disabled_builtin_workflows)),
+        allowed_workflow_refs=effective_allowed_workflow_refs,
     )
-    plugin_tools = plugin_contribution.tools
-    agentic_config.update(plugin_contribution.agentic_config_patch)
+    workflow_tools = workflow_contribution.tools
+    agentic_config.update(workflow_contribution.agentic_config_patch)
 
     intentwriter = build_intentwrite_tool(
         conversation_id=conversation_id,
         current_query=query,
         current_intent=conversation.intent_context,
     )
-    intentwriter = update_intentwriter(intentwriter, plugin.plugin_context)
+    intentwriter = update_intentwriter(intentwriter, workflow.workflow_context)
 
-    # Inject SubAgent task context into the system prompt independently of plugin state.
-    # Injected when either plugin or subagent is enabled so the model knows about ongoing tasks.
+    # Inject SubAgent task context into the system prompt independently of workflow state.
+    # Injected when either workflow or subagent is enabled so the model knows about ongoing tasks.
     # When both are disabled, the task context is suppressed (pure QA mode).
-    _enable_plugin = agentic_config.get('enable_plugin', True)
+    _enable_workflow = agentic_config.get('enable_workflow', True)
     _enable_subagent = agentic_config.get('enable_subagent', True)
     LOG.info(
         f'[ChatServer] [PLUGIN_FLAGS] [sid={conversation.session_id}] '
-        f'[enable_plugin={_enable_plugin!r}] [enable_subagent={_enable_subagent!r}] '
-        f'[plugin_tools={[getattr(t, "__name__", str(t)) for t in plugin_tools]!r}]'
+        f'[enable_workflow={_enable_workflow!r}] [enable_subagent={_enable_subagent!r}] '
+        f'[workflow_tools={[getattr(t, "__name__", str(t)) for t in workflow_tools]!r}]'
     )
     task_ctx = ''
-    if _enable_plugin or _enable_subagent:
+    if _enable_workflow or _enable_subagent:
         task_ctx = _build_chat_agent_task_context((conversation_id or '').strip())
     conversation_intent_section = render_intent_section(
         'Conversation Intent', conversation.intent_context,
@@ -661,7 +661,7 @@ async def _handle_chat_impl(
     )
     # ask_user is a ChatAgent-only stop-tool. It is NOT in DEFAULT_TOOLS so SubAgents
     # (whose tool resolution falls back to DEFAULT_TOOLS) never see it.
-    # Auto plugin mode is non-interactive by contract: ask_user must be absent,
+    # Auto workflow mode is non-interactive by contract: ask_user must be absent,
     # not merely discouraged by prompt text.
     allow_ask_user = _should_register_ask_user(agentic_config, disabled)
     ask_user_tools = _build_ask_user_tool() if allow_ask_user else []
@@ -670,7 +670,7 @@ async def _handle_chat_impl(
     workspace = chat_agent_workspace(user_id or '0', conversation_id)
     skill_listing_tools = [build_list_skills_tool(agent.available_skills)]
     all_tools = ([intentwriter] + agent_tools + artifact_tools + subagent_tools + attachment_tools
-                 + skill_listing_tools + ask_user_tools + plugin_tools + mcp_tools)
+                 + skill_listing_tools + ask_user_tools + workflow_tools + mcp_tools)
     skill_config = agent.available_skills
     selected_skills = agent.available_skills
     if task_profile is not None:
@@ -723,14 +723,14 @@ async def _handle_chat_impl(
         'agent.workspace',
         priority=70,
     )
-    # Plugin policy historically followed the common system prompt.
+    # Workflow policy historically followed the common system prompt.
     prompt_builder.system(
-        'chat_plugin_policy', 'Plugin Policy', plugin_contribution.system_prompt,
-        'plugin.scenario', priority=80,
+        'chat_workflow_policy', 'Workflow Policy', workflow_contribution.system_prompt,
+        'workflow.scenario', priority=80,
     )
     prompt_builder.runtime(
-        'chat_plugin_runtime', 'Plugin State', plugin_contribution.runtime_context,
-        'plugin.runtime', priority=10, authoritative=True, content_kind='state',
+        'chat_workflow_runtime', 'Workflow State', workflow_contribution.runtime_context,
+        'workflow.runtime', priority=10, authoritative=True, content_kind='state',
     )
     prompt_builder.runtime(
         'chat_tasks', 'SubAgent Tasks', task_ctx, 'database.tasks',
@@ -797,8 +797,8 @@ async def _handle_chat_impl(
 
     llm = AutoModel(model='llm')
 
-    # ask_user is always a stop-tool for ChatAgent regardless of plugin state.
-    stop_tools = list(plugin_contribution.stop_tools)
+    # ask_user is always a stop-tool for ChatAgent regardless of workflow state.
+    stop_tools = list(workflow_contribution.stop_tools)
     if allow_ask_user and 'ask_user' not in stop_tools:
         stop_tools.append('ask_user')
 
@@ -871,7 +871,7 @@ async def _handle_chat_impl(
         try:
             async with rag_sem:
                 initial_agent_stream = executor.stream_agent(react_agent, plan)
-                guarded_agent_stream = guard_plugin_agent_stream(
+                guarded_agent_stream = guard_workflow_agent_stream(
                     initial_agent_stream,
                     all_tools=all_tools,
                     query=query,

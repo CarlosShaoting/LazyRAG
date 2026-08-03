@@ -44,9 +44,9 @@ import ChatSelector, { type ChatSelectorImperativeProps } from "../ChatSelector"
 import PromptModal, { PromptImperativeProps } from "../PromptModal";
 import { appendPromptToDraft } from "../PromptModal/promptLibrary";
 import ChatConfigModal from "./ChatConfigModal";
-import type { ConversationPluginSettings } from "../../utils/request";
-import { PluginSessionApi } from "../../utils/request";
-import { usePluginStore } from "@/modules/chat/store/pluginPanel";
+import type { ConversationWorkflowSettings } from "../../utils/request";
+import { WorkflowSessionApi } from "../../utils/request";
+import { useWorkflowStore } from "@/modules/chat/store/workflowPanel";
 import BatchChatComponent, { BatchChatImperativeProps } from "../BatchChat";
 import MentionEditor, {
   type ChatMention,
@@ -57,7 +57,7 @@ import { buildCitedMessageText } from "../newChatContainer/utils/citeMessage";
 
 // Stable empty array reference — must NOT be inline `?? []` in a zustand selector
 // because a new array on every call triggers useSyncExternalStore to fire React error #185.
-const EMPTY_DISMISSED: Array<{ session_id: string; plugin_id: string }> = [];
+const EMPTY_DISMISSED: Array<{ session_id: string; workflow_id: string }> = [];
 import ShowChatFileList from "../ShowChatFileList";
 import { formatFileSize } from "@/modules/chat/utils";
 import {
@@ -70,11 +70,11 @@ import { PromptServiceApi } from "@/modules/chat/utils/request";
 import { Popover, Tag } from "antd";
 
 /**
- * Shows a button in the toolbar when there are dismissed plugin sessions.
+ * Shows a button in the toolbar when there are dismissed workflow sessions.
  * Clicking it opens a popover listing dismissed sessions with restore buttons.
- * Dismissed sessions are cached in pluginPanel store so the button survives component remounts.
+ * Dismissed sessions are cached in workflowPanel store so the button survives component remounts.
  */
-function DismissedPluginRestoreButton({
+function DismissedWorkflowRestoreButton({
   conversationId,
 }: {
   conversationId: string;
@@ -82,19 +82,19 @@ function DismissedPluginRestoreButton({
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [restoring, setRestoring] = useState<string | null>(null);
-  const bumpDismissedRefresh = usePluginStore((s) => s.bumpDismissedRefresh);
-  const fetchDismissedSessions = usePluginStore(
+  const bumpDismissedRefresh = useWorkflowStore((s) => s.bumpDismissedRefresh);
+  const fetchDismissedSessions = useWorkflowStore(
     (s) => s.fetchDismissedSessions,
   );
   // Read the array reference from store; fall back to undefined and handle below.
   // IMPORTANT: do NOT use `?? []` inline — a fresh array on every selector call
   // causes useSyncExternalStore to detect a state change on every render, leading
   // to an infinite re-render loop (React error #185).
-  const dismissedSessionsFromStore = usePluginStore(
+  const dismissedSessionsFromStore = useWorkflowStore(
     (s) => s.dismissedSessionsByConversation[conversationId],
   );
   const dismissedSessions = dismissedSessionsFromStore ?? EMPTY_DISMISSED;
-  const dismissedRefreshTrigger = usePluginStore(
+  const dismissedRefreshTrigger = useWorkflowStore(
     (s) => s.dismissedRefreshTrigger[conversationId] ?? 0,
   );
 
@@ -112,10 +112,10 @@ function DismissedPluginRestoreButton({
   const handleRestore = async (sessionId: string) => {
     setRestoring(sessionId);
     try {
-      await PluginSessionApi().restoreSession(sessionId);
+      await WorkflowSessionApi().restoreSession(sessionId);
       bumpDismissedRefresh(conversationId);
-      // Reload active session so PluginPanel re-appears immediately without needing a page refresh.
-      usePluginStore.getState().loadActiveSession(conversationId);
+      // Reload active session so WorkflowPanel re-appears immediately without needing a page refresh.
+      useWorkflowStore.getState().loadActiveSession(conversationId);
       setOpen(false);
     } catch {
       // API errors are reported by the shared request interceptor.
@@ -139,13 +139,13 @@ function DismissedPluginRestoreButton({
               marginBottom: 6,
             }}
           >
-            <Tag style={{ flex: 1 }}>{s.plugin_id}</Tag>
+            <Tag style={{ flex: 1 }}>{s.workflow_id}</Tag>
             <Button
               size="small"
               loading={restoring === s.session_id}
               onClick={() => handleRestore(s.session_id)}
             >
-              {t("chat.pluginRestoreBtn")}
+              {t("chat.workflowRestoreBtn")}
             </Button>
           </li>
         ))}
@@ -159,13 +159,13 @@ function DismissedPluginRestoreButton({
       onOpenChange={handleOpenChange}
       trigger="click"
       content={content}
-      title={t("chat.pluginDismissedTitle")}
+      title={t("chat.workflowDismissedTitle")}
     >
-      <Tooltip title={t("chat.pluginDismissedTitle")}>
+      <Tooltip title={t("chat.workflowDismissedTitle")}>
         <button
           type="button"
           className="input-bottom-actions-left-item input-bottom-actions-left-item--icon-only"
-          aria-label={t("chat.pluginDismissedTitle")}
+          aria-label={t("chat.workflowDismissedTitle")}
         >
           {/* Trash / recycle-bin icon */}
           <svg
@@ -373,12 +373,12 @@ interface ChatInputProps {
   isStreaming?: boolean;
   onStopGeneration?: () => void;
   embeddingReady?: boolean | null;
-  /** Called when plugin settings change (e.g. from the chat config popover). */
-  onPluginSettingsChange?: (settings: ConversationPluginSettings) => void;
-  /** Initial plugin settings to pre-populate the config popover. */
-  initialPluginSettings?: ConversationPluginSettings;
-  /** When true, the allow-plugin toggle in config is locked (plugin session is active). */
-  hasPluginSession?: boolean;
+  /** Called when workflow settings change (e.g. from the chat config popover). */
+  onWorkflowSettingsChange?: (settings: ConversationWorkflowSettings) => void;
+  /** Initial workflow settings to pre-populate the config popover. */
+  initialWorkflowSettings?: ConversationWorkflowSettings;
+  /** When true, the allow-workflow toggle in config is locked (workflow session is active). */
+  hasWorkflowSession?: boolean;
   multimodalEmbeddingReady?: boolean | null;
   rerankReady?: boolean | null;
   disabled?: boolean;
@@ -492,9 +492,9 @@ const ChatInput = forwardRef<ChatInputImperativeProps, ChatInputProps>(
       skillDepositStats,
       skillDepositDisabledReason,
       onSkillDeposit,
-      onPluginSettingsChange,
-      initialPluginSettings,
-      hasPluginSession,
+      onWorkflowSettingsChange,
+      initialWorkflowSettings,
+      hasWorkflowSession,
       runInBackground = false,
     } = props;
     const fileListRef = useRef<ImageUploadImperativeProps | null>(null);
@@ -513,7 +513,7 @@ const ChatInput = forwardRef<ChatInputImperativeProps, ChatInputProps>(
     const { t } = useTranslation();
     const [text, setText] = useState("");
     const [mentions, setMentions] = useState<ChatMention[]>([]);
-    const [contextRuntimeSettings, setContextRuntimeSettings] = useState(initialPluginSettings);
+    const [contextRuntimeSettings, setContextRuntimeSettings] = useState(initialWorkflowSettings);
     const [contextUsageReset, setContextUsageReset] = useState(0);
     const [addMenuOpen, setAddMenuOpen] = useState(false);
     const disabledNoticeId = useId();
@@ -521,8 +521,8 @@ const ChatInput = forwardRef<ChatInputImperativeProps, ChatInputProps>(
     const hasSentMessageRef = useRef(false);
 
     useEffect(() => {
-      setContextRuntimeSettings(initialPluginSettings);
-    }, [initialPluginSettings]);
+      setContextRuntimeSettings(initialWorkflowSettings);
+    }, [initialWorkflowSettings]);
 
     const [fileList, setFileList] = useState<ChatFileList[]>([]);
     const { setPendingMessage, clearPendingMessage } = useChatMessageStore();
@@ -1233,15 +1233,15 @@ const ChatInput = forwardRef<ChatInputImperativeProps, ChatInputProps>(
                         ? sessionId
                         : undefined
                     }
-                    initialSettings={initialPluginSettings}
-                    hasPluginSession={hasPluginSession}
+                    initialSettings={initialWorkflowSettings}
+                    hasWorkflowSession={hasWorkflowSession}
                     onSave={(settings) => {
                       setContextRuntimeSettings(settings);
-                      onPluginSettingsChange?.(settings);
+                      onWorkflowSettingsChange?.(settings);
                     }}
                   />
                   {sessionId && !sessionId.startsWith("temp_") && (
-                    <DismissedPluginRestoreButton conversationId={sessionId} />
+                    <DismissedWorkflowRestoreButton conversationId={sessionId} />
                   )}
                 </div>
 

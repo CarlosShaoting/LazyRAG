@@ -27,8 +27,8 @@ const subagentRunTimeout = 2 * time.Hour
 //
 // objective, input_slots, and output_slots are intentionally
 // omitted: the Python runner reads those from the sub_agent_tasks DB record.
-// tools is still forwarded for non-plugin_step agent types; plugin_step tasks
-// resolve their tools from plugin_loader at execution time.
+// tools is still forwarded for non-workflow_step agent types; workflow_step tasks
+// resolve their tools from workflow_loader at execution time.
 type RunRequest struct {
 	TaskID        string         `json:"task_id"`
 	AgentType     string         `json:"agent_type"`
@@ -137,7 +137,7 @@ func routeEvent(ctx context.Context, db *gorm.DB, stateStore state.Store, ev Tas
 			return nil
 		}
 		_ = WriteStatus(ctx, stateStore, ev.TaskID, map[string]any{"status": StatusRunning, "progress": 0})
-		// Mirror running status into plugin_session_steps if this is a plugin_step task.
+		// Mirror running status into workflow_session_steps if this is a workflow_step task.
 		routeWorkflowStepStatus(ctx, db, stateStore, ev.TaskID, StatusRunning, "")
 	case "progress":
 		_ = UpdateProgress(ctx, db, ev.TaskID, ev.Progress, ev.CurrentPhase, ev.EstimatedSec)
@@ -152,7 +152,7 @@ func routeEvent(ctx context.Context, db *gorm.DB, stateStore state.Store, ev Tas
 		if err := SaveArtifact(ctx, db, ev.TaskID, ev.ArtifactKey, ev.ContentType, ev.Value, seq); err != nil {
 			return fmt.Errorf("save artifact task=%s slot=%s seq=%d: %w", ev.TaskID, ev.ArtifactKey, seq, err)
 		}
-		// Write slot revision if this is a plugin_step task with a slot binding.
+		// Write slot revision if this is a workflow_step task with a slot binding.
 		// list_index for partial retry is embedded inside the artifact JSON value and
 		// extracted by the plugin hook via extractListIndex — no need to pass it here.
 		routeWorkflowArtifact(ctx, db, stateStore, ev.TaskID, ev.ArtifactKey)
@@ -208,7 +208,7 @@ type eventHooks struct {
 	onTerminalStatus func(ctx context.Context, db *gorm.DB, stateStore state.Store, taskID, status, message string)
 	// onConversationEvent is called when a plugin lifecycle event should be pushed to the
 	// main conversation SSE stream. convID and historyID identify the target stream;
-	// eventType is one of "step_waiting", "plugin_completed", "plugin_error".
+	// eventType is one of "step_waiting", "workflow_completed", "workflow_error".
 	onConversationEvent func(ctx context.Context, stateStore state.Store, convID, historyID, eventType string, payload map[string]any)
 }
 

@@ -8,7 +8,7 @@ import importlib
 _EXPORTS = {
     'build_schedule_toolkit': ('.schedule', 'build_schedule_toolkit'),
     'calculator': ('.calculator', 'calculator'),
-    'create_plugin_draft': ('.plugin_chat_tools', 'create_plugin_draft'),
+    'create_workflow_draft': ('.workflow_chat_tools', 'create_workflow_draft'),
     'ExternalDatabaseToolkit': ('.external_db', 'ExternalDatabaseToolkit'),
     'image_editor': ('.multimodal', 'image_editor'),
     'image_generator': ('.multimodal', 'image_generator'),

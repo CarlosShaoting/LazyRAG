@@ -3245,6 +3245,16 @@ INSERT INTO public.eval_set_shards (
     5368709120, 0, 0, now(), now()
 ) ON CONFLICT (id) DO NOTHING;
 
+CREATE TABLE public.workflow_preparations (id varchar(36) PRIMARY KEY, idempotency_key varchar(255) NOT NULL, owner_user_id varchar(255) NOT NULL, workflow_id varchar(255) NOT NULL, contract_version varchar(32) NOT NULL, request_json jsonb NOT NULL, response_json jsonb NOT NULL, consumed_at timestamp NULL, session_id varchar(36) NOT NULL DEFAULT '', created_at timestamp NOT NULL, updated_at timestamp NOT NULL, UNIQUE(owner_user_id, idempotency_key));
+CREATE INDEX idx_workflow_preparations_owner ON public.workflow_preparations(owner_user_id);
+CREATE TABLE public.workflow_commands (command_id varchar(255) PRIMARY KEY, owner_user_id varchar(255) NOT NULL, session_id varchar(36) NOT NULL, contract_version varchar(32) NOT NULL, request_hash varchar(64) NOT NULL, http_status integer NOT NULL, response_json jsonb NOT NULL, created_at timestamp NOT NULL);
+CREATE INDEX idx_workflow_commands_owner ON public.workflow_commands(owner_user_id);
+CREATE INDEX idx_workflow_commands_session ON public.workflow_commands(session_id);
+CREATE TABLE public.workflow_events (id bigserial PRIMARY KEY, session_id varchar(36) NOT NULL, owner_user_id varchar(255) NOT NULL, contract_version varchar(32) NOT NULL, event_type varchar(64) NOT NULL, entity_id varchar(255) NOT NULL DEFAULT '', state_version bigint NOT NULL DEFAULT 0, command_id varchar(255) NOT NULL DEFAULT '', payload_json jsonb NOT NULL, created_at timestamp NOT NULL);
+CREATE INDEX idx_workflow_events_session_cursor ON public.workflow_events(session_id, id);
+CREATE INDEX idx_workflow_events_owner ON public.workflow_events(owner_user_id);
+CREATE INDEX idx_workflow_events_command ON public.workflow_events(command_id);
+
 -- +migrate Dialect sqlite
 PRAGMA defer_foreign_keys = ON;
 ALTER TABLE "acl_groups" RENAME TO "__v01_acl_groups";
@@ -3950,3 +3960,28 @@ INSERT OR IGNORE INTO eval_set_shards (
   id,status,row_limit,row_open_threshold,size_limit_bytes,size_open_threshold_bytes,
   actual_rows,estimated_bytes,created_at,updated_at
 ) VALUES ('eval_shard_0001','open',200000,120000,8589934592,5368709120,0,0,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);
+
+CREATE TABLE workflow_preparations (
+    id TEXT PRIMARY KEY, idempotency_key TEXT NOT NULL, owner_user_id TEXT NOT NULL,
+    workflow_id TEXT NOT NULL, contract_version TEXT NOT NULL, request_json TEXT NOT NULL,
+    response_json TEXT NOT NULL, consumed_at DATETIME NULL, session_id TEXT NOT NULL DEFAULT '',
+    created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL,
+    UNIQUE(owner_user_id, idempotency_key)
+);
+CREATE INDEX idx_workflow_preparations_owner ON workflow_preparations(owner_user_id);
+CREATE TABLE workflow_commands (
+    command_id TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL, session_id TEXT NOT NULL,
+    contract_version TEXT NOT NULL, request_hash TEXT NOT NULL, http_status INTEGER NOT NULL,
+    response_json TEXT NOT NULL, created_at DATETIME NOT NULL
+);
+CREATE INDEX idx_workflow_commands_owner ON workflow_commands(owner_user_id);
+CREATE INDEX idx_workflow_commands_session ON workflow_commands(session_id);
+CREATE TABLE workflow_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, owner_user_id TEXT NOT NULL,
+    contract_version TEXT NOT NULL, event_type TEXT NOT NULL, entity_id TEXT NOT NULL DEFAULT '',
+    state_version INTEGER NOT NULL DEFAULT 0, command_id TEXT NOT NULL DEFAULT '',
+    payload_json TEXT NOT NULL, created_at DATETIME NOT NULL
+);
+CREATE INDEX idx_workflow_events_session_cursor ON workflow_events(session_id, id);
+CREATE INDEX idx_workflow_events_owner ON workflow_events(owner_user_id);
+CREATE INDEX idx_workflow_events_command ON workflow_events(command_id);

@@ -220,7 +220,7 @@ func loadUserAgentConfig(ctx context.Context, db *gorm.DB, userID string, body m
 	var settings orm.UserChatSettings
 	if err := db.WithContext(ctx).Where("user_id = ?", userID).First(&settings).Error; err == nil {
 		out["enable_plugin"] = settings.EnableWorkflow
-		out["plugin_mode"] = settings.WorkflowMode
+		out["workflow_mode"] = settings.WorkflowMode
 		out["enable_subagent"] = settings.EnableSubagent
 	}
 
@@ -233,7 +233,7 @@ func loadUserAgentConfig(ctx context.Context, db *gorm.DB, userID string, body m
 				out["enable_plugin"] = *conv.EnableWorkflow
 			}
 			if conv.WorkflowMode != nil {
-				out["plugin_mode"] = *conv.WorkflowMode
+				out["workflow_mode"] = *conv.WorkflowMode
 			}
 			if conv.EnableSubagent != nil {
 				out["enable_subagent"] = *conv.EnableSubagent

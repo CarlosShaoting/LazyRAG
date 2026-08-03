@@ -77,7 +77,7 @@ type TaskCreatedNotice struct {
 	Mode              string `json:"mode"`
 	Status            string `json:"status"`
 	SeqInConversation int    `json:"seq_in_conversation"`
-	// WorkflowSessionID is set when the task is a Workflow Step (agent_type='plugin_step').
+	// WorkflowSessionID is set when the task is a Workflow Step (agent_type='workflow_step').
 	WorkflowSessionID string `json:"workflow_session_id,omitempty"`
 }
 
@@ -264,7 +264,7 @@ func getMultiAnswerInfo(ctx context.Context, stateStore state.Store, conversatio
 // ConvEvent is a conversation-level notification pushed to the frontend via the
 // /conversations/{id}/events SSE endpoint. It is independent of any chat turn.
 type ConvEvent struct {
-	Type    string `json:"type"`    // task_created | plugin_artifact_updated | step_waiting | plugin_completed | plugin_error | driver_input | auto_chat_started | ask_pending
+	Type    string `json:"type"`    // task_created | workflow_artifact_updated | step_waiting | workflow_completed | workflow_error | driver_input | auto_chat_started | ask_pending
 	Payload any    `json:"payload"` // *TaskCreatedNotice or plugin lifecycle payload map
 }
 

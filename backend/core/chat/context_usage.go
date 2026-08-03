@@ -283,29 +283,29 @@ func estimateContext(w http.ResponseWriter, r *http.Request, exportPrompt bool) 
 		reqBody["context_preview_allow_llm_routing"] = value
 	}
 	workflowMode := resolveWorkflowModeWithFallback(raw, reqBody)
-	workflowContext, _ := reqBody["plugin_context"].(map[string]any)
+	workflowContext, _ := reqBody["workflow_context"].(map[string]any)
 	if workflowContext == nil {
 		workflowContext = map[string]any{}
 	}
-	workflowContext["plugin_mode"] = workflowMode
+	workflowContext["workflow_mode"] = workflowMode
 	if convID != "" {
 		if preflight := loadWorkflowPreflightContext(r.Context(), db, convID); len(preflight) > 0 {
-			workflowContext["plugin_preflight"] = preflight
+			workflowContext["workflow_preflight"] = preflight
 		}
 	}
 	if convID != "" {
 		if active, activeErr := workflow.GetLatestSession(r.Context(), db, convID); activeErr == nil && active != nil {
 			workflowContext["session_id"] = active.ID
-			workflowContext["plugin_id"] = active.WorkflowID
+			workflowContext["workflow_id"] = active.WorkflowID
 			workflowContext["current_step"] = active.CurrentStepID
-			workflowContext["plugin_ref"] = active.WorkflowRef
+			workflowContext["workflow_ref"] = active.WorkflowRef
 			workflowContext["revision_id"] = active.WorkflowRevisionID
 			workflowContext["revision_no"] = active.WorkflowRevisionNo
 			workflowContext["tree_hash"] = active.WorkflowTreeHash
 			workflowContext["remote_root"] = active.WorkflowRemoteRoot
 		}
 	}
-	reqBody["plugin_context"] = workflowContext
+	reqBody["workflow_context"] = workflowContext
 	if err := applyWorkflowSelection(
 		r.Context(), db, userID, reqBody, mentioned.WorkflowRefs, mentioned.ExcludedWorkflowRefs,
 	); err != nil {

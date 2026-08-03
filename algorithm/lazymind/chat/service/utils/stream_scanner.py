@@ -11,9 +11,9 @@ _THINK_CLOSE = '</think>'
 
 
 # ============================================================
-# BasePlugin
+# BaseWorkflow
 # ============================================================
-class BasePlugin(ABC):
+class BaseWorkflow(ABC):
     prefix_set: set[str]
 
     @abstractmethod
@@ -28,9 +28,9 @@ class BasePlugin(ABC):
 
 
 # ============================================================
-# ImagePlugin  ![alt](url)
+# ImageWorkflow  ![alt](url)
 # ============================================================
-class ImagePlugin(BasePlugin):
+class ImageWorkflow(BaseWorkflow):
     prefix_set = {'!'}
     # Use non-greedy matching for alt and url, allowing alt to contain parentheses etc.
     _pat = re.compile(r'!\[(.*?)\]\((.*?)\)')
@@ -96,10 +96,10 @@ class ImagePlugin(BasePlugin):
 
 
 def markdown_image_incomplete_pos(buf: str) -> int | None:
-    return ImagePlugin({}).last_incomplete_pos(buf)
+    return ImageWorkflow({}).last_incomplete_pos(buf)
 
 
-class MarkdownImageHoldPlugin(BasePlugin):
+class MarkdownImageHoldWorkflow(BaseWorkflow):
     """Keep unclosed ``![alt](url)`` tokens in the scanner buffer across chunks."""
 
     prefix_set = {'!'}
@@ -117,8 +117,8 @@ class MarkdownImageHoldPlugin(BasePlugin):
 class IncrementalScanner:
     """BODY / THINK state streaming parser."""
 
-    def __init__(self, plugins: List[BasePlugin], initial_state: str = 'BODY'):
-        self.plugins = plugins
+    def __init__(self, workflows: List[BaseWorkflow], initial_state: str = 'BODY'):
+        self.workflows = workflows
         self.state = initial_state
         self.buf = ''
 
@@ -159,9 +159,9 @@ class IncrementalScanner:
                 self.state = 'BODY'
                 continue
 
-            # ---- plugin match attempt ----
+            # ---- workflow match attempt ----
             handled = False
-            for pl in self.plugins:
+            for pl in self.workflows:
                 if self.buf[i] not in pl.prefix_set:
                     continue
                 res = pl.match(self.buf, i)
@@ -177,8 +177,8 @@ class IncrementalScanner:
 
         # ---- safe zone cutoff ----
         cut = len(self.buf)
-        # 1) unclosed token reported by plugin
-        for pl in self.plugins:
+        # 1) unclosed token reported by workflow
+        for pl in self.workflows:
             pos = pl.last_incomplete_pos(self.buf)
             if pos is not None and pos >= seg_start and pos < cut:
                 cut = pos

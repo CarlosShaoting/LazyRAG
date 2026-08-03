@@ -94,9 +94,9 @@ func runBatchTransition(t *testing.T, db *orm.DB, graphHash, operation string, t
 	body, _ := json.Marshal(map[string]any{
 		"command_id": "batch-command-" + targets[0]["target_step_id"].(string),
 		"operation":  operation, "expected_state_version": 4, "graph_hash": graphHash,
-		"targets": targets, "plugin_mode": "dynamic",
+		"targets": targets, "workflow_mode": "dynamic",
 	})
-	req := httptest.NewRequest(http.MethodPost, "/internal/plugin-sessions/batch-session:transition", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/internal/workflow-sessions/batch-session:transition", bytes.NewReader(body))
 	req = mux.SetURLVars(req, map[string]string{"session_id": "batch-session"})
 	w := httptest.NewRecorder()
 	TransitionWorkflowSession(w, req)

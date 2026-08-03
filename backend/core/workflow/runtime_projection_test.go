@@ -17,7 +17,7 @@ func TestLoadSessionGraphDoesNotFallbackWhenRevisionIsMissing(t *testing.T) {
 		t.Fatalf("migrate revision: %v", err)
 	}
 	_, err := loadSessionGraph(context.Background(), db.DB, &orm.WorkflowSession{
-		WorkflowID:         "plugin-a",
+		WorkflowID:         "workflow-a",
 		WorkflowRevisionID: "missing-revision",
 	})
 	if err == nil || !strings.Contains(err.Error(), "missing-revision") {

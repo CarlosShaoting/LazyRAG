@@ -16,7 +16,7 @@ import (
 )
 
 func workflowRefPathVar(r *http.Request) string {
-	raw := strings.TrimSpace(common.PathVar(r, "plugin_ref"))
+	raw := strings.TrimSpace(common.PathVar(r, "workflow_ref"))
 	if decoded, err := url.PathUnescape(raw); err == nil {
 		return decoded
 	}
@@ -60,9 +60,9 @@ func ListUserWorkflowSettings(w http.ResponseWriter, r *http.Request) {
 		if v.Enabled != nil {
 			enabled = *v.Enabled
 		}
-		items = append(items, map[string]any{"plugin_ref": v.WorkflowRef, "plugin_id": v.WorkflowID, "name": v.Name, "description": v.Description, "when_to_use": v.WhenToUse, "source_type": v.SourceType, "revision_id": v.HeadRevisionID, "revision_no": v.Version, "remote_root": "remote://" + v.RelativeRoot, "enabled": enabled, "status": v.Status})
+		items = append(items, map[string]any{"workflow_ref": v.WorkflowRef, "workflow_id": v.WorkflowID, "name": v.Name, "description": v.Description, "when_to_use": v.WhenToUse, "source_type": v.SourceType, "revision_id": v.HeadRevisionID, "revision_no": v.Version, "remote_root": "remote://" + v.RelativeRoot, "enabled": enabled, "status": v.Status})
 	}
-	if req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, common.ChatServiceEndpoint()+"/api/plugins", nil); err == nil {
+	if req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, common.ChatServiceEndpoint()+"/api/workflows", nil); err == nil {
 		if resp, err := http.DefaultClient.Do(req); err == nil {
 			defer resp.Body.Close()
 			var payload struct {
@@ -85,7 +85,7 @@ func ListUserWorkflowSettings(w http.ResponseWriter, r *http.Request) {
 					if !exists {
 						enabled = true
 					}
-					items = append(items, map[string]any{"plugin_ref": ref, "plugin_id": b.ID, "name": b.Name, "description": b.Description, "source_type": "builtin", "enabled": enabled, "status": "active"})
+					items = append(items, map[string]any{"workflow_ref": ref, "workflow_id": b.ID, "name": b.Name, "description": b.Description, "source_type": "builtin", "enabled": enabled, "status": "active"})
 				}
 			}
 		}
@@ -108,7 +108,7 @@ func EnabledCatalog(db *gorm.DB, userID string) ([]map[string]any, error) {
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for _, v := range rows {
-		out = append(out, map[string]any{"plugin_ref": v.WorkflowRef, "plugin_id": v.WorkflowID, "name": v.Name, "description": v.Description, "when_to_use": v.WhenToUse, "source_type": v.SourceType, "remote_root": "remote://" + v.RelativeRoot, "revision_id": v.HeadRevisionID, "revision_no": v.Version, "tree_hash": v.TreeHash})
+		out = append(out, map[string]any{"workflow_ref": v.WorkflowRef, "workflow_id": v.WorkflowID, "name": v.Name, "description": v.Description, "when_to_use": v.WhenToUse, "source_type": v.SourceType, "remote_root": "remote://" + v.RelativeRoot, "revision_id": v.HeadRevisionID, "revision_no": v.Version, "tree_hash": v.TreeHash})
 	}
 	return out, nil
 }
@@ -150,5 +150,5 @@ func PatchUserWorkflowSetting(w http.ResponseWriter, r *http.Request) {
 		common.ReplyErr(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	common.ReplyOK(w, map[string]any{"plugin_ref": ref, "enabled": body.Enabled})
+	common.ReplyOK(w, map[string]any{"workflow_ref": ref, "enabled": body.Enabled})
 }

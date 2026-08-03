@@ -61,7 +61,7 @@ type transitionTarget struct {
 	PartialIndices     map[string][]int `json:"partial_indices"`
 }
 
-// plugin_attempt_input_bindings.id is varchar(36). Keep the semantic prefix,
+// workflow_attempt_input_bindings.id is varchar(36). Keep the semantic prefix,
 // but unlike the historical "paib_" prefix, fit the 32-character generated ID.
 func newAttemptInputBindingID() string {
 	return "pib_" + common.GenerateID()
@@ -203,7 +203,7 @@ func PlanWorkflowSessionStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.WorkflowID == "" {
-		common.ReplyErr(w, "plugin_id is required", http.StatusUnprocessableEntity)
+		common.ReplyErr(w, "workflow_id is required", http.StatusUnprocessableEntity)
 		return
 	}
 	probe := &orm.WorkflowSession{WorkflowID: req.WorkflowID, WorkflowRevisionID: req.WorkflowRevisionID}
@@ -251,7 +251,7 @@ func StartWorkflowSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.WorkflowID == "" || req.TargetStepID == "" || req.ConversationID == "" {
-		response := transitionCommandResponse{Accepted: false, CommandID: req.CommandID, Error: &transitionError{Code: "INVALID_TARGET", Message: "plugin_id, conversation_id, and target_step_id are required"}}
+		response := transitionCommandResponse{Accepted: false, CommandID: req.CommandID, Error: &transitionError{Code: "INVALID_TARGET", Message: "workflow_id, conversation_id, and target_step_id are required"}}
 		_ = persistTransitionCommand(store.DB(), req, response, "rejected")
 		writeTransitionResponse(w, response, http.StatusUnprocessableEntity)
 		return
@@ -828,6 +828,6 @@ func emitTaskCreatedConvEvent(ctx context.Context, taskID, sessionID, conversati
 		"mode":                task.Mode,
 		"status":              task.Status,
 		"seq_in_conversation": task.SeqInConversation,
-		"plugin_session_id":   sessionID,
+		"workflow_session_id": sessionID,
 	})
 }

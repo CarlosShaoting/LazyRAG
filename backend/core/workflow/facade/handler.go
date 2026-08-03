@@ -89,29 +89,33 @@ type toolCommandRequest struct {
 	} `json:"steps"`
 }
 
+type validationError string
+
+func (e validationError) Error() string { return string(e) }
+
 func validateToolCommand(body []byte, pathSessionID string) error {
 	var command toolCommandRequest
 	if err := json.Unmarshal(body, &command); err != nil {
-		return errors.New("invalid JSON command")
+		return validationError("invalid JSON command")
 	}
 	if command.ContractVersion != ContractVersion {
-		return errors.New("contract_version must be workflow.v1")
+		return validationError("contract_version must be workflow.v1")
 	}
 	if command.SessionID == "" || command.SessionID != pathSessionID {
-		return errors.New("session_id must match request path")
+		return validationError("session_id must match request path")
 	}
 	if command.Tool != "advance_step" && command.Tool != "advance_step_and_hand_off" {
-		return errors.New("unsupported workflow tool")
+		return validationError("unsupported workflow tool")
 	}
 	if command.ExpectedStateVersion == nil || *command.ExpectedStateVersion < 0 {
-		return errors.New("expected_state_version is required")
+		return validationError("expected_state_version is required")
 	}
 	if len(command.Steps) == 0 {
-		return errors.New("at least one step is required")
+		return validationError("at least one step is required")
 	}
 	for _, step := range command.Steps {
 		if strings.TrimSpace(step.StepID) == "" {
-			return errors.New("step_id is required")
+			return validationError("step_id is required")
 		}
 	}
 	return nil

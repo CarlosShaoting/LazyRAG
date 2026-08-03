@@ -534,9 +534,9 @@ export const useTaskCenterStore = create<TaskCenterStore>()((set, get) => ({
               // to appear duplicated.
               get().subscribeTask(conversationId, payload.task_id);
             }
-            if (payload.agent_type === 'plugin_step' && payload.plugin_session_id) {
-              import('@/modules/chat/store/pluginPanel').then(({ usePluginStore }) => {
-                usePluginStore.getState().loadActiveSession(conversationId);
+            if (payload.agent_type === 'workflow_step' && payload.workflow_session_id) {
+              import('@/modules/chat/store/workflowPanel').then(({ useWorkflowStore }) => {
+                useWorkflowStore.getState().loadActiveSession(conversationId);
               });
             }
           } else if (type === 'artifact_created' && payload?.artifact_id) {
@@ -552,39 +552,39 @@ export const useTaskCenterStore = create<TaskCenterStore>()((set, get) => ({
                 },
               }));
             });
-            import('@/modules/chat/store/pluginPanel').then(({ usePluginStore }) => {
-              usePluginStore.getState().setAutoRunning(conversationId, true);
-              usePluginStore.getState().loadActiveSession(conversationId);
+            import('@/modules/chat/store/workflowPanel').then(({ useWorkflowStore }) => {
+              useWorkflowStore.getState().setAutoRunning(conversationId, true);
+              useWorkflowStore.getState().loadActiveSession(conversationId);
             });
           } else if (
             type === 'step_waiting' ||
-            type === 'plugin_completed' ||
-            type === 'plugin_error'
+            type === 'workflow_completed' ||
+            type === 'workflow_error'
           ) {
             get().loadConversationTasks(conversationId);
             window.dispatchEvent(
               new CustomEvent(PLUGIN_GRAPH_REFRESH_EVENT, { detail: { conversationId } }),
             );
-            import('@/modules/chat/store/pluginPanel').then(({ usePluginStore }) => {
-              usePluginStore.getState().loadActiveSession(conversationId);
-              usePluginStore.getState().setAutoRunning(conversationId, false);
+            import('@/modules/chat/store/workflowPanel').then(({ useWorkflowStore }) => {
+              useWorkflowStore.getState().loadActiveSession(conversationId);
+              useWorkflowStore.getState().setAutoRunning(conversationId, false);
             });
           } else if (type === 'step_partial_done') {
             window.dispatchEvent(
               new CustomEvent(PLUGIN_GRAPH_REFRESH_EVENT, { detail: { conversationId } }),
             );
-            import('@/modules/chat/store/pluginPanel').then(({ usePluginStore }) => {
-              usePluginStore.getState().loadActiveSession(conversationId);
+            import('@/modules/chat/store/workflowPanel').then(({ useWorkflowStore }) => {
+              useWorkflowStore.getState().loadActiveSession(conversationId);
             });
           } else if (type === 'intent_updated') {
             // An update_intent call completed — refresh the session so the
-            // intent badge in the plugin panel updates without a page reload.
-            import('@/modules/chat/store/pluginPanel').then(({ usePluginStore }) => {
-              usePluginStore.getState().loadActiveSession(conversationId);
+            // intent badge in the workflow panel updates without a page reload.
+            import('@/modules/chat/store/workflowPanel').then(({ useWorkflowStore }) => {
+              useWorkflowStore.getState().loadActiveSession(conversationId);
             });
           } else if (type === 'auto_chat_started') {
-            import('@/modules/chat/store/pluginPanel').then(({ usePluginStore }) => {
-              usePluginStore.getState().setAutoRunning(conversationId, true);
+            import('@/modules/chat/store/workflowPanel').then(({ useWorkflowStore }) => {
+              useWorkflowStore.getState().setAutoRunning(conversationId, true);
             });
             import('@/modules/chat/constants/chat').then(({ CHAT_AUTO_ADVANCE_EVENT }) => {
               window.dispatchEvent(new CustomEvent(CHAT_AUTO_ADVANCE_EVENT, {
