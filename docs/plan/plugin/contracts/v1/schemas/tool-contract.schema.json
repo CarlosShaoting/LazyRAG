@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lazymind.ai/contracts/workflow/v1/tool-contract.schema.json",
+  "title": "Workflow Tool Contract v1",
+  "type": "object",
+  "required": ["contract_version", "request_id", "command_id", "tool", "session_id", "expected_state_version", "steps"],
+  "properties": {
+    "contract_version": {"const": "workflow.v1"},
+    "request_id": {"type": "string", "minLength": 1},
+    "command_id": {"type": "string", "minLength": 1},
+    "tool": {"enum": ["advance_step", "advance_step_and_hand_off"]},
+    "session_id": {"type": "string", "minLength": 1},
+    "expected_state_version": {"type": "integer", "minimum": 0},
+    "steps": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "required": ["step_id"],
+        "properties": {
+          "step_id": {"type": "string", "minLength": 1},
+          "user_input": {"type": "string"},
+          "runtime_instruction": {"type": "string"},
+          "partial_indices": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "integer", "minimum": 0}}}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -36,13 +36,14 @@
     },
     "attempt": {
       "type": "object",
-      "required": ["attempt_id", "step_id", "status", "operation", "attempt_no"],
+      "required": ["attempt_id", "step_id", "status", "operation", "attempt_no", "context"],
       "properties": {
         "attempt_id": { "type": "string" }, "step_id": { "type": "string" },
         "status": { "enum": ["queued", "running", "succeeded", "failed", "interrupted", "cancelled"] },
         "operation": { "enum": ["execute", "retry", "rewind"] },
         "attempt_no": { "type": "integer", "minimum": 1 },
-        "partial_selector": { "type": ["array", "null"], "items": { "type": "string" } }
+        "partial_selector": { "type": ["array", "null"], "items": { "type": "string" } },
+        "context": { "$ref": "attempt-context.schema.json" }
       },
       "additionalProperties": false
     },
@@ -58,11 +59,13 @@
     },
     "event": {
       "type": "object",
-      "required": ["cursor", "type", "entity_id"],
+      "required": ["cursor", "type", "entity_id", "state_version", "payload"],
       "properties": {
         "cursor": { "type": "integer", "minimum": 1 },
         "type": { "enum": ["workflow.snapshot", "workflow.patch", "step.patch", "attempt.patch", "artifact.upsert"] },
-        "entity_id": { "type": "string" }
+        "entity_id": { "type": "string" },
+        "state_version": { "type": "integer", "minimum": 1 },
+        "payload": { "type": "object" }
       },
       "additionalProperties": false
     },
