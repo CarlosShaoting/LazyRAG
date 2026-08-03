@@ -71,6 +71,14 @@ func algoServiceURL() string {
 // Run posts to /api/subagent/run, consumes the SSE stream, and routes each event to DB + Redis.
 // It blocks until the stream ends (terminal event or connection close).
 func Run(ctx context.Context, db *gorm.DB, stateStore state.Store, req RunRequest) error {
+	return RunObserved(ctx, db, stateStore, req, nil)
+}
+
+// RunObserved is Run with a read-only copy of every accepted wire event.  The
+// observer is deliberately called before legacy projections are updated so a
+// workflow Executor can drive its own fenced Attempt lifecycle without parsing
+// the SSE stream a second time.
+func RunObserved(ctx context.Context, db *gorm.DB, stateStore state.Store, req RunRequest, observe func(TaskEvent) error) error {
 	runCtx, cancel := context.WithTimeout(ctx, subagentRunTimeout)
 	defer cancel()
 
@@ -115,6 +123,11 @@ func Run(ctx context.Context, db *gorm.DB, stateStore state.Store, req RunReques
 			continue
 		}
 		ev.TaskID = req.TaskID
+		if observe != nil {
+			if err := observe(ev); err != nil {
+				return fmt.Errorf("%w", err)
+			}
+		}
 		if err := routeEvent(runCtx, db, stateStore, ev); err != nil {
 			message := fmt.Sprintf("persist subagent %s event failed: %v", ev.Type, err)
 			routeError(runCtx, db, stateStore, req.TaskID, message)

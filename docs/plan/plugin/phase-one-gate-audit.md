@@ -57,10 +57,10 @@ is checked and linked to executable evidence.
 
 ## PR 7 — LazyMindExecutor
 
-- [ ] Deterministic Supervisor owns running, heartbeat, progress and exactly one terminal report.
-- [ ] Attempt Context adapter invokes the existing AgentRunPlan without leaking Host state.
-- [ ] Sync and handoff modes share execution; handoff requires durable ownership.
-- [ ] Canary comparison proves projection, Artifact lineage and visible event equivalence.
+- [x] Deterministic Supervisor owns running, heartbeat, progress and exactly one terminal report.
+- [x] Attempt Context adapter invokes the existing AgentRunPlan without leaking Host state.
+- [x] Sync and handoff modes share execution; handoff requires durable ownership.
+- [x] Canary comparison proves projection, Artifact lineage and visible event equivalence.
 
 ## PR 8 — remove fixed SubAgent endpoint dependency
 
