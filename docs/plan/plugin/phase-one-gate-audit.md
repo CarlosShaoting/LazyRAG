@@ -64,10 +64,10 @@ is checked and linked to executable evidence.
 
 ## PR 8 — remove fixed SubAgent endpoint dependency
 
-- [ ] Capability-gated queued dispatch is default-on.
-- [ ] Core production Runtime does not call the fixed SubAgent endpoint.
-- [ ] Algorithm outage leaves Attempts queued/recoverable and restart continues them.
-- [ ] Rollback is a dispatch flag only.
+- [x] Capability-gated queued dispatch is default-on.
+- [x] Core production Runtime does not call the fixed SubAgent endpoint.
+- [x] Algorithm outage leaves Attempts queued/recoverable and restart continues them.
+- [x] Rollback is a dispatch flag only.
 
 ## PR 9 — converge algorithm/chat
 

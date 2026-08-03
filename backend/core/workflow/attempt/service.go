@@ -51,6 +51,10 @@ type Service struct {
 	now    func() time.Time
 }
 
+// ServiceCapable identifies the protocol implementation compiled into this
+// binary. Deployment capability additionally requires SchemaCapable.
+func ServiceCapable() bool { return ContractVersion == "workflow.v1" }
+
 func New(db *gorm.DB, config Config) *Service {
 	return &Service{db: db, config: config, now: func() time.Time { return time.Now().UTC() }}
 }
