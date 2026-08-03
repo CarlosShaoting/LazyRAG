@@ -71,10 +71,10 @@ is checked and linked to executable evidence.
 
 ## PR 9 — converge algorithm/chat
 
-- [ ] Shared decisions have one authoritative Skill source.
-- [ ] Python retains only Host model/Agent/interaction/event responsibilities.
-- [ ] Driver and handoff flags cannot alter Runtime projection or lineage.
-- [ ] Policy rollback and decision comparison remain available.
+- [x] Shared decisions have one authoritative Skill source.
+- [x] Python retains only Host model/Agent/interaction/event responsibilities.
+- [x] Driver and handoff flags cannot alter Runtime projection or lineage.
+- [x] Policy rollback and decision comparison remain available.
 
 ## PR 10 — deterministic Workflow authoring
 

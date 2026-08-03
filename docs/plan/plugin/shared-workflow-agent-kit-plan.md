@@ -315,7 +315,7 @@ Codex 生成过程中只使用 Codex 模型；Core 只提供 Skill snapshot、�
 | [x] | [6 (#498)](https://github.com/LazyAGI/LazyMind/pull/498) | 引入 queued Attempt 与 claim/report 协议 | FakeExecutor 可执行 Workflow |
 | [x] | [7 (#500)](https://github.com/LazyAGI/LazyMind/pull/500) | 实现 LazyMindExecutor 和兼容 adapter | LazyMind SubAgent 通过新协议运行 |
 | [ ] | 8 | 移除 Core 到 `/api/subagent/run` 的固定依赖 | Runtime 与 LazyMind Executor 正式解耦 |
-| [ ] | 9 | 收敛 algorithm/chat prompt、Workflow manager 和 Driver adapter | 公共规则只来自共享 Skill |
+| [x] | [9 (#501)](https://github.com/LazyAGI/LazyMind/pull/501) | 收敛 algorithm/chat prompt、Workflow manager 和 Driver adapter | 公共规则只来自共享 Skill |
 | [x] | [10 (#499)](https://github.com/LazyAGI/LazyMind/pull/499) | 拆分 Skill to Workflow Agent 生成与 Authoring Tools | 外部 Agent 可提交生成结果 |
 | [ ] | 11 | 完成 LazyMind 全量回归与旧接口清理 | 达到第一阶段验收条件 |
 | [ ] | 12 | 提供 Codex 只读 Tool Adapter 与 Status View | Codex 可以发现 Workflow，并查看状态图和下载 Artifact |
