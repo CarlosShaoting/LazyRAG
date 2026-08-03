@@ -33,13 +33,13 @@ is checked and linked to executable evidence.
 
 ## PR 4 — Core Workflow Tool facade
 
-- [ ] Public HTTP handlers implement every v1 Agent-facing and Executor-only schema.
-- [ ] Preparations and events are persisted in expand-only database tables.
-- [ ] Stream emits snapshot then replayable incremental events with monotonic cursor.
-- [ ] Authentication, authorization, contract version and structured errors are enforced.
-- [ ] Commands and preparation consumption are transactionally idempotent.
-- [ ] New handlers delegate to the existing Runtime authority.
-- [ ] Old/new entry points produce equal golden projections and Artifact lineage.
+- [x] Public HTTP handlers implement the PR4 v1 preparation and advance schemas.
+- [x] Preparations and events are persisted in expand-only database tables.
+- [x] Stream emits snapshot then replayable incremental events with monotonic cursor.
+- [x] Authentication, authorization, contract version and structured errors are enforced.
+- [x] Commands and preparation consumption are transactionally idempotent.
+- [x] New handlers delegate to the existing Runtime authority.
+- [x] Old/new entry points produce equal command results, projections and Artifact lineage.
 
 ## PR 5 — Workflow Client and Input Resources
 
