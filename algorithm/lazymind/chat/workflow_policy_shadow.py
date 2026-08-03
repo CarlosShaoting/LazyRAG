@@ -10,12 +10,15 @@ from lazymind.workflow_policy import Decision, decide, shadow_trace
 
 LOGGER = logging.getLogger(__name__)
 SHADOW_FLAG = 'LAZYMIND_WORKFLOW_POLICY_SHADOW'
+COMPARE_FLAG = 'LAZYMIND_WORKFLOW_POLICY_COMPARE'
 TRACE_LIMIT = 100
 
 
 def enabled(environ: Mapping[str, str] | None = None) -> bool:
-    value = (environ or os.environ).get(SHADOW_FLAG, '')
-    return value.strip().lower() in {'1', 'true', 'yes', 'on'}
+    env = environ or os.environ
+    shadow = env.get(SHADOW_FLAG, '').strip().lower() in {'1', 'true', 'yes', 'on'}
+    compare = env.get(COMPARE_FLAG, '1').strip().lower() not in {'0', 'false', 'no', 'off'}
+    return shadow or compare
 
 
 def _legacy_decision(projection: Mapping[str, Any], profile: Mapping[str, Any]) -> Decision:
@@ -51,7 +54,11 @@ def observe(
         return None
     legacy = _legacy_decision(projection, profile)
     shared = decide(projection, profile, projection.get('intent_tokens', ()))
-    trace = shadow_trace(legacy, shared, source=source, profile=profile.get('profile'))
+    policy_value = os.environ.get('LAZYMIND_WORKFLOW_POLICY_V1', '1').strip().lower()
+    authority = 'legacy' if policy_value in {'0', 'false', 'no', 'off'} else 'shared'
+    trace = shadow_trace(
+        legacy, shared, authority=authority, source=source, profile=profile.get('profile'),
+    )
     metrics = sink.setdefault('workflow_policy_shadow_metrics', {
         'evaluated': 0, 'equivalent': 0, 'mismatch': 0,
     })

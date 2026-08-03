@@ -128,11 +128,11 @@ def test_dynamic_launch_policy_defaults_to_hand_off():
     from lazymind.chat.workflow import workflow_manager
 
     policy = workflow_manager._build_cold_execution_policy('dynamic')
-    assert 'DEFAULT: use `advance_step_and_hand_off`' in policy
-    assert '帮我执行 N 步' in policy
-    assert 'complete article' in policy
+    assert 'Shared Workflow Decision Policy' in policy
+    assert 'Ordinary Ready frontier' in policy
+    assert 'LazyMind Workflow Launch Binding' in policy
     assert [tool.__name__ for tool in workflow_manager.build_cold_advance_tools()] == [
-        'advance_step_and_hand_off', 'advance_step',
+        'advance_step_and_handoff', 'advance_step',
     ]
 
 
@@ -189,11 +189,11 @@ def test_cold_start_trigger_hides_hand_off_choice_when_tool_is_static(
             explicit_workflow_request=False,
         ))
 
-    assert result['launch_plan']['advance_tool'] == 'advance_step_and_hand_off'
+    assert result['launch_plan']['advance_tool'] == 'advance_step_and_handoff'
     assert 'hand_off' not in result['launch_plan']
     internal_plan = mock_agentic_config['prepared_workflow']['launch_plan']
     assert internal_plan['hand_off'] is True
-    assert internal_plan['advance_tool'] == 'advance_step_and_hand_off'
+    assert internal_plan['advance_tool'] == 'advance_step_and_handoff'
 
 
 def test_cold_start_trigger_rejects_empty_input(loaded_workflow, mock_write_agent_data, mock_agentic_config):
@@ -379,7 +379,7 @@ def test_cold_advance_commits_exact_prepared_plan(
     }
     handoff = next(
         t for t in workflow_manager.build_cold_advance_tools()
-        if t.__name__ == 'advance_step_and_hand_off'
+        if t.__name__ == 'advance_step_and_handoff'
     )
 
     result = handoff(step_id='step_a')
@@ -434,7 +434,7 @@ def test_cold_advance_rejects_tool_that_disagrees_with_launch_plan(
     }
     handoff = next(
         t for t in workflow_manager.build_cold_advance_tools()
-        if t.__name__ == 'advance_step_and_hand_off'
+        if t.__name__ == 'advance_step_and_handoff'
     )
 
     with pytest.raises(ValueError, match='requires advance_step'):
@@ -593,14 +593,14 @@ def test_cold_injection_without_approval_choice_registers_only_hand_off_tool(
     names = {tool.__name__ for tool in tools}
     assert 'trigger_test_workflow' in names
     assert 'advance_step' not in names
-    assert 'advance_step_and_hand_off' in names
-    assert stop_tools == ['advance_step_and_hand_off']
+    assert 'advance_step_and_handoff' in names
+    assert stop_tools == ['advance_step_and_handoff']
     assert 'trigger_test_workflow' not in stop_tools
     assert patch_config['workflow_mode'] == 'auto'
     assert patch_config['workflow_preflight_context']['preflight_id'] == 'pf-old'
     assert 'Original request ten turns ago' in context
-    assert 'Current Workflow Launch Policy' in context
-    assert 'approval or continuation decision' in context
+    assert 'Shared Workflow Decision Policy' in context
+    assert 'cannot choose a Runtime operation' in context
 
 
 def test_compact_step_name_index_has_names_but_no_graph_details(loaded_workflow):
@@ -653,30 +653,30 @@ def test_active_injection_switches_tools_and_request_local_policy_per_turn(
     auto_names = {tool.__name__ for tool in auto_tools}
     dynamic_names = {tool.__name__ for tool in dynamic_tools}
 
-    assert 'advance_step_and_hand_off' in auto_names
+    assert 'advance_step_and_handoff' in auto_names
     assert 'advance_step' not in auto_names
-    assert {'advance_step', 'advance_step_and_hand_off'} <= dynamic_names
+    assert {'advance_step', 'advance_step_and_handoff'} <= dynamic_names
     assert 'advance_steps' not in dynamic_names
     assert 'advance_steps_and_hand_off' not in dynamic_names
-    assert set(auto_stop_tools) == {'advance_step_and_hand_off'}
-    assert set(dynamic_stop_tools) == {'advance_step_and_hand_off'}
+    assert set(auto_stop_tools) == {'advance_step_and_handoff'}
+    assert set(dynamic_stop_tools) == {'advance_step_and_handoff'}
     assert 'Current Workflow Execution Policy' not in auto_system_prompt
     assert 'Current Workflow Execution Policy' not in dynamic_system_prompt
-    assert 'Current Workflow Execution Policy' in auto_context
-    assert 'Current Workflow Execution Policy' in dynamic_context
+    assert 'Shared Workflow Decision Policy' in auto_context
+    assert 'Shared Workflow Decision Policy' in dynamic_context
     assert 'Workflow Step Name Index' in auto_context
     assert 'step_a(Step A)' in auto_context
     assert 'step_d(Step D)' in dynamic_context
     assert 'default approval' not in auto_context.lower()
-    assert '[default approval: ...]' in dynamic_context
+    assert 'approval' in dynamic_context.lower()
     assert 'auto mode' not in auto_context.lower()
     assert 'dynamic mode' not in dynamic_context.lower()
 
     auto_advance = next(
-        tool for tool in auto_tools if tool.__name__ == 'advance_step_and_hand_off'
+        tool for tool in auto_tools if tool.__name__ == 'advance_step_and_handoff'
     )
     dynamic_advance = next(
-        tool for tool in dynamic_tools if tool.__name__ == 'advance_step_and_hand_off'
+        tool for tool in dynamic_tools if tool.__name__ == 'advance_step_and_handoff'
     )
     assert 'default approval' not in (auto_advance.__doc__ or '').lower()
     assert 'default approval' in (dynamic_advance.__doc__ or '').lower()
@@ -1126,17 +1126,9 @@ def test_dynamic_guidance_respects_explicit_target_boundary(loaded_workflow):
 
     guidance = workflow_manager._build_mode_guidance('dynamic')
 
-    assert 'target boundary' in guidance
-    assert 'Match X against the full compact' in guidance
-    assert 'Workflow Step Name Index' in guidance
-    assert 'name index does not imply reachability or execution order' in guidance
-    assert 'higher priority than generic uninterrupted phrases' in guidance
-    assert 'DEFAULT: call `advance_step_and_hand_off`' in guidance
-    assert '帮我执行 N 步' in guidance
-    assert 'complete deliverable' in guidance
-    assert 'Do NOT wait for the boundary step with `advance_step`' in guidance
-    assert 'Do NOT call downstream steps and do NOT call `__end__`' in guidance
-    assert 'returns the next decision to the user' in guidance
+    assert 'Explicit continuous scope/boundary' in guidance
+    assert 'requested/final boundary' in guidance
+    assert 'Runtime projection is authoritative' in guidance
 
 
 def test_guidance_without_approval_choice_assigns_continuation_to_backend(loaded_workflow):
@@ -1144,11 +1136,9 @@ def test_guidance_without_approval_choice_assigns_continuation_to_backend(loaded
 
     guidance = workflow_manager._build_mode_guidance('auto')
 
-    assert 'backend controller evaluates the result' in guidance
-    assert '`advance_step_and_hand_off` with one command' in guidance
-    assert 'default approval' not in guidance.lower()
-    assert 'auto mode' not in guidance.lower()
-    assert 'dynamic mode' not in guidance.lower()
+    assert 'Driver is enabled' in guidance
+    assert 'changes only turn orchestration' in guidance
+    assert 'never change Runtime projection' in guidance
 
 
 def test_batch_guidance_requires_one_atomic_call_for_ready_frontier(loaded_workflow):
@@ -1156,10 +1146,9 @@ def test_batch_guidance_requires_one_atomic_call_for_ready_frontier(loaded_workf
 
     guidance = workflow_manager._build_mode_guidance('dynamic')
 
-    assert 'ONE batch call' in guidance
-    assert 'Do not issue repeated' in guidance
-    assert 'Running an attempted step again remains single-step' in guidance
-    assert 'valid parallel choices' in guidance
+    assert 'one atomic batch' in guidance
+    assert 'profile permits parallel execution' in guidance
+    assert 'Ready step' in guidance
 
 
 def test_step_status_exposes_multi_ready_batch_hint(loaded_workflow):

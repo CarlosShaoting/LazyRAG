@@ -42,12 +42,13 @@ LAZYMIND_PROFILE = {
 }
 
 
-def test_shadow_is_default_off_and_has_no_side_effects():
+def test_decision_comparison_is_default_on():
     sink = {}
     with patch.dict('os.environ', {}, clear=True):
-        assert shadow.observe({'ready_steps': ['draft']}, LAZYMIND_PROFILE, sink,
-                              source='test') is None
-    assert sink == {}
+        trace = shadow.observe({'ready_steps': ['draft']}, LAZYMIND_PROFILE, sink,
+                               source='test')
+    assert trace is not None
+    assert trace['authority'] == 'shared'
 
 
 def test_shadow_records_structured_equivalent_trace_and_metrics():
@@ -60,7 +61,7 @@ def test_shadow_records_structured_equivalent_trace_and_metrics():
         trace = shadow.observe(projection, LAZYMIND_PROFILE, sink, source='golden')
     assert trace is not None
     assert trace['schema_version'] == 'workflow.shadow-trace.v1'
-    assert trace['authority'] == 'legacy'
+    assert trace['authority'] == 'shared'
     assert trace['equivalent'] is True
     assert trace['shared']['targets'] == ('research', 'outline')
     assert sink['workflow_policy_shadow_metrics'] == {
