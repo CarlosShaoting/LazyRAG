@@ -23,6 +23,7 @@ import (
 	"lazymind/core/store"
 	"lazymind/core/subagent"
 	"lazymind/core/taskcenter"
+	"lazymind/core/workflow/legacydispatch"
 )
 
 type chatStatusCacheEntry struct {
@@ -613,6 +614,9 @@ func launchWorkflowAttempt(
 }
 
 func enqueueWorkflowAttemptRunner(ctx context.Context, db *gorm.DB, request subagent.RunRequest) error {
+	if QueuedDispatchEnabled(db) {
+		return enqueueCanonicalAttempt(ctx, db, request)
+	}
 	payload, err := json.Marshal(request)
 	if err != nil {
 		return err
@@ -626,54 +630,10 @@ func enqueueWorkflowAttemptRunner(ctx context.Context, db *gorm.DB, request suba
 // dispatchWorkflowAttemptRunner atomically claims a durable outbox item. It is
 // called only after the transaction that accepted the transition has committed.
 func dispatchWorkflowAttemptRunner(db *gorm.DB, stateStore state.Store, taskID string) {
-	var row orm.WorkflowRunOutbox
-	claimed := false
-	if err := db.WithContext(context.Background()).Transaction(func(tx *gorm.DB) error {
-		result := tx.Model(&orm.WorkflowRunOutbox{}).
-			Where("task_id = ? AND status = ?", taskID, "pending").
-			Updates(map[string]any{"status": "dispatching", "updated_at": time.Now().UTC()})
-		if result.Error != nil || result.RowsAffected != 1 {
-			return result.Error
-		}
-		if err := tx.Where("task_id = ?", taskID).First(&row).Error; err != nil {
-			return err
-		}
-		var task orm.SubAgentTask
-		if err := tx.Select("status").Where("id = ?", taskID).First(&task).Error; err != nil {
-			return err
-		}
-		if task.Status == subagent.StatusSucceeded || task.Status == subagent.StatusFailed || task.Status == subagent.StatusInterrupted || task.Status == subagent.StatusCanceled {
-			return tx.Model(&orm.WorkflowRunOutbox{}).Where("task_id = ?", taskID).
-				Updates(map[string]any{"status": "completed", "updated_at": time.Now().UTC()}).Error
-		}
-		claimed = true
-		return nil
-	}); err != nil || !claimed {
+	if QueuedDispatchEnabled(db) {
 		return
 	}
-	var request subagent.RunRequest
-	if err := json.Unmarshal(row.Payload, &request); err != nil {
-		_ = db.Model(&orm.WorkflowRunOutbox{}).Where("task_id = ?", taskID).
-			Updates(map[string]any{"status": "failed", "last_error": err.Error(), "updated_at": time.Now().UTC()}).Error
-		_ = subagent.UpdateFinalStatus(context.Background(), db, taskID, subagent.StatusFailed, "invalid plugin run outbox payload")
-		_ = UpdateStepStatus(context.Background(), db, taskID, StepStatusFailed)
-		if pctx := loadWorkflowChatContextFromDB(context.Background(), db, taskID); pctx != nil {
-			_ = UpdateSessionStatus(context.Background(), db, pctx.SessionID, SessionStatusWaiting)
-		}
-		return
-	}
-	_ = subagent.WriteStatus(context.Background(), stateStore, taskID, map[string]any{
-		"status": subagent.StatusPending, "progress": 0,
-	})
-	go func() {
-		err := subagent.Run(context.Background(), db, stateStore, request)
-		status, lastError := "completed", ""
-		if err != nil {
-			status, lastError = "failed", err.Error()
-		}
-		_ = db.Model(&orm.WorkflowRunOutbox{}).Where("task_id = ?", taskID).
-			Updates(map[string]any{"status": status, "last_error": lastError, "updated_at": time.Now().UTC()}).Error
-	}()
+	legacydispatch.Dispatch(db, stateStore, taskID)
 }
 
 // OnSubAgentDone is called when a workflow_step task reaches terminal status.

@@ -1,0 +1,71 @@
+package workflow
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"strings"
+	"time"
+
+	"lazymind/core/common/orm"
+	"lazymind/core/subagent"
+	"lazymind/core/workflow/attempt"
+	"lazymind/core/workflow/executor"
+
+	"github.com/google/uuid"
+	"gorm.io/gorm"
+)
+
+const QueuedDispatchEnv = "LAZYMIND_WORKFLOW_QUEUED_DISPATCH"
+
+// QueuedDispatchEnabled is default-on only when both the expand schema and the
+// in-process Attempt protocol service are available. Rollback changes this one
+// dispatch flag; queued data is retained and needs no down migration.
+func QueuedDispatchEnabled(db *gorm.DB) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(QueuedDispatchEnv))) {
+	case "0", "false", "off", "disabled", "legacy":
+		return false
+	}
+	return attempt.SchemaCapable(db) && attempt.ServiceCapable()
+}
+
+func enqueueCanonicalAttempt(ctx context.Context, db *gorm.DB, request subagent.RunRequest) error {
+	var step orm.WorkflowSessionStep
+	if err := db.WithContext(ctx).Where("task_id = ?", request.TaskID).First(&step).Error; err != nil {
+		return err
+	}
+	var task orm.SubAgentTask
+	if err := db.WithContext(ctx).Select("objective", "output_slots").Where("id = ?", request.TaskID).First(&task).Error; err != nil {
+		return err
+	}
+	operation, _ := request.Params["operation"].(string)
+	if operation == "" {
+		operation = "execute"
+	}
+	value := executor.AttemptContext{ContractVersion: attempt.ContractVersion, SessionID: step.SessionID,
+		AttemptID: step.ID, StepID: step.StepID, AttemptNo: step.Attempt, Operation: operation, Objective: task.Objective}
+	_ = json.Unmarshal(task.OutputSlots, &value.RequiredOutputs)
+	if objective, ok := request.Params["objective"].(string); ok {
+		value.Objective = objective
+	}
+	if inputs, ok := request.Params["inputs"].(map[string]any); ok {
+		value.Inputs = inputs
+	}
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		updated := tx.Model(&orm.WorkflowSessionStep{}).Where("id = ? AND status IN ?", step.ID, []string{StepStatusPending, "queued"}).
+			Updates(map[string]any{"status": "queued", "updated_at": now})
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected != 1 {
+			return gorm.ErrInvalidData
+		}
+		return tx.Create(&orm.WorkflowOutbox{ID: uuid.NewString(), AttemptID: step.ID, SessionID: step.SessionID,
+			PayloadJSON: payload, Status: "pending", CreatedAt: now, UpdatedAt: now}).Error
+	})
+}
