@@ -1,8 +1,8 @@
 """Deterministic, host-neutral Workflow v1 decision policy.
 
 This module is deliberately free of LazyMind runtime imports so the same cases can
-be evaluated by other hosts.  During PR3 it is shadow-only: callers must not use a
-``Decision`` returned here to execute a tool.
+be evaluated by other hosts. The shared Skill policy is authoritative by default;
+Host adapters may compare it with the bounded legacy rollback implementation.
 """
 
 from dataclasses import asdict, dataclass
@@ -95,7 +95,8 @@ def decide(
     return Decision('advance', tool, selected[0], selected, reason)
 
 
-def shadow_trace(legacy: Decision, shared: Decision, **context: Any) -> dict[str, Any]:
+def shadow_trace(legacy: Decision, shared: Decision, *, authority: str = 'legacy',
+                 **context: Any) -> dict[str, Any]:
     """Build a structured, non-authoritative comparison trace."""
     dimensions = {
         'action': legacy.action == shared.action,
@@ -106,7 +107,7 @@ def shadow_trace(legacy: Decision, shared: Decision, **context: Any) -> dict[str
     return {
         'schema_version': 'workflow.shadow-trace.v1',
         'policy_version': POLICY_VERSION,
-        'authority': 'legacy',
+        'authority': authority,
         'legacy': asdict(legacy),
         'shared': asdict(shared),
         'dimensions': dimensions,
