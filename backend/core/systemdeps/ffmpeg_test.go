@@ -2,8 +2,11 @@ package systemdeps
 
 import (
 	"archive/tar"
+	"context"
 	"crypto/sha256"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -157,6 +160,7 @@ func TestFFmpegDownloadsUseModelScopeMirrors(t *testing.T) {
 		goarch    string
 		urls      []string
 		checksums []string
+		fallbacks []string
 	}{
 		{
 			name:   "windows x64",
@@ -166,6 +170,7 @@ func TestFFmpegDownloadsUseModelScopeMirrors(t *testing.T) {
 				modelScopeFFmpegBaseURL + "lazymind-ffmpeg-windows-x64-20260803.zip",
 			},
 			checksums: []string{windowsX64FFmpegSHA},
+			fallbacks: []string{"https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"},
 		},
 		{
 			name:   "macOS Apple Silicon via Rosetta",
@@ -176,6 +181,10 @@ func TestFFmpegDownloadsUseModelScopeMirrors(t *testing.T) {
 				modelScopeFFmpegBaseURL + "lazymind-ffprobe-darwin-x64-8.1.2.zip",
 			},
 			checksums: []string{darwinX64FFmpegSHA, darwinX64FFprobeSHA},
+			fallbacks: []string{
+				"https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip",
+				"https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip",
+			},
 		},
 		{
 			name:   "Linux x64",
@@ -185,6 +194,7 @@ func TestFFmpegDownloadsUseModelScopeMirrors(t *testing.T) {
 				modelScopeFFmpegBaseURL + "lazymind-ffmpeg-linux-x64-20260803.tar.xz",
 			},
 			checksums: []string{linuxX64FFmpegSHA},
+			fallbacks: []string{"https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz"},
 		},
 	}
 	for _, tt := range tests {
@@ -203,8 +213,44 @@ func TestFFmpegDownloadsUseModelScopeMirrors(t *testing.T) {
 				if download.sha256 != tt.checksums[index] {
 					t.Fatalf("download[%d].sha256 = %q, want %q", index, download.sha256, tt.checksums[index])
 				}
+				if download.fallbackURL != tt.fallbacks[index] {
+					t.Fatalf("download[%d].fallbackURL = %q, want %q", index, download.fallbackURL, tt.fallbacks[index])
+				}
 			}
 		})
+	}
+}
+
+func TestDownloadFFmpegArchiveFallsBackAfterChecksumFailure(t *testing.T) {
+	fallbackContent := []byte("fallback archive")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/primary":
+			_, _ = w.Write([]byte("corrupt primary archive"))
+		case "/fallback":
+			_, _ = w.Write(fallbackContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	destination := filepath.Join(t.TempDir(), "ffmpeg.zip")
+	expectedPrimarySHA := fmt.Sprintf("%x", sha256.Sum256([]byte("expected primary archive")))
+	err := downloadFFmpegArchiveWithFallback(context.Background(), ffmpegDownload{
+		url:         server.URL + "/primary",
+		sha256:      expectedPrimarySHA,
+		fallbackURL: server.URL + "/fallback",
+	}, destination)
+	if err != nil {
+		t.Fatalf("downloadFFmpegArchiveWithFallback: %v", err)
+	}
+	content, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != string(fallbackContent) {
+		t.Fatalf("downloaded content = %q, want %q", content, fallbackContent)
 	}
 }
 

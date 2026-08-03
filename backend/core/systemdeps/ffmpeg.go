@@ -176,7 +176,7 @@ func InstallBundledFFmpeg(ctx context.Context, runtimeRoot string) (FFmpegStatus
 
 	for index, download := range downloads {
 		archivePath := filepath.Join(stagingDir, fmt.Sprintf("download-%d%s", index, download.extension))
-		if err := downloadFFmpegArchive(ctx, download.url, archivePath, download.sha256); err != nil {
+		if err := downloadFFmpegArchiveWithFallback(ctx, download, archivePath); err != nil {
 			return FFmpegStatus{}, err
 		}
 		extractStartedAt := time.Now()
@@ -248,6 +248,27 @@ func InstallBundledFFmpeg(ctx context.Context, runtimeRoot string) (FFmpegStatus
 		Dur("elapsed", time.Since(installStartedAt)).
 		Msg("bundled ffmpeg install completed")
 	return status, nil
+}
+
+func downloadFFmpegArchiveWithFallback(ctx context.Context, download ffmpegDownload, destination string) error {
+	primaryErr := downloadFFmpegArchive(ctx, download.url, destination, download.sha256)
+	if primaryErr == nil {
+		return nil
+	}
+	if strings.TrimSpace(download.fallbackURL) == "" {
+		return primaryErr
+	}
+	appLog.Logger.Warn().
+		Err(primaryErr).
+		Str("component", "systemdeps.ffmpeg").
+		Str("event", "download.fallback").
+		Str("primary_url", download.url).
+		Str("fallback_url", download.fallbackURL).
+		Msg("primary ffmpeg download failed; trying default upstream")
+	if fallbackErr := downloadFFmpegArchive(ctx, download.fallbackURL, destination, ""); fallbackErr != nil {
+		return fmt.Errorf("ffmpeg download failed: primary: %v; fallback: %w", primaryErr, fallbackErr)
+	}
+	return nil
 }
 
 func downloadFFmpegArchive(ctx context.Context, downloadURL, destination, expectedSHA256 string) (resultErr error) {
@@ -329,10 +350,11 @@ func verifyFFmpegArchiveChecksum(path, expected string) error {
 }
 
 type ffmpegDownload struct {
-	url       string
-	sha256    string
-	format    string
-	extension string
+	url         string
+	sha256      string
+	fallbackURL string
+	format      string
+	extension   string
 }
 
 const (
@@ -357,10 +379,11 @@ func ffmpegDownloadsFor(goos, goarch string) ([]ffmpegDownload, error) {
 		switch goarch {
 		case "amd64":
 			return []ffmpegDownload{{
-				url:       modelScopeFFmpegBaseURL + "lazymind-ffmpeg-windows-x64-20260803.zip",
-				sha256:    windowsX64FFmpegSHA,
-				format:    ffmpegArchiveZip,
-				extension: ".zip",
+				url:         modelScopeFFmpegBaseURL + "lazymind-ffmpeg-windows-x64-20260803.zip",
+				sha256:      windowsX64FFmpegSHA,
+				fallbackURL: btbNBase + "ffmpeg-master-latest-win64-gpl.zip",
+				format:      ffmpegArchiveZip,
+				extension:   ".zip",
 			}}, nil
 		case "arm64":
 			return []ffmpegDownload{{
@@ -373,16 +396,18 @@ func ffmpegDownloadsFor(goos, goarch string) ([]ffmpegDownload, error) {
 		if goarch == "amd64" || goarch == "arm64" {
 			return []ffmpegDownload{
 				{
-					url:       modelScopeFFmpegBaseURL + "lazymind-ffmpeg-darwin-x64-8.1.2.zip",
-					sha256:    darwinX64FFmpegSHA,
-					format:    ffmpegArchiveZip,
-					extension: ".zip",
+					url:         modelScopeFFmpegBaseURL + "lazymind-ffmpeg-darwin-x64-8.1.2.zip",
+					sha256:      darwinX64FFmpegSHA,
+					fallbackURL: "https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip",
+					format:      ffmpegArchiveZip,
+					extension:   ".zip",
 				},
 				{
-					url:       modelScopeFFmpegBaseURL + "lazymind-ffprobe-darwin-x64-8.1.2.zip",
-					sha256:    darwinX64FFprobeSHA,
-					format:    ffmpegArchiveZip,
-					extension: ".zip",
+					url:         modelScopeFFmpegBaseURL + "lazymind-ffprobe-darwin-x64-8.1.2.zip",
+					sha256:      darwinX64FFprobeSHA,
+					fallbackURL: "https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip",
+					format:      ffmpegArchiveZip,
+					extension:   ".zip",
 				},
 			}, nil
 		}
@@ -390,10 +415,11 @@ func ffmpegDownloadsFor(goos, goarch string) ([]ffmpegDownload, error) {
 		switch goarch {
 		case "amd64":
 			return []ffmpegDownload{{
-				url:       modelScopeFFmpegBaseURL + "lazymind-ffmpeg-linux-x64-20260803.tar.xz",
-				sha256:    linuxX64FFmpegSHA,
-				format:    ffmpegArchiveTarXZ,
-				extension: ".tar.xz",
+				url:         modelScopeFFmpegBaseURL + "lazymind-ffmpeg-linux-x64-20260803.tar.xz",
+				sha256:      linuxX64FFmpegSHA,
+				fallbackURL: btbNBase + "ffmpeg-master-latest-linux64-gpl.tar.xz",
+				format:      ffmpegArchiveTarXZ,
+				extension:   ".tar.xz",
 			}}, nil
 		case "arm64":
 			return []ffmpegDownload{{
