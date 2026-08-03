@@ -410,3 +410,28 @@ func TestWorkflowFacadeV1RoutesRegistered(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkflowAuthoringV1RoutesRegistered(t *testing.T) {
+	r := mux.NewRouter()
+	registerAllRoutes(r)
+	cases := []struct{ method, path, template string }{
+		{http.MethodGet, "/workflow-authoring/v1/skill-context", "/workflow-authoring/v1/skill-context"},
+		{http.MethodPost, "/workflow-authoring/v1/drafts", "/workflow-authoring/v1/drafts"},
+		{http.MethodPut, "/workflow-authoring/v1/drafts/d1/files", "/workflow-authoring/v1/drafts/{draft_id}/files"},
+		{http.MethodGet, "/workflow-authoring/v1/drafts/d1/diagnostics", "/workflow-authoring/v1/drafts/{draft_id}/diagnostics"},
+		{http.MethodPost, "/workflow-authoring/v1/drafts/d1:publish", "/workflow-authoring/v1/drafts/{draft_id}:publish"},
+		{http.MethodGet, "/workflow-authoring/v1/fixture", "/workflow-authoring/v1/fixture"},
+	}
+	for _, tc := range cases {
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		var match mux.RouteMatch
+		if !r.Match(req, &match) {
+			t.Errorf("missing %s %s", tc.method, tc.path)
+			continue
+		}
+		got, err := match.Route.GetPathTemplate()
+		if err != nil || got != tc.template {
+			t.Errorf("template=%q err=%v want=%q", got, err, tc.template)
+		}
+	}
+}

@@ -120,24 +120,29 @@ func PublishWorkflowDraft(w http.ResponseWriter, r *http.Request) {
 		common.ReplyErr(w, "not found", http.StatusNotFound)
 		return
 	}
+	diagnostics := authoringDiagnosticsForDraft(store.DB(), d)
+	if !diagnostics.Valid {
+		status := http.StatusUnprocessableEntity
+		message := "plugin validation failed"
+		for _, diagnostic := range diagnostics.Diagnostics {
+			switch diagnostic.Code {
+			case "PACKAGE_INCOMPLETE":
+				status, message = http.StatusBadRequest, diagnostic.Message
+			case "FRAMEWORK_TOOL_UNAVAILABLE":
+				status, message = http.StatusConflict, "framework tool unavailable"
+			case "SCRIPT_APPROVAL_REQUIRED":
+				status, message = http.StatusForbidden, "custom plugin scripts require the administrator publishing workflow"
+			}
+		}
+		common.ReplyErrWithData(w, message, diagnostics, status)
+		return
+	}
 	files, err := workflowFiles(d)
 	if err != nil {
 		common.ReplyErr(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	compiled := graphengine.Compile(d.WorkflowYAMLContent, d.StateYAMLContent, d.ScenarioContent, graphengine.ProfilePublish)
-	if !compiled.Valid {
-		common.ReplyErrWithData(w, "plugin validation failed", compiled, http.StatusUnprocessableEntity)
-		return
-	}
-	if !frameworkToolsAvailableForPublish(store.DB(), d) {
-		common.ReplyErr(w, "framework tool unavailable", http.StatusConflict)
-		return
-	}
-	if len(files) > 3 && !scriptsApprovedForPublish(store.DB(), d) {
-		common.ReplyErr(w, "custom plugin scripts require the administrator publishing workflow", http.StatusForbidden)
-		return
-	}
 	pid := extractWorkflowID(d.WorkflowYAMLContent)
 	if pid == "" {
 		common.ReplyErr(w, "plugin.yaml id required", http.StatusBadRequest)
