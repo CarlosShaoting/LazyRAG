@@ -2,6 +2,9 @@ package facade
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +16,51 @@ import (
 	"gorm.io/gorm"
 	workflowstore "lazymind/core/workflow/store"
 )
+
+func TestInputResourceImportAndBindingPinsStableRevision(t *testing.T) {
+	h, db := testHandler(t)
+	if err := db.Exec(`INSERT INTO plugin_sessions(id, create_user_id) VALUES ('s1','owner')`).Error; err != nil {
+		t.Fatal(err)
+	}
+	content := []byte("stable requirements")
+	sum := sha256.Sum256(content)
+	body, _ := json.Marshal(map[string]any{
+		"contract_version": ContractVersion, "name": "requirements.txt", "mime_type": "text/plain",
+		"size": len(content), "content_hash": "sha256:" + hex.EncodeToString(sum[:]),
+		"content_base64": base64.StdEncoding.EncodeToString(content),
+	})
+	w := httptest.NewRecorder()
+	h.ImportInputResource(w, request(http.MethodPost, "/workflow-input-resources", "owner", body))
+	if w.Code != http.StatusOK {
+		t.Fatalf("import=%d %s", w.Code, w.Body.String())
+	}
+	var resource struct {
+		ResourceID  string `json:"resource_id"`
+		ContentHash string `json:"content_hash"`
+		Revision    int64  `json:"revision"`
+	}
+	encoded, _ := json.Marshal(decodeEnvelope(t, w).Data)
+	if err := json.Unmarshal(encoded, &resource); err != nil {
+		t.Fatal(err)
+	}
+	bindBody, _ := json.Marshal(map[string]any{
+		"material_id": "requirements", "resource_type": "file", "resource_id": resource.ResourceID,
+		"resource_revision": resource.Revision, "content_hash": resource.ContentHash, "command_id": "cmd-bind",
+	})
+	bindRequest := mux.SetURLVars(request(http.MethodPost, "/workflow-sessions/s1/input-bindings", "owner", bindBody), map[string]string{"session_id": "s1"})
+	bound := httptest.NewRecorder()
+	h.BindInput(bound, bindRequest)
+	if bound.Code != http.StatusOK {
+		t.Fatalf("bind=%d %s", bound.Code, bound.Body.String())
+	}
+	var count int64
+	if err := db.Table("workflow_input_bindings").Where("workflow_session_id = ? AND resource_id = ?", "s1", resource.ResourceID).Count(&count).Error; err != nil || count != 1 {
+		t.Fatalf("binding count=%d err=%v", count, err)
+	}
+	if bytes.Contains(encoded, []byte("content_base64")) || bytes.Contains(encoded, []byte("/tmp/")) {
+		t.Fatalf("Host-private data leaked: %s", encoded)
+	}
+}
 
 func testHandler(t *testing.T) (Handler, *gorm.DB) {
 	t.Helper()

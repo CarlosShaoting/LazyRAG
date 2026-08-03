@@ -324,10 +324,12 @@ func registerAllRoutes(r *mux.Router) {
 	handleAPI(r, "PATCH", "/conversations/{conversation_id}/workflow-settings", []string{"qa.write"}, chat.PatchConversationWorkflowSettings)
 
 	// ----- Workflow Sessions -----
+	handleAPI(r, "POST", "/workflow-input-resources", []string{"qa.write"}, workflowFacade.ImportInputResource)
 	handleAPI(r, "POST", "/workflow-preparations", []string{"qa.write"}, workflowFacade.Prepare)
 	handleAPI(r, "POST", "/workflow-preparations/{preparation_id}:consume", []string{"qa.write"}, workflowFacade.Consume)
 	handleAPI(r, "POST", "/workflow-sessions/{session_id}:advance-step", []string{"qa.write"}, workflowFacade.Command(http.HandlerFunc(workflow.TransitionWorkflowSession)))
 	handleAPI(r, "POST", "/workflow-sessions/{session_id}:advance-step-and-hand-off", []string{"qa.write"}, workflowFacade.Command(http.HandlerFunc(workflow.TransitionWorkflowSession)))
+	handleAPI(r, "POST", "/workflow-sessions/{session_id}/input-bindings", []string{"qa.write"}, workflowFacade.BindInput)
 	workflowEvents := workflowstream.Handler{Store: workflowRepository, Snapshot: func(req *http.Request, sessionID, owner string) (any, error) {
 		if err := workflowRepository.AuthorizeSession(req.Context(), sessionID, owner); err != nil {
 			return nil, err

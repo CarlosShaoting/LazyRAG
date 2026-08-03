@@ -2,11 +2,15 @@ package facade
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 	"gorm.io/gorm"
@@ -87,6 +91,78 @@ type toolCommandRequest struct {
 	Steps                []struct {
 		StepID string `json:"step_id"`
 	} `json:"steps"`
+}
+
+type importInputResourceRequest struct {
+	ContractVersion string `json:"contract_version"`
+	Name            string `json:"name"`
+	MimeType        string `json:"mime_type"`
+	Size            int64  `json:"size"`
+	ContentHash     string `json:"content_hash"`
+	ContentBase64   string `json:"content_base64"`
+}
+
+func (h Handler) ImportInputResource(w http.ResponseWriter, r *http.Request) {
+	owner, ok := identityAndVersion(w, r)
+	if !ok {
+		return
+	}
+	var req importInputResourceRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<20)).Decode(&req); err != nil {
+		fail(w, 422, "INVALID_REQUEST", "invalid input resource", false)
+		return
+	}
+	content, err := base64.StdEncoding.DecodeString(req.ContentBase64)
+	if err != nil || req.Name == "" || req.MimeType == "" || int64(len(content)) != req.Size {
+		fail(w, 422, "INVALID_INPUT_RESOURCE", "name, mime_type, size and content are required", false)
+		return
+	}
+	sum := sha256.Sum256(content)
+	hash := "sha256:" + hex.EncodeToString(sum[:])
+	if hash != req.ContentHash {
+		fail(w, 422, "INPUT_HASH_MISMATCH", "content_hash does not match content", false)
+		return
+	}
+	resource, _, err := h.Store.ImportInputResource(r.Context(), owner, req.Name, req.MimeType, hash, content)
+	if err != nil {
+		fail(w, 503, "INPUT_IMPORT_FAILED", err.Error(), true)
+		return
+	}
+	writeJSON(w, 200, envelope{Data: map[string]any{
+		"resource_id": resource.ID, "name": resource.Name, "mime_type": resource.MimeType,
+		"size": resource.Size, "content_hash": resource.ContentHash, "revision": resource.Revision,
+	}})
+}
+
+func (h Handler) BindInput(w http.ResponseWriter, r *http.Request) {
+	owner, ok := identityAndVersion(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		MaterialID       string `json:"material_id"`
+		ResourceType     string `json:"resource_type"`
+		ResourceID       string `json:"resource_id"`
+		ResourceRevision int64  `json:"resource_revision"`
+		ContentHash      string `json:"content_hash"`
+		CommandID        string `json:"command_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.MaterialID == "" || req.ResourceID == "" || req.CommandID == "" {
+		fail(w, 422, "INVALID_INPUT_BINDING", "material_id, resource_id and command_id are required", false)
+		return
+	}
+	binding := workflowstore.InputBinding{WorkflowSessionID: mux.Vars(r)["session_id"], MaterialID: req.MaterialID,
+		ResourceType: req.ResourceType, ResourceID: req.ResourceID, ResourceRevision: req.ResourceRevision,
+		ContentHash: req.ContentHash, CreatedByCommandID: req.CommandID, CreatedAt: time.Now().UTC()}
+	if err := h.Store.BindInput(r.Context(), owner, binding); err != nil {
+		if errors.Is(err, workflowstore.ErrPermissionDenied) {
+			fail(w, 403, "PERMISSION_DENIED", "resource or session is not accessible", false)
+		} else {
+			fail(w, 409, "INPUT_BINDING_CONFLICT", err.Error(), false)
+		}
+		return
+	}
+	writeJSON(w, 200, envelope{Data: map[string]any{"bound": true}})
 }
 
 type validationError string

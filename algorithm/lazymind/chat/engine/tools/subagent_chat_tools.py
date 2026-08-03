@@ -361,6 +361,7 @@ def save_workflow_artifact(
 
     from lazymind.config import config as _cfg
     import httpx
+    from lazymind.chat.workflow.client import workflow_http_post
 
     core_url = str(_cfg['core_api_url']).rstrip('/')
 
@@ -396,10 +397,11 @@ def save_workflow_artifact(
         body['step_id'] = step_id
 
     try:
-        resp = httpx.post(
+        resp = workflow_http_post(
             f'{core_url}/workflow-sessions/{session_id}/artifacts',
             json=body,
             timeout=10.0,
+            transport=httpx,
         )
         if resp.status_code != 200:
             return tool_success('save_workflow_artifact', {

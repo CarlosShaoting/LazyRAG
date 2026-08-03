@@ -34,7 +34,43 @@ func New(db *gorm.DB) *Repository {
 	return &Repository{db: db, subs: map[string]map[chan Event]struct{}{}}
 }
 
-func Models() []any { return []any{&Preparation{}, &Event{}, &Command{}} }
+func Models() []any {
+	return []any{&Preparation{}, &Event{}, &Command{}, &InputResource{}, &InputBinding{}}
+}
+
+func (r *Repository) ImportInputResource(ctx context.Context, owner, name, mime, hash string, content []byte) (InputResource, bool, error) {
+	var existing InputResource
+	err := r.db.WithContext(ctx).Where("owner_user_id = ? AND content_hash = ?", owner, hash).First(&existing).Error
+	if err == nil {
+		return existing, false, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return InputResource{}, false, err
+	}
+	created := InputResource{ID: uuid.NewString(), OwnerUserID: owner, Name: name, MimeType: mime,
+		Size: int64(len(content)), ContentHash: hash, Revision: 1, Content: content, CreatedAt: time.Now().UTC()}
+	if err := r.db.WithContext(ctx).Create(&created).Error; err != nil {
+		return InputResource{}, false, err
+	}
+	return created, true, nil
+}
+
+func (r *Repository) BindInput(ctx context.Context, owner string, binding InputBinding) error {
+	if err := r.AuthorizeSession(ctx, binding.WorkflowSessionID, owner); err != nil {
+		return err
+	}
+	var resource InputResource
+	if err := r.db.WithContext(ctx).Where("id = ? AND owner_user_id = ?", binding.ResourceID, owner).First(&resource).Error; err != nil {
+		return ErrPermissionDenied
+	}
+	if resource.Revision != binding.ResourceRevision || resource.ContentHash != binding.ContentHash {
+		return ErrIdempotencyConflict
+	}
+	binding.ID = uuid.NewString()
+	binding.CreatedAt = time.Now().UTC()
+	binding.Validity = "effective"
+	return r.db.WithContext(ctx).Create(&binding).Error
+}
 
 func (r *Repository) AutoMigrate() error { return r.db.AutoMigrate(Models()...) }
 

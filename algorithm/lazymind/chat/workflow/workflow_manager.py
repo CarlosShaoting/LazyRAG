@@ -33,6 +33,9 @@ from lazymind.chat.workflow import workflow_loader
 from lazymind.chat.engine.subagent import SUBAGENT_CORE_TOOL_NAMES
 from lazymind.chat.engine.tools.intent_writer import enable_workflow_intent_scopes
 from lazymind.model_config import is_model_role_available
+from lazymind.chat.workflow.client import (
+    WorkflowTransportTimeout, workflow_http_get, workflow_http_post,
+)
 
 _FRAMEWORK_TOOLS = tuple(SUBAGENT_CORE_TOOL_NAMES)
 
@@ -120,16 +123,72 @@ def _submit_transition_to_core(
         operation: str = 'advance', is_start: bool = False,
         preflight_id: str = '',
         targets: Optional[List[Dict[str, Any]]] = None) -> _TransitionSubmission:
+    from lazymind.chat.workflow.client import (
+        AdvanceRequest, StepCommand, WorkflowClient, WorkflowClientError,
+        record_legacy_client_call, use_legacy_client,
+    )
     import httpx
     from lazymind.config import config as _cfg
 
     cfg = _agentic_config()
     core_url = str(_cfg['core_api_url']).rstrip('/')
+    if not use_legacy_client():
+        client = WorkflowClient(core_url, str(cfg.get('user_id') or ''), transport=httpx)
+        command_id = str(uuid.uuid4())
+        commands = targets or [{
+            'target_step_id': step_id, 'task_id': task_id, 'objective': objective,
+            'user_input': user_input, 'runtime_instruction': runtime_instruction,
+            'partial_indices': partial_indices,
+        }]
+        typed_steps = [StepCommand(
+            step_id=str(item.get('target_step_id') or ''), task_id=str(item.get('task_id') or ''),
+            objective=str(item.get('objective') or ''), user_input=str(item.get('user_input') or ''),
+            runtime_instruction=str(item.get('runtime_instruction') or ''),
+            partial_indices=item.get('partial_indices') or {},
+        ) for item in commands]
+        try:
+            if is_start:
+                response = client.prepare_start(workflow_id, session_id, command_id, {
+                    'workflow_revision_id': str(cfg.get('revision_id') or ''),
+                    'external_materials': cfg.get('workflow_external_materials') or {},
+                    'command_id': command_id, 'target_step_id': step_id, 'task_id': task_id,
+                    'objective': objective, 'user_input': user_input, 'hand_off': hand_off,
+                    'preflight_id': preflight_id,
+                })
+            else:
+                response = client.advance(AdvanceRequest(
+                    session_id=session_id,
+                    expected_state_version=int(cfg.get('_workflow_state_version') or 0),
+                    steps=typed_steps, handoff=hand_off, command_id=command_id,
+                ))
+            data = response.result
+            accepted = bool(data.get('accepted', True))
+            tasks = data.get('tasks') if isinstance(data.get('tasks'), list) else []
+            normalised = [{
+                'step_id': str(item.get('step_id') or step_id),
+                'task_id': str(item.get('task_id') or task_id),
+                'step_state': str(item.get('step_state') or 'pending'),
+            } for item in tasks if isinstance(item, dict)] or [{
+                'step_id': step_id, 'task_id': str(data.get('task_id') or task_id),
+                'step_state': str(data.get('step_state') or 'pending'),
+            }]
+            return _TransitionSubmission(
+                accepted, str(data.get('message') or 'Workflow transition accepted; acceptance is pending.'),
+                command_id=command_id, task_id=normalised[0]['task_id'],
+                session_id=str(data.get('session_id') or session_id),
+                state_version=int(data.get('state_version') or 0),
+                projection=data.get('projection') if isinstance(data.get('projection'), dict) else {},
+                tasks=normalised,
+            )
+        except WorkflowClientError as exc:
+            return _TransitionSubmission(False, f'{exc.code}: {exc}', command_id=command_id)
+    record_legacy_client_call('_submit_transition_to_core')
     projection_data: Dict[str, Any] = {}
     if not is_start:
         try:
-            projection_resp = httpx.get(
+            projection_resp = workflow_http_get(
                 f'{core_url}/internal/workflow-sessions/{session_id}/projection', timeout=5.0,
+                transport=httpx,
             )
             if projection_resp.status_code == 200:
                 projection_data = _core_response_data(projection_resp)
@@ -176,14 +235,15 @@ def _submit_transition_to_core(
         if is_start else f'{core_url}/internal/workflow-sessions/{session_id}:transition'
     )
     try:
-        response = httpx.post(endpoint, json=payload, timeout=15.0)
+        response = workflow_http_post(endpoint, json=payload, timeout=15.0, transport=httpx)
         data = _core_response_data(response)
-    except httpx.TimeoutException:
+    except WorkflowTransportTimeout:
         # The command id makes an ambiguous network timeout reconcilable without
         # submitting a second transition.
         try:
-            status_resp = httpx.get(
+            status_resp = workflow_http_get(
                 f'{core_url}/internal/workflow-transition-commands/{command_id}', timeout=5.0,
+                transport=httpx,
             )
             data = _core_response_data(status_resp)
             response = status_resp
@@ -212,7 +272,7 @@ def _submit_transition_to_core(
             payload['command_id'] = command_id
             payload['expected_state_version'] = latest_version
             try:
-                response = httpx.post(endpoint, json=payload, timeout=15.0)
+                response = workflow_http_post(endpoint, json=payload, timeout=15.0, transport=httpx)
                 data = _core_response_data(response)
                 expected_version = latest_version
             except Exception as exc:
@@ -284,13 +344,16 @@ def _fetch_go_start_candidates(workflow_id: str) -> List[str]:
 
     cfg = _agentic_config()
     core_url = str(_cfg['core_api_url']).rstrip('/')
+    if not cfg.get('workflow_external_materials'):
+        cfg['workflow_external_materials'] = _import_host_input_resources(cfg, core_url, httpx)
     payload = {
         'workflow_id': workflow_id,
         'workflow_revision_id': str(cfg.get('revision_id') or ''),
         'external_materials': cfg.get('workflow_external_materials') or {},
     }
-    response = httpx.post(
+    response = workflow_http_post(
         f'{core_url}/internal/workflow-sessions:plan-start', json=payload, timeout=10.0,
+        transport=httpx,
     )
     data = _core_response_data(response)
     if response.status_code >= 300:
@@ -309,6 +372,28 @@ def _fetch_go_start_candidates(workflow_id: str) -> List[str]:
             hints.setdefault(target, []).append(when)
     cfg['_workflow_start_route_hints'] = hints
     return [str(step_id) for step_id in ready if step_id]
+
+
+def _import_host_input_resources(cfg: Dict[str, Any], core_url: str, transport: Any) -> Dict[str, Any]:
+    """Import Host attachments and return only stable neutral references."""
+    from lazymind.chat.workflow.file_adapter import LazyMindHostFileAdapter
+
+    paths = [
+        path for turn_paths in (cfg.get('history_files_per_turn') or {}).values()
+        for path in turn_paths
+    ]
+    if not paths:
+        return {}
+    adapter = LazyMindHostFileAdapter(core_url, str(cfg.get('user_id') or ''), transport=transport)
+    resources: Dict[str, Any] = {}
+    for index, path in enumerate(dict.fromkeys(paths)):
+        imported = adapter.import_attachment(path)
+        resources[f'attachment_{index + 1}'] = {
+            'resource_id': imported.resource_id, 'revision': imported.revision,
+            'content_hash': imported.content_hash, 'name': imported.name,
+            'mime_type': imported.mime_type, 'size': imported.size,
+        }
+    return resources
 
 
 def is_workflow_driver_turn(workflow_context: Any) -> bool:
@@ -377,8 +462,9 @@ def _fetch_go_projection(session_id: str) -> Dict[str, Any]:
         import httpx
         from lazymind.config import config as _cfg
         core_url = str(_cfg['core_api_url']).rstrip('/')
-        resp = httpx.get(
+        resp = workflow_http_get(
             f'{core_url}/internal/workflow-sessions/{session_id}/projection', timeout=5.0,
+            transport=httpx,
         )
         if resp.status_code != 200:
             return {}
@@ -1490,7 +1576,9 @@ def _live_reachability_snapshot(
 ) -> _ReachabilitySnapshot:
     """Read Ready/Past from Go without a local graph fallback."""
     cfg = _agentic_config()
-    current_step = cfg.get('workflow_step', '') or fallback_current_step
+    # The caller's step is the scope being documented/executed. Agent globals
+    # may still describe the previous tool invocation in the same process.
+    current_step = fallback_current_step or cfg.get('workflow_step', '')
     session_id = cfg.get('workflow_session_id', '')
     forward_steps: List[str] = []
     rewind = list(rewind_steps or [])
@@ -1499,14 +1587,17 @@ def _live_reachability_snapshot(
         projection = _fetch_go_projection(session_id)
         forward_steps = list(projection.get('ready') or [])
         rewind = list(projection.get('past') or [])
-    else:
+    # A projection without node state is not authoritative (notably during
+    # startup and in compatibility fixtures); retain the local graph fallback.
+    projection_nodes = projection.get('nodes') if isinstance(projection.get('nodes'), dict) else {}
+    if not projection or current_step not in projection_nodes or not forward_steps:
         spec = workflow_loader.get_workflow(workflow_id)
         transitions = spec.state.get('transitions', {}) if spec else {}
         forward_steps = [
             str(edge.get('to')) for edge in transitions.get(current_step, [])
             if isinstance(edge, dict) and edge.get('to') not in {current_step, '__end__'}
         ]
-    nodes = projection.get('nodes') if isinstance(projection.get('nodes'), dict) else {}
+    nodes = projection_nodes
     current_execution = (
         str(nodes.get(current_step, {}).get('execution') or '')
         if isinstance(nodes.get(current_step), dict) else ''
@@ -1755,7 +1846,9 @@ def _wait_for_go_task(step_id: str, trigger_result: str, timeout: float = 600.0)
             step_id, session_id, task_id, timeout,
         )
         while time.monotonic() < deadline:
-            response = httpx.get(f'{core_url}/internal/subagent/tasks/{task_id}', timeout=5.0)
+            response = workflow_http_get(
+                f'{core_url}/internal/subagent/tasks/{task_id}', timeout=5.0, transport=httpx,
+            )
             if response.status_code == 200:
                 data = _core_response_data(response)
                 status = str(data.get('status') or '')
@@ -1813,7 +1906,9 @@ def build_query_tools() -> List[Any]:
             import httpx
             from lazymind.config import config as _cfg
             core_url = str(_cfg['core_api_url']).rstrip('/')
-            resp = httpx.get(f'{core_url}/workflow-sessions/{sid}', timeout=5.0)
+            resp = workflow_http_get(
+                f'{core_url}/workflow-sessions/{sid}', timeout=5.0, transport=httpx,
+            )
             if resp.status_code != 200:
                 return f'Could not fetch session {sid}.'
             steps = resp.json().get('data', {}).get('session', {}).get('steps', [])
@@ -1885,7 +1980,9 @@ def build_query_tools() -> List[Any]:
             import httpx
             from lazymind.config import config as _cfg
             core_url = str(_cfg['core_api_url']).rstrip('/')
-            resp = httpx.get(f'{core_url}/workflow-sessions/{session_id}', timeout=5.0)
+            resp = workflow_http_get(
+                f'{core_url}/workflow-sessions/{session_id}', timeout=5.0, transport=httpx,
+            )
             if resp.status_code != 200:
                 return 'Could not fetch session.'
             steps = resp.json().get('data', {}).get('session', {}).get('steps', [])
