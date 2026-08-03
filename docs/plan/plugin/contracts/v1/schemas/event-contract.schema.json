@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lazymind.ai/contracts/workflow/v1/event-contract.schema.json",
+  "title": "Workflow Event Contract v1",
+  "type": "object",
+  "required": ["contract_version", "session_id", "cursor", "type", "entity_id", "state_version", "payload"],
+  "properties": {
+    "contract_version": {"const": "workflow.v1"},
+    "session_id": {"type": "string", "minLength": 1},
+    "cursor": {"type": "integer", "minimum": 1},
+    "type": {"enum": ["workflow.snapshot", "workflow.patch", "step.patch", "attempt.patch", "artifact.upsert"]},
+    "entity_id": {"type": "string", "minLength": 1},
+    "state_version": {"type": "integer", "minimum": 0},
+    "payload": {"type": "object"}
+  },
+  "additionalProperties": false
+}

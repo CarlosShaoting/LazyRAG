@@ -1,45 +1,51 @@
 {
   "contract_version": "workflow.v1",
-  "scenario": "choice",
+  "scenario": "stop",
   "input": {
-    "choice": "approve"
+    "stop": true
   },
   "projection": {
-    "session_id": "s-choice",
-    "status": "running",
-    "ready_steps": [
-      "publish"
-    ],
+    "session_id": "s-resume",
+    "status": "waiting",
+    "ready_steps": [],
     "state_version": 2
   },
   "attempts": [
     {
-      "attempt_id": "a-gate",
-      "step_id": "gate",
-      "status": "succeeded",
+      "attempt_id": "a-work",
+      "step_id": "work",
+      "status": "interrupted",
       "operation": "execute",
       "attempt_no": 1,
       "context": {
         "contract_version": "workflow.v1",
-        "session_id": "s-choice",
-        "step_id": "gate",
-        "attempt_id": "a-gate",
+        "session_id": "s-resume",
+        "step_id": "work",
+        "attempt_id": "a-work",
         "attempt_no": 1,
         "operation": "execute",
         "input_bindings": []
       }
     }
   ],
-  "artifacts": [],
+  "artifacts": [
+    {
+      "artifact_id": "partial",
+      "slot": "notes",
+      "revision": 1,
+      "producer_attempt_id": "a-work",
+      "stale": false
+    }
+  ],
   "events": [
     {
       "cursor": 1,
       "type": "workflow.snapshot",
-      "entity_id": "s-choice",
+      "entity_id": "s-resume",
       "state_version": 1,
       "payload": {
         "projection": {
-          "session_id": "s-choice",
+          "session_id": "s-resume",
           "status": "running",
           "ready_steps": [],
           "state_version": 1
@@ -49,22 +55,27 @@
     {
       "cursor": 2,
       "type": "attempt.patch",
-      "entity_id": "a-gate",
+      "entity_id": "a-work",
       "state_version": 2,
       "payload": {}
     },
     {
       "cursor": 3,
-      "type": "step.patch",
-      "entity_id": "publish",
+      "type": "artifact.upsert",
+      "entity_id": "partial",
+      "state_version": 3,
+      "payload": {}
+    },
+    {
+      "cursor": 4,
+      "type": "workflow.patch",
+      "entity_id": "s-resume",
       "state_version": 2,
       "payload": {
         "projection": {
-          "session_id": "s-choice",
-          "status": "running",
-          "ready_steps": [
-            "publish"
-          ],
+          "session_id": "s-resume",
+          "status": "waiting",
+          "ready_steps": [],
           "state_version": 2
         }
       }

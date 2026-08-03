@@ -1,1 +1,110 @@
-{"contract_version":"workflow.v1","scenario":"serial","input":{"steps":["draft","review"]},"projection":{"session_id":"s-serial","status":"completed","ready_steps":[],"state_version":4},"attempts":[{"attempt_id":"a-draft","step_id":"draft","status":"succeeded","operation":"execute","attempt_no":1},{"attempt_id":"a-review","step_id":"review","status":"succeeded","operation":"execute","attempt_no":1}],"artifacts":[{"artifact_id":"doc","slot":"document","revision":1,"producer_attempt_id":"a-draft","stale":false}],"events":[{"cursor":1,"type":"workflow.snapshot","entity_id":"s-serial"},{"cursor":2,"type":"attempt.patch","entity_id":"a-draft"},{"cursor":3,"type":"artifact.upsert","entity_id":"doc"},{"cursor":4,"type":"attempt.patch","entity_id":"a-review"},{"cursor":5,"type":"workflow.patch","entity_id":"s-serial"}]}
+{
+  "contract_version": "workflow.v1",
+  "scenario": "serial",
+  "input": {
+    "steps": [
+      "draft",
+      "review"
+    ]
+  },
+  "projection": {
+    "session_id": "s-serial",
+    "status": "completed",
+    "ready_steps": [],
+    "state_version": 4
+  },
+  "attempts": [
+    {
+      "attempt_id": "a-draft",
+      "step_id": "draft",
+      "status": "succeeded",
+      "operation": "execute",
+      "attempt_no": 1,
+      "context": {
+        "contract_version": "workflow.v1",
+        "session_id": "s-serial",
+        "step_id": "draft",
+        "attempt_id": "a-draft",
+        "attempt_no": 1,
+        "operation": "execute",
+        "input_bindings": []
+      }
+    },
+    {
+      "attempt_id": "a-review",
+      "step_id": "review",
+      "status": "succeeded",
+      "operation": "execute",
+      "attempt_no": 1,
+      "context": {
+        "contract_version": "workflow.v1",
+        "session_id": "s-serial",
+        "step_id": "review",
+        "attempt_id": "a-review",
+        "attempt_no": 1,
+        "operation": "execute",
+        "input_bindings": []
+      }
+    }
+  ],
+  "artifacts": [
+    {
+      "artifact_id": "doc",
+      "slot": "document",
+      "revision": 1,
+      "producer_attempt_id": "a-draft",
+      "stale": false
+    }
+  ],
+  "events": [
+    {
+      "cursor": 1,
+      "type": "workflow.snapshot",
+      "entity_id": "s-serial",
+      "state_version": 1,
+      "payload": {
+        "projection": {
+          "session_id": "s-serial",
+          "status": "running",
+          "ready_steps": [],
+          "state_version": 1
+        }
+      }
+    },
+    {
+      "cursor": 2,
+      "type": "attempt.patch",
+      "entity_id": "a-draft",
+      "state_version": 2,
+      "payload": {}
+    },
+    {
+      "cursor": 3,
+      "type": "artifact.upsert",
+      "entity_id": "doc",
+      "state_version": 3,
+      "payload": {}
+    },
+    {
+      "cursor": 4,
+      "type": "attempt.patch",
+      "entity_id": "a-review",
+      "state_version": 4,
+      "payload": {}
+    },
+    {
+      "cursor": 5,
+      "type": "workflow.patch",
+      "entity_id": "s-serial",
+      "state_version": 4,
+      "payload": {
+        "projection": {
+          "session_id": "s-serial",
+          "status": "completed",
+          "ready_steps": [],
+          "state_version": 4
+        }
+      }
+    }
+  ]
+}

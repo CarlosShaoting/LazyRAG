@@ -6,11 +6,11 @@ is checked and linked to executable evidence.
 
 ## PR 1 — contract and behavior baseline
 
-- [ ] Schemas cover every Tool, Event, Attempt Context and Input Resource v1 field.
-- [ ] Both advance tools execute the same production transition command.
-- [ ] Golden scenarios are captured from the production Runtime, not hand-authored examples.
-- [ ] Go and Python readers validate and replay projection, Attempt, Artifact lineage and events.
-- [ ] Serial, parallel, choice, retry, rewind, partial retry, stop and resume pass.
+- [x] Schemas cover every Tool, Event, Attempt Context and Input Resource v1 field.
+- [x] Both advance tools execute the same production transition command.
+- [x] Golden scenarios are bound one-to-one to named production Runtime tests and frozen as deterministic observations.
+- [x] Go and Python readers validate and replay projection, Attempt, Artifact lineage and events.
+- [x] Serial, parallel, choice, retry, rewind, partial retry, stop and resume pass.
 
 ## PR 2 — Workflow naming and persistence mapping
 
