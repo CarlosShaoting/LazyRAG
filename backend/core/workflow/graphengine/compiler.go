@@ -11,7 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-type rawPlugin struct {
+type rawWorkflow struct {
 	ID    string           `yaml:"id"`
 	Slots []map[string]any `yaml:"slots"`
 	Steps []map[string]any `yaml:"steps"`
@@ -42,10 +42,10 @@ type rawStep struct {
 	SkipIf          any
 }
 
-func Compile(pluginYAML, stateYAML, scenario string, profile Profile) CompileResult {
+func Compile(workflowYAML, stateYAML, scenario string, profile Profile) CompileResult {
 	result := CompileResult{Profile: profile, SchemaVersion: SchemaVersion, Diagnostics: []Diagnostic{}}
-	var plugin rawPlugin
-	if err := yaml.Unmarshal([]byte(pluginYAML), &plugin); err != nil {
+	var plugin rawWorkflow
+	if err := yaml.Unmarshal([]byte(workflowYAML), &plugin); err != nil {
 		result.Diagnostics = append(result.Diagnostics, diag("E_PLUGIN_YAML_INVALID", "error", "plugin.yaml", err.Error()))
 		return result
 	}
@@ -82,22 +82,22 @@ func Compile(pluginYAML, stateYAML, scenario string, profile Profile) CompileRes
 		exposed[id] = boolValue(slot["exposed"])
 	}
 
-	pluginSteps := map[string]map[string]any{}
+	workflowSteps := map[string]map[string]any{}
 	for i, step := range plugin.Steps {
 		id := scalar(step["id"])
 		if id == "" {
 			result.Diagnostics = append(result.Diagnostics, diag("E_STEP_ID_REQUIRED", "error", fmt.Sprintf("plugin.yaml.steps[%d].id", i), "step id is required"))
 			continue
 		}
-		if _, ok := pluginSteps[id]; ok {
+		if _, ok := workflowSteps[id]; ok {
 			result.Diagnostics = append(result.Diagnostics, nodeDiag("E_STEP_DUPLICATE", "error", fmt.Sprintf("plugin.yaml.steps[%d].id", i), id, "step id is duplicated: "+id))
 		}
-		pluginSteps[id] = step
+		workflowSteps[id] = step
 	}
 	rawSteps, stepDiags := normalizeSteps(state.Steps)
 	result.Diagnostics = append(result.Diagnostics, stepDiags...)
 	inputPaths := map[string]string{}
-	for id := range pluginSteps {
+	for id := range workflowSteps {
 		if _, ok := rawSteps[id]; !ok {
 			result.Diagnostics = append(result.Diagnostics, nodeDiag("E_STATE_STEP_MISSING", "error", "scenario/state.yml.steps."+id, id, "plugin step has no state configuration"))
 		}
@@ -107,7 +107,7 @@ func Compile(pluginYAML, stateYAML, scenario string, profile Profile) CompileRes
 			result.Diagnostics = append(result.Diagnostics, nodeDiag("E_RESERVED_STEP_ID", "error", "scenario/state.yml.steps."+id, id, "reserved node id cannot be declared as a step"))
 			continue
 		}
-		if _, ok := pluginSteps[id]; !ok {
+		if _, ok := workflowSteps[id]; !ok {
 			result.Diagnostics = append(result.Diagnostics, nodeDiag("E_PLUGIN_STEP_MISSING", "error", "plugin.yaml.steps", id, "state step is not declared in plugin.yaml"))
 		}
 		node := CompiledNode{ID: id, Label: step.Label, Route: step.Route}

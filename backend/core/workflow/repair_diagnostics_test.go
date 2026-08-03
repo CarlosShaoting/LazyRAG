@@ -1,11 +1,11 @@
-package plugin
+package workflow
 
 import "testing"
 
-func TestDiagnosePluginFindsCrossFileErrors(t *testing.T) {
-	pluginYAML := "id: demo\nsteps:\n  - id: collect\n    label: Collect\ntool_scripts:\n  - path: scripts/tool.py\n    functions: [run]\n"
+func TestDiagnoseWorkflowFindsCrossFileErrors(t *testing.T) {
+	workflowYAML := "id: demo\nsteps:\n  - id: collect\n    label: Collect\ntool_scripts:\n  - path: scripts/tool.py\n    functions: [run]\n"
 	stateYAML := "initial: __start__\nsteps: {}\ntransitions: {}\n"
-	diagnostics := diagnosePlugin(pluginYAML, stateYAML, "", "{}")
+	diagnostics := diagnoseWorkflow(workflowYAML, stateYAML, "", "{}")
 	if !hasDiagnosticErrors(diagnostics) {
 		t.Fatal("expected blocking diagnostics")
 	}
@@ -22,10 +22,10 @@ func TestDiagnosePluginFindsCrossFileErrors(t *testing.T) {
 	}
 }
 
-func TestDiagnosePluginAcceptsConsistentFiles(t *testing.T) {
-	pluginYAML := "id: demo\nslots:\n  - id: result\n    type: text\nsteps:\n  - id: collect\n    label: Collect\nui:\n  tabs:\n    - id: result\n      label: Result\n      layout: vertical\n      slots:\n        - id: result\n"
+func TestDiagnoseWorkflowAcceptsConsistentFiles(t *testing.T) {
+	workflowYAML := "id: demo\nslots:\n  - id: result\n    type: text\nsteps:\n  - id: collect\n    label: Collect\nui:\n  tabs:\n    - id: result\n      label: Result\n      layout: vertical\n      slots:\n        - id: result\n"
 	stateYAML := "initial: __start__\nsteps:\n  collect:\n    prompt: collect\n    outputs: [result]\ntransitions:\n  __start__:\n    - to: collect\n  collect:\n    - to: __end__\n"
-	if diagnostics := diagnosePlugin(pluginYAML, stateYAML, "### collect\nDoes work.", "{}"); hasDiagnosticErrors(diagnostics) {
+	if diagnostics := diagnoseWorkflow(workflowYAML, stateYAML, "### collect\nDoes work.", "{}"); hasDiagnosticErrors(diagnostics) {
 		t.Fatalf("unexpected diagnostics: %#v", diagnostics)
 	}
 }

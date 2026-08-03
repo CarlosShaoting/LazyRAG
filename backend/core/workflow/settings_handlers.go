@@ -1,4 +1,4 @@
-package plugin
+package workflow
 
 import (
 	"encoding/json"
@@ -15,7 +15,7 @@ import (
 	"lazymind/core/store"
 )
 
-func pluginRefPathVar(r *http.Request) string {
+func workflowRefPathVar(r *http.Request) string {
 	raw := strings.TrimSpace(common.PathVar(r, "plugin_ref"))
 	if decoded, err := url.PathUnescape(raw); err == nil {
 		return decoded
@@ -23,29 +23,29 @@ func pluginRefPathVar(r *http.Request) string {
 	return raw
 }
 
-func DisabledBuiltinPluginIDs(db *gorm.DB, userID string) ([]string, error) {
-	var rows []orm.UserPluginSetting
+func DisabledBuiltinWorkflowIDs(db *gorm.DB, userID string) ([]string, error) {
+	var rows []orm.UserWorkflowSetting
 	if err := db.Where("user_id=? AND enabled=false AND plugin_ref LIKE 'builtin:%'", userID).Find(&rows).Error; err != nil {
-		if missingPluginTables(err) {
+		if missingWorkflowTables(err) {
 			return []string{}, nil
 		}
 		return nil, err
 	}
 	out := make([]string, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, strings.TrimPrefix(r.PluginRef, "builtin:"))
+		out = append(out, strings.TrimPrefix(r.WorkflowRef, "builtin:"))
 	}
 	return out, nil
 }
 
-func ListUserPluginSettings(w http.ResponseWriter, r *http.Request) {
+func ListUserWorkflowSettings(w http.ResponseWriter, r *http.Request) {
 	userID := common.UserID(r)
 	if userID == "" {
 		common.ReplyErr(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 	type row struct {
-		orm.PluginResource
+		orm.WorkflowResource
 		Enabled *bool `gorm:"column:enabled"`
 	}
 	var rows []row
@@ -60,26 +60,26 @@ func ListUserPluginSettings(w http.ResponseWriter, r *http.Request) {
 		if v.Enabled != nil {
 			enabled = *v.Enabled
 		}
-		items = append(items, map[string]any{"plugin_ref": v.PluginRef, "plugin_id": v.PluginID, "name": v.Name, "description": v.Description, "when_to_use": v.WhenToUse, "source_type": v.SourceType, "revision_id": v.HeadRevisionID, "revision_no": v.Version, "remote_root": "remote://" + v.RelativeRoot, "enabled": enabled, "status": v.Status})
+		items = append(items, map[string]any{"plugin_ref": v.WorkflowRef, "plugin_id": v.WorkflowID, "name": v.Name, "description": v.Description, "when_to_use": v.WhenToUse, "source_type": v.SourceType, "revision_id": v.HeadRevisionID, "revision_no": v.Version, "remote_root": "remote://" + v.RelativeRoot, "enabled": enabled, "status": v.Status})
 	}
 	if req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, common.ChatServiceEndpoint()+"/api/plugins", nil); err == nil {
 		if resp, err := http.DefaultClient.Do(req); err == nil {
 			defer resp.Body.Close()
 			var payload struct {
-				Plugins []struct {
+				Workflows []struct {
 					ID          string `json:"id"`
 					Name        string `json:"name"`
 					Description string `json:"description"`
 				} `json:"plugins"`
 			}
 			if resp.StatusCode == http.StatusOK && json.NewDecoder(resp.Body).Decode(&payload) == nil {
-				var settings []orm.UserPluginSetting
+				var settings []orm.UserWorkflowSetting
 				_ = store.DB().Where("user_id=? AND plugin_ref LIKE 'builtin:%'", userID).Find(&settings).Error
 				values := map[string]bool{}
 				for _, s := range settings {
-					values[s.PluginRef] = s.Enabled
+					values[s.WorkflowRef] = s.Enabled
 				}
-				for _, b := range payload.Plugins {
+				for _, b := range payload.Workflows {
 					ref := "builtin:" + b.ID
 					enabled, exists := values[ref]
 					if !exists {
@@ -95,25 +95,25 @@ func ListUserPluginSettings(w http.ResponseWriter, r *http.Request) {
 
 func EnabledCatalog(db *gorm.DB, userID string) ([]map[string]any, error) {
 	type row struct {
-		orm.PluginResource
+		orm.WorkflowResource
 		TreeHash string `gorm:"column:tree_hash"`
 	}
 	var rows []row
 	err := db.Table("plugins p").Select("p.*, pr.tree_hash").Joins("JOIN user_plugin_settings ups ON ups.plugin_ref=p.plugin_ref AND ups.user_id=? AND ups.enabled=true", userID).Joins("JOIN plugin_revisions pr ON pr.id=p.head_revision_id").Where("p.status='active' AND (p.owner_user_id=? OR p.owner_user_id='')", userID).Order("p.plugin_ref").Scan(&rows).Error
 	if err != nil {
-		if missingPluginTables(err) {
+		if missingWorkflowTables(err) {
 			return []map[string]any{}, nil
 		}
 		return nil, err
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for _, v := range rows {
-		out = append(out, map[string]any{"plugin_ref": v.PluginRef, "plugin_id": v.PluginID, "name": v.Name, "description": v.Description, "when_to_use": v.WhenToUse, "source_type": v.SourceType, "remote_root": "remote://" + v.RelativeRoot, "revision_id": v.HeadRevisionID, "revision_no": v.Version, "tree_hash": v.TreeHash})
+		out = append(out, map[string]any{"plugin_ref": v.WorkflowRef, "plugin_id": v.WorkflowID, "name": v.Name, "description": v.Description, "when_to_use": v.WhenToUse, "source_type": v.SourceType, "remote_root": "remote://" + v.RelativeRoot, "revision_id": v.HeadRevisionID, "revision_no": v.Version, "tree_hash": v.TreeHash})
 	}
 	return out, nil
 }
 
-func missingPluginTables(err error) bool {
+func missingWorkflowTables(err error) bool {
 	if err == nil {
 		return false
 	}
@@ -121,9 +121,9 @@ func missingPluginTables(err error) bool {
 	return strings.Contains(s, "no such table") || strings.Contains(s, "does not exist")
 }
 
-func PatchUserPluginSetting(w http.ResponseWriter, r *http.Request) {
+func PatchUserWorkflowSetting(w http.ResponseWriter, r *http.Request) {
 	userID := common.UserID(r)
-	ref := pluginRefPathVar(r)
+	ref := workflowRefPathVar(r)
 	if userID == "" {
 		common.ReplyErr(w, "unauthorized", http.StatusUnauthorized)
 		return
@@ -139,13 +139,13 @@ func PatchUserPluginSetting(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(ref, "builtin:") {
 		count = 1
 	} else {
-		store.DB().Model(&orm.PluginResource{}).Where("plugin_ref=? AND status='active' AND (owner_user_id=? OR owner_user_id='')", ref, userID).Count(&count)
+		store.DB().Model(&orm.WorkflowResource{}).Where("plugin_ref=? AND status='active' AND (owner_user_id=? OR owner_user_id='')", ref, userID).Count(&count)
 	}
 	if count == 0 {
 		common.ReplyErr(w, "plugin not found", http.StatusNotFound)
 		return
 	}
-	setting := orm.UserPluginSetting{UserID: userID, PluginRef: ref, Enabled: body.Enabled, UpdatedAt: time.Now().UTC()}
+	setting := orm.UserWorkflowSetting{UserID: userID, WorkflowRef: ref, Enabled: body.Enabled, UpdatedAt: time.Now().UTC()}
 	if err := store.DB().Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "user_id"}, {Name: "plugin_ref"}}, DoUpdates: clause.AssignmentColumns([]string{"enabled", "updated_at"})}).Create(&setting).Error; err != nil {
 		common.ReplyErr(w, err.Error(), http.StatusInternalServerError)
 		return

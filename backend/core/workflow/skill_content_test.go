@@ -1,4 +1,4 @@
-package plugin
+package workflow
 
 import (
 	"context"
@@ -12,9 +12,9 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestLoadPluginBuiltinSkill(t *testing.T) {
+func TestLoadWorkflowBuiltinSkill(t *testing.T) {
 	root := t.TempDir()
-	manifest := pluginBuiltinSkillManifests[0]
+	manifest := workflowBuiltinSkillManifests[0]
 	dir := filepath.Join(root, manifest.Category, manifest.DirName)
 	if err := os.MkdirAll(filepath.Join(dir, "references"), 0o755); err != nil {
 		t.Fatal(err)
@@ -26,29 +26,29 @@ func TestLoadPluginBuiltinSkill(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("LAZYMIND_BUILTIN_SKILLS_DIR", root)
-	content, name, err := loadPluginBuiltinSkill("builtin:" + manifest.UID)
+	content, name, err := loadWorkflowBuiltinSkill("builtin:" + manifest.UID)
 	if err != nil || content == "" || name != "deep-research" {
 		t.Fatalf("parent content=%q name=%q err=%v", content, name, err)
 	}
-	content, name, err = loadPluginBuiltinSkill("builtin:" + manifest.UID + ":references/guide.md")
+	content, name, err = loadWorkflowBuiltinSkill("builtin:" + manifest.UID + ":references/guide.md")
 	if err != nil || content != "guide" || name != "references/guide" {
 		t.Fatalf("child content=%q name=%q err=%v", content, name, err)
 	}
-	snapshot, err := loadPluginBuiltinSkillPackage("builtin:" + manifest.UID)
+	snapshot, err := loadWorkflowBuiltinSkillPackage("builtin:" + manifest.UID)
 	if err != nil || snapshot.TreeHash == "" || len(snapshot.Files) != 2 {
 		t.Fatalf("builtin snapshot=%#v err=%v", snapshot, err)
 	}
 }
 
-func TestLoadPluginBuiltinSkillRejectsTraversal(t *testing.T) {
+func TestLoadWorkflowBuiltinSkillRejectsTraversal(t *testing.T) {
 	t.Setenv("LAZYMIND_BUILTIN_SKILLS_DIR", t.TempDir())
-	_, _, err := loadPluginBuiltinSkill("builtin:" + pluginBuiltinSkillManifests[0].UID + ":../secret")
-	if !errors.Is(err, errPluginSourceSkillNotFound) {
+	_, _, err := loadWorkflowBuiltinSkill("builtin:" + workflowBuiltinSkillManifests[0].UID + ":../secret")
+	if !errors.Is(err, errWorkflowSourceSkillNotFound) {
 		t.Fatalf("err=%v, want not found", err)
 	}
 }
 
-func TestLoadPluginSourceSkillPinsHeadAndLoadsWholePackage(t *testing.T) {
+func TestLoadWorkflowSourceSkillPinsHeadAndLoadsWholePackage(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
@@ -70,7 +70,7 @@ func TestLoadPluginSourceSkillPinsHeadAndLoadsWholePackage(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	snapshot, err := loadPluginSourceSkill(context.Background(), db, "u1", "s1")
+	snapshot, err := loadWorkflowSourceSkill(context.Background(), db, "u1", "s1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestLoadPluginSourceSkillPinsHeadAndLoadsWholePackage(t *testing.T) {
 	}
 }
 
-func TestPluginSourceSkillEntryQueryQuotesBinaryColumn(t *testing.T) {
+func TestWorkflowSourceSkillEntryQueryQuotesBinaryColumn(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{DryRun: true})
 	if err != nil {
 		t.Fatal(err)

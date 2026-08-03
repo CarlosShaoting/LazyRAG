@@ -15,9 +15,9 @@ import (
 	"lazymind/core/common/orm"
 	"lazymind/core/evolution"
 	"lazymind/core/modelconfig"
-	"lazymind/core/plugin"
 	"lazymind/core/store"
 	"lazymind/core/subagent"
+	"lazymind/core/workflow"
 )
 
 const (
@@ -222,7 +222,7 @@ func estimateContext(w http.ResponseWriter, r *http.Request, exportPrompt bool) 
 		common.ReplyErr(w, err.Error(), http.StatusForbidden)
 		return
 	}
-	if len(mentioned.PluginRefs) > 1 {
+	if len(mentioned.WorkflowRefs) > 1 {
 		common.ReplyErr(w, "at most one plugin mention is allowed per turn", http.StatusBadRequest)
 		return
 	}
@@ -282,32 +282,32 @@ func estimateContext(w http.ResponseWriter, r *http.Request, exportPrompt bool) 
 	if value, ok := raw["context_preview_allow_llm_routing"].(bool); ok {
 		reqBody["context_preview_allow_llm_routing"] = value
 	}
-	pluginMode := resolvePluginModeWithFallback(raw, reqBody)
-	pluginContext, _ := reqBody["plugin_context"].(map[string]any)
-	if pluginContext == nil {
-		pluginContext = map[string]any{}
+	workflowMode := resolveWorkflowModeWithFallback(raw, reqBody)
+	workflowContext, _ := reqBody["plugin_context"].(map[string]any)
+	if workflowContext == nil {
+		workflowContext = map[string]any{}
 	}
-	pluginContext["plugin_mode"] = pluginMode
+	workflowContext["plugin_mode"] = workflowMode
 	if convID != "" {
-		if preflight := loadPluginPreflightContext(r.Context(), db, convID); len(preflight) > 0 {
-			pluginContext["plugin_preflight"] = preflight
+		if preflight := loadWorkflowPreflightContext(r.Context(), db, convID); len(preflight) > 0 {
+			workflowContext["plugin_preflight"] = preflight
 		}
 	}
 	if convID != "" {
-		if active, activeErr := plugin.GetLatestSession(r.Context(), db, convID); activeErr == nil && active != nil {
-			pluginContext["session_id"] = active.ID
-			pluginContext["plugin_id"] = active.PluginID
-			pluginContext["current_step"] = active.CurrentStepID
-			pluginContext["plugin_ref"] = active.PluginRef
-			pluginContext["revision_id"] = active.PluginRevisionID
-			pluginContext["revision_no"] = active.PluginRevisionNo
-			pluginContext["tree_hash"] = active.PluginTreeHash
-			pluginContext["remote_root"] = active.PluginRemoteRoot
+		if active, activeErr := workflow.GetLatestSession(r.Context(), db, convID); activeErr == nil && active != nil {
+			workflowContext["session_id"] = active.ID
+			workflowContext["plugin_id"] = active.WorkflowID
+			workflowContext["current_step"] = active.CurrentStepID
+			workflowContext["plugin_ref"] = active.WorkflowRef
+			workflowContext["revision_id"] = active.WorkflowRevisionID
+			workflowContext["revision_no"] = active.WorkflowRevisionNo
+			workflowContext["tree_hash"] = active.WorkflowTreeHash
+			workflowContext["remote_root"] = active.WorkflowRemoteRoot
 		}
 	}
-	reqBody["plugin_context"] = pluginContext
-	if err := applyPluginSelection(
-		r.Context(), db, userID, reqBody, mentioned.PluginRefs, mentioned.ExcludedPluginRefs,
+	reqBody["plugin_context"] = workflowContext
+	if err := applyWorkflowSelection(
+		r.Context(), db, userID, reqBody, mentioned.WorkflowRefs, mentioned.ExcludedWorkflowRefs,
 	); err != nil {
 		common.ReplyErr(w, err.Error(), http.StatusForbidden)
 		return

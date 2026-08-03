@@ -1,4 +1,4 @@
-package plugin
+package workflow
 
 import (
 	"encoding/json"
@@ -12,19 +12,19 @@ import (
 	"lazymind/core/store"
 )
 
-func ownedPluginResource(r *http.Request) (orm.PluginResource, bool) {
-	var p orm.PluginResource
-	err := store.DB().Where("plugin_ref=? AND owner_user_id=?", pluginRefPathVar(r), common.UserID(r)).First(&p).Error
+func ownedWorkflowResource(r *http.Request) (orm.WorkflowResource, bool) {
+	var p orm.WorkflowResource
+	err := store.DB().Where("plugin_ref=? AND owner_user_id=?", workflowRefPathVar(r), common.UserID(r)).First(&p).Error
 	return p, err == nil
 }
 
-func ListPluginVersions(w http.ResponseWriter, r *http.Request) {
-	p, ok := ownedPluginResource(r)
+func ListWorkflowVersions(w http.ResponseWriter, r *http.Request) {
+	p, ok := ownedWorkflowResource(r)
 	if !ok {
 		common.ReplyErr(w, "plugin not found", http.StatusNotFound)
 		return
 	}
-	var rows []orm.PluginRevision
+	var rows []orm.WorkflowRevision
 	if err := store.DB().Where("plugin_resource_id=?", p.ID).Order("revision_no DESC").Find(&rows).Error; err != nil {
 		common.ReplyErr(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -33,15 +33,15 @@ func ListPluginVersions(w http.ResponseWriter, r *http.Request) {
 	for _, v := range rows {
 		items = append(items, map[string]any{"revision_id": v.ID, "revision_no": v.RevisionNo, "tree_hash": v.TreeHash, "message": v.Message, "created_by": v.CreatedBy, "created_at": v.CreatedAt, "current": v.ID == p.HeadRevisionID})
 	}
-	common.ReplyOK(w, map[string]any{"plugin_ref": p.PluginRef, "current_revision_id": p.HeadRevisionID, "current_revision_no": p.Version, "versions": items})
+	common.ReplyOK(w, map[string]any{"plugin_ref": p.WorkflowRef, "current_revision_id": p.HeadRevisionID, "current_revision_no": p.Version, "versions": items})
 }
 
-func revisionFiles(p orm.PluginResource, revisionID string) (map[string]string, error) {
-	var rev orm.PluginRevision
+func revisionFiles(p orm.WorkflowResource, revisionID string) (map[string]string, error) {
+	var rev orm.WorkflowRevision
 	if err := store.DB().Where("id=? AND plugin_resource_id=?", revisionID, p.ID).First(&rev).Error; err != nil {
 		return nil, err
 	}
-	var entries []orm.PluginRevisionEntry
+	var entries []orm.WorkflowRevisionEntry
 	if err := store.DB().Where("revision_id=?", revisionID).Find(&entries).Error; err != nil {
 		return nil, err
 	}
@@ -50,7 +50,7 @@ func revisionFiles(p orm.PluginResource, revisionID string) (map[string]string, 
 		if e.BlobHash == nil {
 			continue
 		}
-		var b orm.PluginBlob
+		var b orm.WorkflowBlob
 		if err := store.DB().Where("hash=?", *e.BlobHash).First(&b).Error; err != nil {
 			return nil, err
 		}
@@ -59,7 +59,7 @@ func revisionFiles(p orm.PluginResource, revisionID string) (map[string]string, 
 	return files, nil
 }
 
-func pluginVersionPayload(p orm.PluginResource, revisionID string) (map[string]any, error) {
+func workflowVersionPayload(p orm.WorkflowResource, revisionID string) (map[string]any, error) {
 	files, err := revisionFiles(p, revisionID)
 	if err != nil {
 		return nil, err
@@ -74,18 +74,18 @@ func pluginVersionPayload(p orm.PluginResource, revisionID string) (map[string]a
 	}
 	sort.Strings(keys)
 	scriptsJSON, _ := json.Marshal(scripts)
-	var rev orm.PluginRevision
+	var rev orm.WorkflowRevision
 	_ = store.DB().Where("id=?", revisionID).First(&rev).Error
-	return map[string]any{"plugin_ref": p.PluginRef, "revision_id": rev.ID, "revision_no": rev.RevisionNo, "tree_hash": rev.TreeHash, "plugin_yaml_content": files["plugin.yaml"], "state_yaml_content": files["scenario/state.yml"], "scenario_content": files["scenario/scenario.md"], "driver_content": files["scenario/driver.md"], "scripts_content": string(scriptsJSON), "readonly": true}, nil
+	return map[string]any{"plugin_ref": p.WorkflowRef, "revision_id": rev.ID, "revision_no": rev.RevisionNo, "tree_hash": rev.TreeHash, "plugin_yaml_content": files["plugin.yaml"], "state_yaml_content": files["scenario/state.yml"], "scenario_content": files["scenario/scenario.md"], "driver_content": files["scenario/driver.md"], "scripts_content": string(scriptsJSON), "readonly": true}, nil
 }
 
-func GetPluginVersion(w http.ResponseWriter, r *http.Request) {
-	p, ok := ownedPluginResource(r)
+func GetWorkflowVersion(w http.ResponseWriter, r *http.Request) {
+	p, ok := ownedWorkflowResource(r)
 	if !ok {
 		common.ReplyErr(w, "plugin not found", http.StatusNotFound)
 		return
 	}
-	payload, err := pluginVersionPayload(p, common.PathVar(r, "revision_id"))
+	payload, err := workflowVersionPayload(p, common.PathVar(r, "revision_id"))
 	if err != nil {
 		common.ReplyErr(w, "version not found", http.StatusNotFound)
 		return
@@ -93,8 +93,8 @@ func GetPluginVersion(w http.ResponseWriter, r *http.Request) {
 	common.ReplyOK(w, payload)
 }
 
-func ReplaceDraftFromPluginVersion(w http.ResponseWriter, r *http.Request) {
-	p, ok := ownedPluginResource(r)
+func ReplaceDraftFromWorkflowVersion(w http.ResponseWriter, r *http.Request) {
+	p, ok := ownedWorkflowResource(r)
 	if !ok {
 		common.ReplyErr(w, "plugin not found", http.StatusNotFound)
 		return
@@ -104,8 +104,8 @@ func ReplaceDraftFromPluginVersion(w http.ResponseWriter, r *http.Request) {
 		common.ReplyErr(w, "version not found", http.StatusNotFound)
 		return
 	}
-	var draft orm.PluginDraft
-	if err := store.DB().Where("created_by=? AND plugin_id=?", common.UserID(r), p.PluginID).First(&draft).Error; err != nil {
+	var draft orm.WorkflowDraft
+	if err := store.DB().Where("created_by=? AND plugin_id=?", common.UserID(r), p.WorkflowID).First(&draft).Error; err != nil {
 		common.ReplyErr(w, "plugin draft not found", http.StatusNotFound)
 		return
 	}

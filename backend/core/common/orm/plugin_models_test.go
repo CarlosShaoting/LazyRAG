@@ -5,17 +5,17 @@ import (
 	"testing"
 )
 
-func TestPluginModelsRegisteredForLocalDDL(t *testing.T) {
+func TestWorkflowModelsRegisteredForLocalDDL(t *testing.T) {
 	models := AllModelsForDDL()
 	for _, want := range []any{
-		&PluginSlotOrder{},
-		&PluginHumanArtifact{},
-		&PluginDraft{},
-		&PluginResource{},
-		&PluginBlob{},
-		&PluginRevision{},
-		&PluginRevisionEntry{},
-		&UserPluginSetting{},
+		&WorkflowSlotOrder{},
+		&WorkflowHumanArtifact{},
+		&WorkflowDraft{},
+		&WorkflowResource{},
+		&WorkflowBlob{},
+		&WorkflowRevision{},
+		&WorkflowRevisionEntry{},
+		&UserWorkflowSetting{},
 	} {
 		if !modelListContains(models, want) {
 			t.Fatalf("expected %T in AllModelsForDDL", want)
@@ -42,7 +42,7 @@ func TestPluginModelsRegisteredForLocalDDL(t *testing.T) {
 	}
 }
 
-func TestProductionModelListCreatesPluginSchemaOnSQLite(t *testing.T) {
+func TestProductionModelListCreatesWorkflowSchemaOnSQLite(t *testing.T) {
 	db, err := Connect(DriverSQLite, filepath.Join(t.TempDir(), "plugin-schema.db"))
 	if err != nil {
 		t.Fatalf("connect sqlite: %v", err)
@@ -53,19 +53,19 @@ func TestProductionModelListCreatesPluginSchemaOnSQLite(t *testing.T) {
 	}
 
 	for _, model := range []any{
-		&PluginDraft{},
-		&PluginResource{},
-		&PluginBlob{},
-		&PluginRevision{},
-		&PluginRevisionEntry{},
-		&UserPluginSetting{},
+		&WorkflowDraft{},
+		&WorkflowResource{},
+		&WorkflowBlob{},
+		&WorkflowRevision{},
+		&WorkflowRevisionEntry{},
+		&UserWorkflowSetting{},
 	} {
 		if !db.Migrator().HasTable(model) {
 			t.Fatalf("expected table for %T to exist", model)
 		}
 	}
 
-	columnTypes, err := db.Migrator().ColumnTypes(&PluginBlob{})
+	columnTypes, err := db.Migrator().ColumnTypes(&WorkflowBlob{})
 	if err != nil {
 		t.Fatalf("inspect plugin blob columns: %v", err)
 	}
@@ -82,16 +82,16 @@ func TestProductionModelListCreatesPluginSchemaOnSQLite(t *testing.T) {
 		t.Fatal("expected plugin blob content column")
 	}
 
-	if !db.Migrator().HasIndex(&PluginDraft{}, "idx_plugin_drafts_created_by") {
+	if !db.Migrator().HasIndex(&WorkflowDraft{}, "idx_plugin_drafts_created_by") {
 		t.Fatal("expected plugin draft owner index")
 	}
-	if !db.Migrator().HasIndex(&PluginDraft{}, "idx_plugin_drafts_user_plugin_id") {
+	if !db.Migrator().HasIndex(&WorkflowDraft{}, "idx_plugin_drafts_user_plugin_id") {
 		t.Fatal("expected plugin draft identity unique index")
 	}
-	if !db.Migrator().HasIndex(&PluginResource{}, "idx_plugins_owner") {
+	if !db.Migrator().HasIndex(&WorkflowResource{}, "idx_plugins_owner") {
 		t.Fatal("expected plugin owner index")
 	}
-	if !db.Migrator().HasIndex(&PluginRevision{}, "uk_plugin_revisions_resource_no") {
+	if !db.Migrator().HasIndex(&WorkflowRevision{}, "uk_plugin_revisions_resource_no") {
 		t.Fatal("expected plugin revision unique index")
 	}
 }

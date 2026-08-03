@@ -1,4 +1,4 @@
-package plugin
+package workflow
 
 // handlers_by_index.go — slot item handlers addressed by list_index (stable identifier).
 //
@@ -148,7 +148,7 @@ func PatchSlotItemByIndex(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if updatedInPlace {
-			NotifyPluginArtifactUpdated(ctx, db, sessionID, updated.StepID, updated.SlotID, updated.Slot, updated.Revision, updated.ListIndex, "human")
+			NotifyWorkflowArtifactUpdated(ctx, db, sessionID, updated.StepID, updated.SlotID, updated.Slot, updated.Revision, updated.ListIndex, "human")
 			common.ReplyOK(w, map[string]any{
 				"type":       "slot_item_patched",
 				"session_id": sessionID,
@@ -163,7 +163,7 @@ func PatchSlotItemByIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// listIndex == -1 means single slot (list_index IS NULL)
-	var existing orm.PluginSlotRevision
+	var existing orm.WorkflowSlotRevision
 	q := db.WithContext(ctx).Where("session_id = ? AND slot_id = ? AND selected = ?", sessionID, slotID, true)
 	if liPtr == nil {
 		q = q.Where("list_index IS NULL")
@@ -188,7 +188,7 @@ func PatchSlotItemByIndex(w http.ResponseWriter, r *http.Request) {
 		common.ReplyErr(w, "patch item failed", http.StatusInternalServerError)
 		return
 	}
-	NotifyPluginArtifactUpdated(ctx, db, sessionID, newRev.StepID, newRev.SlotID, newRev.Slot, newRev.Revision, newRev.ListIndex, "human")
+	NotifyWorkflowArtifactUpdated(ctx, db, sessionID, newRev.StepID, newRev.SlotID, newRev.Slot, newRev.Revision, newRev.ListIndex, "human")
 	common.ReplyOK(w, map[string]any{
 		"type":       "slot_item_patched",
 		"session_id": sessionID,
@@ -223,7 +223,7 @@ func PatchSlotCaptionByIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	li := listIndex
-	var rev orm.PluginSlotRevision
+	var rev orm.WorkflowSlotRevision
 	if err := db.WithContext(ctx).
 		Where("session_id = ? AND slot_id = ? AND list_index = ? AND selected = ?", sessionID, slotID, li, true).
 		First(&rev).Error; err != nil {
@@ -232,14 +232,14 @@ func PatchSlotCaptionByIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	cap := body.Caption
 	if rev.HumanArtifactID != nil {
-		if err := db.WithContext(ctx).Model(&orm.PluginHumanArtifact{}).
+		if err := db.WithContext(ctx).Model(&orm.WorkflowHumanArtifact{}).
 			Where("id = ?", *rev.HumanArtifactID).
 			Update("caption", &cap).Error; err != nil {
 			common.ReplyErr(w, "update caption failed", http.StatusInternalServerError)
 			return
 		}
 	} else {
-		var step orm.PluginSessionStep
+		var step orm.WorkflowSessionStep
 		if err := db.WithContext(ctx).
 			Where("session_id = ? AND step_id = ? AND attempt = ?", sessionID, rev.StepID, rev.Attempt).
 			First(&step).Error; err != nil {
@@ -289,7 +289,7 @@ func GetSlotItemVersionsByIndex(w http.ResponseWriter, r *http.Request) {
 		attempt int
 	}
 	taskIDByStep := map[stepKey]string{}
-	var steps []orm.PluginSessionStep
+	var steps []orm.WorkflowSessionStep
 	db.WithContext(ctx).Where("session_id = ?", sessionID).Find(&steps)
 	for _, s := range steps {
 		taskIDByStep[stepKey{s.StepID, s.Attempt}] = s.TaskID
@@ -304,7 +304,7 @@ func GetSlotItemVersionsByIndex(w http.ResponseWriter, r *http.Request) {
 			"selected":      rev.Selected,
 		}
 		if rev.HumanArtifactID != nil {
-			var ha orm.PluginHumanArtifact
+			var ha orm.WorkflowHumanArtifact
 			if db.WithContext(ctx).Where("id = ?", *rev.HumanArtifactID).First(&ha).Error == nil {
 				ct := resolveContentType(ha.ContentType, ha.Value)
 				item["content_snapshot"] = enrichArtifactValue(ha.Value, ct)
@@ -358,7 +358,7 @@ func RollbackSlotItemByIndex(w http.ResponseWriter, r *http.Request) {
 		li := listIndex
 		liPtr = &li
 	}
-	var anyRev orm.PluginSlotRevision
+	var anyRev orm.WorkflowSlotRevision
 	q := db.WithContext(ctx).Where("session_id = ? AND slot_id = ?", sessionID, slotID)
 	if liPtr == nil {
 		q = q.Where("list_index IS NULL")
@@ -378,7 +378,7 @@ func RollbackSlotItemByIndex(w http.ResponseWriter, r *http.Request) {
 		common.ReplyErr(w, "rollback failed", http.StatusInternalServerError)
 		return
 	}
-	NotifyPluginArtifactUpdated(ctx, db, sessionID, newRev.StepID, newRev.SlotID, newRev.Slot, newRev.Revision, newRev.ListIndex, "rollback")
+	NotifyWorkflowArtifactUpdated(ctx, db, sessionID, newRev.StepID, newRev.SlotID, newRev.Slot, newRev.Revision, newRev.ListIndex, "rollback")
 	common.ReplyOK(w, map[string]any{
 		"type":       "slot_item_rolled_back",
 		"session_id": sessionID,

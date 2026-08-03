@@ -138,7 +138,7 @@ func routeEvent(ctx context.Context, db *gorm.DB, stateStore state.Store, ev Tas
 		}
 		_ = WriteStatus(ctx, stateStore, ev.TaskID, map[string]any{"status": StatusRunning, "progress": 0})
 		// Mirror running status into plugin_session_steps if this is a plugin_step task.
-		routePluginStepStatus(ctx, db, stateStore, ev.TaskID, StatusRunning, "")
+		routeWorkflowStepStatus(ctx, db, stateStore, ev.TaskID, StatusRunning, "")
 	case "progress":
 		_ = UpdateProgress(ctx, db, ev.TaskID, ev.Progress, ev.CurrentPhase, ev.EstimatedSec)
 		_ = WriteStatus(ctx, stateStore, ev.TaskID, map[string]any{
@@ -155,7 +155,7 @@ func routeEvent(ctx context.Context, db *gorm.DB, stateStore state.Store, ev Tas
 		// Write slot revision if this is a plugin_step task with a slot binding.
 		// list_index for partial retry is embedded inside the artifact JSON value and
 		// extracted by the plugin hook via extractListIndex — no need to pass it here.
-		routePluginArtifact(ctx, db, stateStore, ev.TaskID, ev.ArtifactKey)
+		routeWorkflowArtifact(ctx, db, stateStore, ev.TaskID, ev.ArtifactKey)
 	case "done":
 		status := ev.Status
 		if status == "" {
@@ -169,7 +169,7 @@ func routeEvent(ctx context.Context, db *gorm.DB, stateStore state.Store, ev Tas
 			"status": status, "progress": 100, "summary": ev.Summary,
 		})
 		// Handle plugin step completion (auto-advance or step_waiting).
-		routePluginStepStatus(ctx, db, stateStore, ev.TaskID, status, ev.Summary)
+		routeWorkflowStepStatus(ctx, db, stateStore, ev.TaskID, status, ev.Summary)
 	case "error":
 		status := ev.Status
 		if status == "" {
@@ -180,7 +180,7 @@ func routeEvent(ctx context.Context, db *gorm.DB, stateStore state.Store, ev Tas
 			return nil
 		}
 		_ = WriteStatus(ctx, stateStore, ev.TaskID, map[string]any{"status": status, "summary": ev.Message})
-		routePluginStepStatus(ctx, db, stateStore, ev.TaskID, status, ev.Message)
+		routeWorkflowStepStatus(ctx, db, stateStore, ev.TaskID, status, ev.Message)
 	}
 	_ = AppendStreamEvent(ctx, stateStore, ev.TaskID, ev)
 	return nil
@@ -196,7 +196,7 @@ func routeError(ctx context.Context, db *gorm.DB, stateStore state.Store, taskID
 	}
 	_ = WriteStatus(ctx, stateStore, taskID, map[string]any{"status": StatusFailed, "summary": message})
 	_ = AppendStreamEvent(ctx, stateStore, taskID, ev)
-	routePluginStepStatus(ctx, db, stateStore, taskID, StatusFailed, message)
+	routeWorkflowStepStatus(ctx, db, stateStore, taskID, StatusFailed, message)
 }
 
 // EventHooks allows external packages (e.g. plugin) to register callbacks for SubAgent events.
@@ -235,13 +235,13 @@ func (h *eventHooks) CallConversationEvent(ctx context.Context, stateStore state
 	}
 }
 
-func routePluginStepStatus(ctx context.Context, db *gorm.DB, stateStore state.Store, taskID, status, message string) {
+func routeWorkflowStepStatus(ctx context.Context, db *gorm.DB, stateStore state.Store, taskID, status, message string) {
 	if EventHooks.onTerminalStatus != nil {
 		EventHooks.onTerminalStatus(ctx, db, stateStore, taskID, status, message)
 	}
 }
 
-func routePluginArtifact(ctx context.Context, db *gorm.DB, stateStore state.Store, taskID, slot string) {
+func routeWorkflowArtifact(ctx context.Context, db *gorm.DB, stateStore state.Store, taskID, slot string) {
 	if EventHooks.onArtifact != nil {
 		EventHooks.onArtifact(ctx, db, stateStore, taskID, slot)
 	}

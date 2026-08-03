@@ -1,4 +1,4 @@
-package plugin
+package workflow
 
 import (
 	"context"
@@ -48,11 +48,11 @@ func enrichArtifactValue(raw json.RawMessage, contentType string) json.RawMessag
 	return subagent.SignArtifactImageValue(contentType, raw)
 }
 
-// sessionDTO is the frontend shape for a PluginSession.
+// sessionDTO is the frontend shape for a WorkflowSession.
 type sessionDTO struct {
 	SessionID      string    `json:"session_id"`
 	ConversationID string    `json:"conversation_id"`
-	PluginID       string    `json:"plugin_id"`
+	WorkflowID     string    `json:"workflow_id"`
 	Status         string    `json:"status"`
 	CurrentStepID  string    `json:"current_step_id"`
 	IntentContext  string    `json:"intent_context,omitempty"`
@@ -97,11 +97,11 @@ type slotDTO struct {
 	ContentSnapshot json.RawMessage `json:"-"`
 }
 
-func toSessionDTO(s *orm.PluginSession) sessionDTO {
+func toSessionDTO(s *orm.WorkflowSession) sessionDTO {
 	return sessionDTO{
 		SessionID:      s.ID,
 		ConversationID: s.ConversationID,
-		PluginID:       s.PluginID,
+		WorkflowID:     s.WorkflowID,
 		Status:         s.Status,
 		CurrentStepID:  s.CurrentStepID,
 		IntentContext:  s.IntentContext,
@@ -110,7 +110,7 @@ func toSessionDTO(s *orm.PluginSession) sessionDTO {
 	}
 }
 
-func toStepDTO(r *orm.PluginSessionStep) stepDTO {
+func toStepDTO(r *orm.WorkflowSessionStep) stepDTO {
 	return stepDTO{
 		StepID:    r.StepID,
 		Attempt:   r.Attempt,
@@ -137,7 +137,7 @@ func buildStepIntentMap(ctx context.Context, db *gorm.DB, sessionID string) map[
 	return m
 }
 
-func toSlotDTO(r *orm.PluginSlotRevision) slotDTO {
+func toSlotDTO(r *orm.WorkflowSlotRevision) slotDTO {
 	return slotDTO{
 		SlotID:          r.SlotID,
 		Revision:        r.Revision,
@@ -167,7 +167,7 @@ func enrichSlots(ctx context.Context, db *gorm.DB, sessionID string, slots []slo
 		attempt int
 	}
 	taskIDByStep := map[stepKey]string{}
-	var steps []orm.PluginSessionStep
+	var steps []orm.WorkflowSessionStep
 	db.WithContext(ctx).Where("session_id = ?", sessionID).Find(&steps)
 	for _, s := range steps {
 		taskIDByStep[stepKey{s.StepID, s.Attempt}] = s.TaskID
@@ -225,8 +225,8 @@ func enrichSlots(ctx context.Context, db *gorm.DB, sessionID string, slots []slo
 	}
 
 	// Step 4: load slot order info for order_version and sort_order lookup.
-	orderBySlot := map[string]*orm.PluginSlotOrder{}
-	var orders []orm.PluginSlotOrder
+	orderBySlot := map[string]*orm.WorkflowSlotOrder{}
+	var orders []orm.WorkflowSlotOrder
 	db.WithContext(ctx).Where("session_id = ?", sessionID).Find(&orders)
 	for i := range orders {
 		orderBySlot[orders[i].SlotID] = &orders[i]
@@ -245,7 +245,7 @@ func enrichSlots(ctx context.Context, db *gorm.DB, sessionID string, slots []slo
 		var resolvedCaption *string
 
 		if slot.HumanArtifactID != nil {
-			var ha orm.PluginHumanArtifact
+			var ha orm.WorkflowHumanArtifact
 			haErr := db.WithContext(ctx).Where("id = ?", *slot.HumanArtifactID).First(&ha).Error
 			if haErr == nil {
 				resolvedContentType = resolveContentType(ha.ContentType, ha.Value)
@@ -538,7 +538,7 @@ func PatchSessionSlot(w http.ResponseWriter, r *http.Request) {
 	}
 	// This endpoint selects a version of a cardinality=single slot. List items use
 	// the list_index rollback endpoint, which avoids an ambiguous revision number.
-	var selected orm.PluginSlotRevision
+	var selected orm.WorkflowSlotRevision
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("session_id = ? AND slot_id = ? AND list_index IS NULL AND revision = ? AND validity = ?",
@@ -546,12 +546,12 @@ func PatchSessionSlot(w http.ResponseWriter, r *http.Request) {
 			First(&selected).Error; err != nil {
 			return err
 		}
-		if err := tx.Model(&orm.PluginSlotRevision{}).
+		if err := tx.Model(&orm.WorkflowSlotRevision{}).
 			Where("session_id = ? AND slot_id = ? AND list_index IS NULL AND selected = ?", sessionID, slotID, true).
 			Update("selected", false).Error; err != nil {
 			return err
 		}
-		return tx.Model(&orm.PluginSlotRevision{}).
+		return tx.Model(&orm.WorkflowSlotRevision{}).
 			Where("id = ?", selected.ID).
 			Update("selected", true).Error
 	})
@@ -563,7 +563,7 @@ func PatchSessionSlot(w http.ResponseWriter, r *http.Request) {
 		common.ReplyErr(w, "select revision failed", http.StatusInternalServerError)
 		return
 	}
-	NotifyPluginArtifactUpdated(ctx, db, sessionID, selected.StepID, selected.SlotID, selected.Slot, selected.Revision, selected.ListIndex, "selection")
+	NotifyWorkflowArtifactUpdated(ctx, db, sessionID, selected.StepID, selected.SlotID, selected.Slot, selected.Revision, selected.ListIndex, "selection")
 	common.ReplyOK(w, map[string]any{"selected_revision": body.SelectedRevision})
 }
 
@@ -648,16 +648,16 @@ type stepAttemptDTO struct {
 	StartedAt     string  `json:"started_at"`
 }
 
-// GetPluginInfo handles GET /plugins/{plugin_id}.
+// GetWorkflowInfo handles GET /plugins/{plugin_id}.
 // Proxies to the Python chat service /api/plugins/{plugin_id} and returns the plugin spec
-// including the ui.tabs declaration needed by the frontend PluginPanel.
-func GetPluginInfo(w http.ResponseWriter, r *http.Request) {
-	pluginID := common.PathVar(r, "plugin_id")
-	if pluginID == "" {
+// including the ui.tabs declaration needed by the frontend WorkflowPanel.
+func GetWorkflowInfo(w http.ResponseWriter, r *http.Request) {
+	workflowID := common.PathVar(r, "plugin_id")
+	if workflowID == "" {
 		common.ReplyErr(w, "plugin_id required", http.StatusBadRequest)
 		return
 	}
-	upstream := common.ChatServiceEndpoint() + "/api/plugins/" + pluginID
+	upstream := common.ChatServiceEndpoint() + "/api/plugins/" + workflowID
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, upstream, nil)
@@ -696,9 +696,9 @@ func GetPluginInfo(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// ListPlugins handles GET /plugins.
+// ListWorkflows handles GET /plugins.
 // Proxies to the Python chat service /api/plugins.
-func ListPlugins(w http.ResponseWriter, r *http.Request) {
+func ListWorkflows(w http.ResponseWriter, r *http.Request) {
 	upstream := common.ChatServiceEndpoint() + "/api/plugins"
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
@@ -921,7 +921,7 @@ func CreateSlotItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Get an existing selected revision to borrow its slot and step info.
-	var anyRev orm.PluginSlotRevision
+	var anyRev orm.WorkflowSlotRevision
 	if err := db.WithContext(ctx).
 		Where("session_id = ? AND slot_id = ? AND selected = ?", sessionID, slotID, true).
 		First(&anyRev).Error; err != nil {
@@ -960,7 +960,7 @@ func CreateSlotItem(w http.ResponseWriter, r *http.Request) {
 	}
 	// Persist caption if provided.
 	if body.Caption != nil {
-		var step orm.PluginSessionStep
+		var step orm.WorkflowSessionStep
 		if err := db.WithContext(ctx).
 			Where("session_id = ? AND step_id = ? AND attempt = ?", sessionID, anyRev.StepID, anyRev.Attempt).
 			First(&step).Error; err == nil {
@@ -1018,7 +1018,7 @@ func SaveArtifactByKey(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	// Resolve plugin_id from session.
-	var sess orm.PluginSession
+	var sess orm.WorkflowSession
 	if err := db.WithContext(ctx).Where("id = ?", sessionID).First(&sess).Error; err != nil {
 		common.ReplyErr(w, "session not found", http.StatusNotFound)
 		return
@@ -1029,9 +1029,9 @@ func SaveArtifactByKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve slot binding for the slot via Python plugin API.
-	slotID, cardinality := resolveSlotBinding(sess.PluginID, body.Slot)
+	slotID, cardinality := resolveSlotBinding(sess.WorkflowID, body.Slot)
 	if slotID == "" {
-		common.ReplyErr(w, fmt.Sprintf("no slot binding: slot %q in plugin %q", body.Slot, sess.PluginID), http.StatusBadRequest)
+		common.ReplyErr(w, fmt.Sprintf("no slot binding: slot %q in plugin %q", body.Slot, sess.WorkflowID), http.StatusBadRequest)
 		return
 	}
 
@@ -1095,7 +1095,7 @@ func DismissSessionHandler(w http.ResponseWriter, r *http.Request) {
 		// pending/running parallel SubAgent receives a Python cancel signal. Only
 		// do this for the session being dismissed: an older waiting session may
 		// share the conversation with a newer active session.
-		stopPluginSession(r.Context(), db, store.State(), session)
+		stopWorkflowSession(r.Context(), db, store.State(), session)
 	}
 	if err := DismissSession(r.Context(), db, sessionID); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) || err.Error() == "session not found or already dismissed" {

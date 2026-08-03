@@ -21,11 +21,11 @@ import (
 	"lazymind/core/common/orm"
 	"lazymind/core/evolution"
 	"lazymind/core/modelconfig"
-	"lazymind/core/plugin"
 	"lazymind/core/state"
 	"lazymind/core/store"
 	"lazymind/core/subagent"
 	"lazymind/core/taskcenter"
+	"lazymind/core/workflow"
 )
 
 func writeConversationJSON(w http.ResponseWriter, status int, v any) {
@@ -242,12 +242,12 @@ func ChatConversations(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Extract initial_plugin_settings from request body (only used on first message of a new conversation).
-	var initialPluginSettings map[string]any
+	var initialWorkflowSettings map[string]any
 	if rawPS, ok := raw["initial_plugin_settings"].(map[string]any); ok {
-		initialPluginSettings = rawPS
+		initialWorkflowSettings = rawPS
 	}
 
-	_, seq, err := ensureConversation(r.Context(), db, convID, displayName, searchConfigJSON, modelsJSON, userID, userName, initialPluginSettings)
+	_, seq, err := ensureConversation(r.Context(), db, convID, displayName, searchConfigJSON, modelsJSON, userID, userName, initialWorkflowSettings)
 	if err != nil {
 		common.ReplyErr(w, fmt.Sprintf("%s: %v", "failed to ensure conversation", err), http.StatusInternalServerError)
 		return
@@ -268,12 +268,12 @@ func ChatConversations(w http.ResponseWriter, r *http.Request) {
 		common.ReplyErr(w, err.Error(), http.StatusForbidden)
 		return
 	}
-	if len(mentionedResources.PluginRefs) > 1 {
+	if len(mentionedResources.WorkflowRefs) > 1 {
 		common.ReplyErr(w, "at most one plugin mention is allowed per turn", http.StatusBadRequest)
 		return
 	}
-	if len(mentionedResources.PluginRefs) == 1 {
-		if active, activeErr := plugin.GetLatestSession(r.Context(), db, convID); activeErr == nil && active != nil && active.PluginRef != mentionedResources.PluginRefs[0] {
+	if len(mentionedResources.WorkflowRefs) == 1 {
+		if active, activeErr := workflow.GetLatestSession(r.Context(), db, convID); activeErr == nil && active != nil && active.WorkflowRef != mentionedResources.WorkflowRefs[0] {
 			common.ReplyErr(w, "another plugin session is active; finish or close it before mentioning a different plugin", http.StatusConflict)
 			return
 		}
@@ -325,22 +325,22 @@ func ChatConversations(w http.ResponseWriter, r *http.Request) {
 	if basicChatOnly {
 		applyBasicChatOnlyPolicy(reqBody)
 	} else {
-		// resolvePluginModeWithFallback determines the effective plugin_mode for this request.
+		// resolveWorkflowModeWithFallback determines the effective plugin_mode for this request.
 		// It is injected into plugin_context (below) so Python can use it; it is not sent
 		// as a top-level reqBody field because Python reads it exclusively from plugin_context.
-		pluginMode := resolvePluginModeWithFallback(raw, reqBody)
-		existingPluginContext, _ := reqBody["plugin_context"].(map[string]any)
-		if existingPluginContext == nil {
-			existingPluginContext = map[string]any{}
+		workflowMode := resolveWorkflowModeWithFallback(raw, reqBody)
+		existingWorkflowContext, _ := reqBody["plugin_context"].(map[string]any)
+		if existingWorkflowContext == nil {
+			existingWorkflowContext = map[string]any{}
 		}
-		existingPluginContext["plugin_mode"] = pluginMode
-		reqBody["plugin_context"] = existingPluginContext
-		if preflight := loadPluginPreflightContext(r.Context(), db, convID); len(preflight) > 0 {
+		existingWorkflowContext["plugin_mode"] = workflowMode
+		reqBody["plugin_context"] = existingWorkflowContext
+		if preflight := loadWorkflowPreflightContext(r.Context(), db, convID); len(preflight) > 0 {
 			existing, _ := reqBody["plugin_context"].(map[string]any)
 			if existing == nil {
 				existing = map[string]any{}
 			}
-			existing["plugin_mode"] = pluginMode
+			existing["plugin_mode"] = workflowMode
 			existing["plugin_preflight"] = preflight
 			reqBody["plugin_context"] = existing
 		}
@@ -355,27 +355,27 @@ func ChatConversations(w http.ResponseWriter, r *http.Request) {
 				reqBody["enable_subagent"] = v
 			}
 		}
-		if err := applyPluginSelection(
-			r.Context(), db, userID, reqBody, mentionedResources.PluginRefs,
-			mentionedResources.ExcludedPluginRefs,
+		if err := applyWorkflowSelection(
+			r.Context(), db, userID, reqBody, mentionedResources.WorkflowRefs,
+			mentionedResources.ExcludedWorkflowRefs,
 		); err != nil {
 			common.ReplyErr(w, err.Error(), http.StatusForbidden)
 			return
 		}
 
-		if activeSess, err := plugin.GetLatestSession(r.Context(), db, convID); err == nil && activeSess != nil {
+		if activeSess, err := workflow.GetLatestSession(r.Context(), db, convID); err == nil && activeSess != nil {
 			existing, hasPC := reqBody["plugin_context"].(map[string]any)
 			if !hasPC || existing == nil {
 				// Case 1: inject from DB.
 				reqBody["plugin_context"] = map[string]any{
 					"session_id":   activeSess.ID,
-					"plugin_id":    activeSess.PluginID,
+					"plugin_id":    activeSess.WorkflowID,
 					"current_step": activeSess.CurrentStepID,
-					"plugin_mode":  pluginMode,
-					"plugin_ref":   activeSess.PluginRef, "revision_id": activeSess.PluginRevisionID, "revision_no": activeSess.PluginRevisionNo, "tree_hash": activeSess.PluginTreeHash, "remote_root": activeSess.PluginRemoteRoot,
+					"plugin_mode":  workflowMode,
+					"plugin_ref":   activeSess.WorkflowRef, "revision_id": activeSess.WorkflowRevisionID, "revision_no": activeSess.WorkflowRevisionNo, "tree_hash": activeSess.WorkflowTreeHash, "remote_root": activeSess.WorkflowRemoteRoot,
 				}
 				fmt.Printf("[PLUGIN_CONTEXT_INJECTED] conversation_id=%s session_id=%s plugin_id=%s current_step=%s plugin_mode=%s\n",
-					convID, activeSess.ID, activeSess.PluginID, activeSess.CurrentStepID, pluginMode)
+					convID, activeSess.ID, activeSess.WorkflowID, activeSess.CurrentStepID, workflowMode)
 			} else {
 				// Case 2: validate/correct stale fields from frontend.
 				stale := false
@@ -383,23 +383,23 @@ func ChatConversations(w http.ResponseWriter, r *http.Request) {
 					existing["session_id"] = activeSess.ID
 					stale = true
 				}
-				if pid, _ := existing["plugin_id"].(string); pid != activeSess.PluginID {
-					existing["plugin_id"] = activeSess.PluginID
+				if pid, _ := existing["plugin_id"].(string); pid != activeSess.WorkflowID {
+					existing["plugin_id"] = activeSess.WorkflowID
 					stale = true
 				}
 				if cs, _ := existing["current_step"].(string); cs != activeSess.CurrentStepID {
 					existing["current_step"] = activeSess.CurrentStepID
 					stale = true
 				}
-				existing["plugin_mode"] = pluginMode
-				existing["plugin_ref"] = activeSess.PluginRef
-				existing["revision_id"] = activeSess.PluginRevisionID
-				existing["revision_no"] = activeSess.PluginRevisionNo
-				existing["tree_hash"] = activeSess.PluginTreeHash
-				existing["remote_root"] = activeSess.PluginRemoteRoot
+				existing["plugin_mode"] = workflowMode
+				existing["plugin_ref"] = activeSess.WorkflowRef
+				existing["revision_id"] = activeSess.WorkflowRevisionID
+				existing["revision_no"] = activeSess.WorkflowRevisionNo
+				existing["tree_hash"] = activeSess.WorkflowTreeHash
+				existing["remote_root"] = activeSess.WorkflowRemoteRoot
 				if stale {
 					fmt.Printf("[PLUGIN_CONTEXT_CORRECTED] conversation_id=%s session_id=%s plugin_id=%s current_step=%s\n",
-						convID, activeSess.ID, activeSess.PluginID, activeSess.CurrentStepID)
+						convID, activeSess.ID, activeSess.WorkflowID, activeSess.CurrentStepID)
 				}
 			}
 		} else if existing, hasPC := reqBody["plugin_context"].(map[string]any); hasPC {
@@ -408,7 +408,7 @@ func ChatConversations(w http.ResponseWriter, r *http.Request) {
 			for _, key := range []string{"session_id", "plugin_id", "current_step", "plugin_ref", "revision_id", "revision_no", "tree_hash", "remote_root"} {
 				delete(existing, key)
 			}
-			existing["plugin_mode"] = pluginMode
+			existing["plugin_mode"] = workflowMode
 			reqBody["plugin_context"] = existing
 			if _, hasPreflight := existing["plugin_preflight"]; !hasPreflight {
 				fmt.Printf("[PLUGIN_CONTEXT_CLEARED] conversation_id=%s no active session in DB\n", convID)
@@ -851,11 +851,11 @@ func StopChatGeneration(w http.ResponseWriter, r *http.Request) {
 
 	// Interrupt any active plugin session steps.
 	if db := store.DB(); db != nil {
-		plugin.StopActivePluginSession(r.Context(), db, stateStore, convID)
+		workflow.StopActiveWorkflowSession(r.Context(), db, stateStore, convID)
 	}
 
 	// Notify Python ChatAgent to cancel any active chat session for this conversation.
-	go plugin.NotifyChatCancel(convID)
+	go workflow.NotifyChatCancel(convID)
 
 	common.ReplyOK(w, nil)
 }
@@ -1262,8 +1262,8 @@ func GetConversationDetail(w http.ResponseWriter, r *http.Request) {
 			"create_time":           c.CreatedAt.UTC().Format(time.RFC3339),
 			"update_time":           c.UpdatedAt.UTC().Format(time.RFC3339),
 			"models":                models,
-			"enable_plugin":         c.EnablePlugin,
-			"plugin_mode":           c.PluginMode,
+			"enable_plugin":         c.EnableWorkflow,
+			"plugin_mode":           c.WorkflowMode,
 			"enable_subagent":       c.EnableSubagent,
 		},
 	})
@@ -1727,7 +1727,7 @@ func SetMultiAnswersSwitchStatus(w http.ResponseWriter, r *http.Request) {
 // StreamConvEvents is GET /conversations/{conversation_id}/events.
 // It opens a long-lived SSE connection that replays all existing ConvEvents for the
 // conversation and then tails new ones in real time. The frontend subscribes once per
-// active conversation and uses the events to update TaskCenter and PluginPanel without
+// active conversation and uses the events to update TaskCenter and WorkflowPanel without
 // depending on any specific chat-turn history_id stream.
 func StreamConvEvents(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)

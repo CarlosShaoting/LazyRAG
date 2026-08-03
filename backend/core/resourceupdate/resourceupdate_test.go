@@ -544,17 +544,17 @@ func TestCountSkillReviewHistoryStatsCountsTrajectoryToolCalls(t *testing.T) {
 	}
 }
 
-func TestCountSkillReviewHistoryStatsExcludesPluginConversations(t *testing.T) {
+func TestCountSkillReviewHistoryStatsExcludesWorkflowConversations(t *testing.T) {
 	db := newResourceUpdateTestDB(t)
 	ctx := context.Background()
 	start := time.Date(2026, 6, 9, 10, 0, 0, 0, time.UTC)
 	end := start.Add(time.Hour)
 	insertSkillReviewConversation(t, db, "conv-regular", "user-1", start.Add(10*time.Minute), 2, 2)
 	insertSkillReviewConversation(t, db, "conv-plugin", "user-1", start.Add(20*time.Minute), 3, 4)
-	if err := db.Create(&orm.PluginSession{
+	if err := db.Create(&orm.WorkflowSession{
 		ID:             "plugin-session-1",
 		ConversationID: "conv-plugin",
-		PluginID:       "image-plugin",
+		WorkflowID:     "image-plugin",
 		Status:         "completed",
 		Dismissed:      true,
 		CreateUserID:   "user-1",
@@ -576,17 +576,17 @@ func TestCountSkillReviewHistoryStatsExcludesPluginConversations(t *testing.T) {
 	}
 }
 
-func TestValidateSkillReviewSessionsRejectsOtherUsersAndPluginConversations(t *testing.T) {
+func TestValidateSkillReviewSessionsRejectsOtherUsersAndWorkflowConversations(t *testing.T) {
 	db := newResourceUpdateTestDB(t)
 	ctx := context.Background()
 	now := time.Date(2026, 6, 9, 10, 0, 0, 0, time.UTC)
 	insertConversation(t, db, "conv-owned", "user-1", now)
 	insertConversation(t, db, "conv-other", "user-2", now)
 	insertConversation(t, db, "conv-plugin", "user-1", now)
-	if err := db.Create(&orm.PluginSession{
+	if err := db.Create(&orm.WorkflowSession{
 		ID:             "plugin-session-validation",
 		ConversationID: "conv-plugin",
-		PluginID:       "image-plugin",
+		WorkflowID:     "image-plugin",
 		Status:         "completed",
 		CreateUserID:   "user-1",
 		CreatedAt:      now,
@@ -2420,7 +2420,7 @@ func newResourceUpdateTestDB(t *testing.T) *gorm.DB {
 	if err := db.AutoMigrate(
 		&orm.Conversation{},
 		&orm.ChatHistory{},
-		&orm.PluginSession{},
+		&orm.WorkflowSession{},
 		&orm.ResourceUpdateTask{},
 		&orm.SkillReviewSchedulerState{},
 		&orm.PersonalResource{},

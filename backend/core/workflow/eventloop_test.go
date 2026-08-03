@@ -1,4 +1,4 @@
-package plugin
+package workflow
 
 import (
 	"context"
@@ -20,7 +20,7 @@ import (
 // ──────────────────────────────────────────────
 
 // makeSubAgentTask inserts a sub_agent_task row directly, so EventLoop tests
-// can work without going through HandlePluginStepCreated.
+// can work without going through HandleWorkflowStepCreated.
 func makeSubAgentTask(t *testing.T, db interface {
 	CreateTask(in subagent.CreateTaskInput) error
 }, taskID, convID, sessionID, stepID string) {
@@ -31,7 +31,7 @@ func makeSubAgentTask(t *testing.T, db interface {
 // Returns the task ID used.
 func seedSessionAndTask(t *testing.T, ctx context.Context, gdb interface {
 	CreateSession(context.Context, CreateSessionInput) error
-}, sessionID, convID, pluginID, stepID, taskID string) {
+}, sessionID, convID, workflowID, stepID, taskID string) {
 	t.Helper()
 }
 
@@ -88,7 +88,7 @@ func TestOnSubAgentDone_SucceededManualMode(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := CreateSession(ctx, db.DB, CreateSessionInput{
-		SessionID: "ps-1", ConversationID: "conv-1", PluginID: "image-plugin",
+		SessionID: "ps-1", ConversationID: "conv-1", WorkflowID: "image-plugin",
 	}); err != nil {
 		t.Fatalf("session: %v", err)
 	}
@@ -97,13 +97,13 @@ func TestOnSubAgentDone_SucceededManualMode(t *testing.T) {
 	}
 
 	// plugin_mode=dynamic in pctx → step_waiting with reason=dynamic_pause
-	pctx := &PluginChatContext{
-		SessionID:  "ps-1",
-		PluginID:   "image-plugin",
-		StepID:     "analyze_subject",
-		ConvID:     "conv-1",
-		UserID:     "user-1",
-		PluginMode: "dynamic",
+	pctx := &WorkflowChatContext{
+		SessionID:    "ps-1",
+		WorkflowID:   "image-plugin",
+		StepID:       "analyze_subject",
+		ConvID:       "conv-1",
+		UserID:       "user-1",
+		WorkflowMode: "dynamic",
 	}
 
 	var gotEvent string
@@ -137,7 +137,7 @@ func TestOnSubAgentDone_HandoffWaitsAndMergesParallelTerminalStatuses(t *testing
 		t.Fatalf("migrate history: %v", err)
 	}
 	if _, err := CreateSession(ctx, db.DB, CreateSessionInput{
-		SessionID: "ps-history", ConversationID: "conv-history", PluginID: "image-plugin",
+		SessionID: "ps-history", ConversationID: "conv-history", WorkflowID: "image-plugin",
 	}); err != nil {
 		t.Fatalf("session: %v", err)
 	}
@@ -164,9 +164,9 @@ func TestOnSubAgentDone_HandoffWaitsAndMergesParallelTerminalStatuses(t *testing
 	}
 
 	handOff := true
-	pctx := &PluginChatContext{
-		SessionID: "ps-history", PluginID: "image-plugin", StepID: "analyze_subject",
-		ConvID: "conv-history", PluginMode: "dynamic", HandOff: &handOff,
+	pctx := &WorkflowChatContext{
+		SessionID: "ps-history", WorkflowID: "image-plugin", StepID: "analyze_subject",
+		ConvID: "conv-history", WorkflowMode: "dynamic", HandOff: &handOff,
 		TriggerHistoryID: "history-1",
 	}
 	OnSubAgentDone(
@@ -221,7 +221,7 @@ func TestEnforceWorkflowConversationSettings_EnablesApprovalMode(t *testing.T) {
 	auto := "auto"
 	conversation := orm.Conversation{
 		ID: "conv-settings", DisplayName: "Workflow chat",
-		EnablePlugin: &disabled, PluginMode: &auto,
+		EnableWorkflow: &disabled, WorkflowMode: &auto,
 	}
 	if err := db.DB.Create(&conversation).Error; err != nil {
 		t.Fatalf("create conversation: %v", err)
@@ -233,11 +233,11 @@ func TestEnforceWorkflowConversationSettings_EnablesApprovalMode(t *testing.T) {
 	if err := db.DB.First(&got, "id = ?", conversation.ID).Error; err != nil {
 		t.Fatalf("reload conversation: %v", err)
 	}
-	if got.EnablePlugin == nil || !*got.EnablePlugin {
-		t.Fatalf("workflow was not enabled: %#v", got.EnablePlugin)
+	if got.EnableWorkflow == nil || !*got.EnableWorkflow {
+		t.Fatalf("workflow was not enabled: %#v", got.EnableWorkflow)
 	}
-	if got.PluginMode == nil || *got.PluginMode != "dynamic" {
-		t.Fatalf("plugin mode: %#v", got.PluginMode)
+	if got.WorkflowMode == nil || *got.WorkflowMode != "dynamic" {
+		t.Fatalf("plugin mode: %#v", got.WorkflowMode)
 	}
 }
 
@@ -254,7 +254,7 @@ func TestAppendHandoffHistorySummary_SkipsInlineExecution(t *testing.T) {
 		t.Fatalf("history: %v", err)
 	}
 	handOff := false
-	err := appendHandoffHistorySummary(ctx, db.DB, &PluginChatContext{
+	err := appendHandoffHistorySummary(ctx, db.DB, &WorkflowChatContext{
 		ConvID: "conv-inline-history", StepID: "step-a", HandOff: &handOff,
 		TriggerHistoryID: "history-inline",
 	}, false)
@@ -272,7 +272,7 @@ func TestOnSubAgentDone_ExplicitNoHandOffWaitsForChatAgent(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	if _, err := CreateSession(ctx, db.DB, CreateSessionInput{
-		SessionID: "ps-inline", ConversationID: "conv-inline", PluginID: "image-plugin",
+		SessionID: "ps-inline", ConversationID: "conv-inline", WorkflowID: "image-plugin",
 	}); err != nil {
 		t.Fatalf("session: %v", err)
 	}
@@ -281,9 +281,9 @@ func TestOnSubAgentDone_ExplicitNoHandOffWaitsForChatAgent(t *testing.T) {
 	}
 
 	handOff := false
-	pctx := &PluginChatContext{
-		SessionID: "ps-inline", PluginID: "image-plugin", StepID: "analyze_subject",
-		ConvID: "conv-inline", PluginMode: "auto", HandOff: &handOff,
+	pctx := &WorkflowChatContext{
+		SessionID: "ps-inline", WorkflowID: "image-plugin", StepID: "analyze_subject",
+		ConvID: "conv-inline", WorkflowMode: "auto", HandOff: &handOff,
 	}
 	var gotEvent string
 	var gotReason any
@@ -306,7 +306,7 @@ func TestOnSubAgentDone_Interrupted_SetsWaiting(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := CreateSession(ctx, db.DB, CreateSessionInput{
-		SessionID: "ps-2", ConversationID: "conv-2", PluginID: "image-plugin",
+		SessionID: "ps-2", ConversationID: "conv-2", WorkflowID: "image-plugin",
 	}); err != nil {
 		t.Fatalf("session: %v", err)
 	}
@@ -314,8 +314,8 @@ func TestOnSubAgentDone_Interrupted_SetsWaiting(t *testing.T) {
 		t.Fatalf("step: %v", err)
 	}
 
-	pctx := &PluginChatContext{
-		SessionID: "ps-2", PluginID: "image-plugin", StepID: "generate_image",
+	pctx := &WorkflowChatContext{
+		SessionID: "ps-2", WorkflowID: "image-plugin", StepID: "generate_image",
 		ConvID: "conv-2", UserID: "user-1",
 	}
 
@@ -344,7 +344,7 @@ func TestOnSubAgentDone_Failed_SetsSessionFailed(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := CreateSession(ctx, db.DB, CreateSessionInput{
-		SessionID: "ps-3", ConversationID: "conv-3", PluginID: "image-plugin",
+		SessionID: "ps-3", ConversationID: "conv-3", WorkflowID: "image-plugin",
 	}); err != nil {
 		t.Fatalf("session: %v", err)
 	}
@@ -352,8 +352,8 @@ func TestOnSubAgentDone_Failed_SetsSessionFailed(t *testing.T) {
 		t.Fatalf("step: %v", err)
 	}
 
-	pctx := &PluginChatContext{
-		SessionID: "ps-3", PluginID: "image-plugin", StepID: "optimize_prompt",
+	pctx := &WorkflowChatContext{
+		SessionID: "ps-3", WorkflowID: "image-plugin", StepID: "optimize_prompt",
 		ConvID: "conv-3",
 	}
 
@@ -451,7 +451,7 @@ func TestCheckAndFallbackIfStuck_SkipsWhenSubAgentRunning(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := CreateSession(ctx, db.DB, CreateSessionInput{
-		SessionID: "ps-stuck-1", ConversationID: "conv-stuck-1", PluginID: "image-plugin",
+		SessionID: "ps-stuck-1", ConversationID: "conv-stuck-1", WorkflowID: "image-plugin",
 	}); err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -465,7 +465,7 @@ func TestCheckAndFallbackIfStuck_SkipsWhenSubAgentRunning(t *testing.T) {
 		t.Fatalf("UpdateStepStatus: %v", err)
 	}
 
-	checkAndFallbackIfStuck(ctx, db.DB, nil, func(string, map[string]any) {}, &PluginChatContext{
+	checkAndFallbackIfStuck(ctx, db.DB, nil, func(string, map[string]any) {}, &WorkflowChatContext{
 		SessionID: "ps-stuck-1",
 		StepID:    "optimize_prompt",
 	})
@@ -484,7 +484,7 @@ func TestCheckAndFallbackIfStuck_DemotesWhenIdle(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := CreateSession(ctx, db.DB, CreateSessionInput{
-		SessionID: "ps-stuck-2", ConversationID: "conv-stuck-2", PluginID: "image-plugin",
+		SessionID: "ps-stuck-2", ConversationID: "conv-stuck-2", WorkflowID: "image-plugin",
 	}); err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -501,7 +501,7 @@ func TestCheckAndFallbackIfStuck_DemotesWhenIdle(t *testing.T) {
 	var gotEvent string
 	checkAndFallbackIfStuck(ctx, db.DB, nil, func(eventType string, _ map[string]any) {
 		gotEvent = eventType
-	}, &PluginChatContext{
+	}, &WorkflowChatContext{
 		SessionID: "ps-stuck-2",
 		StepID:    "optimize_prompt",
 	})
@@ -524,9 +524,9 @@ func TestCheckAndFallbackIfStuck_DemotesWhenIdle(t *testing.T) {
 
 func TestResolveSlotBinding_FoundBinding(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		pluginID := r.URL.Query().Get("plugin_id")
+		workflowID := r.URL.Query().Get("plugin_id")
 		slot := r.URL.Query().Get("slot")
-		if pluginID != "image-plugin" || slot != "enhanced_image_url" {
+		if workflowID != "image-plugin" || slot != "enhanced_image_url" {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
@@ -560,15 +560,15 @@ func TestResolveSlotBinding_NoBinding_ReturnsEmpty(t *testing.T) {
 }
 
 // ──────────────────────────────────────────────
-// StopActivePluginSession — sends task-cancel to Python
+// StopActiveWorkflowSession — sends task-cancel to Python
 // ──────────────────────────────────────────────
 
-func TestStopActivePluginSession_SendsTaskCancel(t *testing.T) {
+func TestStopActiveWorkflowSession_SendsTaskCancel(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 
 	if _, err := CreateSession(ctx, db.DB, CreateSessionInput{
-		SessionID: "stop-sess-1", ConversationID: "stop-conv-1", PluginID: "image-plugin",
+		SessionID: "stop-sess-1", ConversationID: "stop-conv-1", WorkflowID: "image-plugin",
 	}); err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -581,7 +581,7 @@ func TestStopActivePluginSession_SendsTaskCancel(t *testing.T) {
 	if _, err := CreateSessionStep(ctx, db.DB, "stop-sess-1", "analyze_subject", "stop-task-1", 1); err != nil {
 		t.Fatalf("CreateSessionStep: %v", err)
 	}
-	// Mark the step as running so StopActivePluginSession picks it up.
+	// Mark the step as running so StopActiveWorkflowSession picks it up.
 	if err := UpdateStepStatus(ctx, db.DB, "stop-task-1", StepStatusRunning); err != nil {
 		t.Fatalf("UpdateStepStatus: %v", err)
 	}
@@ -596,7 +596,7 @@ func TestStopActivePluginSession_SendsTaskCancel(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("LAZYMIND_CHAT_SERVICE_URL", srv.URL)
 
-	StopActivePluginSession(ctx, db.DB, nil, "stop-conv-1")
+	StopActiveWorkflowSession(ctx, db.DB, nil, "stop-conv-1")
 
 	// notifyTaskCancel runs in a goroutine; give it a moment to complete.
 	time.Sleep(100 * time.Millisecond)
@@ -606,12 +606,12 @@ func TestStopActivePluginSession_SendsTaskCancel(t *testing.T) {
 	}
 }
 
-func TestStopActivePluginSession_CancelsAllPendingAndRunningAttempts(t *testing.T) {
+func TestStopActiveWorkflowSession_CancelsAllPendingAndRunningAttempts(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 
 	if _, err := CreateSession(ctx, db.DB, CreateSessionInput{
-		SessionID: "stop-sess-parallel", ConversationID: "stop-conv-parallel", PluginID: "image-plugin",
+		SessionID: "stop-sess-parallel", ConversationID: "stop-conv-parallel", WorkflowID: "image-plugin",
 	}); err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -654,7 +654,7 @@ func TestStopActivePluginSession_CancelsAllPendingAndRunningAttempts(t *testing.
 	defer srv.Close()
 	t.Setenv("LAZYMIND_CHAT_SERVICE_URL", srv.URL)
 
-	StopActivePluginSession(ctx, db.DB, nil, "stop-conv-parallel")
+	StopActiveWorkflowSession(ctx, db.DB, nil, "stop-conv-parallel")
 
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
@@ -691,7 +691,7 @@ func TestStopActivePluginSession_CancelsAllPendingAndRunningAttempts(t *testing.
 	}
 }
 
-func TestPluginRunOutboxDoesNotDispatchInterruptedTask(t *testing.T) {
+func TestWorkflowRunOutboxDoesNotDispatchInterruptedTask(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	const taskID = "outbox-interrupted-task"
@@ -701,15 +701,15 @@ func TestPluginRunOutboxDoesNotDispatchInterruptedTask(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
-	if err := enqueuePluginAttemptRunner(ctx, db.DB, subagent.RunRequest{TaskID: taskID, AgentType: "plugin_step"}); err != nil {
-		t.Fatalf("enqueuePluginAttemptRunner: %v", err)
+	if err := enqueueWorkflowAttemptRunner(ctx, db.DB, subagent.RunRequest{TaskID: taskID, AgentType: "plugin_step"}); err != nil {
+		t.Fatalf("enqueueWorkflowAttemptRunner: %v", err)
 	}
 	if err := subagent.UpdateFinalStatus(ctx, db.DB, taskID, subagent.StatusInterrupted, "stopped"); err != nil {
 		t.Fatalf("interrupt task: %v", err)
 	}
-	dispatchPluginAttemptRunner(db.DB, nil, taskID)
+	dispatchWorkflowAttemptRunner(db.DB, nil, taskID)
 
-	var row orm.PluginRunOutbox
+	var row orm.WorkflowRunOutbox
 	if err := db.Where("task_id = ?", taskID).First(&row).Error; err != nil {
 		t.Fatalf("load outbox: %v", err)
 	}
@@ -731,7 +731,7 @@ func TestOnSubAgentDone_ParallelStepsAllDone(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := CreateSession(ctx, db.DB, CreateSessionInput{
-		SessionID: "par-sess-1", ConversationID: "par-conv-1", PluginID: "image-plugin",
+		SessionID: "par-sess-1", ConversationID: "par-conv-1", WorkflowID: "image-plugin",
 	}); err != nil {
 		t.Fatalf("session: %v", err)
 	}
@@ -766,7 +766,7 @@ func TestOnSubAgentDone_ParallelStepsPartialDone(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := CreateSession(ctx, db.DB, CreateSessionInput{
-		SessionID: "par-sess-2", ConversationID: "par-conv-2", PluginID: "image-plugin",
+		SessionID: "par-sess-2", ConversationID: "par-conv-2", WorkflowID: "image-plugin",
 	}); err != nil {
 		t.Fatalf("session: %v", err)
 	}

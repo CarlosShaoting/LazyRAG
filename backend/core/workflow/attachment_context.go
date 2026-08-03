@@ -1,4 +1,4 @@
-package plugin
+package workflow
 
 import (
 	"encoding/json"

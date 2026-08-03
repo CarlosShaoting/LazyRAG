@@ -77,8 +77,8 @@ type TaskCreatedNotice struct {
 	Mode              string `json:"mode"`
 	Status            string `json:"status"`
 	SeqInConversation int    `json:"seq_in_conversation"`
-	// PluginSessionID is set when the task is a Plugin Step (agent_type='plugin_step').
-	PluginSessionID string `json:"plugin_session_id,omitempty"`
+	// WorkflowSessionID is set when the task is a Workflow Step (agent_type='plugin_step').
+	WorkflowSessionID string `json:"workflow_session_id,omitempty"`
 }
 
 func chatStatusKey(conversationID string) string {

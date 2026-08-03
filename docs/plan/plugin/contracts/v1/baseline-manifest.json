@@ -2,11 +2,11 @@
   "contract_version": "workflow.v1",
   "authority": "legacy_runtime",
   "production_sources": [
-    "backend/core/plugin/graphengine/compiler_test.go",
-    "backend/core/plugin/runtime_projection_test.go",
-    "backend/core/plugin/transition_batch_test.go",
-    "backend/core/plugin/store_test.go",
-    "backend/core/plugin/eventloop_test.go",
+    "backend/core/workflow/graphengine/compiler_test.go",
+    "backend/core/workflow/runtime_projection_test.go",
+    "backend/core/workflow/transition_batch_test.go",
+    "backend/core/workflow/store_test.go",
+    "backend/core/workflow/eventloop_test.go",
     "algorithm/tests/chat/plugins/test_manager.py"
   ],
   "required_scenarios": [
@@ -20,14 +20,14 @@
     "resume"
   ],
   "scenario_tests": {
-    "serial": {"source": "backend/core/plugin/graphengine/compiler_test.go", "symbol": "TestCompileArbitraryDAGAndProjectBlockedMerge"},
-    "parallel": {"source": "backend/core/plugin/transition_batch_test.go", "symbol": "TestBatchTransitionAcceptsAllReadyTargetsAtomically"},
-    "choice": {"source": "backend/core/plugin/graphengine/projector_test.go", "symbol": "TestSelectRouteTarget_LLMChoice"},
-    "retry": {"source": "backend/core/plugin/transition_batch_test.go", "symbol": "TestResolveAdvanceOperationFromEffectiveAttempt"},
-    "rewind": {"source": "backend/core/plugin/graphengine/compiler_test.go", "symbol": "TestProjectionShowsStaleHistoryAndRouteWithoutMaskingNewEffectiveFacts"},
-    "partial-retry": {"source": "backend/core/plugin/store_test.go", "symbol": "TestWriteSlotRevision_PartialRetry_ReplacesTargetIndex"},
-    "stop": {"source": "backend/core/plugin/eventloop_test.go", "symbol": "TestStopActivePluginSession_CancelsAllPendingAndRunningAttempts"},
-    "resume": {"source": "backend/core/plugin/eventloop_test.go", "symbol": "TestConversationPreflightMustBeReadyAndIsConsumed"}
+    "serial": {"source": "backend/core/workflow/graphengine/compiler_test.go", "symbol": "TestCompileArbitraryDAGAndProjectBlockedMerge"},
+    "parallel": {"source": "backend/core/workflow/transition_batch_test.go", "symbol": "TestBatchTransitionAcceptsAllReadyTargetsAtomically"},
+    "choice": {"source": "backend/core/workflow/graphengine/projector_test.go", "symbol": "TestSelectRouteTarget_LLMChoice"},
+    "retry": {"source": "backend/core/workflow/transition_batch_test.go", "symbol": "TestResolveAdvanceOperationFromEffectiveAttempt"},
+    "rewind": {"source": "backend/core/workflow/graphengine/compiler_test.go", "symbol": "TestProjectionShowsStaleHistoryAndRouteWithoutMaskingNewEffectiveFacts"},
+    "partial-retry": {"source": "backend/core/workflow/store_test.go", "symbol": "TestWriteSlotRevision_PartialRetry_ReplacesTargetIndex"},
+    "stop": {"source": "backend/core/workflow/eventloop_test.go", "symbol": "TestStopActiveWorkflowSession_CancelsAllPendingAndRunningAttempts"},
+    "resume": {"source": "backend/core/workflow/eventloop_test.go", "symbol": "TestConversationPreflightMustBeReadyAndIsConsumed"}
   },
   "tool_semantics": {
     "advance_step": {
@@ -35,7 +35,7 @@
       "wait": "attempt_terminal",
       "production_source": "algorithm/lazymind/chat/plugin/plugin_manager.py",
       "production_symbol": "build_advance_step_tool",
-      "transition_source": "backend/core/plugin/transition_handlers.go",
+      "transition_source": "backend/core/workflow/transition_handlers.go",
       "transition_symbol": "resolveAdvanceOperation"
     },
     "advance_step_and_hand_off": {
@@ -43,7 +43,7 @@
       "wait": "durable_submission",
       "production_source": "algorithm/lazymind/chat/plugin/plugin_manager.py",
       "production_symbol": "build_advance_step_and_hand_off_tool",
-      "transition_source": "backend/core/plugin/transition_handlers.go",
+      "transition_source": "backend/core/workflow/transition_handlers.go",
       "transition_symbol": "resolveAdvanceOperation"
     }
   },

@@ -1,4 +1,4 @@
-package plugin
+package workflow
 
 import (
 	"os"
@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestPluginGenerationAnalysisMigrationContract(t *testing.T) {
+func TestWorkflowGenerationAnalysisMigrationContract(t *testing.T) {
 	_, file, _, _ := runtime.Caller(0)
 	root := filepath.Join(filepath.Dir(file), "..", "migrations", "dev_mode", "v0_2")
 	up, err := os.ReadFile(filepath.Join(root, "20260710180000_plugin_generation_analysis.up.sql"))

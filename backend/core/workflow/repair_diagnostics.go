@@ -1,4 +1,4 @@
-package plugin
+package workflow
 
 import (
 	"encoding/json"
@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
-	"lazymind/core/plugin/graphengine"
+	"lazymind/core/workflow/graphengine"
 )
 
 type repairDiagnostic struct {
@@ -21,25 +21,25 @@ type repairDiagnostic struct {
 	Fixable    bool           `json:"fixable"`
 }
 
-func diagnosePlugin(pluginYAML, stateYAML, scenario, scriptsJSON string) []repairDiagnostic {
-	return diagnosePluginWithProfile(pluginYAML, stateYAML, scenario, scriptsJSON, graphengine.ProfileEditor)
+func diagnoseWorkflow(workflowYAML, stateYAML, scenario, scriptsJSON string) []repairDiagnostic {
+	return diagnoseWorkflowWithProfile(workflowYAML, stateYAML, scenario, scriptsJSON, graphengine.ProfileEditor)
 }
 
-func diagnosePluginWithProfile(pluginYAML, stateYAML, scenario, scriptsJSON string, profile graphengine.Profile) []repairDiagnostic {
-	compiled := graphengine.Compile(pluginYAML, stateYAML, scenario, profile)
+func diagnoseWorkflowWithProfile(workflowYAML, stateYAML, scenario, scriptsJSON string, profile graphengine.Profile) []repairDiagnostic {
+	compiled := graphengine.Compile(workflowYAML, stateYAML, scenario, profile)
 	out := make([]repairDiagnostic, 0, len(compiled.Diagnostics))
 	for _, item := range compiled.Diagnostics {
 		out = append(out, repairDiagnostic{Code: item.Code, Path: item.Path, Message: item.Message, Severity: item.Severity, NodeID: item.NodeID, EdgeID: item.EdgeID, MaterialID: item.MaterialID, Details: item.Details, Fixable: item.Fixable})
 	}
 	// Script diagnostics are deliberately separate from graph compilation, but
 	// use the same public diagnostic envelope.
-	var pluginDoc map[string]any
-	_ = yaml.Unmarshal([]byte(pluginYAML), &pluginDoc)
+	var workflowDoc map[string]any
+	_ = yaml.Unmarshal([]byte(workflowYAML), &workflowDoc)
 	var scripts map[string]string
 	if strings.TrimSpace(scriptsJSON) != "" && json.Unmarshal([]byte(scriptsJSON), &scripts) != nil {
 		out = append(out, repairDiagnostic{Code: "E_SCRIPTS_JSON_INVALID", Path: "scripts", Message: "scripts_content is not valid JSON", Severity: "error", Fixable: true})
 	}
-	if declarations, ok := pluginDoc["tool_scripts"].([]any); ok {
+	if declarations, ok := workflowDoc["tool_scripts"].([]any); ok {
 		for _, raw := range declarations {
 			declaration, _ := raw.(map[string]any)
 			path := fmt.Sprint(declaration["path"])

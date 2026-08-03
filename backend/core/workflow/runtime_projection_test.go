@@ -1,4 +1,4 @@
-package plugin
+package workflow
 
 import (
 	"context"
@@ -8,17 +8,17 @@ import (
 	"time"
 
 	"lazymind/core/common/orm"
-	"lazymind/core/plugin/graphengine"
+	"lazymind/core/workflow/graphengine"
 )
 
 func TestLoadSessionGraphDoesNotFallbackWhenRevisionIsMissing(t *testing.T) {
 	db := newTestDB(t)
-	if err := db.AutoMigrate(&orm.PluginRevision{}); err != nil {
+	if err := db.AutoMigrate(&orm.WorkflowRevision{}); err != nil {
 		t.Fatalf("migrate revision: %v", err)
 	}
-	_, err := loadSessionGraph(context.Background(), db.DB, &orm.PluginSession{
-		PluginID:         "plugin-a",
-		PluginRevisionID: "missing-revision",
+	_, err := loadSessionGraph(context.Background(), db.DB, &orm.WorkflowSession{
+		WorkflowID:         "plugin-a",
+		WorkflowRevisionID: "missing-revision",
 	})
 	if err == nil || !strings.Contains(err.Error(), "missing-revision") {
 		t.Fatalf("missing pinned revision must be rejected, got %v", err)
@@ -27,7 +27,7 @@ func TestLoadSessionGraphDoesNotFallbackWhenRevisionIsMissing(t *testing.T) {
 
 func TestLoadSessionGraphRejectsSessionHashMismatch(t *testing.T) {
 	db := newTestDB(t)
-	if err := db.AutoMigrate(&orm.PluginRevision{}); err != nil {
+	if err := db.AutoMigrate(&orm.WorkflowRevision{}); err != nil {
 		t.Fatalf("migrate revision: %v", err)
 	}
 	graph := &graphengine.CompiledStateGraph{
@@ -35,7 +35,7 @@ func TestLoadSessionGraphRejectsSessionHashMismatch(t *testing.T) {
 		GraphHash:     "revision-hash",
 		Nodes:         map[string]graphengine.CompiledNode{},
 	}
-	if err := db.Create(&orm.PluginRevision{
+	if err := db.Create(&orm.WorkflowRevision{
 		ID:                 "revision-a",
 		CompiledGraph:      graph.JSON(),
 		GraphHash:          graph.GraphHash,
@@ -44,8 +44,8 @@ func TestLoadSessionGraphRejectsSessionHashMismatch(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatalf("create revision: %v", err)
 	}
-	_, err := loadSessionGraph(context.Background(), db.DB, &orm.PluginSession{
-		PluginRevisionID:   "revision-a",
+	_, err := loadSessionGraph(context.Background(), db.DB, &orm.WorkflowSession{
+		WorkflowRevisionID: "revision-a",
 		GraphHash:          "different-session-hash",
 		GraphSchemaVersion: graphengine.SchemaVersion,
 	})
@@ -54,11 +54,11 @@ func TestLoadSessionGraphRejectsSessionHashMismatch(t *testing.T) {
 	}
 }
 
-func TestLegacySessionRejectsChangedPluginDefinition(t *testing.T) {
-	session := &orm.PluginSession{GraphHash: "hash-at-task-start"}
+func TestLegacySessionRejectsChangedWorkflowDefinition(t *testing.T) {
+	session := &orm.WorkflowSession{GraphHash: "hash-at-task-start"}
 	graph := &graphengine.CompiledStateGraph{GraphHash: "hash-after-code-change"}
 	err := ensureLegacySessionGraphUnchanged(session, graph)
-	var changed *pluginDefinitionChangedError
+	var changed *workflowDefinitionChangedError
 	if !errors.As(err, &changed) {
 		t.Fatalf("changed builtin graph must return typed error, got %v", err)
 	}

@@ -6,10 +6,10 @@ must not add new business rules.
 
 | Existing area | Classification | Current authority | Migration target |
 |---|---|---|---|
-| `backend/core/plugin/runtime_projection.go` | Runtime invariant | Core | `workflow/graphengine` |
-| `backend/core/plugin/transition_handlers.go` | Runtime invariant and tool adapter | Core | Workflow Tool facade |
-| `backend/core/plugin/store.go` | persistence compatibility boundary | Core | Workflow repository mapped to physical `plugin_*` schema |
-| `backend/core/plugin/eventloop.go` | LazyMind-coupled dispatch | Core | queued Attempt and generic Outbox |
+| `backend/core/workflow/runtime_projection.go` | Runtime invariant | Core | `workflow/graphengine` |
+| `backend/core/workflow/transition_handlers.go` | Runtime invariant and tool adapter | Core | Workflow Tool facade |
+| `backend/core/workflow/store.go` | persistence compatibility boundary | Core | Workflow repository mapped to physical `plugin_*` schema |
+| `backend/core/workflow/eventloop.go` | LazyMind-coupled dispatch | Core | queued Attempt and generic Outbox |
 | `algorithm/lazymind/chat/plugin/plugin_manager.py` | mixed public decision and Host policy | algorithm/chat | shared Skill plus LazyMind Profile |
 | `algorithm/lazymind/chat/plugin/driver_agent.py` | LazyMind Host policy | algorithm/chat | LazyMind Host Adapter |
 | `algorithm/lazymind/chat/engine/subagent/runner.py` | model execution | algorithm/chat | LazyMindExecutor |

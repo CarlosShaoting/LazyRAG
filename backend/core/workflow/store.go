@@ -1,6 +1,6 @@
 // Package plugin manages plugin sessions, steps, and slot revisions.
 // SubAgent tables (sub_agent_tasks / sub_agent_steps / sub_agent_artifacts) are reused unchanged.
-package plugin
+package workflow
 
 import (
 	"context"
@@ -40,12 +40,12 @@ const (
 type CreateSessionInput struct {
 	SessionID          string
 	ConversationID     string
-	PluginID           string
-	PluginRef          string
-	PluginRevisionID   string
-	PluginRevisionNo   int64
-	PluginTreeHash     string
-	PluginRemoteRoot   string
+	WorkflowID         string
+	WorkflowRef        string
+	WorkflowRevisionID string
+	WorkflowRevisionNo int64
+	WorkflowTreeHash   string
+	WorkflowRemoteRoot string
 	GraphHash          string
 	GraphSchemaVersion string
 	TriggerHistoryID   string
@@ -55,10 +55,10 @@ type CreateSessionInput struct {
 
 // CreateSession inserts a new plugin_sessions record.
 // It returns an error if an active session already exists for the conversation.
-func CreateSession(ctx context.Context, db *gorm.DB, in CreateSessionInput) (*orm.PluginSession, error) {
+func CreateSession(ctx context.Context, db *gorm.DB, in CreateSessionInput) (*orm.WorkflowSession, error) {
 	// Guard: at most one non-dismissed active session per conversation.
 	var count int64
-	if err := db.WithContext(ctx).Model(&orm.PluginSession{}).
+	if err := db.WithContext(ctx).Model(&orm.WorkflowSession{}).
 		Where("conversation_id = ? AND status = ? AND dismissed = false", in.ConversationID, SessionStatusActive).
 		Count(&count).Error; err != nil {
 		return nil, err
@@ -68,11 +68,11 @@ func CreateSession(ctx context.Context, db *gorm.DB, in CreateSessionInput) (*or
 	}
 
 	now := time.Now().UTC()
-	s := &orm.PluginSession{
+	s := &orm.WorkflowSession{
 		ID:             in.SessionID,
 		ConversationID: in.ConversationID,
-		PluginID:       in.PluginID,
-		PluginRef:      in.PluginRef, PluginRevisionID: in.PluginRevisionID, PluginRevisionNo: in.PluginRevisionNo, PluginTreeHash: in.PluginTreeHash, PluginRemoteRoot: in.PluginRemoteRoot,
+		WorkflowID:     in.WorkflowID,
+		WorkflowRef:    in.WorkflowRef, WorkflowRevisionID: in.WorkflowRevisionID, WorkflowRevisionNo: in.WorkflowRevisionNo, WorkflowTreeHash: in.WorkflowTreeHash, WorkflowRemoteRoot: in.WorkflowRemoteRoot,
 		GraphHash: in.GraphHash, GraphSchemaVersion: in.GraphSchemaVersion,
 		TriggerHistoryID: in.TriggerHistoryID,
 		Status:           SessionStatusActive,
@@ -88,10 +88,10 @@ func CreateSession(ctx context.Context, db *gorm.DB, in CreateSessionInput) (*or
 }
 
 // GetActiveSession returns the in-progress plugin session for a conversation, or nil if none.
-// Only 'active' and non-dismissed sessions are considered: used by HandlePluginStepCreated
+// Only 'active' and non-dismissed sessions are considered: used by HandleWorkflowStepCreated
 // to guard against duplicate cold-start sessions.
-func GetActiveSession(ctx context.Context, db *gorm.DB, conversationID string) (*orm.PluginSession, error) {
-	var s orm.PluginSession
+func GetActiveSession(ctx context.Context, db *gorm.DB, conversationID string) (*orm.WorkflowSession, error) {
+	var s orm.WorkflowSession
 	err := db.WithContext(ctx).
 		Where("conversation_id = ? AND status = ? AND dismissed = false", conversationID, SessionStatusActive).
 		Order("created_at DESC").
@@ -108,8 +108,8 @@ func GetActiveSession(ctx context.Context, db *gorm.DB, conversationID string) (
 // GetLatestSession returns the most recent non-dismissed plugin session for a conversation,
 // or nil if none exists. Used by the frontend to show the current active session.
 // Dismissed sessions are excluded so the frontend sees a clean state after dismissal.
-func GetLatestSession(ctx context.Context, db *gorm.DB, conversationID string) (*orm.PluginSession, error) {
-	var s orm.PluginSession
+func GetLatestSession(ctx context.Context, db *gorm.DB, conversationID string) (*orm.WorkflowSession, error) {
+	var s orm.WorkflowSession
 	err := db.WithContext(ctx).
 		Where("conversation_id = ? AND dismissed = false", conversationID).
 		Order("created_at DESC").
@@ -128,7 +128,7 @@ func GetLatestSession(ctx context.Context, db *gorm.DB, conversationID string) (
 // is preserved for audit purposes; only the dismissed flag is set.
 func DismissSession(ctx context.Context, db *gorm.DB, sessionID string) error {
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var s orm.PluginSession
+		var s orm.WorkflowSession
 		if err := tx.Where("id = ? AND dismissed = false", sessionID).First(&s).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return fmt.Errorf("session not found or already dismissed")
@@ -137,13 +137,13 @@ func DismissSession(ctx context.Context, db *gorm.DB, sessionID string) error {
 		}
 		// If active, mark queued/running steps interrupted before dismissing.
 		if s.Status == SessionStatusActive {
-			if err := tx.Model(&orm.PluginSessionStep{}).
+			if err := tx.Model(&orm.WorkflowSessionStep{}).
 				Where("session_id = ? AND status IN ?", sessionID, []string{StepStatusPending, StepStatusRunning}).
 				Updates(map[string]any{"status": StepStatusInterrupted, "updated_at": time.Now().UTC()}).Error; err != nil {
 				return err
 			}
 		}
-		return tx.Model(&orm.PluginSession{}).
+		return tx.Model(&orm.WorkflowSession{}).
 			Where("id = ?", sessionID).
 			Updates(map[string]any{"dismissed": true, "updated_at": time.Now().UTC()}).Error
 	})
@@ -154,7 +154,7 @@ func DismissSession(ctx context.Context, db *gorm.DB, sessionID string) error {
 // session was active before dismissal, it is restored to waiting (SubAgent was cancelled).
 func RestoreSession(ctx context.Context, db *gorm.DB, sessionID string) error {
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var s orm.PluginSession
+		var s orm.WorkflowSession
 		if err := tx.Where("id = ? AND dismissed = true", sessionID).First(&s).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return fmt.Errorf("session not found or not dismissed")
@@ -163,7 +163,7 @@ func RestoreSession(ctx context.Context, db *gorm.DB, sessionID string) error {
 		}
 		// Guard: no other active/waiting session in this conversation.
 		var count int64
-		if err := tx.Model(&orm.PluginSession{}).
+		if err := tx.Model(&orm.WorkflowSession{}).
 			Where("conversation_id = ? AND dismissed = false AND status IN ?",
 				s.ConversationID, []string{SessionStatusActive, SessionStatusWaiting}).
 			Count(&count).Error; err != nil {
@@ -177,7 +177,7 @@ func RestoreSession(ctx context.Context, db *gorm.DB, sessionID string) error {
 			// SubAgent was cancelled at dismiss time; restore to waiting so the user can retry.
 			newStatus = SessionStatusWaiting
 		}
-		return tx.Model(&orm.PluginSession{}).
+		return tx.Model(&orm.WorkflowSession{}).
 			Where("id = ?", sessionID).
 			Updates(map[string]any{
 				"dismissed":  false,
@@ -198,7 +198,7 @@ func RestoreSession(ctx context.Context, db *gorm.DB, sessionID string) error {
 //
 // A grace period (staleThreshold) is applied to the session's updated_at to avoid touching
 // sessions that just started.
-func healStaleActiveSession(ctx context.Context, db *gorm.DB, s *orm.PluginSession) {
+func healStaleActiveSession(ctx context.Context, db *gorm.DB, s *orm.WorkflowSession) {
 	const staleThreshold = 2 * time.Minute
 	if time.Since(s.UpdatedAt) < staleThreshold {
 		return
@@ -222,7 +222,7 @@ func healStaleActiveSession(ctx context.Context, db *gorm.DB, s *orm.PluginSessi
 
 	// Count genuinely running steps remaining after the fix.
 	var realRunning int64
-	db.WithContext(ctx).Model(&orm.PluginSessionStep{}).
+	db.WithContext(ctx).Model(&orm.WorkflowSessionStep{}).
 		Where("session_id = ? AND status = ?", s.ID, StepStatusRunning).
 		Count(&realRunning)
 
@@ -244,8 +244,8 @@ func healStaleActiveSession(ctx context.Context, db *gorm.DB, s *orm.PluginSessi
 }
 
 // GetSession loads a session by ID.
-func GetSession(ctx context.Context, db *gorm.DB, sessionID string) (*orm.PluginSession, error) {
-	var s orm.PluginSession
+func GetSession(ctx context.Context, db *gorm.DB, sessionID string) (*orm.WorkflowSession, error) {
+	var s orm.WorkflowSession
 	if err := db.WithContext(ctx).Where("id = ?", sessionID).First(&s).Error; err != nil {
 		return nil, err
 	}
@@ -253,8 +253,8 @@ func GetSession(ctx context.Context, db *gorm.DB, sessionID string) (*orm.Plugin
 }
 
 // ListSessions returns non-dismissed sessions for a conversation ordered by creation time desc.
-func ListSessions(ctx context.Context, db *gorm.DB, conversationID string) ([]orm.PluginSession, error) {
-	var rows []orm.PluginSession
+func ListSessions(ctx context.Context, db *gorm.DB, conversationID string) ([]orm.WorkflowSession, error) {
+	var rows []orm.WorkflowSession
 	if err := db.WithContext(ctx).
 		Where("conversation_id = ? AND dismissed = false", conversationID).
 		Order("created_at DESC").
@@ -266,8 +266,8 @@ func ListSessions(ctx context.Context, db *gorm.DB, conversationID string) ([]or
 
 // ListDismissedSessions returns dismissed sessions for a conversation ordered by creation time desc.
 // Used by the restore UI to enumerate sessions the user can bring back.
-func ListDismissedSessions(ctx context.Context, db *gorm.DB, conversationID string) ([]orm.PluginSession, error) {
-	var rows []orm.PluginSession
+func ListDismissedSessions(ctx context.Context, db *gorm.DB, conversationID string) ([]orm.WorkflowSession, error) {
+	var rows []orm.WorkflowSession
 	if err := db.WithContext(ctx).
 		Where("conversation_id = ? AND dismissed = true", conversationID).
 		Order("created_at DESC").
@@ -279,7 +279,7 @@ func ListDismissedSessions(ctx context.Context, db *gorm.DB, conversationID stri
 
 // UpdateSessionStatus transitions a session to a new status.
 func UpdateSessionStatus(ctx context.Context, db *gorm.DB, sessionID, status string) error {
-	return db.WithContext(ctx).Model(&orm.PluginSession{}).
+	return db.WithContext(ctx).Model(&orm.WorkflowSession{}).
 		Where("id = ?", sessionID).
 		Updates(map[string]any{
 			"status":     status,
@@ -289,7 +289,7 @@ func UpdateSessionStatus(ctx context.Context, db *gorm.DB, sessionID, status str
 
 // UpdateSessionCurrentStep updates current_step_id for a session.
 func UpdateSessionCurrentStep(ctx context.Context, db *gorm.DB, sessionID, stepID string) error {
-	return db.WithContext(ctx).Model(&orm.PluginSession{}).
+	return db.WithContext(ctx).Model(&orm.WorkflowSession{}).
 		Where("id = ?", sessionID).
 		Updates(map[string]any{
 			"current_step_id": stepID,
@@ -298,9 +298,9 @@ func UpdateSessionCurrentStep(ctx context.Context, db *gorm.DB, sessionID, stepI
 }
 
 // CreateSessionStep inserts a new plugin_session_steps record.
-func CreateSessionStep(ctx context.Context, db *gorm.DB, sessionID, stepID, taskID string, attempt int) (*orm.PluginSessionStep, error) {
+func CreateSessionStep(ctx context.Context, db *gorm.DB, sessionID, stepID, taskID string, attempt int) (*orm.WorkflowSessionStep, error) {
 	now := time.Now().UTC()
-	row := &orm.PluginSessionStep{
+	row := &orm.WorkflowSessionStep{
 		ID:        "pss_" + common.GenerateID(),
 		SessionID: sessionID,
 		StepID:    stepID,
@@ -321,7 +321,7 @@ func CreateSessionStep(ctx context.Context, db *gorm.DB, sessionID, stepID, task
 // Terminal states are first-writer-wins: once a step has been interrupted by the
 // user, delayed start/done/error frames from the SubAgent stream cannot revive it.
 func UpdateStepStatus(ctx context.Context, db *gorm.DB, taskID, status string) error {
-	q := db.WithContext(ctx).Model(&orm.PluginSessionStep{}).
+	q := db.WithContext(ctx).Model(&orm.WorkflowSessionStep{}).
 		Where("task_id = ?", taskID)
 	terminal := []string{StepStatusSucceeded, StepStatusFailed, StepStatusInterrupted}
 	if status == StepStatusRunning || status == StepStatusSucceeded ||
@@ -335,8 +335,8 @@ func UpdateStepStatus(ctx context.Context, db *gorm.DB, taskID, status string) e
 }
 
 // GetLatestStep returns the most recent execution instance of step_id within a session.
-func GetLatestStep(ctx context.Context, db *gorm.DB, sessionID, stepID string) (*orm.PluginSessionStep, error) {
-	var row orm.PluginSessionStep
+func GetLatestStep(ctx context.Context, db *gorm.DB, sessionID, stepID string) (*orm.WorkflowSessionStep, error) {
+	var row orm.WorkflowSessionStep
 	err := db.WithContext(ctx).
 		Where("session_id = ? AND step_id = ?", sessionID, stepID).
 		Order("attempt DESC").
@@ -348,8 +348,8 @@ func GetLatestStep(ctx context.Context, db *gorm.DB, sessionID, stepID string) (
 }
 
 // GetStepByTaskID returns the plugin_session_steps row for a given task_id.
-func GetStepByTaskID(ctx context.Context, db *gorm.DB, taskID string) (*orm.PluginSessionStep, error) {
-	var row orm.PluginSessionStep
+func GetStepByTaskID(ctx context.Context, db *gorm.DB, taskID string) (*orm.WorkflowSessionStep, error) {
+	var row orm.WorkflowSessionStep
 	err := db.WithContext(ctx).Where("task_id = ?", taskID).First(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
@@ -360,7 +360,7 @@ func GetStepByTaskID(ctx context.Context, db *gorm.DB, taskID string) (*orm.Plug
 // NextAttempt returns the next attempt number for (sessionID, stepID).
 func NextAttempt(ctx context.Context, db *gorm.DB, sessionID, stepID string) (int, error) {
 	var maxAttempt int
-	row := db.WithContext(ctx).Model(&orm.PluginSessionStep{}).
+	row := db.WithContext(ctx).Model(&orm.WorkflowSessionStep{}).
 		Select("COALESCE(MAX(attempt), 0)").
 		Where("session_id = ? AND step_id = ?", sessionID, stepID)
 	if err := row.Scan(&maxAttempt).Error; err != nil {
@@ -370,8 +370,8 @@ func NextAttempt(ctx context.Context, db *gorm.DB, sessionID, stepID string) (in
 }
 
 // ListSteps returns all step records for a session ordered by creation time.
-func ListSteps(ctx context.Context, db *gorm.DB, sessionID string) ([]orm.PluginSessionStep, error) {
-	var rows []orm.PluginSessionStep
+func ListSteps(ctx context.Context, db *gorm.DB, sessionID string) ([]orm.WorkflowSessionStep, error) {
+	var rows []orm.WorkflowSessionStep
 	if err := db.WithContext(ctx).
 		Where("session_id = ?", sessionID).
 		Order("created_at ASC").
@@ -382,8 +382,8 @@ func ListSteps(ctx context.Context, db *gorm.DB, sessionID string) ([]orm.Plugin
 }
 
 // ListStepIntents returns all step-level intent rows for a session.
-func ListStepIntents(ctx context.Context, db *gorm.DB, sessionID string) ([]orm.PluginStepIntent, error) {
-	var rows []orm.PluginStepIntent
+func ListStepIntents(ctx context.Context, db *gorm.DB, sessionID string) ([]orm.WorkflowStepIntent, error) {
+	var rows []orm.WorkflowStepIntent
 	if err := db.WithContext(ctx).
 		Where("session_id = ?", sessionID).
 		Find(&rows).Error; err != nil {
@@ -406,7 +406,7 @@ func ListStepIntents(ctx context.Context, db *gorm.DB, sessionID string) ([]orm.
 // Revisions at other indices are untouched.
 func WriteSlotRevision(ctx context.Context, db *gorm.DB,
 	sessionID, slotID, artifactKey, stepID string, attempt int,
-	cardinality string, listIndex *int) (*orm.PluginSlotRevision, error) {
+	cardinality string, listIndex *int) (*orm.WorkflowSlotRevision, error) {
 
 	now := time.Now().UTC()
 	var revision int
@@ -417,7 +417,7 @@ func WriteSlotRevision(ctx context.Context, db *gorm.DB,
 	// This is best-effort; a nil artifactSeq causes enrichSlots to fall back
 	// to content_snapshot (written later by OnSubAgentDoneSnapshot).
 	var artifactSeq *int
-	var step orm.PluginSessionStep
+	var step orm.WorkflowSessionStep
 	if db.WithContext(ctx).
 		Where("session_id = ? AND step_id = ? AND attempt = ?", sessionID, stepID, attempt).
 		First(&step).Error == nil {
@@ -437,7 +437,7 @@ func WriteSlotRevision(ctx context.Context, db *gorm.DB,
 		// For a new list append (listIndex == nil), this is always the first revision.
 		var maxRev int
 		if cardinality != "list" || listIndex != nil {
-			q := tx.Model(&orm.PluginSlotRevision{}).
+			q := tx.Model(&orm.WorkflowSlotRevision{}).
 				Select("COALESCE(MAX(revision), 0)").
 				Where("session_id = ? AND slot_id = ?", sessionID, slotID)
 			if cardinality == "list" && listIndex != nil {
@@ -453,7 +453,7 @@ func WriteSlotRevision(ctx context.Context, db *gorm.DB,
 
 		if cardinality == "single" {
 			// Deselect all previous revisions for this slot.
-			if err := tx.Model(&orm.PluginSlotRevision{}).
+			if err := tx.Model(&orm.WorkflowSlotRevision{}).
 				Where("session_id = ? AND slot_id = ? AND selected = ?", sessionID, slotID, true).
 				Update("selected", false).Error; err != nil {
 				return err
@@ -462,7 +462,7 @@ func WriteSlotRevision(ctx context.Context, db *gorm.DB,
 			// list cardinality.
 			if listIndex != nil {
 				// Partial retry: deselect the existing selected row for this list_index only.
-				if err := tx.Model(&orm.PluginSlotRevision{}).
+				if err := tx.Model(&orm.WorkflowSlotRevision{}).
 					Where("session_id = ? AND slot_id = ? AND list_index = ? AND selected = ?",
 						sessionID, slotID, *listIndex, true).
 					Update("selected", false).Error; err != nil {
@@ -472,7 +472,7 @@ func WriteSlotRevision(ctx context.Context, db *gorm.DB,
 			} else {
 				// Full append: list_index = MAX(all existing list_index) + 1 (never reuse deleted indices).
 				var maxIdx int
-				if err := tx.Model(&orm.PluginSlotRevision{}).
+				if err := tx.Model(&orm.WorkflowSlotRevision{}).
 					Select("COALESCE(MAX(list_index), -1)").
 					Where("session_id = ? AND slot_id = ?", sessionID, slotID).
 					Scan(&maxIdx).Error; err != nil {
@@ -483,7 +483,7 @@ func WriteSlotRevision(ctx context.Context, db *gorm.DB,
 			}
 		}
 
-		row := &orm.PluginSlotRevision{
+		row := &orm.WorkflowSlotRevision{
 			ID:                "psr_" + common.GenerateID(),
 			SessionID:         sessionID,
 			SlotID:            slotID,
@@ -514,7 +514,7 @@ func WriteSlotRevision(ctx context.Context, db *gorm.DB,
 		return nil, err
 	}
 
-	var result orm.PluginSlotRevision
+	var result orm.WorkflowSlotRevision
 	err := db.WithContext(ctx).
 		Where("session_id = ? AND slot_id = ? AND revision = ?", sessionID, slotID, revision).
 		First(&result).Error
@@ -529,7 +529,7 @@ func WriteSlotRevision(ctx context.Context, db *gorm.DB,
 func WriteSlotRevisionWithSnapshot(ctx context.Context, db *gorm.DB,
 	sessionID, slotID, artifactKey, stepID string, attempt int,
 	cardinality string, listIndex *int,
-	contentSnapshot json.RawMessage, changeSource string) (*orm.PluginSlotRevision, error) {
+	contentSnapshot json.RawMessage, changeSource string) (*orm.WorkflowSlotRevision, error) {
 
 	src := changeSource
 	if src == "" {
@@ -546,7 +546,7 @@ func WriteSlotRevisionWithSnapshot(ctx context.Context, db *gorm.DB,
 		// For a new list append (listIndex == nil), this is always the first revision.
 		var maxRev int
 		if cardinality != "list" || listIndex != nil {
-			q := tx.Model(&orm.PluginSlotRevision{}).
+			q := tx.Model(&orm.WorkflowSlotRevision{}).
 				Select("COALESCE(MAX(revision), 0)").
 				Where("session_id = ? AND slot_id = ?", sessionID, slotID)
 			if cardinality == "list" && listIndex != nil {
@@ -561,14 +561,14 @@ func WriteSlotRevisionWithSnapshot(ctx context.Context, db *gorm.DB,
 		revision = maxRev + 1
 
 		if cardinality == "single" {
-			if err := tx.Model(&orm.PluginSlotRevision{}).
+			if err := tx.Model(&orm.WorkflowSlotRevision{}).
 				Where("session_id = ? AND slot_id = ? AND selected = ?", sessionID, slotID, true).
 				Update("selected", false).Error; err != nil {
 				return err
 			}
 		} else {
 			if listIndex != nil {
-				if err := tx.Model(&orm.PluginSlotRevision{}).
+				if err := tx.Model(&orm.WorkflowSlotRevision{}).
 					Where("session_id = ? AND slot_id = ? AND list_index = ? AND selected = ?",
 						sessionID, slotID, *listIndex, true).
 					Update("selected", false).Error; err != nil {
@@ -577,7 +577,7 @@ func WriteSlotRevisionWithSnapshot(ctx context.Context, db *gorm.DB,
 				finalListIndex = listIndex
 			} else {
 				var maxIdx int
-				if err := tx.Model(&orm.PluginSlotRevision{}).
+				if err := tx.Model(&orm.WorkflowSlotRevision{}).
 					Select("COALESCE(MAX(list_index), -1)").
 					Where("session_id = ? AND slot_id = ?", sessionID, slotID).
 					Scan(&maxIdx).Error; err != nil {
@@ -588,7 +588,7 @@ func WriteSlotRevisionWithSnapshot(ctx context.Context, db *gorm.DB,
 			}
 		}
 
-		row := &orm.PluginSlotRevision{
+		row := &orm.WorkflowSlotRevision{
 			ID:              "psr_" + common.GenerateID(),
 			SessionID:       sessionID,
 			SlotID:          slotID,
@@ -616,7 +616,7 @@ func WriteSlotRevisionWithSnapshot(ctx context.Context, db *gorm.DB,
 		return nil, err
 	}
 
-	var result orm.PluginSlotRevision
+	var result orm.WorkflowSlotRevision
 	err := db.WithContext(ctx).
 		Where("session_id = ? AND slot_id = ? AND revision = ?", sessionID, slotID, revision).
 		First(&result).Error
@@ -628,14 +628,14 @@ func WriteSlotRevisionWithSnapshot(ctx context.Context, db *gorm.DB,
 // Uses SELECT FOR UPDATE to prevent concurrent appends from losing updates.
 func appendSlotOrderEntry(ctx context.Context, db *gorm.DB, sessionID, slotID string, idx int) error {
 	now := time.Now().UTC()
-	var existing orm.PluginSlotOrder
+	var existing orm.WorkflowSlotOrder
 	err := db.WithContext(ctx).
 		Clauses(clause.Locking{Strength: "UPDATE"}).
 		Where("session_id = ? AND slot_id = ?", sessionID, slotID).
 		First(&existing).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		list, _ := json.Marshal([]int{idx})
-		row := orm.PluginSlotOrder{
+		row := orm.WorkflowSlotOrder{
 			SessionID:    sessionID,
 			SlotID:       slotID,
 			OrderList:    list,
@@ -657,7 +657,7 @@ func appendSlotOrderEntry(ctx context.Context, db *gorm.DB, sessionID, slotID st
 	}
 	current = append(current, idx)
 	newList, _ := json.Marshal(current)
-	return db.WithContext(ctx).Model(&orm.PluginSlotOrder{}).
+	return db.WithContext(ctx).Model(&orm.WorkflowSlotOrder{}).
 		Where("session_id = ? AND slot_id = ?", sessionID, slotID).
 		Updates(map[string]any{
 			"order_list":    newList,
@@ -667,8 +667,8 @@ func appendSlotOrderEntry(ctx context.Context, db *gorm.DB, sessionID, slotID st
 }
 
 // GetSlotOrder returns the plugin_slot_order row for a slot, or nil if not found.
-func GetSlotOrder(ctx context.Context, db *gorm.DB, sessionID, slotID string) (*orm.PluginSlotOrder, error) {
-	var row orm.PluginSlotOrder
+func GetSlotOrder(ctx context.Context, db *gorm.DB, sessionID, slotID string) (*orm.WorkflowSlotOrder, error) {
+	var row orm.WorkflowSlotOrder
 	err := db.WithContext(ctx).
 		Where("session_id = ? AND slot_id = ?", sessionID, slotID).
 		First(&row).Error
@@ -689,7 +689,7 @@ func ReorderSlot(ctx context.Context, db *gorm.DB,
 
 	now := time.Now().UTC()
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var existing orm.PluginSlotOrder
+		var existing orm.WorkflowSlotOrder
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("session_id = ? AND slot_id = ?", sessionID, slotID).
 			First(&existing).Error; err != nil {
@@ -716,7 +716,7 @@ func ReorderSlot(ctx context.Context, db *gorm.DB,
 			}
 		}
 		newList, _ := json.Marshal(newListIndexOrder)
-		return tx.Model(&orm.PluginSlotOrder{}).
+		return tx.Model(&orm.WorkflowSlotOrder{}).
 			Where("session_id = ? AND slot_id = ?", sessionID, slotID).
 			Updates(map[string]any{
 				"order_list":    newList,
@@ -733,7 +733,7 @@ func HideSlotItem(ctx context.Context, db *gorm.DB, sessionID, slotID string, li
 	now := time.Now().UTC()
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Deselect all revisions at this list_index.
-		if err := tx.Model(&orm.PluginSlotRevision{}).
+		if err := tx.Model(&orm.WorkflowSlotRevision{}).
 			Where("session_id = ? AND slot_id = ? AND list_index = ?", sessionID, slotID, listIndex).
 			Updates(map[string]any{"selected": false}).Error; err != nil {
 			return err
@@ -751,13 +751,13 @@ func HideSlotItem(ctx context.Context, db *gorm.DB, sessionID, slotID string, li
 			seq    int
 		}
 		var refs []artifactRef
-		var revRows []orm.PluginSlotRevision
+		var revRows []orm.WorkflowSlotRevision
 		if err := tx.Where("session_id = ? AND slot_id = ? AND list_index = ?", sessionID, slotID, listIndex).
 			Find(&revRows).Error; err != nil {
 			return err
 		}
 		// Build task_id lookup for this session.
-		var stepRows []orm.PluginSessionStep
+		var stepRows []orm.WorkflowSessionStep
 		if err := tx.Where("session_id = ?", sessionID).Find(&stepRows).Error; err != nil {
 			return err
 		}
@@ -784,7 +784,7 @@ func HideSlotItem(ctx context.Context, db *gorm.DB, sessionID, slotID string, li
 		}
 
 		// Remove list_index from order_list.
-		var existing orm.PluginSlotOrder
+		var existing orm.WorkflowSlotOrder
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("session_id = ? AND slot_id = ?", sessionID, slotID).
 			First(&existing).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -800,7 +800,7 @@ func HideSlotItem(ctx context.Context, db *gorm.DB, sessionID, slotID string, li
 				}
 			}
 			newList, _ := json.Marshal(filtered)
-			if err := tx.Model(&orm.PluginSlotOrder{}).
+			if err := tx.Model(&orm.WorkflowSlotOrder{}).
 				Where("session_id = ? AND slot_id = ?", sessionID, slotID).
 				Updates(map[string]any{
 					"order_list":    newList,
@@ -858,7 +858,7 @@ func ListIndexToSortOrder(ctx context.Context, db *gorm.DB, sessionID, slotID st
 
 // LoadSlotVersions returns all revisions for (sessionID, slotID, listIndex) ordered by revision ASC.
 func LoadSlotVersions(ctx context.Context, db *gorm.DB,
-	sessionID, slotID string, listIndex *int) ([]orm.PluginSlotRevision, error) {
+	sessionID, slotID string, listIndex *int) ([]orm.WorkflowSlotRevision, error) {
 	q := db.WithContext(ctx).
 		Where("session_id = ? AND slot_id = ?", sessionID, slotID)
 	if listIndex == nil {
@@ -866,7 +866,7 @@ func LoadSlotVersions(ctx context.Context, db *gorm.DB,
 	} else {
 		q = q.Where("list_index = ?", *listIndex)
 	}
-	var rows []orm.PluginSlotRevision
+	var rows []orm.WorkflowSlotRevision
 	if err := q.Order("revision ASC").Find(&rows).Error; err != nil {
 		return nil, err
 	}
@@ -878,7 +878,7 @@ func LoadSlotVersions(ctx context.Context, db *gorm.DB,
 // No new revision row is created.
 func RollbackSlotRevision(ctx context.Context, db *gorm.DB,
 	sessionID, slotID string, listIndex *int,
-	targetRevision int, _ string) (*orm.PluginSlotRevision, error) {
+	targetRevision int, _ string) (*orm.WorkflowSlotRevision, error) {
 
 	// Load the target revision to verify it exists.
 	tq := db.WithContext(ctx).
@@ -888,14 +888,14 @@ func RollbackSlotRevision(ctx context.Context, db *gorm.DB,
 	} else {
 		tq = tq.Where("list_index = ?", *listIndex)
 	}
-	var target orm.PluginSlotRevision
+	var target orm.WorkflowSlotRevision
 	if err := tq.First(&target).Error; err != nil {
 		return nil, err
 	}
 
 	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Deselect current selected revision.
-		deselectQ := tx.Model(&orm.PluginSlotRevision{}).
+		deselectQ := tx.Model(&orm.WorkflowSlotRevision{}).
 			Where("session_id = ? AND slot_id = ? AND selected = ?", sessionID, slotID, true)
 		if listIndex == nil {
 			deselectQ = deselectQ.Where("list_index IS NULL")
@@ -907,7 +907,7 @@ func RollbackSlotRevision(ctx context.Context, db *gorm.DB,
 		}
 
 		// Select the target revision.
-		return tx.Model(&orm.PluginSlotRevision{}).
+		return tx.Model(&orm.WorkflowSlotRevision{}).
 			Where("id = ?", target.ID).
 			Update("selected", true).Error
 	}); err != nil {
@@ -921,8 +921,8 @@ func RollbackSlotRevision(ctx context.Context, db *gorm.DB,
 // LoadSelectedSlots returns the currently-selected slot revisions for a session,
 // ordered by (slot_id, sort_order) derived from plugin_slot_order.order_list.
 // Falls back to list_index ASC for slots that have no order row.
-func LoadSelectedSlots(ctx context.Context, db *gorm.DB, sessionID string) ([]orm.PluginSlotRevision, error) {
-	var rows []orm.PluginSlotRevision
+func LoadSelectedSlots(ctx context.Context, db *gorm.DB, sessionID string) ([]orm.WorkflowSlotRevision, error) {
+	var rows []orm.WorkflowSlotRevision
 	if err := db.WithContext(ctx).
 		Where("session_id = ? AND selected = ?", sessionID, true).
 		Order("slot_id ASC, list_index ASC").
@@ -932,9 +932,9 @@ func LoadSelectedSlots(ctx context.Context, db *gorm.DB, sessionID string) ([]or
 	return orderSlotRevisions(ctx, db, sessionID, rows), nil
 }
 
-func orderSlotRevisions(ctx context.Context, db *gorm.DB, sessionID string, rows []orm.PluginSlotRevision) []orm.PluginSlotRevision {
+func orderSlotRevisions(ctx context.Context, db *gorm.DB, sessionID string, rows []orm.WorkflowSlotRevision) []orm.WorkflowSlotRevision {
 	// Re-sort each slot's items by their position in plugin_slot_order.order_list.
-	var orders []orm.PluginSlotOrder
+	var orders []orm.WorkflowSlotOrder
 	if err := db.WithContext(ctx).Where("session_id = ?", sessionID).Find(&orders).Error; err != nil {
 		// On error fall back to the already-loaded list_index order.
 		return rows
@@ -965,7 +965,7 @@ func orderSlotRevisions(ctx context.Context, db *gorm.DB, sessionID string, rows
 	// Group rows by slot_id, re-order each group, then flatten.
 	type group struct {
 		slotID string
-		items  []orm.PluginSlotRevision
+		items  []orm.WorkflowSlotRevision
 	}
 	var groups []group
 	slotIdx := map[string]int{}
@@ -974,7 +974,7 @@ func orderSlotRevisions(ctx context.Context, db *gorm.DB, sessionID string, rows
 			groups[idx].items = append(groups[idx].items, row)
 		} else {
 			slotIdx[row.SlotID] = len(groups)
-			groups = append(groups, group{slotID: row.SlotID, items: []orm.PluginSlotRevision{row}})
+			groups = append(groups, group{slotID: row.SlotID, items: []orm.WorkflowSlotRevision{row}})
 		}
 	}
 	for g := range groups {
@@ -999,7 +999,7 @@ func orderSlotRevisions(ctx context.Context, db *gorm.DB, sessionID string, rows
 			return li < lj
 		})
 	}
-	result := make([]orm.PluginSlotRevision, 0, len(rows))
+	result := make([]orm.WorkflowSlotRevision, 0, len(rows))
 	for _, g := range groups {
 		result = append(result, g.items...)
 	}
@@ -1009,13 +1009,13 @@ func orderSlotRevisions(ctx context.Context, db *gorm.DB, sessionID string, rows
 // LoadDisplaySlots returns the selected slot revisions plus the latest revision written
 // by each step attempt. The selected rows still define the current artifact value; the
 // extra step-scoped rows let the UI render each step tab as it looked when that step ran.
-func LoadDisplaySlots(ctx context.Context, db *gorm.DB, sessionID string) ([]orm.PluginSlotRevision, error) {
+func LoadDisplaySlots(ctx context.Context, db *gorm.DB, sessionID string) ([]orm.WorkflowSlotRevision, error) {
 	selected, err := LoadSelectedSlots(ctx, db, sessionID)
 	if err != nil {
 		return nil, err
 	}
 
-	var revisions []orm.PluginSlotRevision
+	var revisions []orm.WorkflowSlotRevision
 	if err := db.WithContext(ctx).
 		Where("session_id = ?", sessionID).
 		Order("step_id ASC, slot_id ASC, list_index ASC, attempt DESC, revision DESC").
@@ -1023,7 +1023,7 @@ func LoadDisplaySlots(ctx context.Context, db *gorm.DB, sessionID string) ([]orm
 		return nil, err
 	}
 
-	result := make([]orm.PluginSlotRevision, 0, len(selected)+len(revisions))
+	result := make([]orm.WorkflowSlotRevision, 0, len(selected)+len(revisions))
 	seenIDs := make(map[string]bool, len(selected)+len(revisions))
 	seenDisplayItem := map[string]bool{}
 	for _, row := range selected {
@@ -1051,7 +1051,7 @@ func LoadDisplaySlots(ctx context.Context, db *gorm.DB, sessionID string) ([]orm
 	return orderSlotRevisions(ctx, db, sessionID, result), nil
 }
 
-func slotDisplayKey(row orm.PluginSlotRevision) string {
+func slotDisplayKey(row orm.WorkflowSlotRevision) string {
 	key := row.StepID + "|" + row.SlotID + "|"
 	if row.ListIndex != nil {
 		key += fmt.Sprint(*row.ListIndex)
@@ -1104,8 +1104,8 @@ func UpdateSelectedHumanArtifactValue(
 	ctx context.Context, db *gorm.DB,
 	sessionID, slotID string, listIndex *int,
 	contentType string, value json.RawMessage, caption *string,
-) (*orm.PluginSlotRevision, bool, error) {
-	var selected orm.PluginSlotRevision
+) (*orm.WorkflowSlotRevision, bool, error) {
+	var selected orm.WorkflowSlotRevision
 	q := db.WithContext(ctx).Where("session_id = ? AND slot_id = ? AND selected = ?", sessionID, slotID, true)
 	if listIndex == nil {
 		q = q.Where("list_index IS NULL")
@@ -1126,7 +1126,7 @@ func UpdateSelectedHumanArtifactValue(
 	if caption != nil {
 		updates["caption"] = caption
 	}
-	if err := db.WithContext(ctx).Model(&orm.PluginHumanArtifact{}).
+	if err := db.WithContext(ctx).Model(&orm.WorkflowHumanArtifact{}).
 		Where("id = ?", *selected.HumanArtifactID).
 		Updates(updates).Error; err != nil {
 		return nil, false, err
@@ -1145,11 +1145,11 @@ func WriteSlotRevisionWithHumanArtifact(
 	sessionID, slotID, artifactKey, stepID string, attempt int,
 	cardinality string, listIndex *int,
 	contentType string, value json.RawMessage, caption *string,
-) (*orm.PluginSlotRevision, error) {
+) (*orm.WorkflowSlotRevision, error) {
 
 	now := time.Now().UTC()
 	artifactID := "pha_" + common.GenerateID()
-	humanArt := &orm.PluginHumanArtifact{
+	humanArt := &orm.WorkflowHumanArtifact{
 		ID:          artifactID,
 		SessionID:   sessionID,
 		Slot:        artifactKey,
@@ -1168,7 +1168,7 @@ func WriteSlotRevisionWithHumanArtifact(
 		}
 		var maxRev int
 		if cardinality != "list" || listIndex != nil {
-			q := tx.Model(&orm.PluginSlotRevision{}).
+			q := tx.Model(&orm.WorkflowSlotRevision{}).
 				Select("COALESCE(MAX(revision), 0)").
 				Where("session_id = ? AND slot_id = ?", sessionID, slotID)
 			if cardinality == "list" && listIndex != nil {
@@ -1182,14 +1182,14 @@ func WriteSlotRevisionWithHumanArtifact(
 		}
 		revision = maxRev + 1
 		if cardinality == "single" {
-			if err := tx.Model(&orm.PluginSlotRevision{}).
+			if err := tx.Model(&orm.WorkflowSlotRevision{}).
 				Where("session_id = ? AND slot_id = ? AND selected = ?", sessionID, slotID, true).
 				Update("selected", false).Error; err != nil {
 				return err
 			}
 		} else {
 			if listIndex != nil {
-				if err := tx.Model(&orm.PluginSlotRevision{}).
+				if err := tx.Model(&orm.WorkflowSlotRevision{}).
 					Where("session_id = ? AND slot_id = ? AND list_index = ? AND selected = ?",
 						sessionID, slotID, *listIndex, true).
 					Update("selected", false).Error; err != nil {
@@ -1198,7 +1198,7 @@ func WriteSlotRevisionWithHumanArtifact(
 				finalListIndex = listIndex
 			} else {
 				var maxIdx int
-				if err := tx.Model(&orm.PluginSlotRevision{}).
+				if err := tx.Model(&orm.WorkflowSlotRevision{}).
 					Select("COALESCE(MAX(list_index), -1)").
 					Where("session_id = ? AND slot_id = ?", sessionID, slotID).
 					Scan(&maxIdx).Error; err != nil {
@@ -1208,7 +1208,7 @@ func WriteSlotRevisionWithHumanArtifact(
 				finalListIndex = &idx
 			}
 		}
-		row := &orm.PluginSlotRevision{
+		row := &orm.WorkflowSlotRevision{
 			ID:              "psr_" + common.GenerateID(),
 			SessionID:       sessionID,
 			SlotID:          slotID,
@@ -1235,7 +1235,7 @@ func WriteSlotRevisionWithHumanArtifact(
 		return nil, err
 	}
 
-	var result orm.PluginSlotRevision
+	var result orm.WorkflowSlotRevision
 	err := db.WithContext(ctx).
 		Where("session_id = ? AND slot_id = ? AND revision = ?", sessionID, slotID, revision).
 		First(&result).Error

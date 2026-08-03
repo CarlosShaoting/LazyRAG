@@ -1,4 +1,4 @@
-package plugin
+package workflow
 
 import (
 	"bytes"
@@ -12,8 +12,8 @@ import (
 
 	"github.com/gorilla/mux"
 	"lazymind/core/common/orm"
-	"lazymind/core/plugin/graphengine"
 	"lazymind/core/store"
+	"lazymind/core/workflow/graphengine"
 )
 
 func TestAttemptInputBindingIDFitsSchema(t *testing.T) {
@@ -31,10 +31,10 @@ func setupBatchTransitionSession(t *testing.T) (*orm.DB, string) {
 	db := newTestDB(t)
 	if err := db.AutoMigrate(
 		&orm.Conversation{},
-		&orm.PluginRevision{},
-		&orm.PluginAttemptInputBinding{},
-		&orm.PluginRouteDecision{},
-		&orm.PluginTransitionCommand{},
+		&orm.WorkflowRevision{},
+		&orm.WorkflowAttemptInputBinding{},
+		&orm.WorkflowRouteDecision{},
+		&orm.WorkflowTransitionCommand{},
 	); err != nil {
 		t.Fatalf("migrate batch transition tables: %v", err)
 	}
@@ -57,20 +57,20 @@ func setupBatchTransitionSession(t *testing.T) (*orm.DB, string) {
 		},
 	}
 	now := time.Now().UTC()
-	if err := db.Create(&orm.PluginRevision{
-		ID: "batch-revision", PluginResourceID: "batch-resource", RevisionNo: 1,
+	if err := db.Create(&orm.WorkflowRevision{
+		ID: "batch-revision", WorkflowResourceID: "batch-resource", RevisionNo: 1,
 		TreeHash: "batch-tree", CompiledGraph: graph.JSON(), GraphHash: graph.GraphHash,
 		GraphSchemaVersion: graph.SchemaVersion, CreatedAt: now,
 	}).Error; err != nil {
 		t.Fatalf("create compiled revision: %v", err)
 	}
 	if _, err := CreateSession(context.Background(), db.DB, CreateSessionInput{
-		SessionID: "batch-session", ConversationID: "batch-conversation", PluginID: "batch-plugin",
-		PluginRevisionID: "batch-revision", CreateUserID: "batch-user",
+		SessionID: "batch-session", ConversationID: "batch-conversation", WorkflowID: "batch-plugin",
+		WorkflowRevisionID: "batch-revision", CreateUserID: "batch-user",
 	}); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	if err := db.Model(&orm.PluginSession{}).Where("id = ?", "batch-session").Updates(map[string]any{
+	if err := db.Model(&orm.WorkflowSession{}).Where("id = ?", "batch-session").Updates(map[string]any{
 		"state_version": 4, "graph_hash": graph.GraphHash, "graph_schema_version": graph.SchemaVersion,
 	}).Error; err != nil {
 		t.Fatalf("pin graph: %v", err)
@@ -99,11 +99,11 @@ func runBatchTransition(t *testing.T, db *orm.DB, graphHash, operation string, t
 	req := httptest.NewRequest(http.MethodPost, "/internal/plugin-sessions/batch-session:transition", bytes.NewReader(body))
 	req = mux.SetURLVars(req, map[string]string{"session_id": "batch-session"})
 	w := httptest.NewRecorder()
-	TransitionPluginSession(w, req)
+	TransitionWorkflowSession(w, req)
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		var live int64
-		_ = db.Model(&orm.PluginRunOutbox{}).
+		_ = db.Model(&orm.WorkflowRunOutbox{}).
 			Where("status IN ?", []string{"pending", "dispatching"}).Count(&live).Error
 		if live == 0 {
 			break
@@ -127,7 +127,7 @@ func TestBatchTransitionAcceptsAllReadyTargetsAtomically(t *testing.T) {
 	if w.Code != http.StatusOK || data["accepted"] != true {
 		t.Fatalf("batch rejected: status=%d body=%s", w.Code, w.Body.String())
 	}
-	var session orm.PluginSession
+	var session orm.WorkflowSession
 	if err := db.Where("id = ?", "batch-session").First(&session).Error; err != nil {
 		t.Fatalf("load session: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestBatchTransitionAcceptsAllReadyTargetsAtomically(t *testing.T) {
 		t.Fatalf("state version=%d, want one increment to 5", session.StateVersion)
 	}
 	var attempts int64
-	if err := db.Model(&orm.PluginSessionStep{}).Where("session_id = ?", session.ID).Count(&attempts).Error; err != nil {
+	if err := db.Model(&orm.WorkflowSessionStep{}).Where("session_id = ?", session.ID).Count(&attempts).Error; err != nil {
 		t.Fatalf("count attempts: %v", err)
 	}
 	if attempts != 2 {
@@ -160,11 +160,11 @@ func TestBatchTransitionRejectsWholeBatchWhenOneTargetBlocked(t *testing.T) {
 		t.Fatalf("error=%#v", errorData)
 	}
 	var attempts int64
-	_ = db.Model(&orm.PluginSessionStep{}).Where("session_id = ?", "batch-session").Count(&attempts).Error
+	_ = db.Model(&orm.WorkflowSessionStep{}).Where("session_id = ?", "batch-session").Count(&attempts).Error
 	if attempts != 0 {
 		t.Fatalf("partial batch attempts persisted: %d", attempts)
 	}
-	var session orm.PluginSession
+	var session orm.WorkflowSession
 	_ = db.Where("id = ?", "batch-session").First(&session).Error
 	if session.StateVersion != 4 {
 		t.Fatalf("rejected batch changed state version to %d", session.StateVersion)
@@ -183,7 +183,7 @@ func TestBatchTransitionDoesNotAllowRetryOrRewind(t *testing.T) {
 				t.Fatalf("%s batch status=%d body=%s", operation, w.Code, w.Body.String())
 			}
 			var attempts int64
-			_ = db.Model(&orm.PluginSessionStep{}).
+			_ = db.Model(&orm.WorkflowSessionStep{}).
 				Where("session_id = ?", "batch-session").Count(&attempts).Error
 			if attempts != 0 {
 				t.Fatalf("%s batch persisted %d attempts", operation, attempts)
@@ -206,7 +206,7 @@ func TestResolveAdvanceOperationFromEffectiveAttempt(t *testing.T) {
 	ctx := context.Background()
 	if _, err := CreateSession(ctx, db.DB, CreateSessionInput{
 		SessionID: "advance-operation-session", ConversationID: "advance-operation-conversation",
-		PluginID: "writer-plugin",
+		WorkflowID: "writer-plugin",
 	}); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestResolveAdvanceOperationFromEffectiveAttempt(t *testing.T) {
 		if err != nil {
 			t.Fatalf("create %s: %v", stepID, err)
 		}
-		if err := db.Model(&orm.PluginSessionStep{}).Where("id = ?", step.ID).Update("status", status).Error; err != nil {
+		if err := db.Model(&orm.WorkflowSessionStep{}).Where("id = ?", step.ID).Update("status", status).Error; err != nil {
 			t.Fatalf("set %s status: %v", stepID, err)
 		}
 	}

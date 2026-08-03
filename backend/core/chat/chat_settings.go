@@ -33,8 +33,8 @@ func GetChatSettings(w http.ResponseWriter, r *http.Request) {
 			// Return defaults.
 			s = orm.UserChatSettings{
 				UserID:         userID,
-				EnablePlugin:   true,
-				PluginMode:     "dynamic",
+				EnableWorkflow: true,
+				WorkflowMode:   "dynamic",
 				EnableSubagent: true,
 			}
 		} else {
@@ -43,16 +43,16 @@ func GetChatSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	common.ReplyOK(w, map[string]any{
-		"enable_plugin":   s.EnablePlugin,
-		"plugin_mode":     s.PluginMode,
+		"enable_plugin":   s.EnableWorkflow,
+		"plugin_mode":     s.WorkflowMode,
 		"enable_subagent": s.EnableSubagent,
 		"updated_at":      s.UpdatedAt,
 	})
 }
 
-// PatchConversationPluginSettings updates conversation-level plugin/subagent overrides.
+// PatchConversationWorkflowSettings updates conversation-level plugin/subagent overrides.
 // Supports enable_plugin, plugin_mode, enable_subagent; null clears back to global default.
-func PatchConversationPluginSettings(w http.ResponseWriter, r *http.Request) {
+func PatchConversationWorkflowSettings(w http.ResponseWriter, r *http.Request) {
 	userID := store.UserID(r)
 	if userID == "" {
 		common.ReplyErr(w, "unauthorized", http.StatusUnauthorized)
@@ -108,7 +108,7 @@ func PatchConversationPluginSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if enabled, exists := updates["enable_plugin"]; exists && enabled == false {
 		var workflowCount int64
-		if err := db.WithContext(r.Context()).Model(&orm.PluginSession{}).
+		if err := db.WithContext(r.Context()).Model(&orm.WorkflowSession{}).
 			Where("conversation_id = ? AND dismissed = false", convID).
 			Count(&workflowCount).Error; err != nil {
 			common.ReplyErr(w, err.Error(), http.StatusInternalServerError)
@@ -169,8 +169,8 @@ func PatchChatSettings(w http.ResponseWriter, r *http.Request) {
 	// Upsert: insert defaults first if not present, then apply updates.
 	defaults := orm.UserChatSettings{
 		UserID:         userID,
-		EnablePlugin:   true,
-		PluginMode:     "dynamic",
+		EnableWorkflow: true,
+		WorkflowMode:   "dynamic",
 		EnableSubagent: true,
 		UpdatedAt:      time.Now().UTC(),
 	}

@@ -1,4 +1,4 @@
-package plugin
+package workflow
 
 import (
 	"context"
@@ -19,12 +19,12 @@ func newTestDB(t *testing.T) *orm.DB {
 		&orm.SubAgentTask{},
 		&orm.SubAgentStep{},
 		&orm.SubAgentArtifact{},
-		&orm.PluginSession{},
-		&orm.PluginSessionStep{},
-		&orm.PluginSlotRevision{},
-		&orm.PluginRunOutbox{},
-		&orm.PluginSlotOrder{},
-		&orm.PluginStepIntent{},
+		&orm.WorkflowSession{},
+		&orm.WorkflowSessionStep{},
+		&orm.WorkflowSlotRevision{},
+		&orm.WorkflowRunOutbox{},
+		&orm.WorkflowSlotOrder{},
+		&orm.WorkflowStepIntent{},
 	); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestCreateSession_Basic(t *testing.T) {
 	s, err := CreateSession(ctx, db.DB, CreateSessionInput{
 		SessionID:      "ps-1",
 		ConversationID: "conv-1",
-		PluginID:       "image-plugin",
+		WorkflowID:     "image-plugin",
 		CurrentStepID:  "analyze_subject",
 		CreateUserID:   "user-1",
 	})
@@ -52,8 +52,8 @@ func TestCreateSession_Basic(t *testing.T) {
 	if s.Status != SessionStatusActive {
 		t.Fatalf("expected active, got %s", s.Status)
 	}
-	if s.PluginID != "image-plugin" {
-		t.Fatalf("expected image-plugin, got %s", s.PluginID)
+	if s.WorkflowID != "image-plugin" {
+		t.Fatalf("expected image-plugin, got %s", s.WorkflowID)
 	}
 }
 
@@ -62,14 +62,14 @@ func TestCreateSession_RejectsSecondActiveSession(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := CreateSession(ctx, db.DB, CreateSessionInput{
-		SessionID: "ps-1", ConversationID: "conv-1", PluginID: "image-plugin",
+		SessionID: "ps-1", ConversationID: "conv-1", WorkflowID: "image-plugin",
 	}); err != nil {
 		t.Fatalf("first session: %v", err)
 	}
 
 	// A second active session on the same conversation must be rejected.
 	_, err := CreateSession(ctx, db.DB, CreateSessionInput{
-		SessionID: "ps-2", ConversationID: "conv-1", PluginID: "image-plugin",
+		SessionID: "ps-2", ConversationID: "conv-1", WorkflowID: "image-plugin",
 	})
 	if err == nil {
 		t.Fatal("expected error for duplicate active session, got nil")
@@ -81,7 +81,7 @@ func TestCreateSession_AllowsNewSessionAfterCompletion(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := CreateSession(ctx, db.DB, CreateSessionInput{
-		SessionID: "ps-1", ConversationID: "conv-1", PluginID: "image-plugin",
+		SessionID: "ps-1", ConversationID: "conv-1", WorkflowID: "image-plugin",
 	}); err != nil {
 		t.Fatalf("first session: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestCreateSession_AllowsNewSessionAfterCompletion(t *testing.T) {
 
 	// A new session is allowed once the previous one is completed.
 	_, err := CreateSession(ctx, db.DB, CreateSessionInput{
-		SessionID: "ps-2", ConversationID: "conv-1", PluginID: "image-plugin",
+		SessionID: "ps-2", ConversationID: "conv-1", WorkflowID: "image-plugin",
 	})
 	if err != nil {
 		t.Fatalf("second session after completion: %v", err)
@@ -112,7 +112,7 @@ func TestGetActiveSession(t *testing.T) {
 	}
 
 	if _, err := CreateSession(ctx, db.DB, CreateSessionInput{
-		SessionID: "ps-1", ConversationID: "conv-1", PluginID: "image-plugin",
+		SessionID: "ps-1", ConversationID: "conv-1", WorkflowID: "image-plugin",
 	}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestUpdateSessionCurrentStep(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := CreateSession(ctx, db.DB, CreateSessionInput{
-		SessionID: "ps-1", ConversationID: "conv-1", PluginID: "image-plugin",
+		SessionID: "ps-1", ConversationID: "conv-1", WorkflowID: "image-plugin",
 		CurrentStepID: "analyze_subject",
 	}); err != nil {
 		t.Fatalf("create: %v", err)
@@ -159,7 +159,7 @@ func TestCreateSessionStep_AttemptIncrement(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := CreateSession(ctx, db.DB, CreateSessionInput{
-		SessionID: "ps-1", ConversationID: "conv-1", PluginID: "image-plugin",
+		SessionID: "ps-1", ConversationID: "conv-1", WorkflowID: "image-plugin",
 	}); err != nil {
 		t.Fatalf("session: %v", err)
 	}
@@ -186,7 +186,7 @@ func TestUpdateStepStatus(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := CreateSession(ctx, db.DB, CreateSessionInput{
-		SessionID: "ps-1", ConversationID: "conv-1", PluginID: "image-plugin",
+		SessionID: "ps-1", ConversationID: "conv-1", WorkflowID: "image-plugin",
 	}); err != nil {
 		t.Fatalf("session: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestGetLatestStep_ReturnsHighestAttempt(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := CreateSession(ctx, db.DB, CreateSessionInput{
-		SessionID: "ps-1", ConversationID: "conv-1", PluginID: "image-plugin",
+		SessionID: "ps-1", ConversationID: "conv-1", WorkflowID: "image-plugin",
 	}); err != nil {
 		t.Fatalf("session: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestListSteps_OrderedByCreation(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := CreateSession(ctx, db.DB, CreateSessionInput{
-		SessionID: "ps-1", ConversationID: "conv-1", PluginID: "image-plugin",
+		SessionID: "ps-1", ConversationID: "conv-1", WorkflowID: "image-plugin",
 	}); err != nil {
 		t.Fatalf("session: %v", err)
 	}
@@ -283,7 +283,7 @@ func TestWriteSlotRevision_Single_DeselectsPrevious(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := CreateSession(ctx, db.DB, CreateSessionInput{
-		SessionID: "ps-1", ConversationID: "conv-1", PluginID: "image-plugin",
+		SessionID: "ps-1", ConversationID: "conv-1", WorkflowID: "image-plugin",
 	}); err != nil {
 		t.Fatalf("session: %v", err)
 	}
@@ -321,7 +321,7 @@ func TestWriteSlotRevision_List_AppendsAll(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := CreateSession(ctx, db.DB, CreateSessionInput{
-		SessionID: "ps-1", ConversationID: "conv-1", PluginID: "image-plugin",
+		SessionID: "ps-1", ConversationID: "conv-1", WorkflowID: "image-plugin",
 	}); err != nil {
 		t.Fatalf("session: %v", err)
 	}
@@ -357,7 +357,7 @@ func TestWriteSlotRevision_SingleAndList_Coexist(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := CreateSession(ctx, db.DB, CreateSessionInput{
-		SessionID: "ps-1", ConversationID: "conv-1", PluginID: "image-plugin",
+		SessionID: "ps-1", ConversationID: "conv-1", WorkflowID: "image-plugin",
 	}); err != nil {
 		t.Fatalf("session: %v", err)
 	}
@@ -389,7 +389,7 @@ func TestWriteSlotRevision_PartialRetry_ReplacesTargetIndex(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := CreateSession(ctx, db.DB, CreateSessionInput{
-		SessionID: "ps-partial", ConversationID: "conv-1", PluginID: "image-plugin",
+		SessionID: "ps-partial", ConversationID: "conv-1", WorkflowID: "image-plugin",
 	}); err != nil {
 		t.Fatalf("session: %v", err)
 	}
@@ -449,7 +449,7 @@ func TestLoadSelectedSlots_EmptySession(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := CreateSession(ctx, db.DB, CreateSessionInput{
-		SessionID: "ps-empty", ConversationID: "conv-1", PluginID: "image-plugin",
+		SessionID: "ps-empty", ConversationID: "conv-1", WorkflowID: "image-plugin",
 	}); err != nil {
 		t.Fatalf("session: %v", err)
 	}
@@ -468,7 +468,7 @@ func TestLoadDisplaySlots_IncludesLatestRevisionPerStep(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := CreateSession(ctx, db.DB, CreateSessionInput{
-		SessionID: "ps-display", ConversationID: "conv-1", PluginID: "writer-plugin",
+		SessionID: "ps-display", ConversationID: "conv-1", WorkflowID: "writer-plugin",
 	}); err != nil {
 		t.Fatalf("session: %v", err)
 	}
@@ -519,7 +519,7 @@ func TestLoadDisplaySlots_IncludesLatestRevisionPerStep(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadDisplaySlots: %v", err)
 	}
-	byStep := map[string]orm.PluginSlotRevision{}
+	byStep := map[string]orm.WorkflowSlotRevision{}
 	for _, row := range display {
 		if row.SlotID == "writing_context_slot" {
 			byStep[row.StepID] = row

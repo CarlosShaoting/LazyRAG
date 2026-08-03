@@ -1,4 +1,4 @@
-package plugin
+package workflow
 
 import (
 	"encoding/json"
@@ -12,9 +12,9 @@ import (
 	"lazymind/core/store"
 )
 
-func GetPluginGenerationAnalysis(w http.ResponseWriter, r *http.Request) {
+func GetWorkflowGenerationAnalysis(w http.ResponseWriter, r *http.Request) {
 	draftID, userID := common.PathVar(r, "draft_id"), common.UserID(r)
-	var row orm.PluginGenerationAnalysis
+	var row orm.WorkflowGenerationAnalysis
 	if err := store.DB().Where("draft_id = ? AND user_id = ?", draftID, userID).Order("created_at DESC").First(&row).Error; err != nil {
 		common.ReplyErr(w, "generation analysis not found", http.StatusNotFound)
 		return
@@ -27,8 +27,8 @@ func GetPluginGenerationAnalysis(w http.ResponseWriter, r *http.Request) {
 	common.ReplyOK(w, map[string]any{"analysis_id": row.ID, "status": row.Status, "verdict_code": row.VerdictCode, "message": row.VerdictMessage, "source_skill_revision_id": row.SourceSkillRevisionID, "source_skill_revision_no": row.SourceSkillRevisionNo, "source_skill_tree_hash": row.SourceSkillTreeHash, "candidates": candidates, "selected_candidate_id": row.SelectedCandidateID, "coverage": coverage, "tool_mappings": tools, "scripts": scripts})
 }
 
-func GetPluginRepairRun(w http.ResponseWriter, r *http.Request) {
-	var row orm.PluginRepairRun
+func GetWorkflowRepairRun(w http.ResponseWriter, r *http.Request) {
+	var row orm.WorkflowRepairRun
 	if store.DB().Where("id=? AND draft_id=? AND user_id=?", common.PathVar(r, "repair_id"), common.PathVar(r, "draft_id"), common.UserID(r)).First(&row).Error != nil {
 		common.ReplyErr(w, "repair run not found", http.StatusNotFound)
 		return
@@ -40,8 +40,8 @@ func GetPluginRepairRun(w http.ResponseWriter, r *http.Request) {
 	common.ReplyOK(w, map[string]any{"repair_id": row.ID, "status": row.Status, "target": row.Target, "mode": row.Mode, "draft_version_before": row.DraftVersionBefore, "source_skill_revision_id": row.SourceSkillRevisionID, "diagnostics_before": before, "diagnostics_after": after, "changes": changes, "created_at": row.CreatedAt, "updated_at": row.UpdatedAt})
 }
 
-func PreviewPluginRepair(w http.ResponseWriter, r *http.Request) {
-	var draft orm.PluginDraft
+func PreviewWorkflowRepair(w http.ResponseWriter, r *http.Request) {
+	var draft orm.WorkflowDraft
 	if store.DB().Where("id=? AND created_by=?", common.PathVar(r, "draft_id"), common.UserID(r)).First(&draft).Error != nil {
 		common.ReplyErr(w, "not found", http.StatusNotFound)
 		return
@@ -58,7 +58,7 @@ func PreviewPluginRepair(w http.ResponseWriter, r *http.Request) {
 		body.Mode = "plugin_local"
 	}
 	diagnostics := diagnosticsForTarget(
-		diagnosePlugin(draft.PluginYAMLContent, draft.StateYAMLContent, draft.ScenarioContent, draft.ScriptsContent),
+		diagnoseWorkflow(draft.WorkflowYAMLContent, draft.StateYAMLContent, draft.ScenarioContent, draft.ScriptsContent),
 		body.Target,
 	)
 	if diagnostics == nil {
@@ -68,7 +68,7 @@ func PreviewPluginRepair(w http.ResponseWriter, r *http.Request) {
 	common.ReplyOK(w, map[string]any{"target": body.Target, "mode": body.Mode, "draft_version": draft.Version, "diagnostics": diagnostics, "planned_files": files[body.Target]})
 }
 
-func ConfirmPluginWorkflow(w http.ResponseWriter, r *http.Request) {
+func ConfirmWorkflowWorkflow(w http.ResponseWriter, r *http.Request) {
 	draftID, userID := common.PathVar(r, "draft_id"), common.UserID(r)
 	var body struct {
 		AnalysisID            string `json:"analysis_id"`
@@ -81,7 +81,7 @@ func ConfirmPluginWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	db := store.DB()
-	var draft orm.PluginDraft
+	var draft orm.WorkflowDraft
 	if db.Where("id=? AND created_by=?", draftID, userID).First(&draft).Error != nil {
 		common.ReplyErr(w, "not found", http.StatusNotFound)
 		return
@@ -90,7 +90,7 @@ func ConfirmPluginWorkflow(w http.ResponseWriter, r *http.Request) {
 		common.ReplyErr(w, "workflow confirmation stale", http.StatusConflict)
 		return
 	}
-	var analysis orm.PluginGenerationAnalysis
+	var analysis orm.WorkflowGenerationAnalysis
 	if db.Where("id=? AND draft_id=? AND user_id=?", body.AnalysisID, draftID, userID).First(&analysis).Error != nil {
 		common.ReplyErr(w, "generation analysis not found", http.StatusNotFound)
 		return
@@ -118,7 +118,7 @@ func ConfirmPluginWorkflow(w http.ResponseWriter, r *http.Request) {
 	selectedJSON, _ := json.Marshal(map[string]any{"candidate": selected, "tool_mappings": toolMappings, "scripts": scriptReport})
 	var skillPackage map[string]any
 	if strings.HasPrefix(analysis.SourceSkillID, builtinSkillIDPrefix) {
-		snapshot, loadErr := loadPluginBuiltinSkillPackage(analysis.SourceSkillID)
+		snapshot, loadErr := loadWorkflowBuiltinSkillPackage(analysis.SourceSkillID)
 		if loadErr != nil || snapshot.TreeHash != analysis.SourceSkillTreeHash {
 			common.ReplyErr(w, "workflow confirmation stale", http.StatusConflict)
 			return
@@ -126,7 +126,7 @@ func ConfirmPluginWorkflow(w http.ResponseWriter, r *http.Request) {
 		b, _ := json.Marshal(snapshot)
 		_ = json.Unmarshal(b, &skillPackage)
 	} else {
-		snapshot, loadErr := loadPluginSourceSkillRevision(r.Context(), db, userID, analysis.SourceSkillID, analysis.SourceSkillRevisionID)
+		snapshot, loadErr := loadWorkflowSourceSkillRevision(r.Context(), db, userID, analysis.SourceSkillID, analysis.SourceSkillRevisionID)
 		if loadErr != nil || snapshot.TreeHash != analysis.SourceSkillTreeHash {
 			common.ReplyErr(w, "workflow confirmation stale", http.StatusConflict)
 			return
@@ -143,7 +143,7 @@ func ConfirmPluginWorkflow(w http.ResponseWriter, r *http.Request) {
 		common.ReplyErr(w, "update failed", http.StatusInternalServerError)
 		return
 	}
-	_, err := asyncjob.Enqueue(r.Context(), db, asyncjob.EnqueueRequest{JobType: pluginDraftGenerateJobType, ResourceType: "plugin_draft", ResourceID: draftID, Payload: pluginDraftGeneratePayload{DraftID: draftID, Name: draft.Name, UserID: userID, SkillContent: skillPackageSkillMD(skillPackage), SkillPackage: skillPackage, SourceSkillRevisionID: analysis.SourceSkillRevisionID, SelectedCandidateJSON: string(selectedJSON), ReusableScripts: reusableSkillScriptsJSON(skillPackage, analysis.ScriptReportJSON)}, MaxAttempts: 1, CreateUserID: userID})
+	_, err := asyncjob.Enqueue(r.Context(), db, asyncjob.EnqueueRequest{JobType: workflowDraftGenerateJobType, ResourceType: "plugin_draft", ResourceID: draftID, Payload: workflowDraftGeneratePayload{DraftID: draftID, Name: draft.Name, UserID: userID, SkillContent: skillPackageSkillMD(skillPackage), SkillPackage: skillPackage, SourceSkillRevisionID: analysis.SourceSkillRevisionID, SelectedCandidateJSON: string(selectedJSON), ReusableScripts: reusableSkillScriptsJSON(skillPackage, analysis.ScriptReportJSON)}, MaxAttempts: 1, CreateUserID: userID})
 	if err != nil {
 		common.ReplyErr(w, "enqueue failed", http.StatusInternalServerError)
 		return
@@ -157,7 +157,7 @@ func reusableSkillScriptsJSON(pkg map[string]any, reportJSON string) map[string]
 	return reusableSkillScripts(pkg, report)
 }
 
-func cachedAnalysisContext(analysis orm.PluginGenerationAnalysis) string {
+func cachedAnalysisContext(analysis orm.WorkflowGenerationAnalysis) string {
 	var candidates []map[string]any
 	var mappings, scripts any
 	_ = json.Unmarshal([]byte(analysis.CandidatesJSON), &candidates)
