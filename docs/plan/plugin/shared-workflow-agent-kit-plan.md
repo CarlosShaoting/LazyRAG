@@ -305,23 +305,23 @@ Codex 生成过程中只使用 Codex 模型；Core 只提供 Skill snapshot、�
 
 为了控制变更规模，保留以下 15 个 PR，不再继续拆分 PR 数量。表格只提供顺序和目标摘要；每个 PR 不可省略的依赖、范围、feature flag、兼容路径、测试、回滚和删除 gate 以 [`execution-guardrails.md`](execution-guardrails.md) 为准。一个 PR 内可以用多个顺序清晰的 commit 完成机械迁移、shadow、canary 和切流，但未满足退出条件不得合并。
 
-| PR | 主要改动 | 可验证结果 |
-|---|---|---|
-| 1 | 建立 Workflow Tool、Event、Attempt Context 契约和 golden fixtures | 当前行为被固定，所有新契约使用 Workflow 命名 |
-| 2 | 将代码、配置、工具和 UI 的领域命名从 Plugin 迁移为 Workflow，并在 Python/Go persistence adapter 映射旧数据库字段 | 业务层不再泄漏 Plugin 命名，旧数据无需迁移即可兼容读写 |
-| 3 | 创建共享 Workflow Skill、references 和 Host Profiles | LazyMind shadow load，决策 trace 可比较 |
-| 4 | Core 增加 Agent-neutral Workflow Tool facade | 现有 internal API 仍兼容，公共契约可测试 |
-| 5 | algorithm/chat 增加统一 Workflow Client | 移除分散的 HTTP payload 和 Workflow DB 查询 |
-| 6 | 引入 queued Attempt 与 claim/report 协议 | FakeExecutor 可执行 Workflow |
-| 7 | 实现 LazyMindExecutor 和兼容 adapter | LazyMind SubAgent 通过新协议运行 |
-| 8 | 移除 Core 到 `/api/subagent/run` 的固定依赖 | Runtime 与 LazyMind Executor 正式解耦 |
-| 9 | 收敛 algorithm/chat prompt、Workflow manager 和 Driver adapter | 公共规则只来自共享 Skill |
-| 10 | 拆分 Skill to Workflow Agent 生成与 Authoring Tools | 外部 Agent 可提交生成结果 |
-| 11 | 完成 LazyMind 全量回归与旧接口清理 | 达到第一阶段验收条件 |
-| 12 | 提供 Codex 只读 Tool Adapter 与 Status View | Codex 可以发现 Workflow，并查看状态图和下载 Artifact |
-| 13 | 实现 Codex 串行全自动 Executor | Codex 独立执行 Workflow |
-| 14 | 增加 Codex 并行、恢复与模型 Artifact 修订 | Codex 通过 Runtime golden scenarios |
-| 15 | 接入 Codex Skill to Workflow | Codex 独立生成和发布 Workflow |
+| 状态 | PR | 主要改动 | 可验证结果 |
+|---|---|---|---|
+| [x] | [1 (#487)](https://github.com/LazyAGI/LazyMind/pull/487) | 建立 Workflow Tool、Event、Attempt Context 契约和 golden fixtures | 当前行为被固定，所有新契约使用 Workflow 命名 |
+| [ ] | 2 | 将代码、配置、工具和 UI 的领域命名从 Plugin 迁移为 Workflow，并在 Python/Go persistence adapter 映射旧数据库字段 | 业务层不再泄漏 Plugin 命名，旧数据无需迁移即可兼容读写 |
+| [ ] | 3 | 创建共享 Workflow Skill、references 和 Host Profiles | LazyMind shadow load，决策 trace 可比较 |
+| [ ] | 4 | Core 增加 Agent-neutral Workflow Tool facade | 现有 internal API 仍兼容，公共契约可测试 |
+| [ ] | 5 | algorithm/chat 增加统一 Workflow Client | 移除分散的 HTTP payload 和 Workflow DB 查询 |
+| [ ] | 6 | 引入 queued Attempt 与 claim/report 协议 | FakeExecutor 可执行 Workflow |
+| [ ] | 7 | 实现 LazyMindExecutor 和兼容 adapter | LazyMind SubAgent 通过新协议运行 |
+| [ ] | 8 | 移除 Core 到 `/api/subagent/run` 的固定依赖 | Runtime 与 LazyMind Executor 正式解耦 |
+| [ ] | 9 | 收敛 algorithm/chat prompt、Workflow manager 和 Driver adapter | 公共规则只来自共享 Skill |
+| [ ] | 10 | 拆分 Skill to Workflow Agent 生成与 Authoring Tools | 外部 Agent 可提交生成结果 |
+| [ ] | 11 | 完成 LazyMind 全量回归与旧接口清理 | 达到第一阶段验收条件 |
+| [ ] | 12 | 提供 Codex 只读 Tool Adapter 与 Status View | Codex 可以发现 Workflow，并查看状态图和下载 Artifact |
+| [ ] | 13 | 实现 Codex 串行全自动 Executor | Codex 独立执行 Workflow |
+| [ ] | 14 | 增加 Codex 并行、恢复与模型 Artifact 修订 | Codex 通过 Runtime golden scenarios |
+| [ ] | 15 | 接入 Codex Skill to Workflow | Codex 独立生成和发布 Workflow |
 
 所有 PR 使用相同 Definition of Done：实现引用的 contract clauses；新旧链路只有一个权威写入者；数据库变化通过前向兼容与 rolling deploy tests；feature flag 默认值和回滚路径明确；兼容入口有调用量观测和删除条件；`make lint`、相关单元测试、contract tests 与指定 golden scenarios 通过；公共 payload 和非 persistence 代码通过旧 Plugin 命名残留扫描。任何一项不满足，都不能用“后续 PR 补充”替代当前退出条件，除非先在主计划中明确调整依赖和 gate。
 
