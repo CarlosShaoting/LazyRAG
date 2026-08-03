@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/ulikunitz/xz"
+
+	appLog "lazymind/core/log"
 )
 
 type FFmpegStatus struct {
@@ -145,10 +147,19 @@ func InstallBundledFFmpeg(ctx context.Context, runtimeRoot string) (FFmpegStatus
 	if !IsLocalRuntime() {
 		return FFmpegStatus{}, errors.New("bundled ffmpeg install is only supported in local/desktop runtime")
 	}
+	installStartedAt := time.Now()
 	downloads, err := ffmpegDownloads()
 	if err != nil {
 		return FFmpegStatus{}, err
 	}
+	appLog.Logger.Info().
+		Str("component", "systemdeps.ffmpeg").
+		Str("event", "install.started").
+		Str("platform", runtime.GOOS).
+		Str("arch", runtime.GOARCH).
+		Int("archive_count", len(downloads)).
+		Str("runtime_root", runtimeRoot).
+		Msg("bundled ffmpeg install started")
 	depsDir := filepath.Join(runtimeRoot, "deps")
 	if err := os.MkdirAll(depsDir, 0o755); err != nil {
 		return FFmpegStatus{}, err
@@ -168,9 +179,29 @@ func InstallBundledFFmpeg(ctx context.Context, runtimeRoot string) (FFmpegStatus
 		if err := downloadFFmpegArchive(ctx, download.url, archivePath, download.sha256); err != nil {
 			return FFmpegStatus{}, err
 		}
+		extractStartedAt := time.Now()
+		appLog.Logger.Info().
+			Str("component", "systemdeps.ffmpeg").
+			Str("event", "extract.started").
+			Int("archive_index", index).
+			Str("format", download.format).
+			Msg("ffmpeg archive extraction started")
 		if err := extractFFmpegArchive(archivePath, stagingBinDir, download.format); err != nil {
+			appLog.Logger.Error().
+				Err(err).
+				Str("component", "systemdeps.ffmpeg").
+				Str("event", "extract.failed").
+				Int("archive_index", index).
+				Dur("elapsed", time.Since(extractStartedAt)).
+				Msg("ffmpeg archive extraction failed")
 			return FFmpegStatus{}, fmt.Errorf("extract ffmpeg download failed: %w", err)
 		}
+		appLog.Logger.Info().
+			Str("component", "systemdeps.ffmpeg").
+			Str("event", "extract.completed").
+			Int("archive_index", index).
+			Dur("elapsed", time.Since(extractStartedAt)).
+			Msg("ffmpeg archive extraction completed")
 		if err := os.Remove(archivePath); err != nil {
 			return FFmpegStatus{}, err
 		}
@@ -207,10 +238,43 @@ func InstallBundledFFmpeg(ctx context.Context, runtimeRoot string) (FFmpegStatus
 	if !status.Installed {
 		return status, errors.New("ffmpeg install finished but binaries were not detected")
 	}
+	appLog.Logger.Info().
+		Str("component", "systemdeps.ffmpeg").
+		Str("event", "install.completed").
+		Str("platform", runtime.GOOS).
+		Str("arch", runtime.GOARCH).
+		Str("ffmpeg", status.FFmpegPath).
+		Str("ffprobe", status.FFprobePath).
+		Dur("elapsed", time.Since(installStartedAt)).
+		Msg("bundled ffmpeg install completed")
 	return status, nil
 }
 
-func downloadFFmpegArchive(ctx context.Context, downloadURL, destination, expectedSHA256 string) error {
+func downloadFFmpegArchive(ctx context.Context, downloadURL, destination, expectedSHA256 string) (resultErr error) {
+	downloadStartedAt := time.Now()
+	var downloadedBytes int64
+	appLog.Logger.Info().
+		Str("component", "systemdeps.ffmpeg").
+		Str("event", "download.started").
+		Str("url", downloadURL).
+		Bool("sha256_required", strings.TrimSpace(expectedSHA256) != "").
+		Msg("ffmpeg archive download started")
+	defer func() {
+		logEvent := appLog.Logger.Info()
+		message := "ffmpeg archive download completed"
+		if resultErr != nil {
+			logEvent = appLog.Logger.Error().Err(resultErr)
+			message = "ffmpeg archive download failed"
+		}
+		logEvent.
+			Str("component", "systemdeps.ffmpeg").
+			Str("event", map[bool]string{true: "download.failed", false: "download.completed"}[resultErr != nil]).
+			Str("url", downloadURL).
+			Int64("bytes", downloadedBytes).
+			Dur("elapsed", time.Since(downloadStartedAt)).
+			Bool("sha256_verified", resultErr == nil && strings.TrimSpace(expectedSHA256) != "").
+			Msg(message)
+	}()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
 		return err
@@ -228,7 +292,8 @@ func downloadFFmpegArchive(ctx context.Context, downloadURL, destination, expect
 	if err != nil {
 		return err
 	}
-	_, copyErr := io.Copy(output, resp.Body)
+	var copyErr error
+	downloadedBytes, copyErr = io.Copy(output, resp.Body)
 	closeErr := output.Close()
 	if copyErr != nil {
 		return fmt.Errorf("write ffmpeg download failed: %w", copyErr)
@@ -274,10 +339,11 @@ const (
 	ffmpegArchiveZip   = "zip"
 	ffmpegArchiveTarXZ = "tar.xz"
 
-	aliyunFFmpegBaseURL = "https://lazymind-cst.oss-cn-beijing.aliyuncs.com/lazymind-ffmpeg/"
-	windowsX64FFmpegSHA = "99785441c93840109a84967aa9d226c566523ed79d9865570afdac7a12398731"
-	darwinX64FFmpegSHA  = "e91df72a1ee7c26606f90dd2dd4dcccc6a75140ff9ea6fdd50faae828b82ba69"
-	darwinX64FFprobeSHA = "399b93f0b9862f69767afa343e90c2f48d7e7958cadbb6deb76a012d0e3b7ce3"
+	modelScopeFFmpegBaseURL = "https://modelscope.cn/datasets/CarlosShaoting/lazymind-cst/resolve/master/"
+	windowsX64FFmpegSHA     = "99785441c93840109a84967aa9d226c566523ed79d9865570afdac7a12398731"
+	darwinX64FFmpegSHA      = "e91df72a1ee7c26606f90dd2dd4dcccc6a75140ff9ea6fdd50faae828b82ba69"
+	darwinX64FFprobeSHA     = "399b93f0b9862f69767afa343e90c2f48d7e7958cadbb6deb76a012d0e3b7ce3"
+	linuxX64FFmpegSHA       = "baad8e0c2864a7b4045bf44a596376f889e7454988a4e689d2c0f766646c2c22"
 )
 
 func ffmpegDownloads() ([]ffmpegDownload, error) {
@@ -291,7 +357,7 @@ func ffmpegDownloadsFor(goos, goarch string) ([]ffmpegDownload, error) {
 		switch goarch {
 		case "amd64":
 			return []ffmpegDownload{{
-				url:       aliyunFFmpegBaseURL + "lazymind-ffmpeg-windows-x64-20260803.zip",
+				url:       modelScopeFFmpegBaseURL + "lazymind-ffmpeg-windows-x64-20260803.zip",
 				sha256:    windowsX64FFmpegSHA,
 				format:    ffmpegArchiveZip,
 				extension: ".zip",
@@ -307,13 +373,13 @@ func ffmpegDownloadsFor(goos, goarch string) ([]ffmpegDownload, error) {
 		if goarch == "amd64" || goarch == "arm64" {
 			return []ffmpegDownload{
 				{
-					url:       aliyunFFmpegBaseURL + "lazymind-ffmpeg-darwin-x64-8.1.2.zip",
+					url:       modelScopeFFmpegBaseURL + "lazymind-ffmpeg-darwin-x64-8.1.2.zip",
 					sha256:    darwinX64FFmpegSHA,
 					format:    ffmpegArchiveZip,
 					extension: ".zip",
 				},
 				{
-					url:       aliyunFFmpegBaseURL + "lazymind-ffprobe-darwin-x64-8.1.2.zip",
+					url:       modelScopeFFmpegBaseURL + "lazymind-ffprobe-darwin-x64-8.1.2.zip",
 					sha256:    darwinX64FFprobeSHA,
 					format:    ffmpegArchiveZip,
 					extension: ".zip",
@@ -321,16 +387,17 @@ func ffmpegDownloadsFor(goos, goarch string) ([]ffmpegDownload, error) {
 			}, nil
 		}
 	case "linux":
-		target := ""
 		switch goarch {
 		case "amd64":
-			target = "linux64"
-		case "arm64":
-			target = "linuxarm64"
-		}
-		if target != "" {
 			return []ffmpegDownload{{
-				url:       btbNBase + "ffmpeg-master-latest-" + target + "-gpl.tar.xz",
+				url:       modelScopeFFmpegBaseURL + "lazymind-ffmpeg-linux-x64-20260803.tar.xz",
+				sha256:    linuxX64FFmpegSHA,
+				format:    ffmpegArchiveTarXZ,
+				extension: ".tar.xz",
+			}}, nil
+		case "arm64":
+			return []ffmpegDownload{{
+				url:       btbNBase + "ffmpeg-master-latest-linuxarm64-gpl.tar.xz",
 				format:    ffmpegArchiveTarXZ,
 				extension: ".tar.xz",
 			}}, nil

@@ -150,7 +150,7 @@ func TestExtractFFmpegTarXZ(t *testing.T) {
 	}
 }
 
-func TestFFmpegDownloadsUseAliyunMirrors(t *testing.T) {
+func TestFFmpegDownloadsUseModelScopeMirrors(t *testing.T) {
 	tests := []struct {
 		name      string
 		goos      string
@@ -163,7 +163,7 @@ func TestFFmpegDownloadsUseAliyunMirrors(t *testing.T) {
 			goos:   "windows",
 			goarch: "amd64",
 			urls: []string{
-				aliyunFFmpegBaseURL + "lazymind-ffmpeg-windows-x64-20260803.zip",
+				modelScopeFFmpegBaseURL + "lazymind-ffmpeg-windows-x64-20260803.zip",
 			},
 			checksums: []string{windowsX64FFmpegSHA},
 		},
@@ -172,10 +172,19 @@ func TestFFmpegDownloadsUseAliyunMirrors(t *testing.T) {
 			goos:   "darwin",
 			goarch: "arm64",
 			urls: []string{
-				aliyunFFmpegBaseURL + "lazymind-ffmpeg-darwin-x64-8.1.2.zip",
-				aliyunFFmpegBaseURL + "lazymind-ffprobe-darwin-x64-8.1.2.zip",
+				modelScopeFFmpegBaseURL + "lazymind-ffmpeg-darwin-x64-8.1.2.zip",
+				modelScopeFFmpegBaseURL + "lazymind-ffprobe-darwin-x64-8.1.2.zip",
 			},
 			checksums: []string{darwinX64FFmpegSHA, darwinX64FFprobeSHA},
+		},
+		{
+			name:   "Linux x64",
+			goos:   "linux",
+			goarch: "amd64",
+			urls: []string{
+				modelScopeFFmpegBaseURL + "lazymind-ffmpeg-linux-x64-20260803.tar.xz",
+			},
+			checksums: []string{linuxX64FFmpegSHA},
 		},
 	}
 	for _, tt := range tests {
