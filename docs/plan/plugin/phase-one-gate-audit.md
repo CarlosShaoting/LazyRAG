@@ -43,10 +43,10 @@ is checked and linked to executable evidence.
 
 ## PR 5 — Workflow Client and Input Resources
 
-- [ ] Typed client, error mapping, timeout/retry and rollback flag are production wired.
-- [ ] Direct Runtime table queries and handwritten transition payloads are removed outside the adapter.
-- [ ] Host attachments bind to stable Input Resource revisions.
-- [ ] Attempt Context contains no temporary URL, absolute path, token or model configuration.
+- [x] Typed client, error mapping, timeout/retry and rollback flag are production wired.
+- [x] Direct Runtime table queries and handwritten transition payloads are removed outside the adapter.
+- [x] Host attachments bind to stable Input Resource revisions.
+- [x] Attempt Context contains no temporary URL, absolute path, token or model configuration.
 
 ## PR 6 — queued Attempt protocol
 
