@@ -122,7 +122,6 @@ function IntentPopover({
 
 interface WorkflowPanelProps {
   conversationId: string;
-  pollIntervalMs?: number;
   /** Called when the user clicks Continue or Retry — simulates sending a user message. */
   onSendMessage?: (text: string) => void;
   /** Called when the user clicks the reference button on a slot item. */
@@ -1076,7 +1075,6 @@ function persistExpanded(conversationId: string, expanded: boolean) {
 
 export function WorkflowPanel({
   conversationId,
-  pollIntervalMs = 3000,
   onSendMessage,
   onReference,
   onStop,
@@ -1191,12 +1189,6 @@ export function WorkflowPanel({
     const idx = tabs.findIndex((t) => t.id === persistedFocusedTab);
     if (idx !== -1) setActiveTabIdx(idx);
   }, [ui.tabs, persistedFocusedTab]);
-
-  useEffect(() => {
-    if (!session || session.status !== 'active') return;
-    const id = setInterval(refresh, pollIntervalMs);
-    return () => clearInterval(id);
-  }, [session, refresh, pollIntervalMs]);
 
   // Track focused tab changes.
   const handleTabChange = useCallback((idx: number, tabId: string) => {

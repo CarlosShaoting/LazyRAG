@@ -160,6 +160,16 @@ def check_sensitive_content(query: str) -> Optional[SensitiveMatch]:
     return sensitive_filter.evaluate(query)
 
 
+def _should_skip_sensitive_filter(query: str, workflow_context: Dict[str, Any]) -> bool:
+    """Bypass user-input filtering only for trusted Workflow synthetic turns."""
+    if not workflow_context.get('workflow_id') or not workflow_context.get('session_id'):
+        return False
+    if workflow_context.get('synthetic_source') == 'driver':
+        return True
+    normalized = query.strip().lower()
+    return normalized.startswith('step ') and ' completed.' in normalized
+
+
 def _mcp_server_cache_key(server: Dict[str, Any]) -> str:
     encoded = json.dumps(server, ensure_ascii=False, sort_keys=True, default=str).encode()
     return hashlib.sha256(encoded).hexdigest()

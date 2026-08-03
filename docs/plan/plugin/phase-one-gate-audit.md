@@ -84,8 +84,8 @@ is checked and linked to executable evidence.
 
 ## PR 11 — phase-one acceptance
 
-- [ ] Full golden, contract and UI regression suites pass.
-- [ ] One reducer consumes snapshot plus patches for every Workflow panel surface.
-- [ ] Normal refresh uses the Workflow Event Stream without polling/refetch-per-event.
-- [ ] Compatibility usage report and deletion ledger are generated.
-- [ ] All twelve phase-one acceptance clauses have executable evidence.
+- [x] Full golden, contract and UI regression suites pass.
+- [x] One reducer consumes snapshot plus patches for every Workflow panel surface.
+- [x] Normal refresh uses the Workflow Event Stream without polling/refetch-per-event.
+- [x] Compatibility usage report and deletion ledger are generated.
+- [x] All twelve phase-one acceptance clauses have executable evidence.
