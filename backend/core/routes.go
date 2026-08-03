@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -19,6 +22,7 @@ import (
 	"lazymind/core/resourceupdate"
 	"lazymind/core/scheduler"
 	skillv2handler "lazymind/core/skillv2/handler"
+	corestore "lazymind/core/store"
 	"lazymind/core/subagent"
 	"lazymind/core/systemdeps"
 	"lazymind/core/taskcenter"
@@ -26,9 +30,27 @@ import (
 	"lazymind/core/wordgroup"
 	"lazymind/core/workflow"
 	workflowcompat "lazymind/core/workflow/compat"
+	workflowfacade "lazymind/core/workflow/facade"
+	workflowstore "lazymind/core/workflow/store"
+	workflowstream "lazymind/core/workflow/stream"
 
 	"github.com/gorilla/mux"
 )
+
+type routeCapture struct {
+	header http.Header
+	body   bytes.Buffer
+	status int
+}
+
+func (c *routeCapture) Header() http.Header    { return c.header }
+func (c *routeCapture) WriteHeader(status int) { c.status = status }
+func (c *routeCapture) Write(body []byte) (int, error) {
+	if c.status == 0 {
+		c.status = http.StatusOK
+	}
+	return c.body.Write(body)
+}
 
 func handleAgentThreadAPI(r *mux.Router, method, path string, perms []string, h http.HandlerFunc) {
 	handleAPI(r, method, path, perms, h).MatcherFunc(func(r *http.Request, _ *mux.RouteMatch) bool {
@@ -46,6 +68,13 @@ func handleAgentThreadAPI(r *mux.Router, method, path string, perms []string, h 
 // registerAllRoutes text OpenAPI text（text Job），text handleAPI textPermissiontext（text extract_api_permissions.py text Kong RBAC）。
 func registerAllRoutes(r *mux.Router) {
 	resourcefs.AutoEvoEnabledScanner = resourceupdate.ScanPendingResultsForResource
+	workflowRepository := workflowstore.New(corestore.DB())
+	workflowFacade := workflowfacade.Handler{
+		Store:            workflowRepository,
+		PlanLegacy:       http.HandlerFunc(workflow.PlanWorkflowSessionStart),
+		StartLegacy:      http.HandlerFunc(workflow.StartWorkflowSession),
+		TransitionLegacy: http.HandlerFunc(workflow.TransitionWorkflowSession),
+	}
 
 	// ----- Datasettext -----
 	handleAPI(r, "GET", "/dataset/algos", []string{"document.read"}, doc.ListAlgos)
@@ -291,6 +320,27 @@ func registerAllRoutes(r *mux.Router) {
 	handleAPI(r, "PATCH", "/conversations/{conversation_id}/plugin-settings", []string{"qa.write"}, chat.PatchConversationWorkflowSettings)
 
 	// ----- Workflow Sessions -----
+	handleAPI(r, "POST", "/workflow-preparations", []string{"qa.write"}, workflowFacade.Prepare)
+	handleAPI(r, "POST", "/workflow-preparations/{preparation_id}:consume", []string{"qa.write"}, workflowFacade.Consume)
+	handleAPI(r, "POST", "/workflow-sessions/{session_id}:advance-step", []string{"qa.write"}, workflowFacade.Command(http.HandlerFunc(workflow.TransitionWorkflowSession)))
+	handleAPI(r, "POST", "/workflow-sessions/{session_id}:advance-step-and-hand-off", []string{"qa.write"}, workflowFacade.Command(http.HandlerFunc(workflow.TransitionWorkflowSession)))
+	workflowEvents := workflowstream.Handler{Store: workflowRepository, Snapshot: func(req *http.Request, sessionID, owner string) (any, error) {
+		if err := workflowRepository.AuthorizeSession(req.Context(), sessionID, owner); err != nil {
+			return nil, err
+		}
+		recorder := &routeCapture{header: http.Header{}}
+		projectionRequest := mux.SetURLVars(req.Clone(req.Context()), map[string]string{"session_id": sessionID})
+		workflow.GetSessionProjection(recorder, projectionRequest)
+		if recorder.status >= http.StatusBadRequest {
+			return nil, fmt.Errorf("projection status %d: %s", recorder.status, recorder.body.String())
+		}
+		var projection any
+		if err := json.Unmarshal(recorder.body.Bytes(), &projection); err != nil {
+			return nil, err
+		}
+		return projection, nil
+	}}
+	handleAPI(r, "GET", "/workflow-sessions/{session_id}/events", []string{"qa.read"}, workflowEvents.ServeHTTP)
 	handleAPI(r, "GET", "/conversations/{conversation_id}/plugin-sessions", []string{"qa.read"}, workflow.ListConversationSessions)
 	handleAPI(r, "GET", "/conversations/{conversation_id}/plugin-sessions:active", []string{"qa.read"}, workflow.GetActiveConversationSession)
 	handleAPI(r, "GET", "/conversations/{conversation_id}/plugin-sessions:latest", []string{"qa.read"}, workflow.GetLatestConversationSession)
