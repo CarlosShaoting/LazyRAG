@@ -31,8 +31,8 @@ func repairDiagnosticsPayload(items []repairDiagnostic) []map[string]any {
 	return payload
 }
 
-const workflowDraftGenerateJobType = "plugin_draft_generate"
-const workflowDraftRepairJobType = "plugin_draft_repair"
+const workflowDraftGenerateJobType = "workflow_draft_generate"
+const workflowDraftRepairJobType = "workflow_draft_repair"
 
 const (
 	generateStatusGenerating   = "generating"
@@ -197,9 +197,9 @@ func handleWorkflowDraftGenerateJob(ctx context.Context, job asyncjob.Job, _ asy
 		return asyncjob.Result{ErrorCode: generateErrAlgoFailed}, fmt.Errorf("phase1 skeleton: %w", err)
 	}
 	if err := db.WithContext(ctx).Model(&orm.WorkflowDraft{}).Where("id = ?", payload.DraftID).Updates(map[string]any{
-		"plugin_yaml_content": skeletonResp.WorkflowYAML,
-		"generate_status":     generateStatusSkeletonDone,
-		"updated_at":          time.Now().UTC(),
+		"workflow_yaml_content": skeletonResp.WorkflowYAML,
+		"generate_status":       generateStatusSkeletonDone,
+		"updated_at":            time.Now().UTC(),
 	}).Error; err != nil {
 		return asyncjob.Result{ErrorCode: generateErrSaveFailed}, fmt.Errorf("save skeleton: %w", err)
 	}
@@ -216,17 +216,17 @@ func handleWorkflowDraftGenerateJob(ctx context.Context, job asyncjob.Job, _ asy
 		_ = markGenerateFailed(db, payload.DraftID, fmt.Sprintf("phase2 state_machine: %s", err))
 		return asyncjob.Result{ErrorCode: generateErrAlgoFailed}, fmt.Errorf("phase2 state_machine: %w", err)
 	}
-	// Use the (possibly slot-repaired) plugin_yaml returned by Phase 2.
+	// Use the (possibly slot-repaired) workflow_yaml returned by Phase 2.
 	// Falls back to Phase 1 output when Phase 2 did not modify it.
 	finalWorkflowYAML := skeletonResp.WorkflowYAML
 	if stateResp.WorkflowYAML != "" {
 		finalWorkflowYAML = stateResp.WorkflowYAML
 	}
 	stateUpdates := map[string]any{
-		"state_yaml_content":  stateResp.StateYAML,
-		"plugin_yaml_content": finalWorkflowYAML,
-		"generate_status":     generateStatusStateDone,
-		"updated_at":          time.Now().UTC(),
+		"state_yaml_content":    stateResp.StateYAML,
+		"workflow_yaml_content": finalWorkflowYAML,
+		"generate_status":       generateStatusStateDone,
+		"updated_at":            time.Now().UTC(),
 	}
 	if len(stateResp.Warnings) > 0 {
 		stateUpdates["generate_warning"] = strings.Join(stateResp.Warnings, "; ")
@@ -305,15 +305,15 @@ func handleWorkflowDraftGenerateJob(ctx context.Context, job asyncjob.Job, _ asy
 	}
 
 	if err := db.WithContext(ctx).Model(&orm.WorkflowDraft{}).Where("id = ?", payload.DraftID).Updates(map[string]any{
-		"plugin_yaml_content": finalWorkflowYAML,
-		"state_yaml_content":  stateResp.StateYAML,
-		"scenario_content":    scenarioResp.ScenarioMD,
-		"scripts_content":     scriptsJSON,
-		"generate_status":     generateStatusDone,
-		"generate_error":      "",
-		"generate_warning":    mergeWarnings(mergeWarnings(currentGenerateWarning(db, payload.DraftID), strings.Join(scenarioResp.Warnings, "; ")), strings.Join(diagnosticWarnings, "; ")),
-		"version":             gorm.Expr("version + 1"),
-		"updated_at":          time.Now().UTC(),
+		"workflow_yaml_content": finalWorkflowYAML,
+		"state_yaml_content":    stateResp.StateYAML,
+		"scenario_content":      scenarioResp.ScenarioMD,
+		"scripts_content":       scriptsJSON,
+		"generate_status":       generateStatusDone,
+		"generate_error":        "",
+		"generate_warning":      mergeWarnings(mergeWarnings(currentGenerateWarning(db, payload.DraftID), strings.Join(scenarioResp.Warnings, "; ")), strings.Join(diagnosticWarnings, "; ")),
+		"version":               gorm.Expr("version + 1"),
+		"updated_at":            time.Now().UTC(),
 	}).Error; err != nil {
 		return asyncjob.Result{ErrorCode: generateErrSaveFailed}, fmt.Errorf("save scenario_scripts: %w", err)
 	}
@@ -407,7 +407,7 @@ func handleWorkflowDraftRepairJob(ctx context.Context, job asyncjob.Job, _ async
 		}
 		return asyncjob.Result{ErrorCode: "repair_stale_draft"}, fmt.Errorf("repair stale draft")
 	}
-	log.Printf("[repair_job] draft loaded draft_id=%s plugin_yaml_len=%d state_yaml_len=%d version=%d",
+	log.Printf("[repair_job] draft loaded draft_id=%s workflow_yaml_len=%d state_yaml_len=%d version=%d",
 		payload.DraftID, len(draft.WorkflowYAMLContent), len(draft.StateYAMLContent), draft.Version)
 
 	llmConfig := payload.LLMConfig
@@ -492,7 +492,7 @@ func handleWorkflowDraftRepairJob(ctx context.Context, job asyncjob.Job, _ async
 			restoreStatus("repair validation failed")
 			return asyncjob.Result{ErrorCode: "repair_validation_failed"}, fmt.Errorf("repair validation failed")
 		}
-		updates := map[string]any{"plugin_yaml_content": workflowYAML, "state_yaml_content": stateYAML, "scenario_content": scenarioMD, "scripts_content": scriptsJSON, "generate_status": payload.PrevStatus, "generate_warning": mergeWarnings(currentGenerateWarning(db, draft.ID), strings.Join(allWarnings, "; ")), "version": draft.Version + 1, "updated_at": time.Now().UTC()}
+		updates := map[string]any{"workflow_yaml_content": workflowYAML, "state_yaml_content": stateYAML, "scenario_content": scenarioMD, "scripts_content": scriptsJSON, "generate_status": payload.PrevStatus, "generate_warning": mergeWarnings(currentGenerateWarning(db, draft.ID), strings.Join(allWarnings, "; ")), "version": draft.Version + 1, "updated_at": time.Now().UTC()}
 		result := db.Model(&orm.WorkflowDraft{}).Where("id=? AND version=?", draft.ID, payload.DraftVersion).Updates(updates)
 		if result.Error != nil || result.RowsAffected != 1 {
 			if payload.RepairRunID != "" {
@@ -575,7 +575,7 @@ func handleWorkflowDraftRepairJob(ctx context.Context, job asyncjob.Job, _ async
 		restoreStatus(err.Error())
 		return asyncjob.Result{ErrorCode: generateErrAlgoFailed}, fmt.Errorf("repair statemachine: %w", err)
 	}
-	log.Printf("[repair_job/statemachine] algo returned state_yaml_len=%d plugin_yaml_updated=%v remaining_warnings=%v",
+	log.Printf("[repair_job/statemachine] algo returned state_yaml_len=%d workflow_yaml_updated=%v remaining_warnings=%v",
 		len(resp.StateYAML), resp.WorkflowYAML != "", resp.RemainingWarnings)
 
 	newWarning := strings.Join(resp.RemainingWarnings, "; ")
@@ -603,7 +603,7 @@ func handleWorkflowDraftRepairJob(ctx context.Context, job asyncjob.Job, _ async
 		"updated_at":         time.Now().UTC(),
 	}
 	if resp.WorkflowYAML != "" {
-		updates["plugin_yaml_content"] = resp.WorkflowYAML
+		updates["workflow_yaml_content"] = resp.WorkflowYAML
 	}
 	result := db.Model(&orm.WorkflowDraft{}).Where("id=? AND version=?", draft.ID, payload.DraftVersion).Updates(updates)
 	if result.Error != nil || result.RowsAffected != 1 {

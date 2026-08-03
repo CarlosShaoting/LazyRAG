@@ -16,15 +16,6 @@ func TestSessionPublicPayloadUsesWorkflowNames(t *testing.T) {
 	}
 }
 
-func TestLegacyRouteFeatureFlagRollback(t *testing.T) {
-	if got := PublicRoute(true); got != "/api/workflows" {
-		t.Fatal(got)
-	}
-	if got := PublicRoute(false); got != "/api/plugins" {
-		t.Fatal(got)
-	}
-}
-
 func TestPhysicalPersistenceMappingRemainsCompatible(t *testing.T) {
 	if (Session{}).TableName() != "plugin_sessions" {
 		t.Fatal("physical table must remain stable")

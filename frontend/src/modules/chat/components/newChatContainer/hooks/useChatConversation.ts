@@ -326,9 +326,9 @@ export function useChatConversation({
         status: tc.status || "pending",
       });
       taskStore.subscribeTask(convId, tc.task_id);
-      if (tc.agent_type === "plugin_step" && tc.plugin_session_id) {
-        import("@/modules/chat/store/pluginPanel").then(({ usePluginStore }) => {
-          usePluginStore.getState().loadActiveSession(convId);
+      if (tc.agent_type === "workflow_step" && tc.workflow_session_id) {
+        import("@/modules/chat/store/workflowPanel").then(({ useWorkflowStore }) => {
+          useWorkflowStore.getState().loadActiveSession(convId);
         });
       }
     }
@@ -931,8 +931,8 @@ export function useChatConversation({
     currentConversationIdRef.current = id;
 
     if (id) {
-      import("@/modules/chat/store/pluginPanel").then(({ usePluginStore }) => {
-        usePluginStore.getState().loadActiveSession(id);
+      import("@/modules/chat/store/workflowPanel").then(({ useWorkflowStore }) => {
+        useWorkflowStore.getState().loadActiveSession(id);
       });
     }
 

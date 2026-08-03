@@ -32,7 +32,7 @@ func TestLoadWorkflowChatContextFromDB_WrongAgentType(t *testing.T) {
 	})
 	got := loadWorkflowChatContextFromDB(ctx, db.DB, "t1")
 	if got != nil {
-		t.Fatalf("got %v, want nil for non-plugin_step agent type", got)
+		t.Fatalf("got %v, want nil for non-workflow_step agent type", got)
 	}
 }
 
@@ -50,7 +50,7 @@ func TestLoadWorkflowChatContextFromDB_ValidTask(t *testing.T) {
 	}
 	paramsBytes, _ := json.Marshal(params)
 	db.DB.Create(&orm.SubAgentTask{
-		ID: "t2", ConversationID: "c2", AgentType: "plugin_step", Title: "Workflow",
+		ID: "t2", ConversationID: "c2", AgentType: "workflow_step", Title: "Workflow",
 		Objective: "run", Mode: "auto", Status: "running",
 		CreateUserID: "u1", TriggerHistoryID: "hist-1",
 		Params:    json.RawMessage(paramsBytes),
@@ -75,7 +75,7 @@ func TestLoadWorkflowChatContextFromDB_MissingParams(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 	db.DB.Create(&orm.SubAgentTask{
-		ID: "t3", ConversationID: "c3", AgentType: "plugin_step", Title: "Workflow",
+		ID: "t3", ConversationID: "c3", AgentType: "workflow_step", Title: "Workflow",
 		Objective: "run", Mode: "auto", Status: "running",
 		CreateUserID: "u1", CreatedAt: now, UpdatedAt: now, LastHeartbeat: now,
 		InputSlots: json.RawMessage("[]"), OutputSlots: json.RawMessage("[]"),

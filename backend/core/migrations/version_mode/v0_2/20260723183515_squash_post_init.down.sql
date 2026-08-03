@@ -1,6 +1,9 @@
 -- 20260723183515_squash_post_init
 -- +migrate Down
 -- +migrate Dialect postgres
+DROP TABLE IF EXISTS public.workflow_events CASCADE;
+DROP TABLE IF EXISTS public.workflow_commands CASCADE;
+DROP TABLE IF EXISTS public.workflow_preparations CASCADE;
 
 -- Reverse the flattened net migration back to the unchanged init schema.
 -- Data from tables intentionally dropped by the historical migrations cannot be restored.
@@ -415,6 +418,9 @@ CREATE UNIQUE INDEX uk_system_memories_user_id ON public.system_memories USING b
 CREATE UNIQUE INDEX uk_system_user_preferences_user_id ON public.system_user_preferences USING btree (user_id);
 
 -- +migrate Dialect sqlite
+DROP TABLE IF EXISTS workflow_events;
+DROP TABLE IF EXISTS workflow_commands;
+DROP TABLE IF EXISTS workflow_preparations;
 PRAGMA defer_foreign_keys = ON;
 DROP TABLE IF EXISTS plugin_repair_runs;
 DROP TABLE IF EXISTS plugin_generation_analyses;

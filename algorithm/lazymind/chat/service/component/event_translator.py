@@ -72,7 +72,7 @@ class AgentEventFrameTranslator:
         self.streamed_text = False
         self.ask_pending_emitted = False
         self.tool_call_turns = 0
-        self.text_scanner, self.citation_plugin = build_stream_citation_scanner(self.citation_state)
+        self.text_scanner, self.citation_workflow = build_stream_citation_scanner(self.citation_state)
 
     def feed(self, event: Any) -> list[dict[str, Any]]:
         frames: list[dict[str, Any]] = []
@@ -98,9 +98,9 @@ class AgentEventFrameTranslator:
             payload = {k: v for k, v in event.items() if k != 'tag'}
             frames.append(_stream_frame(extra={'intent_updated': payload}))
             return frames
-        if event_type == 'plugin_preflight_updated':
+        if event_type == 'workflow_preflight_updated':
             payload = {k: v for k, v in event.items() if k != 'tag'}
-            frames.append(_stream_frame(extra={'plugin_preflight_updated': payload}))
+            frames.append(_stream_frame(extra={'workflow_preflight_updated': payload}))
             return frames
         if event_type == 'heartbeat':
             frames.append(_stream_frame(extra={'heartbeat': True}))
@@ -166,7 +166,7 @@ class AgentEventFrameTranslator:
         return frames
 
     def _collect_sources(self) -> Any:
-        return self.citation_plugin.collect()
+        return self.citation_workflow.collect()
 
     def finish(self, final_result: Any) -> list[dict[str, Any]]:
         frames = self.flush()

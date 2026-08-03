@@ -5,7 +5,7 @@ package workflow
 // These handlers replace the sort_order-based variants for all mutations where
 // sort_order is unreliable (delete, patch value, patch caption, get versions, rollback).
 //
-// URL pattern: /plugin-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}[/...]
+// URL pattern: /workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}[/...]
 //
 // list_index is a permanent, monotonically increasing integer assigned when an item is
 // first created and never reused.  It is returned in every SlotRevision as "list_index".
@@ -42,7 +42,7 @@ func parseListIndex(r *http.Request) (int, bool) {
 	return n, true
 }
 
-// DeleteSlotItemByIndex handles DELETE /plugin-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}.
+// DeleteSlotItemByIndex handles DELETE /workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}.
 // Body (optional): {"order_version": N}  — when provided, triggers optimistic-lock check.
 func DeleteSlotItemByIndex(w http.ResponseWriter, r *http.Request) {
 	sessionID := common.PathVar(r, "session_id")
@@ -92,7 +92,7 @@ func DeleteSlotItemByIndex(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// PatchSlotItemByIndex handles PATCH /plugin-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}.
+// PatchSlotItemByIndex handles PATCH /workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}.
 // Body: {"value": <json>, "content_type": "text"|"json"|"image"|"file", "mode": "draft"|"checkpoint"}
 //
 // mode=draft updates the selected human artifact in place when possible (no new revision).
@@ -199,7 +199,7 @@ func PatchSlotItemByIndex(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// PatchSlotCaptionByIndex handles PATCH /plugin-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}/caption.
+// PatchSlotCaptionByIndex handles PATCH /workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}/caption.
 // Body: {"caption": "..."}
 func PatchSlotCaptionByIndex(w http.ResponseWriter, r *http.Request) {
 	sessionID := common.PathVar(r, "session_id")
@@ -256,7 +256,7 @@ func PatchSlotCaptionByIndex(w http.ResponseWriter, r *http.Request) {
 	common.ReplyOK(w, map[string]any{"status": "ok"})
 }
 
-// GetSlotItemVersionsByIndex handles GET /plugin-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}/versions.
+// GetSlotItemVersionsByIndex handles GET /workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}/versions.
 func GetSlotItemVersionsByIndex(w http.ResponseWriter, r *http.Request) {
 	sessionID := common.PathVar(r, "session_id")
 	slotID := common.PathVar(r, "slot_id")
@@ -330,7 +330,7 @@ func GetSlotItemVersionsByIndex(w http.ResponseWriter, r *http.Request) {
 	common.ReplyOK(w, map[string]any{"versions": out})
 }
 
-// RollbackSlotItemByIndex handles POST /plugin-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}/rollback.
+// RollbackSlotItemByIndex handles POST /workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}/rollback.
 // Body: {"revision": N}
 func RollbackSlotItemByIndex(w http.ResponseWriter, r *http.Request) {
 	sessionID := common.PathVar(r, "session_id")

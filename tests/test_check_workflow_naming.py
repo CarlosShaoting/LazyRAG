@@ -56,12 +56,33 @@ class WorkflowNamingCheckTest(unittest.TestCase):
         )
         self.assertIn("plugin_id", {item.token for item in violations})  # noqa: Q000
 
+    def test_migration_allowlist_is_limited_to_physical_identifiers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            migration = Path(directory) / 'migrations' / '001_expand.sql'
+            migration.parent.mkdir(parents=True)
+            migration.write_text(
+                'ALTER TABLE plugin_sessions ADD COLUMN plugin_ref TEXT;\n'
+                '-- /api/plugins and plugin-sessions are not database identifiers\n',
+                encoding='utf-8',
+            )
+            tokens = {item.token for item in MODULE.scan_paths([migration])}
+        self.assertNotIn('plugin_sessions', tokens)
+        self.assertNotIn('plugin_ref', tokens)
+        self.assertIn('/api/plugins', tokens)
+        self.assertIn('plugin-sessions', tokens)
+
     def test_does_not_allow_a_whole_persistence_file(self):
         violations = self._scan(
             "persistence_adapter.go",  # noqa: Q000
             'type PluginSession struct{}\nfunc route() string { return "/api/plugins" }\n',  # noqa: Q000
         )
         self.assertEqual(2, len(violations))
+
+    def test_exact_persistence_file_still_rejects_public_domain_names(self):
+        path = ROOT / 'backend/core/workflow/store.go'
+        self.assertTrue(MODULE._is_physical_name_allowed(path, '', 'plugin_sessions', 0))
+        self.assertFalse(MODULE._is_physical_name_allowed(path, '', 'PluginSession', 0))
+        self.assertFalse(MODULE._is_physical_name_allowed(path, '', '/api/plugins', 0))
 
     def test_ignores_unrelated_plain_english_word(self):
         self.assertEqual([], self._scan("comment.py", "# load a plugin dynamically\n"))  # noqa: Q000

@@ -75,7 +75,7 @@ export default function Workbench({ active, onViewAllStatus }: WorkbenchProps) {
         <Input prefix={<SearchOutlined />} allowClear placeholder={t('taskCenter.searchPlaceholder')} value={keyword} onChange={(event: React.ChangeEvent<HTMLInputElement>) => setKeyword(event.target.value)} />
         <Select value={type} onChange={setType} options={[
           { value: '', label: t('taskCenter.triggerAll') },
-          { value: 'plugin_run', label: t('taskCenter.typePluginRun') },
+          { value: 'workflow_run', label: t('taskCenter.typeWorkflowRun') },
           { value: 'background_chat', label: t('taskCenter.typeBackgroundChat') },
           { value: 'scheduled', label: t('taskCenter.typeScheduled') },
         ]} />
@@ -90,7 +90,7 @@ export default function Workbench({ active, onViewAllStatus }: WorkbenchProps) {
         <RecentSection tasks={recent} expanded={recentExpanded} onToggle={() => setRecentExpanded((value) => !value)} onSelect={setSelected} />
       </Spin>
       <TaskDetail task={selected} onClose={() => setSelected(null)} onOpenConversation={openConversation} onOpenGraph={() => selected && setGraphTask(selected)} onDelete={async (task) => { await removeTask(task.id); setSelected(null); await load(); }} />
-      {graphTask?.plugin_session_id && <StateGraphModal open onClose={() => setGraphTask(null)} sessionId={graphTask.plugin_session_id} pluginId='' liveRefresh={false} fallbackSteps={graphTask.steps} />}
+      {graphTask?.workflow_session_id && <StateGraphModal open onClose={() => setGraphTask(null)} sessionId={graphTask.workflow_session_id} workflowId='' liveRefresh={false} fallbackSteps={graphTask.steps} />}
     </div>
   );
 }
@@ -120,7 +120,7 @@ function AttentionSection({ tasks, expanded, onToggle, onSelect, onOpenGraph }: 
       <article className='attention-task-card' key={task.id}>
         <div className='attention-task-card-top'>
           <span className={`task-type-icon task-type-${task.task_type}`}><ClockCircleOutlined /></span>
-          <StatusTag status={task.status} onClick={task.plugin_session_id ? () => onOpenGraph(task) : undefined} />
+          <StatusTag status={task.status} onClick={task.workflow_session_id ? () => onOpenGraph(task) : undefined} />
         </div>
         <div className='attention-task-card-title'>
           <Tooltip title={taskTitle(task, t)}><strong>{taskTitle(task, t)}</strong></Tooltip>
@@ -144,7 +144,7 @@ function RunningSection({ tasks, expanded, onToggle, onSelect, onOpenGraph }: { 
         return <button type='button' className='running-task-row' key={task.id} onClick={() => onSelect(task)}>
           <span className='task-leading-icon running'><SyncOutlined spin /></span>
           <span className='workbench-task-main'><Tooltip title={taskTitle(task, t)}><strong>{taskTitle(task, t)}</strong></Tooltip><small>{taskMeta(task, t)}</small></span>
-          <span className='running-task-state'><span><StatusTag status={task.status} onClick={task.plugin_session_id ? () => onOpenGraph(task) : undefined} /><small>{taskDescription(task, t)}</small></span>{progress !== null ? <Progress percent={progress} size='small' /> : null}</span>
+          <span className='running-task-state'><span><StatusTag status={task.status} onClick={task.workflow_session_id ? () => onOpenGraph(task) : undefined} /><small>{taskDescription(task, t)}</small></span>{progress !== null ? <Progress percent={progress} size='small' /> : null}</span>
           <time>{formatDate(task.updated_at)}</time>
           <span className='workbench-row-action'>{t('taskCenter.viewAction')} <RightOutlined /></span>
         </button>;
@@ -171,7 +171,7 @@ function StatusCardSection({ status, tasks, totalCount, onViewAll, onSelect, onO
       <article className='attention-task-card' key={task.id}>
         <div className='attention-task-card-top'>
           <span className={`task-type-icon task-type-${task.task_type}`}>{failed ? <CloseCircleOutlined /> : <StopOutlined />}</span>
-          <StatusTag status={task.status} onClick={task.plugin_session_id ? () => onOpenGraph(task) : undefined} />
+          <StatusTag status={task.status} onClick={task.workflow_session_id ? () => onOpenGraph(task) : undefined} />
         </div>
         <div className='attention-task-card-title'>
           <Tooltip title={taskTitle(task, t)}><strong>{taskTitle(task, t)}</strong></Tooltip>
@@ -214,7 +214,7 @@ function taskDescription(task: Task, t: (key: string) => string) {
 }
 
 function taskMeta(task: Task, t: (key: string) => string) {
-  const labels: Record<string, string> = { plugin_run: t('taskCenter.typePluginRun'), background_chat: t('taskCenter.typeBackgroundChat'), scheduled: t('taskCenter.typeScheduled') };
+  const labels: Record<string, string> = { workflow_run: t('taskCenter.typeWorkflowRun'), background_chat: t('taskCenter.typeBackgroundChat'), scheduled: t('taskCenter.typeScheduled') };
   return labels[task.task_type] ?? task.task_type;
 }
 

@@ -227,7 +227,7 @@ func PublishWorkflowDraft(w http.ResponseWriter, r *http.Request) {
 	}
 	var setting orm.UserWorkflowSetting
 	enabled := store.DB().Where("user_id=? AND plugin_ref=?", userID, out.WorkflowRef).First(&setting).Error == nil && setting.Enabled
-	common.ReplyOK(w, map[string]any{"plugin_ref": out.WorkflowRef, "revision_id": out.HeadRevisionID, "revision_no": out.Version, "remote_root": "remote://" + out.RelativeRoot, "enabled": enabled})
+	common.ReplyOK(w, map[string]any{"workflow_ref": out.WorkflowRef, "revision_id": out.HeadRevisionID, "revision_no": out.Version, "remote_root": "remote://" + out.RelativeRoot, "enabled": enabled})
 }
 
 func scriptsApprovedForPublish(db *gorm.DB, draft orm.WorkflowDraft) bool {

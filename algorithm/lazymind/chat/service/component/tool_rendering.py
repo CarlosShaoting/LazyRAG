@@ -220,7 +220,7 @@ _TOOL_CALL_PREVIEW_TEMPLATES: dict[str, str] = {
     'advance_steps': 'Starting the Ready step batch {value}.',
     'advance_steps_and_hand_off': 'Starting the Ready step batch {value} and handing off.',
     'regex:get_(.+)_methods': 'Expanding the {match} Toolkit.',
-    'regex:trigger_(.+)_plugin': 'Checking whether the {match} workflow fits this request.',
+    'regex:trigger_(.+)_workflow': 'Checking whether the {match} workflow fits this request.',
 }
 _TOOL_CALL_FALLBACK_TEMPLATE = 'Calling {tool_name} to handle the request.'
 _TOOL_CALL_PREVIEW_TEMPLATES['ask_user'] = 'Gathering questions for you, please wait…'
@@ -289,7 +289,7 @@ _ZH_TOOL_CALL_PREVIEW_TEMPLATES: dict[str, str] = {
     'advance_steps': '正在批量启动可执行步骤 {value}...',
     'advance_steps_and_hand_off': '正在批量启动可执行步骤 {value} 并交出控制权...',
     'regex:get_(.+)_methods': '正在展开{match}工具箱。',
-    'regex:trigger_(.+)_plugin': '正在检查 {match} 工作流是否适合当前需求...',
+    'regex:trigger_(.+)_workflow': '正在检查 {match} 工作流是否适合当前需求...',
 }
 _ZH_TOOL_CALL_FALLBACK_TEMPLATE = '正在调用工具 {tool_name}...'
 _ZH_TOOL_CALL_PREVIEW_TEMPLATES['ask_user'] = '我正在组织问题，请稍后'
@@ -361,7 +361,7 @@ _TOOL_RESULT_PREVIEW_TEMPLATES: dict[str, str] = {
     'advance_steps': 'Workflow step batch launched.',
     'advance_steps_and_hand_off': 'Workflow step batch queued and launched.',
     'regex:get_(.+)_methods': 'The {match} Toolkit has been expanded.',
-    'regex:trigger_(.+)_plugin': (
+    'regex:trigger_(.+)_workflow': (
         'Workflow preflight completed. Result: {result.outcome}. Reason: {result.reason}.'
     ),
 }
@@ -431,7 +431,7 @@ _ZH_TOOL_RESULT_PREVIEW_TEMPLATES: dict[str, str] = {
     'advance_steps': '工作流步骤已批量启动',
     'advance_steps_and_hand_off': '工作流步骤已批量排队并启动',
     'regex:get_(.+)_methods': '已经展开{match}工具箱。',
-    'regex:trigger_(.+)_plugin': (
+    'regex:trigger_(.+)_workflow': (
         '工作流启动检查已完成，结果是 {result.outcome}，原因是 {result.reason}。'
     ),
 }
@@ -500,7 +500,7 @@ _TOOL_RESULT_FAILURE_TEMPLATES: dict[str, str] = {
     'advance_steps': 'Step batch {value} could not be started.',
     'advance_steps_and_hand_off': 'Step batch {value} could not be queued.',
     'regex:get_(.+)_methods': 'The {match} Toolkit could not be expanded.',
-    'regex:trigger_(.+)_plugin': (
+    'regex:trigger_(.+)_workflow': (
         'Workflow preflight completed. Result: {result.outcome}. Reason: {result.reason}.'
     ),
 }
@@ -569,7 +569,7 @@ _ZH_TOOL_RESULT_FAILURE_TEMPLATES: dict[str, str] = {
     'advance_steps': '步骤批次 {value} 启动失败',
     'advance_steps_and_hand_off': '步骤批次 {value} 排队失败',
     'regex:get_(.+)_methods': '未能展开{match}工具箱。',
-    'regex:trigger_(.+)_plugin': (
+    'regex:trigger_(.+)_workflow': (
         '工作流启动检查已完成，结果是 {result.outcome}，原因是 {result.reason}。'
     ),
 }

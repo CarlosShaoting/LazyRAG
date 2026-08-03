@@ -36,7 +36,7 @@ const (
 	StepStatusInterrupted = "interrupted"
 )
 
-// CreateSessionInput holds fields required to insert a new plugin_sessions row.
+// CreateSessionInput holds fields required to insert a new workflow_sessions row.
 type CreateSessionInput struct {
 	SessionID          string
 	ConversationID     string
@@ -53,7 +53,7 @@ type CreateSessionInput struct {
 	CreateUserID       string
 }
 
-// CreateSession inserts a new plugin_sessions record.
+// CreateSession inserts a new workflow_sessions record.
 // It returns an error if an active session already exists for the conversation.
 func CreateSession(ctx context.Context, db *gorm.DB, in CreateSessionInput) (*orm.WorkflowSession, error) {
 	// Guard: at most one non-dismissed active session per conversation.
@@ -190,7 +190,7 @@ func RestoreSession(ctx context.Context, db *gorm.DB, sessionID string) error {
 // healStaleActiveSession repairs a session that is stuck in "active" state after a crash.
 // A step is considered orphaned (and safe to mark interrupted) only when its backing
 // sub_agent_task is already in a terminal state (succeeded/failed/interrupted/canceled) while
-// the plugin_session_step still shows "running". This avoids incorrectly interrupting steps
+// the workflow_session_step still shows "running". This avoids incorrectly interrupting steps
 // that are genuinely still executing.
 //
 // If all orphaned running steps are resolved and no real running steps remain, the session
@@ -206,7 +206,7 @@ func healStaleActiveSession(ctx context.Context, db *gorm.DB, s *orm.WorkflowSes
 
 	now := time.Now().UTC()
 
-	// Fix orphaned running steps: plugin_session_step is "running" but the backing
+	// Fix orphaned running steps: workflow_session_step is "running" but the backing
 	// sub_agent_task has already reached a terminal state. Sync the step status to
 	// match the task status exactly (succeeded/failed/interrupted/canceled).
 	result := db.WithContext(ctx).Exec(`

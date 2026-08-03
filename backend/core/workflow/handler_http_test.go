@@ -146,8 +146,8 @@ func TestMissingWorkflowTables(t *testing.T) {
 		errMsg string
 		want   bool
 	}{
-		{"no such table: user_plugin_settings", true},
-		{"relation \"user_plugin_settings\" does not exist", true},
+		{"no such table: user_workflow_settings", true},
+		{"relation \"user_workflow_settings\" does not exist", true},
 		{"unknown error", false},
 		{"", false},
 	}
@@ -169,7 +169,7 @@ func TestMissingWorkflowTables(t *testing.T) {
 func TestListWorkflowVersions_NotFound(t *testing.T) {
 	newHandlerTestDB(t)
 	req := httptest.NewRequest(http.MethodGet, "/plugins/nonexistent/versions", nil)
-	req = mux.SetURLVars(req, map[string]string{"plugin_ref": "nonexistent"})
+	req = mux.SetURLVars(req, map[string]string{"workflow_ref": "nonexistent"})
 	req.Header.Set("X-User-Id", "user-1")
 	rec := httptest.NewRecorder()
 	ListWorkflowVersions(rec, req)
@@ -183,7 +183,7 @@ func TestListWorkflowVersions_NotFound(t *testing.T) {
 func TestPatchUserWorkflowSetting_Unauthorized(t *testing.T) {
 	newHandlerTestDB(t)
 	req := httptest.NewRequest(http.MethodPatch, "/plugins/test/settings", nil)
-	req = mux.SetURLVars(req, map[string]string{"plugin_ref": "test"})
+	req = mux.SetURLVars(req, map[string]string{"workflow_ref": "test"})
 	rec := httptest.NewRecorder()
 	PatchUserWorkflowSetting(rec, req)
 	if rec.Code != http.StatusUnauthorized {
@@ -196,7 +196,7 @@ func TestPatchUserWorkflowSetting_ExistingWorkflowUpserts(t *testing.T) {
 	seedWorkflowResource(t, db, "custom-plugin", "pid-custom", "user-1")
 	body := jsonBody(`{"enabled":false}`)
 	req := httptest.NewRequest(http.MethodPatch, "/plugins/custom-plugin/settings", body)
-	req = mux.SetURLVars(req, map[string]string{"plugin_ref": "custom-plugin"})
+	req = mux.SetURLVars(req, map[string]string{"workflow_ref": "custom-plugin"})
 	req.Header.Set("X-User-Id", "user-1")
 	rec := httptest.NewRecorder()
 	PatchUserWorkflowSetting(rec, req)
@@ -209,7 +209,7 @@ func TestPatchUserWorkflowSetting_NonBuiltinNotFound(t *testing.T) {
 	newHandlerTestDB(t)
 	body := jsonBody(`{"enabled":true}`)
 	req := httptest.NewRequest(http.MethodPatch, "/plugins/unknown-ref/settings", body)
-	req = mux.SetURLVars(req, map[string]string{"plugin_ref": "unknown-ref"})
+	req = mux.SetURLVars(req, map[string]string{"workflow_ref": "unknown-ref"})
 	req.Header.Set("X-User-Id", "user-1")
 	rec := httptest.NewRecorder()
 	PatchUserWorkflowSetting(rec, req)

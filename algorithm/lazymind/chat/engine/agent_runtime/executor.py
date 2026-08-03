@@ -15,13 +15,13 @@ from .tool_limit_control import tool_limit_decision_coordinator
 _EXPANDED_BUDGET_TOOLS = {
     'advance_step',
     'advance_step_and_hand_off',
-    'create_plugin_draft',
+    'create_workflow_draft',
     'create_subagent',
 }
 
 
 def _requires_expanded_budget(tool_name: str) -> bool:
-    """Return whether invoking this tool starts plugin or SubAgent work."""
+    """Return whether invoking this tool starts workflow or SubAgent work."""
     return tool_name in _EXPANDED_BUDGET_TOOLS or tool_name.startswith('trigger_')
 
 

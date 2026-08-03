@@ -72,7 +72,7 @@ type draftResponse struct {
 	SourceSkillTreeHash   string `json:"source_skill_tree_hash"`
 	SourceAnalysisID      string `json:"source_analysis_id"`
 	Published             bool   `json:"published"`
-	PublishedWorkflowRef  string `json:"published_plugin_ref"`
+	PublishedWorkflowRef  string `json:"published_workflow_ref"`
 	CurrentRevisionID     string `json:"current_revision_id"`
 	CurrentRevisionNo     int64  `json:"current_revision_no"`
 	PublishedStatus       string `json:"published_status"`
@@ -137,7 +137,7 @@ func toEnrichedDraftResponse(db *gorm.DB, d orm.WorkflowDraft) draftResponse {
 	return resp
 }
 
-// ListWorkflowDrafts handles GET /plugin-drafts
+// ListWorkflowDrafts handles GET /workflow-drafts
 // Returns the drafts owned by the current user, paginated.
 func ListWorkflowDrafts(w http.ResponseWriter, r *http.Request) {
 	userID := common.UserID(r)
@@ -186,7 +186,7 @@ func ListWorkflowDrafts(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// CreateWorkflowDraft handles POST /plugin-drafts
+// CreateWorkflowDraft handles POST /workflow-drafts
 // Body: { "name": "...", "content": "...", "source_type": "blank|ai|skill" }
 func CreateWorkflowDraft(w http.ResponseWriter, r *http.Request) {
 	userID := common.UserID(r)
@@ -233,7 +233,7 @@ func CreateWorkflowDraft(w http.ResponseWriter, r *http.Request) {
 	common.ReplyOK(w, toEnrichedDraftResponse(store.DB(), draft))
 }
 
-// GetWorkflowDraft handles GET /plugin-drafts/{draft_id}
+// GetWorkflowDraft handles GET /workflow-drafts/{draft_id}
 func GetWorkflowDraft(w http.ResponseWriter, r *http.Request) {
 	draftID := common.PathVar(r, "draft_id")
 	userID := common.UserID(r)
@@ -251,16 +251,16 @@ func GetWorkflowDraft(w http.ResponseWriter, r *http.Request) {
 	common.ReplyOK(w, toEnrichedDraftResponse(store.DB(), draft))
 }
 
-// SaveWorkflowDraft handles POST /plugin-drafts/{draft_id}:save
+// SaveWorkflowDraft handles POST /workflow-drafts/{draft_id}:save
 //
 //	Body: {
 //	  "content": "...",
-//	  "plugin_yaml_content": "...",
+//	  "workflow_yaml_content": "...",
 //	  "state_yaml_content": "...",
 //	  "state_layout_content": "...",   // no version check, last-write-wins
 //	  "scenario_content": "...",
 //	  "scripts_content": "...",
-//	  "version": 3                      // required when sending plugin_yaml_content or state_yaml_content
+//	  "version": 3                      // required when sending workflow_yaml_content or state_yaml_content
 //	}
 //
 // Returns 409 Conflict when version is stale (another write already incremented it).
@@ -284,7 +284,7 @@ func SaveWorkflowDraft(w http.ResponseWriter, r *http.Request) {
 		ScenarioContent     *string `json:"scenario_content"`
 		ScriptsContent      *string `json:"scripts_content"`
 		// Version is the caller's last-known version. Required when writing
-		// plugin_yaml_content or state_yaml_content; ignored otherwise.
+		// workflow_yaml_content or state_yaml_content; ignored otherwise.
 		Version *int `json:"version"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -317,9 +317,9 @@ func SaveWorkflowDraft(w http.ResponseWriter, r *http.Request) {
 		updates["content"] = *body.Content
 	}
 	if body.WorkflowYAMLContent != nil {
-		updates["plugin_yaml_content"] = *body.WorkflowYAMLContent
-		// Keep plugin_id in sync so the per-user unique index can enforce deduplication.
-		updates["plugin_id"] = extractWorkflowID(*body.WorkflowYAMLContent)
+		updates["workflow_yaml_content"] = *body.WorkflowYAMLContent
+		// Keep workflow_id in sync so the per-user unique index can enforce deduplication.
+		updates["workflow_id"] = extractWorkflowID(*body.WorkflowYAMLContent)
 	}
 	if body.StateYAMLContent != nil {
 		updates["state_yaml_content"] = *body.StateYAMLContent
@@ -344,8 +344,8 @@ func SaveWorkflowDraft(w http.ResponseWriter, r *http.Request) {
 	result := query.Updates(updates)
 	if result.Error != nil {
 		err := result.Error
-		if strings.Contains(err.Error(), "idx_plugin_drafts_user_plugin_id") ||
-			strings.Contains(err.Error(), "unique") && strings.Contains(err.Error(), "plugin_id") {
+		if strings.Contains(err.Error(), "idx_workflow_drafts_user_workflow_id") ||
+			strings.Contains(err.Error(), "unique") && strings.Contains(err.Error(), "workflow_id") {
 			common.ReplyErr(w, "plugin id already exists for this user", http.StatusConflict)
 			return
 		}
@@ -372,7 +372,7 @@ func SaveWorkflowDraft(w http.ResponseWriter, r *http.Request) {
 	common.ReplyOK(w, toEnrichedDraftResponse(store.DB(), draft))
 }
 
-// DeleteWorkflowDraft handles DELETE /plugin-drafts/{draft_id}
+// DeleteWorkflowDraft handles DELETE /workflow-drafts/{draft_id}
 func DeleteWorkflowDraft(w http.ResponseWriter, r *http.Request) {
 	draftID := common.PathVar(r, "draft_id")
 	userID := common.UserID(r)
@@ -415,7 +415,7 @@ func DeleteWorkflowDraft(w http.ResponseWriter, r *http.Request) {
 	common.ReplyOK(w, nil)
 }
 
-// AIGenerateWorkflowDraft handles POST /plugin-drafts/{draft_id}:ai-generate
+// AIGenerateWorkflowDraft handles POST /workflow-drafts/{draft_id}:ai-generate
 // Body: { "description": "..." } or { "skill_id": "..." } (mutually exclusive)
 // Sets generate_status to "generating" and enqueues an async job.
 // Returns immediately with the current draft (generate_status == "generating").
@@ -559,7 +559,7 @@ func AIGenerateWorkflowDraft(w http.ResponseWriter, r *http.Request) {
 	}
 	_, err := asyncjob.Enqueue(r.Context(), db, asyncjob.EnqueueRequest{
 		JobType:      workflowDraftGenerateJobType,
-		ResourceType: "plugin_draft",
+		ResourceType: "workflow_draft",
 		ResourceID:   draftID,
 		Payload: workflowDraftGeneratePayload{
 			DraftID:               draftID,
@@ -587,7 +587,7 @@ func AIGenerateWorkflowDraft(w http.ResponseWriter, r *http.Request) {
 	common.ReplyOK(w, toEnrichedDraftResponse(store.DB(), draft))
 }
 
-// PolishWorkflowDraftInfo handles POST /plugin-drafts:polish-info
+// PolishWorkflowDraftInfo handles POST /workflow-drafts:polish-info
 // Loads the current user's llm_config and proxies to the Python polish_info endpoint.
 // Body: { "fields": {...}, "target_fields": [...] }
 func PolishWorkflowDraftInfo(w http.ResponseWriter, r *http.Request) {
@@ -628,7 +628,7 @@ func PolishWorkflowDraftInfo(w http.ResponseWriter, r *http.Request) {
 	common.ReplyOK(w, resp)
 }
 
-// AIRepairWorkflowDraft handles POST /plugin-drafts/{draft_id}:ai-repair
+// AIRepairWorkflowDraft handles POST /workflow-drafts/{draft_id}:ai-repair
 // Enqueues an async repair job and returns immediately with status=repairing.
 // The client polls generate_status until it leaves the repairing state.
 func AIRepairWorkflowDraft(w http.ResponseWriter, r *http.Request) {
@@ -681,9 +681,9 @@ func AIRepairWorkflowDraft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Mode == "" {
-		body.Mode = "plugin_local"
+		body.Mode = "workflow_local"
 	}
-	if body.Mode != "plugin_local" && body.Mode != "source_aware" {
+	if body.Mode != "workflow_local" && body.Mode != "source_aware" {
 		common.ReplyErr(w, "invalid repair mode", http.StatusBadRequest)
 		return
 	}
@@ -714,7 +714,7 @@ func AIRepairWorkflowDraft(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	log.Printf("[ai_repair] draft_id=%s target=%q hint_len=%d prev_status=%q warnings=%v plugin_yaml_empty=%v state_yaml_empty=%v",
+	log.Printf("[ai_repair] draft_id=%s target=%q hint_len=%d prev_status=%q warnings=%v workflow_yaml_empty=%v state_yaml_empty=%v",
 		draftID, body.Target, len(body.RepairHint), draft.GenerateStatus,
 		warnings, draft.WorkflowYAMLContent == "", draft.StateYAMLContent == "")
 
@@ -747,7 +747,7 @@ func AIRepairWorkflowDraft(w http.ResponseWriter, r *http.Request) {
 
 	if _, err := asyncjob.Enqueue(r.Context(), db, asyncjob.EnqueueRequest{
 		JobType:      workflowDraftRepairJobType,
-		ResourceType: "plugin_draft",
+		ResourceType: "workflow_draft",
 		ResourceID:   draftID,
 		Payload:      payload,
 		MaxAttempts:  1,

@@ -44,14 +44,14 @@ func GetChatSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	common.ReplyOK(w, map[string]any{
 		"enable_plugin":   s.EnableWorkflow,
-		"plugin_mode":     s.WorkflowMode,
+		"workflow_mode":   s.WorkflowMode,
 		"enable_subagent": s.EnableSubagent,
 		"updated_at":      s.UpdatedAt,
 	})
 }
 
 // PatchConversationWorkflowSettings updates conversation-level plugin/subagent overrides.
-// Supports enable_plugin, plugin_mode, enable_subagent; null clears back to global default.
+// Supports enable_plugin, workflow_mode, enable_subagent; null clears back to global default.
 func PatchConversationWorkflowSettings(w http.ResponseWriter, r *http.Request) {
 	userID := store.UserID(r)
 	if userID == "" {
@@ -90,16 +90,16 @@ func PatchConversationWorkflowSettings(w http.ResponseWriter, r *http.Request) {
 			updates["enable_subagent"] = v
 		}
 	}
-	if raw, present := body["plugin_mode"]; present {
+	if raw, present := body["workflow_mode"]; present {
 		if raw == nil {
-			updates["plugin_mode"] = nil
+			updates["workflow_mode"] = nil
 		} else if v, ok := raw.(string); ok {
 			v = strings.TrimSpace(v)
 			if v != "auto" && v != "dynamic" {
-				common.ReplyErr(w, "plugin_mode must be 'auto' or 'dynamic'", http.StatusBadRequest)
+				common.ReplyErr(w, "workflow_mode must be 'auto' or 'dynamic'", http.StatusBadRequest)
 				return
 			}
-			updates["plugin_mode"] = v
+			updates["workflow_mode"] = v
 		}
 	}
 	if len(updates) == 0 {
@@ -153,13 +153,17 @@ func PatchChatSettings(w http.ResponseWriter, r *http.Request) {
 	if v, ok := body["enable_subagent"].(bool); ok {
 		updates["enable_subagent"] = v
 	}
-	if v, ok := body["plugin_mode"].(string); ok {
+	v, ok := body["workflow_mode"].(string)
+	if !ok {
+		v, ok = body["plugin_mode"].(string) // workflow-naming: persistence
+	}
+	if ok {
 		v = strings.TrimSpace(v)
 		if v != "auto" && v != "dynamic" {
-			common.ReplyErr(w, "plugin_mode must be 'auto' or 'dynamic'", http.StatusBadRequest)
+			common.ReplyErr(w, "workflow_mode must be 'auto' or 'dynamic'", http.StatusBadRequest)
 			return
 		}
-		updates["plugin_mode"] = v
+		updates["plugin_mode"] = v // workflow-naming: persistence
 	}
 	if len(updates) == 1 { // only updated_at
 		common.ReplyErr(w, "no valid fields to update", http.StatusBadRequest)

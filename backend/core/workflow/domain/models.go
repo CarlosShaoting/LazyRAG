@@ -24,10 +24,3 @@ func (Session) TableName() string { return "plugin_sessions" }
 type SchemaCapabilities struct {
 	HostNeutralSessionRefs bool `json:"host_neutral_session_refs"`
 }
-
-func PublicRoute(useWorkflowNames bool) string {
-	if useWorkflowNames {
-		return "/api/workflows"
-	}
-	return "/api/plugins"
-}

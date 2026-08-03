@@ -56,7 +56,7 @@ func TestConversationPreflightMustBeReadyAndIsConsumed(t *testing.T) {
 	}
 	extJSON, _ := json.Marshal(map[string]any{
 		"keep": "value",
-		"plugin_preflight": map[string]any{
+		"workflow_preflight": map[string]any{
 			"preflight_id": "pf-ready",
 			"status":       "ready",
 		},
@@ -96,7 +96,7 @@ func TestOnSubAgentDone_SucceededManualMode(t *testing.T) {
 		t.Fatalf("step: %v", err)
 	}
 
-	// plugin_mode=dynamic in pctx → step_waiting with reason=dynamic_pause
+	// workflow_mode=dynamic in pctx → step_waiting with reason=dynamic_pause
 	pctx := &WorkflowChatContext{
 		SessionID:    "ps-1",
 		WorkflowID:   "image-plugin",
@@ -151,7 +151,7 @@ func TestOnSubAgentDone_HandoffWaitsAndMergesParallelTerminalStatuses(t *testing
 	for _, taskID := range []string{"task-history", "task-image"} {
 		if err := db.DB.Exec(
 			"INSERT INTO sub_agent_tasks (id, conversation_id, trigger_history_id, seq_in_conversation, agent_type, title, objective, mode, status, progress_pct, last_heartbeat, workspace_path, input_slots, output_slots, create_user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-			taskID, "conv-history", "history-1", 1, "plugin_step", taskID, "", "manual", "pending", 0, now, "", "[]", "[]", "", now, now,
+			taskID, "conv-history", "history-1", 1, "workflow_step", taskID, "", "manual", "pending", 0, now, "", "[]", "[]", "", now, now,
 		).Error; err != nil {
 			t.Fatalf("task %s: %v", taskID, err)
 		}
@@ -362,8 +362,8 @@ func TestOnSubAgentDone_Failed_SetsSessionFailed(t *testing.T) {
 
 	OnSubAgentDone(ctx, db.DB, nil, "task-3", subagent.StatusFailed, "step error", onSSE, pctx)
 
-	if len(gotEvents) != 1 || gotEvents[0] != "plugin_error" {
-		t.Fatalf("expected only plugin_error, got %v", gotEvents)
+	if len(gotEvents) != 1 || gotEvents[0] != "workflow_error" {
+		t.Fatalf("expected only workflow_error, got %v", gotEvents)
 	}
 	// Session failure is distinct from a successful approval checkpoint.
 	s, _ := GetSession(ctx, db.DB, "ps-3")
@@ -524,7 +524,7 @@ func TestCheckAndFallbackIfStuck_DemotesWhenIdle(t *testing.T) {
 
 func TestResolveSlotBinding_FoundBinding(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		workflowID := r.URL.Query().Get("plugin_id")
+		workflowID := r.URL.Query().Get("workflow_id")
 		slot := r.URL.Query().Get("slot")
 		if workflowID != "image-plugin" || slot != "enhanced_image_url" {
 			w.WriteHeader(http.StatusNotFound)
@@ -573,7 +573,7 @@ func TestStopActiveWorkflowSession_SendsTaskCancel(t *testing.T) {
 		t.Fatalf("CreateSession: %v", err)
 	}
 	if _, err := subagent.CreateTask(ctx, db.DB, subagent.CreateTaskInput{
-		TaskID: "stop-task-1", ConversationID: "stop-conv-1", AgentType: "plugin_step",
+		TaskID: "stop-task-1", ConversationID: "stop-conv-1", AgentType: "workflow_step",
 		Title: "analyze_subject", Objective: "analyze_subject", CreateUserID: "user-1",
 	}); err != nil {
 		t.Fatalf("CreateTask: %v", err)
@@ -624,7 +624,7 @@ func TestStopActiveWorkflowSession_CancelsAllPendingAndRunningAttempts(t *testin
 		{stepID: "active_branch", taskID: "stop-task-running", status: StepStatusRunning},
 	} {
 		if _, err := subagent.CreateTask(ctx, db.DB, subagent.CreateTaskInput{
-			TaskID: item.taskID, ConversationID: "stop-conv-parallel", AgentType: "plugin_step",
+			TaskID: item.taskID, ConversationID: "stop-conv-parallel", AgentType: "workflow_step",
 			Title: item.stepID, Objective: item.stepID, CreateUserID: "user-1",
 		}); err != nil {
 			t.Fatalf("CreateTask(%s): %v", item.taskID, err)
@@ -696,12 +696,12 @@ func TestWorkflowRunOutboxDoesNotDispatchInterruptedTask(t *testing.T) {
 	ctx := context.Background()
 	const taskID = "outbox-interrupted-task"
 	if _, err := subagent.CreateTask(ctx, db.DB, subagent.CreateTaskInput{
-		TaskID: taskID, ConversationID: "outbox-conv", AgentType: "plugin_step",
+		TaskID: taskID, ConversationID: "outbox-conv", AgentType: "workflow_step",
 		Title: "outbox", Objective: "outbox", CreateUserID: "user-1",
 	}); err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
-	if err := enqueueWorkflowAttemptRunner(ctx, db.DB, subagent.RunRequest{TaskID: taskID, AgentType: "plugin_step"}); err != nil {
+	if err := enqueueWorkflowAttemptRunner(ctx, db.DB, subagent.RunRequest{TaskID: taskID, AgentType: "workflow_step"}); err != nil {
 		t.Fatalf("enqueueWorkflowAttemptRunner: %v", err)
 	}
 	if err := subagent.UpdateFinalStatus(ctx, db.DB, taskID, subagent.StatusInterrupted, "stopped"); err != nil {

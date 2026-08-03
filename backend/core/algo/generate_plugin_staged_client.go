@@ -187,7 +187,7 @@ func GenerateSkeleton(ctx context.Context, req GenerateSkeletonRequest) (*Genera
 		return nil, err
 	}
 	return &GenerateSkeletonResponse{
-		WorkflowYAML: extractStringField(raw, "plugin_yaml"),
+		WorkflowYAML: extractStringField(raw, "workflow_yaml"),
 	}, nil
 }
 
@@ -202,8 +202,8 @@ func GenerateStateMachine(ctx context.Context, req GenerateStateMachineRequest) 
 	resp := &GenerateStateMachineResponse{
 		StateYAML: extractStringField(raw, "state_yaml"),
 	}
-	// Phase 2 may return an updated plugin_yaml when slot repair was applied.
-	resp.WorkflowYAML = extractStringField(raw, "plugin_yaml")
+	// Phase 2 may return an updated workflow_yaml when slot repair was applied.
+	resp.WorkflowYAML = extractStringField(raw, "workflow_yaml")
 	// Extract warnings list from response (may be absent for older Python versions).
 	if data, ok := raw["data"].(map[string]any); ok {
 		raw = data
@@ -284,7 +284,7 @@ func RepairStateMachine(ctx context.Context, req RepairStateMachineRequest) (*Re
 	}
 	resp := &RepairStateMachineResponse{
 		StateYAML:    extractStringField(raw, "state_yaml"),
-		WorkflowYAML: extractStringField(raw, "plugin_yaml"),
+		WorkflowYAML: extractStringField(raw, "workflow_yaml"),
 		ScenarioMD:   extractStringField(raw, "scenario_md"),
 		Scripts:      extractScripts(raw),
 	}

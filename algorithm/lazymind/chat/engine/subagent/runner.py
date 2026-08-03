@@ -47,8 +47,8 @@ def _build_artifact_context_section(
 
     Returns an empty list when there are no input artifacts.
 
-    Plugin scenario (params contains session_id):
-      Reads from plugin_slot_revisions with sort_order from plugin_slot_order.
+    Workflow scenario (params contains session_id):
+      Reads from workflow_slot_revisions with sort_order from workflow_slot_order.
       Resolves human vs AI revision for each row, then builds per-key ordered summaries.
 
     Ordinary SubAgent (no session_id, but has input_slots):
@@ -59,10 +59,10 @@ def _build_artifact_context_section(
     session_id: str = params.get('session_id', '')
 
     if session_id:
-        return db.format_plugin_session_artifacts(session_id)
+        return db.format_workflow_session_artifacts(session_id)
 
     if ctx.input_slots:
-        steps = db.load_plugin_session_steps(session_id) if session_id else []
+        steps = db.load_workflow_session_steps(session_id) if session_id else []
         succeeded_task_ids = [
             s['task_id'] for s in steps
             if s.get('status') == 'succeeded' and s.get('task_id')
@@ -74,37 +74,68 @@ def _build_artifact_context_section(
     return []
 
 
-def _resolve_plugin_step_tools(params: Dict[str, Any]) -> Optional[List[str]]:
-    """Resolve the tool list for a plugin_step task from plugin_loader.
+def _resolve_workflow_step_tools(params: Dict[str, Any]) -> Optional[List[str]]:
+    """Resolve the tool list for a workflow_step task from workflow_loader.
 
-    Returns None if the plugin or step cannot be resolved (falls back to caller default).
+    Returns None if the workflow or step cannot be resolved (falls back to caller default).
     """
     try:
-        from lazymind.chat.plugin import plugin_loader as _loader
-        plugin_id: str = params.get('plugin_id', '')
+        from lazymind.chat.workflow import workflow_loader as _loader
+        workflow_id: str = params.get('workflow_id', '')
         step_id: str = params.get('step_id', '')
-        if not plugin_id or not step_id:
+        if not workflow_id or not step_id:
             return None
-        step_config = _loader.get_step_config(plugin_id, step_id)
-        if not step_config and not plugin_id:
+        step_config = _loader.get_step_config(workflow_id, step_id)
+        if not step_config and not workflow_id:
             return None
-        # If the plugin itself doesn't exist, get_step_config returns {}.
-        # Distinguish "step exists but has no tools" from "plugin not found"
-        # by checking whether the plugin is registered.
-        if _loader.get_plugin(plugin_id) is None:
+        # If the workflow itself doesn't exist, get_step_config returns {}.
+        # Distinguish "step exists but has no tools" from "workflow not found"
+        # by checking whether the workflow is registered.
+        if _loader.get_workflow(workflow_id) is None:
             return None
         declared: List[str] = step_config.get('tools', [])
-        return list(declared)
+        return list(dict.fromkeys([*SUBAGENT_CORE_TOOL_NAMES, *declared]))
     except Exception as exc:
-        LOG.warning(f'[SubAgent] _resolve_plugin_step_tools failed: {exc}')
+        LOG.warning(f'[SubAgent] _resolve_workflow_step_tools failed: {exc}')
         return None
 
 
-def _resolve_runtime_tools(explicit: Optional[List[str]], plugin_id: Optional[str] = None) -> List[Any]:
+def _enrich_objective_with_artifacts(
+    objective: str, params: Dict[str, Any], db: Any,
+) -> str:
+    """Substitute artifact placeholders using succeeded workflow-step outputs."""
+    if '{{' not in objective or not params.get('session_id'):
+        return objective
+    try:
+        steps = db.load_workflow_session_steps(params['session_id'])
+        task_ids = [
+            str(step.get('task_id')) for step in steps
+            if step.get('status') == 'succeeded' and step.get('task_id')
+        ]
+        if not task_ids:
+            return objective
+        artifacts = db.load_artifacts_for_tasks(task_ids)
+        values: Dict[str, str] = {}
+        for artifact in artifacts:
+            key = str(artifact.get('slot') or artifact.get('key') or '')
+            value = artifact.get('value')
+            if isinstance(value, dict):
+                value = value.get('text') or value.get('url') or value.get('value')
+            if key and value is not None:
+                values[key] = str(value)
+        for key, value in values.items():
+            objective = objective.replace('{{' + key + '}}', value)
+        return objective
+    except Exception as exc:
+        LOG.warning('[SubAgent] objective artifact enrichment failed: %s', exc)
+        return objective
+
+
+def _resolve_runtime_tools(explicit: Optional[List[str]], workflow_id: Optional[str] = None) -> List[Any]:
     """Build the runtime tool list for a SubAgent.
 
     If explicit tool names are provided, each name is resolved in order:
-      1. Plugin script tools (loaded from the plugin's tool_scripts declarations).
+      1. Workflow script tools (loaded from the workflow's tool_scripts declarations).
       2. DEFAULT_TOOLS registry (framework / global tools).
     If a name is not found in either source it is silently skipped and a warning is logged.
 
@@ -122,17 +153,17 @@ def _resolve_runtime_tools(explicit: Optional[List[str]], plugin_id: Optional[st
         ]
         # Build lookup from DEFAULT_TOOLS
         default_by_name = {cfg.name: cfg for cfg in DEFAULT_TOOLS if tool_is_active(cfg)}
-        # Build lookup from plugin script tools
+        # Build lookup from workflow script tools
         script_by_name: Dict[str, Any] = {}
-        if plugin_id:
+        if workflow_id:
             try:
-                from lazymind.chat.plugin import plugin_loader as _loader
-                for fn_name in _loader.list_script_tool_names(plugin_id):
-                    fn = _loader.get_script_tool(plugin_id, fn_name)
+                from lazymind.chat.workflow import workflow_loader as _loader
+                for fn_name in _loader.list_script_tool_names(workflow_id):
+                    fn = _loader.get_script_tool(workflow_id, fn_name)
                     if fn is not None:
                         script_by_name[fn_name] = fn
             except Exception as exc:
-                LOG.warning('[SubAgent] failed to load script tools for plugin=%s: %s', plugin_id, exc)
+                LOG.warning('[SubAgent] failed to load script tools for workflow=%s: %s', workflow_id, exc)
 
         result = []
         for name in name_list:
@@ -141,7 +172,7 @@ def _resolve_runtime_tools(explicit: Optional[List[str]], plugin_id: Optional[st
             elif name in default_by_name:
                 result.append(default_by_name[name].tool)
             else:
-                LOG.warning('[SubAgent] tool %r not found in plugin scripts or DEFAULT_TOOLS — skipped', name)
+                LOG.warning('[SubAgent] tool %r not found in workflow scripts or DEFAULT_TOOLS — skipped', name)
         return result
     return [cfg.tool for cfg in filter_tools(DEFAULT_TOOLS)]
 
@@ -219,7 +250,7 @@ def _build_partial_sort_order_hints(
 
 def _build_intent_context_section(db: 'SubAgentDB', conversation_id: str,
                                   session_id: str, step_id: str = '') -> List[str]:
-    """Read conversation + plugin-session + current-step intent from DB.
+    """Read conversation + workflow-session + current-step intent from DB.
 
     Returns an empty list if there are no intent constraints to inject.
     """
@@ -249,7 +280,7 @@ def _build_intent_context_section(db: 'SubAgentDB', conversation_id: str,
 _STRUCTURED_PARAM_KEYS = {
     # These values are rendered by dedicated sections below. Excluding only these
     # avoids duplicating large/internal representations while preserving arbitrary
-    # task parameters supplied by plugin and ordinary SubAgent callers.
+    # task parameters supplied by workflow and ordinary SubAgent callers.
     'history_files_per_turn',
     SUBAGENT_ATTACHMENT_CONTEXT_KEY,
     'partial_indices',
@@ -306,17 +337,17 @@ def _build_agentic_config(
             params.get('_thinking_depth') or agentic_config.get('thinking_depth') or 'medium'
         ),
     })
-    if effective_agent_type == 'plugin_step':
+    if effective_agent_type == 'workflow_step':
         agentic_config.update({
-            'plugin_id': params.get('plugin_id', ''),
-            'plugin_session_id': params.get('session_id', ''),
-            'plugin_step': params.get('step_id', ''),
+            'workflow_id': params.get('workflow_id', ''),
+            'workflow_session_id': params.get('session_id', ''),
+            'workflow_step': params.get('step_id', ''),
         })
-    # Prefer the launched plugin session id whenever present so artifact tools work
-    # even if parent_agentic_config carried a stale empty plugin_session_id.
+    # Prefer the launched workflow session id whenever present so artifact tools work
+    # even if parent_agentic_config carried a stale empty workflow_session_id.
     launched_session_id = str(params.get('session_id') or '').strip()
     if launched_session_id:
-        agentic_config['plugin_session_id'] = launched_session_id
+        agentic_config['workflow_session_id'] = launched_session_id
     return agentic_config
 
 
@@ -360,7 +391,7 @@ def _build_subagent_plan(
         'task.params', priority=10, content_kind='reference',
     )
 
-    # Inject artifact context: plugin session reads from slot revisions with sort_order;
+    # Inject artifact context: workflow session reads from slot revisions with sort_order;
     # ordinary SubAgent reads from sub_agent_artifacts of prior succeeded steps.
     session_id: str = ctx.params.get('session_id', '')
     step_id: str = ctx.params.get('step_id', '')
@@ -380,7 +411,7 @@ def _build_subagent_plan(
                 priority=20,
                 content_kind='reference',
             )
-    # Inject intent/constraints from the plugin session so SubAgent respects user preferences.
+    # Inject intent/constraints from the workflow session so SubAgent respects user preferences.
     if db:
         intent_lines = _build_intent_context_section(db, ctx.conversation_id, session_id, step_id)
         if intent_lines:
@@ -417,7 +448,7 @@ def _build_subagent_plan(
             )
     if ctx.params.get('required_output_artifact_keys') is not None:
         required_keys = _coerce_str_list(ctx.params.get('required_output_artifact_keys'))
-    elif str(ctx.agent_type or '') == 'plugin_step':
+    elif str(ctx.agent_type or '') == 'workflow_step':
         required_keys = []
     else:
         required_keys = list(ctx.output_slots)
@@ -593,7 +624,7 @@ async def run_subagent_stream(
         effective_agent_type = str(task.get('agent_type') or agent_type or '')
         if params.get('required_output_artifact_keys') is not None:
             required_output_keys = _coerce_str_list(params.get('required_output_artifact_keys'))
-        elif effective_agent_type == 'plugin_step':
+        elif effective_agent_type == 'workflow_step':
             # Do not treat every declared output as mandatory when Go omits empty lists.
             required_output_keys = []
         else:
@@ -613,15 +644,15 @@ async def run_subagent_stream(
         )
         ctx.ensure_workspace()
 
-        # For plugin_step tasks: remove {{slot}} placeholders from the objective
+        # For workflow_step tasks: remove {{slot}} placeholders from the objective
         # (artifact context is now injected as a summary section in _objective_prompt instead).
-        # Also resolve tools from plugin_loader when no explicit list was provided.
-        # Go no longer forwards the tools list for plugin_step tasks.
-        if effective_agent_type == 'plugin_step':
+        # Also resolve tools from workflow_loader when no explicit list was provided.
+        # Go no longer forwards the tools list for workflow_step tasks.
+        if effective_agent_type == 'workflow_step':
             # Strip any remaining {{slot}} placeholders so they don't confuse the LLM.
             ctx.objective = re.sub(r'\{\{[^}]+\}\}', '', ctx.objective).strip()
             if not tools:
-                tools = _resolve_plugin_step_tools(params)
+                tools = _resolve_workflow_step_tools(params)
 
         sid = task_id
         lazyllm.globals._init_sid(sid=sid)
@@ -644,15 +675,15 @@ async def run_subagent_stream(
         yield _sse({'type': 'task_start', 'task_id': task_id})
 
         llm = AutoModel(model='llm')
-        runtime_tools = _resolve_runtime_tools(tools, plugin_id=params.get('plugin_id') or None)
-        # Plugin steps often need find_user_attachment even when the current synthetic
+        runtime_tools = _resolve_runtime_tools(tools, workflow_id=params.get('workflow_id') or None)
+        # Workflow steps often need find_user_attachment even when the current synthetic
         # chat turn has no files; keep the tools available and let the tool report empty.
         attachment_configs = (
             [*USER_ATTACHMENT_TOOL_CONFIGS, ATTACHMENT_EDIT_TOOL_CONFIG]
             if (
                 agentic_config.get('files')
                 or agentic_config.get('history_files_per_turn')
-                or effective_agent_type == 'plugin_step'
+                or effective_agent_type == 'workflow_step'
             )
             else []
         )
@@ -775,14 +806,14 @@ async def run_subagent_stream(
                         'think': frame.get('think'), 'text': frame.get('text')})
 
         # Flush required drafts before checking graph material guarantees.
-        if effective_agent_type == 'plugin_step' and required_output_keys:
+        if effective_agent_type == 'workflow_step' and required_output_keys:
             _auto_flush_drafts(ctx, db)
 
         # Completeness check: every required output key must have at least one artifact.
         saved = set(ctx.saved_keys())
         missing = [k for k in required_output_keys if k not in saved]
         if missing:
-            if effective_agent_type == 'plugin_step':
+            if effective_agent_type == 'workflow_step':
                 cost = round(time.time() - start_time, 3)
                 message = f'缺少必需产出素材: {", ".join(missing)}'
                 yield _sse({'type': 'error', 'task_id': task_id, 'status': 'failed',

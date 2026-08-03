@@ -15,10 +15,14 @@ import (
 )
 
 var (
-	ErrNotFound            = errors.New("WORKFLOW_NOT_FOUND")
-	ErrPermissionDenied    = errors.New("PERMISSION_DENIED")
-	ErrIdempotencyConflict = errors.New("IDEMPOTENCY_CONFLICT")
+	ErrNotFound            error = repositoryError("WORKFLOW_NOT_FOUND")
+	ErrPermissionDenied    error = repositoryError("PERMISSION_DENIED")
+	ErrIdempotencyConflict error = repositoryError("IDEMPOTENCY_CONFLICT")
 )
+
+type repositoryError string
+
+func (e repositoryError) Error() string { return string(e) }
 
 type Repository struct {
 	db   *gorm.DB

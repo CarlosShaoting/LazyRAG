@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestLegacyRoutesFlagDefaultsOnAndCanRollback(t *testing.T) {
@@ -14,6 +15,21 @@ func TestLegacyRoutesFlagDefaultsOnAndCanRollback(t *testing.T) {
 	t.Setenv(LegacyRoutesEnv, "false")
 	if LegacyRoutesEnabled() {
 		t.Fatal("legacy route flag did not disable aliases")
+	}
+}
+
+func TestLegacyRouteDeletionGateRequiresWindowAndZeroCalls(t *testing.T) {
+	metrics := NewRouteMetrics()
+	now := time.Date(2026, 8, 3, 0, 0, 0, 0, time.UTC)
+	if metrics.CanRemoveLegacyRoutes(now.Add(-23*time.Hour), now, 24*time.Hour) {
+		t.Fatal("incomplete observation window must block deletion")
+	}
+	if !metrics.CanRemoveLegacyRoutes(now.Add(-24*time.Hour), now, 24*time.Hour) {
+		t.Fatal("zero calls over a complete window should satisfy the metrics gate")
+	}
+	metrics.counts["frontend|/plugins"] = 1
+	if metrics.CanRemoveLegacyRoutes(now.Add(-48*time.Hour), now, 24*time.Hour) {
+		t.Fatal("observed legacy callers must block deletion")
 	}
 }
 

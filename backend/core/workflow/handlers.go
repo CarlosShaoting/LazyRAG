@@ -62,7 +62,7 @@ type sessionDTO struct {
 	Steps          []stepDTO `json:"steps,omitempty"`
 }
 
-// stepDTO summarises one plugin_session_steps attempt for UI history.
+// stepDTO summarises one plugin_session_steps attempt for UI history.  // workflow-naming: persistence
 type stepDTO struct {
 	StepID        string    `json:"step_id"`
 	Attempt       int       `json:"attempt"`
@@ -155,9 +155,9 @@ func toSlotDTO(r *orm.WorkflowSlotRevision) slotDTO {
 }
 
 // enrichSlots fills ContentType, ArtifactValue, Caption, RevisionCount, SortOrder,
-// and OrderVersion on each slotDTO by querying sub_agent_artifacts, plugin_slot_revisions,
-// and plugin_slot_order.
-// For each revision: look up plugin_session_steps → task_id, then query
+// and OrderVersion on each slotDTO by querying sub_agent_artifacts, plugin_slot_revisions,  // workflow-naming: persistence
+// and plugin_slot_order.  // workflow-naming: persistence
+// For each revision: look up plugin_session_steps → task_id, then query  // workflow-naming: persistence
 // sub_agent_artifacts(task_id, slot) ordered by seq ASC and pick the
 // row at position list_index (0-based); for single slots take the latest (seq DESC).
 func enrichSlots(ctx context.Context, db *gorm.DB, sessionID string, slots []slotDTO) {
@@ -212,7 +212,7 @@ func enrichSlots(ctx context.Context, db *gorm.DB, sessionID string, slots []slo
 	}
 	var rcRows []revCountRow
 	db.WithContext(ctx).Raw(
-		`SELECT slot_id, list_index, COUNT(*) AS cnt FROM plugin_slot_revisions
+		`SELECT slot_id, list_index, COUNT(*) AS cnt FROM plugin_slot_revisions  // workflow-naming: persistence
 		 WHERE session_id = ? GROUP BY slot_id, list_index`,
 		sessionID,
 	).Scan(&rcRows)
@@ -237,7 +237,7 @@ func enrichSlots(ctx context.Context, db *gorm.DB, sessionID string, slots []slo
 		slot := &slots[i]
 
 		// Unified value resolution (priority order):
-		//   1. HumanArtifactID != nil → human revision: read from plugin_human_artifacts.
+		//   1. HumanArtifactID != nil → human revision: read from plugin_human_artifacts.  // workflow-naming: persistence
 		//   2. ArtifactSeq != nil     → AI revision: read from sub_agent_artifacts by seq.
 		//   3. ContentSnapshot        → legacy fallback (pre-migration rows).
 		var resolved json.RawMessage
@@ -306,7 +306,7 @@ func enrichSlots(ctx context.Context, db *gorm.DB, sessionID string, slots []slo
 		}
 		slot.RevisionCount = revCounts[rcKey]
 
-		// sort_order and order_version from plugin_slot_order.
+		// sort_order and order_version from plugin_slot_order.  // workflow-naming: persistence
 		// single slots (list_index IS NULL) get sort_order=0 as a stable sentinel.
 		if slot.ListIndex == nil {
 			so := 0
@@ -327,7 +327,7 @@ func enrichSlots(ctx context.Context, db *gorm.DB, sessionID string, slots []slo
 	}
 }
 
-// ListConversationSessions handles GET /conversations/{conversation_id}/plugin-sessions.
+// ListConversationSessions handles GET /conversations/{conversation_id}/workflow-sessions.
 func ListConversationSessions(w http.ResponseWriter, r *http.Request) {
 	convID := common.PathVar(r, "conversation_id")
 	if convID == "" {
@@ -351,7 +351,7 @@ func ListConversationSessions(w http.ResponseWriter, r *http.Request) {
 	common.ReplyOK(w, map[string]any{"sessions": out})
 }
 
-// GetSessionDetail handles GET /plugin-sessions/{session_id}.
+// GetSessionDetail handles GET /workflow-sessions/{session_id}.
 func GetSessionDetail(w http.ResponseWriter, r *http.Request) {
 	sessionID := common.PathVar(r, "session_id")
 	if sessionID == "" {
@@ -395,7 +395,7 @@ func GetSessionDetail(w http.ResponseWriter, r *http.Request) {
 	common.ReplyOK(w, map[string]any{"session": dto})
 }
 
-// GetSessionSlots handles GET /plugin-sessions/{session_id}/slots.
+// GetSessionSlots handles GET /workflow-sessions/{session_id}/slots.
 func GetSessionSlots(w http.ResponseWriter, r *http.Request) {
 	sessionID := common.PathVar(r, "session_id")
 	if sessionID == "" {
@@ -434,7 +434,7 @@ func GetSessionSlots(w http.ResponseWriter, r *http.Request) {
 	common.ReplyOK(w, map[string]any{"slots": out})
 }
 
-// GetSessionSteps handles GET /plugin-sessions/{session_id}/steps.
+// GetSessionSteps handles GET /workflow-sessions/{session_id}/steps.
 // Returns all step execution records for the session, ordered by created_at ASC.
 // The frontend uses this in completed state to render the rollback step selector.
 func GetSessionSteps(w http.ResponseWriter, r *http.Request) {
@@ -498,7 +498,7 @@ func GetSessionSteps(w http.ResponseWriter, r *http.Request) {
 	common.ReplyOK(w, map[string]any{"steps": out})
 }
 
-// PatchSessionSlot handles PATCH /plugin-sessions/{session_id}/slots/{slot_id}.
+// PatchSessionSlot handles PATCH /workflow-sessions/{session_id}/slots/{slot_id}.
 func PatchSessionSlot(w http.ResponseWriter, r *http.Request) {
 	sessionID := common.PathVar(r, "session_id")
 	slotID := common.PathVar(r, "slot_id")
@@ -567,7 +567,7 @@ func PatchSessionSlot(w http.ResponseWriter, r *http.Request) {
 	common.ReplyOK(w, map[string]any{"selected_revision": body.SelectedRevision})
 }
 
-// GetActiveConversationSession handles GET /conversations/{conversation_id}/plugin-sessions:active.
+// GetActiveConversationSession handles GET /conversations/{conversation_id}/workflow-sessions:active.
 func GetActiveConversationSession(w http.ResponseWriter, r *http.Request) {
 	convID := common.PathVar(r, "conversation_id")
 	if convID == "" {
@@ -600,7 +600,7 @@ func GetActiveConversationSession(w http.ResponseWriter, r *http.Request) {
 	common.ReplyOK(w, map[string]any{"session": dto})
 }
 
-// GetLatestConversationSession handles GET /conversations/{conversation_id}/plugin-sessions:latest.
+// GetLatestConversationSession handles GET /conversations/{conversation_id}/workflow-sessions:latest.
 // Returns the most recent session regardless of status, so the frontend can always show
 // plugin output even after a session completes or fails.
 func GetLatestConversationSession(w http.ResponseWriter, r *http.Request) {
@@ -648,16 +648,16 @@ type stepAttemptDTO struct {
 	StartedAt     string  `json:"started_at"`
 }
 
-// GetWorkflowInfo handles GET /plugins/{plugin_id}.
-// Proxies to the Python chat service /api/plugins/{plugin_id} and returns the plugin spec
+// GetWorkflowInfo handles GET /plugins/{workflow_id}.
+// Proxies to the Python chat service /api/workflows/{workflow_id} and returns the plugin spec
 // including the ui.tabs declaration needed by the frontend WorkflowPanel.
 func GetWorkflowInfo(w http.ResponseWriter, r *http.Request) {
-	workflowID := common.PathVar(r, "plugin_id")
+	workflowID := common.PathVar(r, "workflow_id")
 	if workflowID == "" {
-		common.ReplyErr(w, "plugin_id required", http.StatusBadRequest)
+		common.ReplyErr(w, "workflow_id required", http.StatusBadRequest)
 		return
 	}
-	upstream := common.ChatServiceEndpoint() + "/api/plugins/" + workflowID
+	upstream := common.ChatServiceEndpoint() + "/api/workflows/" + workflowID
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, upstream, nil)
@@ -697,9 +697,9 @@ func GetWorkflowInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 // ListWorkflows handles GET /plugins.
-// Proxies to the Python chat service /api/plugins.
+// Proxies to the Python chat service /api/workflows.
 func ListWorkflows(w http.ResponseWriter, r *http.Request) {
-	upstream := common.ChatServiceEndpoint() + "/api/plugins"
+	upstream := common.ChatServiceEndpoint() + "/api/workflows"
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, upstream, nil)
@@ -734,7 +734,7 @@ func ListWorkflows(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// SyncSessionSearchConfig handles POST /plugin-sessions/{session_id}:sync-search-config.
+// SyncSessionSearchConfig handles POST /workflow-sessions/{session_id}:sync-search-config.
 // Persists the current UI knowledge-base selection onto the parent conversation so
 // analyze_subject KB prefetch can read filters.kb_id.
 // Body: {"search_config": {"dataset_list": [{"id": "..."}], "creators": [], "tags": []}}
@@ -774,7 +774,7 @@ func SyncSessionSearchConfig(w http.ResponseWriter, r *http.Request) {
 	common.ReplyOK(w, map[string]any{"conversation_id": session.ConversationID})
 }
 
-// ReorderSlotItems handles PATCH /plugin-sessions/{session_id}/slots/{slot_id}/order.
+// ReorderSlotItems handles PATCH /workflow-sessions/{session_id}/slots/{slot_id}/order.
 // Body: {"order": [1,0,2], "version": N}
 // order is the desired new sequence expressed as list_index values.
 func ReorderSlotItems(w http.ResponseWriter, r *http.Request) {
@@ -829,7 +829,7 @@ func ReorderSlotItems(w http.ResponseWriter, r *http.Request) {
 	common.ReplyOK(w, map[string]any{"order_version": newVersion})
 }
 
-// GetSlotOrderHandler handles GET /plugin-sessions/{session_id}/slots/{slot_id}/order.
+// GetSlotOrderHandler handles GET /workflow-sessions/{session_id}/slots/{slot_id}/order.
 // Returns the order_list and order_version for a slot, used by Python save_artifacts
 // to translate sort_order → list_index without exposing list_index to the AI.
 func GetSlotOrderHandler(w http.ResponseWriter, r *http.Request) {
@@ -878,7 +878,7 @@ func GetSlotOrderHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// CreateSlotItem handles POST /plugin-sessions/{session_id}/slots/{slot_id}/items.
+// CreateSlotItem handles POST /workflow-sessions/{session_id}/slots/{slot_id}/items.
 // Appends a new human-created item to a list slot or inserts before a given sort_order.
 // Body: { value: {...}, caption?: string, insert_before?: number }
 func CreateSlotItem(w http.ResponseWriter, r *http.Request) {
@@ -978,7 +978,7 @@ func CreateSlotItem(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// SaveArtifactByKey handles POST /plugin-sessions/{session_id}/artifacts.
+// SaveArtifactByKey handles POST /workflow-sessions/{session_id}/artifacts.
 // Allows ChatAgent to write a plugin artifact directly by slot without
 // going through a SubAgent task. Looks up the slot binding via the Python API,
 // then writes a new AI slot revision for the given slot.
@@ -1017,7 +1017,7 @@ func SaveArtifactByKey(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 
-	// Resolve plugin_id from session.
+	// Resolve workflow_id from session.
 	var sess orm.WorkflowSession
 	if err := db.WithContext(ctx).Where("id = ?", sessionID).First(&sess).Error; err != nil {
 		common.ReplyErr(w, "session not found", http.StatusNotFound)
@@ -1076,7 +1076,7 @@ func SaveArtifactByKey(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// DismissSessionHandler handles POST /plugin-sessions/{session_id}:dismiss.
+// DismissSessionHandler handles POST /workflow-sessions/{session_id}:dismiss.
 // Marks the session as dismissed, hiding it from all active-session lookups.
 func DismissSessionHandler(w http.ResponseWriter, r *http.Request) {
 	sessionID := common.PathVar(r, "session_id")
@@ -1108,7 +1108,7 @@ func DismissSessionHandler(w http.ResponseWriter, r *http.Request) {
 	common.ReplyOK(w, map[string]any{"session_id": sessionID, "dismissed": true})
 }
 
-// RestoreSessionHandler handles POST /plugin-sessions/{session_id}:restore.
+// RestoreSessionHandler handles POST /workflow-sessions/{session_id}:restore.
 // Un-dismisses a previously dismissed session, subject to no active/waiting session existing.
 func RestoreSessionHandler(w http.ResponseWriter, r *http.Request) {
 	sessionID := common.PathVar(r, "session_id")
@@ -1137,7 +1137,7 @@ func RestoreSessionHandler(w http.ResponseWriter, r *http.Request) {
 	common.ReplyOK(w, map[string]any{"session_id": sessionID, "dismissed": false})
 }
 
-// ListDismissedSessionsHandler handles GET /conversations/{conversation_id}/dismissed-plugin-sessions.
+// ListDismissedSessionsHandler handles GET /conversations/{conversation_id}/dismissed-workflow-sessions.
 // Returns sessions the user has dismissed, so they can be restored via the UI.
 func ListDismissedSessionsHandler(w http.ResponseWriter, r *http.Request) {
 	convID := common.PathVar(r, "conversation_id")

@@ -1,6 +1,6 @@
-// Package plugin EventLoop handles plugin_step task lifecycle on the Go side.
+// Package plugin EventLoop handles workflow_step task lifecycle on the Go side.
 // It extends handleTaskCreated in chat/conversation_logic.go to process
-// agent_type='plugin_step' events with Workflow-specific session management.
+// agent_type='workflow_step' events with Workflow-specific session management.
 package workflow
 
 import (
@@ -84,14 +84,14 @@ type WorkflowStepParams struct {
 // asMap serialises the params into the generic map expected by subagent.RunRequest.Params.
 func (p WorkflowStepParams) asMap() map[string]any {
 	m := map[string]any{
-		"plugin_id":     p.WorkflowID,
+		"workflow_id":   p.WorkflowID,
 		"step_id":       p.StepID,
 		"session_id":    p.SessionID,
 		"user_input":    p.UserInput,
 		"is_cold_start": p.IsColdStart,
 	}
 	if p.WorkflowMode != "" {
-		m["plugin_mode"] = p.WorkflowMode
+		m["workflow_mode"] = p.WorkflowMode
 	}
 	if p.HandOff != nil {
 		m["hand_off"] = *p.HandOff
@@ -194,10 +194,10 @@ func appendHandoffHistorySummary(
 
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var batch []handoffBatchStep
-		if err := tx.Table("plugin_session_steps AS steps").
-			Select("steps.step_id, steps.status").
-			Joins("JOIN sub_agent_tasks AS tasks ON tasks.id = steps.task_id").
-			Where("steps.session_id = ? AND steps.validity <> ? AND tasks.trigger_history_id = ?",
+		if err := tx.Table("plugin_session_steps AS steps"). // workflow-naming: persistence
+									Select("steps.step_id, steps.status").
+									Joins("JOIN sub_agent_tasks AS tasks ON tasks.id = steps.task_id").
+									Where("steps.session_id = ? AND steps.validity <> ? AND tasks.trigger_history_id = ?",
 				pctx.SessionID, "stale", pctx.TriggerHistoryID).
 			Scan(&batch).Error; err != nil {
 			return err
@@ -217,7 +217,7 @@ func appendHandoffHistorySummary(
 			First(&history).Error; err != nil {
 			return err
 		}
-		marker := fmt.Sprintf("<!-- plugin-handoff-summary:%s -->", pctx.TriggerHistoryID)
+		marker := fmt.Sprintf("<!-- workflow-handoff-summary:%s -->", pctx.TriggerHistoryID)
 		if strings.Contains(history.Result, marker) {
 			return nil
 		}
@@ -258,7 +258,7 @@ func conversationPreflight(ctx context.Context, db *gorm.DB, convID string) (map
 	if json.Unmarshal(conv.Ext, &ext) != nil {
 		return nil, nil
 	}
-	preflight, _ := ext["plugin_preflight"].(map[string]any)
+	preflight, _ := ext["workflow_preflight"].(map[string]any)
 	return ext, preflight
 }
 
@@ -282,12 +282,16 @@ func consumeConversationPreflight(ctx context.Context, db *gorm.DB, convID, pref
 	}
 	ext, preflight := conversationPreflight(ctx, db, convID)
 	if preflight == nil || fmt.Sprint(preflight["preflight_id"]) != preflightID {
-		return fmt.Errorf("plugin: prepared preflight changed before it could be consumed")
+		return workflowRuntimeError("workflow: prepared preflight changed before it could be consumed")
 	}
-	delete(ext, "plugin_preflight")
+	delete(ext, "workflow_preflight")
 	raw, _ := json.Marshal(ext)
 	return db.WithContext(ctx).Model(&orm.Conversation{}).Where("id = ?", convID).Update("ext", raw).Error
 }
+
+type workflowRuntimeError string
+
+func (e workflowRuntimeError) Error() string { return string(e) }
 
 func enforceWorkflowConversationSettings(ctx context.Context, db *gorm.DB, convID string) error {
 	if db == nil || strings.TrimSpace(convID) == "" {
@@ -295,7 +299,7 @@ func enforceWorkflowConversationSettings(ctx context.Context, db *gorm.DB, convI
 	}
 	return db.WithContext(ctx).Model(&orm.Conversation{}).Where("id = ?", convID).Updates(map[string]any{
 		"enable_plugin": true,
-		"plugin_mode":   "dynamic",
+		"plugin_mode":   "dynamic", // workflow-naming: persistence
 	}).Error
 }
 
@@ -434,11 +438,11 @@ func launchWorkflowAttempt(
 			UserID:            userID,
 			ConversationID:    convID,
 			WorkflowSessionID: &sessionID,
-			TaskType:          "plugin_run",
+			TaskType:          "workflow_run",
 			Title:             &tcTitle,
 			Status:            "running",
 		})
-		fmt.Printf("[plugin] taskcenter plugin_run ensured conv=%s session=%s plugin=%s\n",
+		fmt.Printf("[plugin] taskcenter workflow_run ensured conv=%s session=%s plugin=%s\n",
 			convID, sessionID, workflowID)
 	} else {
 		sessionID = params.SessionID
@@ -473,7 +477,7 @@ func launchWorkflowAttempt(
 		// A retry/rewind reopens a failed plugin run. Reset TaskCenter even when its
 		// previous value was terminal so later success can be synchronized normally.
 		_ = db.WithContext(ctx).Model(&orm.TaskCenterTask{}).
-			Where("plugin_session_id = ?", sessionID).
+			Where("plugin_session_id = ?", sessionID). // workflow-naming: persistence
 			Updates(map[string]any{"status": "running", "updated_at": time.Now().UTC()}).Error
 	}
 
@@ -493,7 +497,7 @@ func launchWorkflowAttempt(
 		params.HistoryFilesPerTurn = historyFilesFromParentAgentic(params.ParentAgenticConfig)
 	}
 	rawParamsMap := map[string]any{
-		"plugin_id":     workflowID,
+		"workflow_id":   workflowID,
 		"step_id":       stepID,
 		"session_id":    sessionID,
 		"user_input":    params.UserInput,
@@ -511,7 +515,7 @@ func launchWorkflowAttempt(
 		rawParamsMap["preflight_id"] = params.PreflightID
 	}
 	if params.WorkflowMode != "" {
-		rawParamsMap["plugin_mode"] = params.WorkflowMode
+		rawParamsMap["workflow_mode"] = params.WorkflowMode
 	}
 	if params.ChatSessionID != "" {
 		rawParamsMap["chat_session_id"] = params.ChatSessionID
@@ -554,7 +558,7 @@ func launchWorkflowAttempt(
 		TaskID:           taskID,
 		ConversationID:   convID,
 		TriggerHistoryID: historyID,
-		AgentType:        "plugin_step",
+		AgentType:        "workflow_step",
 		Title:            workflowID + ":" + stepID,
 		Objective:        enrichedObjective,
 		Mode:             "manual",
@@ -570,7 +574,7 @@ func launchWorkflowAttempt(
 	fmt.Printf("[plugin] sub_agent_task created conv=%s session=%s plugin=%s step=%s task=%s workspace=%s\n",
 		convID, sessionID, workflowID, stepID, task.ID, task.WorkspacePath)
 
-	// Create plugin_session_steps record.
+	// Create plugin_session_steps record.  // workflow-naming: persistence
 	attempt, attemptErr := NextAttempt(ctx, db, sessionID, stepID)
 	if attemptErr != nil {
 		return sessionID, task.ID, false, fmt.Errorf("plugin: allocate attempt: %w", attemptErr)
@@ -578,13 +582,13 @@ func launchWorkflowAttempt(
 	if _, stepErr := CreateSessionStep(ctx, db, sessionID, stepID, task.ID, attempt); stepErr != nil {
 		return sessionID, task.ID, false, fmt.Errorf("plugin: create session step: %w", stepErr)
 	} else {
-		fmt.Printf("[plugin] plugin_session_step created conv=%s session=%s step=%s task=%s attempt=%d\n",
+		fmt.Printf("[plugin] workflow_session_step created conv=%s session=%s step=%s task=%s attempt=%d\n",
 			convID, sessionID, stepID, task.ID, attempt)
 	}
 	runParams := map[string]any{
-		"plugin_id":  workflowID,
-		"step_id":    stepID,
-		"session_id": sessionID,
+		"workflow_id": workflowID,
+		"step_id":     stepID,
+		"session_id":  sessionID,
 	}
 	if len(params.HistoryFilesPerTurn) > 0 {
 		runParams["history_files_per_turn"] = params.HistoryFilesPerTurn
@@ -593,7 +597,7 @@ func launchWorkflowAttempt(
 		runParams["parent_agentic_config"] = params.ParentAgenticConfig
 	}
 	runRequest := subagent.RunRequest{
-		TaskID: task.ID, AgentType: "plugin_step", WorkspacePath: task.WorkspacePath,
+		TaskID: task.ID, AgentType: "workflow_step", WorkspacePath: task.WorkspacePath,
 		Params: runParams, DBDSN: subagent.DBDSN(), Resume: false,
 		LLMConfig: llmConfig, ToolConfig: toolConfig,
 	}
@@ -672,7 +676,7 @@ func dispatchWorkflowAttemptRunner(db *gorm.DB, stateStore state.Store, taskID s
 	}()
 }
 
-// OnSubAgentDone is called when a plugin_step task reaches terminal status.
+// OnSubAgentDone is called when a workflow_step task reaches terminal status.
 // It mirrors the step status and handles auto/dynamic advance logic.
 //
 // Successful v2 attempts freeze their route decision and let the graph
@@ -707,7 +711,7 @@ func OnSubAgentDone(
 		// and mark the session failed. Auto mode still asks DriverAgent to diagnose
 		// and recommend retry/rewind; dynamic mode leaves the failure for the user.
 		if pctx != nil {
-			onSSE("plugin_error", map[string]any{
+			onSSE("workflow_error", map[string]any{
 				"session_id": pctx.SessionID,
 				"step_id":    pctx.StepID,
 				"message":    summary,
@@ -747,7 +751,7 @@ func OnSubAgentDone(
 	if sessionCompleted {
 		_ = taskcenter.UpdateTaskStatusBySession(ctx, db, pctx.SessionID, "succeeded")
 		clearGeneratingChatStatus(ctx, stateStore, pctx.ConvID)
-		onSSE("plugin_completed", map[string]any{
+		onSSE("workflow_completed", map[string]any{
 			"session_id": pctx.SessionID,
 			"step_id":    pctx.StepID,
 		})
@@ -945,10 +949,10 @@ func triggerNextChatTurn(
 ) {
 	coreURL := common.CoreSelfEndpoint() + "/conversations:chat"
 	workflowCtx := map[string]any{
-		"session_id":   sessionID,
-		"plugin_id":    workflowID,
-		"current_step": currentStep,
-		"plugin_mode":  workflowMode,
+		"session_id":    sessionID,
+		"workflow_id":   workflowID,
+		"current_step":  currentStep,
+		"workflow_mode": workflowMode,
 	}
 	if syntheticSource != "" {
 		workflowCtx["synthetic_source"] = syntheticSource
@@ -959,10 +963,10 @@ func triggerNextChatTurn(
 		// stream=true is required so that task_created events emitted by the ChatAgent
 		// are written to the Redis SSE buffer and delivered to the frontend.
 		// Non-streaming mode skips the event pipeline entirely.
-		"stream":         true,
-		"mode":           "auto",
-		"input":          []map[string]any{{"input_type": "text", "text": syntheticMsg}},
-		"plugin_context": workflowCtx,
+		"stream":           true,
+		"mode":             "auto",
+		"input":            []map[string]any{{"input_type": "text", "text": syntheticMsg}},
+		"workflow_context": workflowCtx,
 	}
 	if searchConfig := loadConversationSearchConfig(store.DB(), convID); len(searchConfig) > 0 {
 		reqBody["conversation"] = map[string]any{"search_config": searchConfig}
@@ -1023,7 +1027,7 @@ func checkAndFallbackIfStuck(
 		// Session was already advanced or completed — nothing to do.
 		return
 	}
-	// A plugin_step SubAgent may still be running (advance_step succeeded); keep session active.
+	// A workflow_step SubAgent may still be running (advance_step succeeded); keep session active.
 	var runningCount int64
 	if err := db.WithContext(ctx).Model(&orm.WorkflowSessionStep{}).
 		Where("session_id = ? AND status = ?", pctx.SessionID, StepStatusRunning).
@@ -1039,8 +1043,8 @@ func checkAndFallbackIfStuck(
 	})
 }
 
-// OnArtifactEvent is called when a plugin_step SubAgent emits an artifact event.
-// It checks slot binding and writes plugin_slot_revisions if the artifact is bound.
+// OnArtifactEvent is called when a workflow_step SubAgent emits an artifact event.
+// It checks slot binding and writes plugin_slot_revisions if the artifact is bound.  // workflow-naming: persistence
 // Caption embedded in the artifact value is written to sub_agent_artifacts.caption.
 //
 // For list-cardinality slots, the artifact value may carry a "list_index" field
@@ -1237,7 +1241,7 @@ func extractCaption(ctx context.Context, db *gorm.DB, taskID, slot string) strin
 // resolveSlotBinding looks up (slotID, cardinality) for a slot from the Python plugin API.
 func resolveSlotBinding(workflowID, slot string) (slotID, cardinality string) {
 	endpoint := common.ChatServiceEndpoint()
-	url := fmt.Sprintf("%s/api/plugin/slot-binding?plugin_id=%s&slot=%s",
+	url := fmt.Sprintf("%s/api/plugin/slot-binding?workflow_id=%s&slot=%s",
 		endpoint, workflowID, slot)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1280,7 +1284,7 @@ func callDriverAgent(
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		reqBody := map[string]any{
-			"plugin_id":   workflowID,
+			"workflow_id": workflowID,
 			"step_id":     stepID,
 			"step_result": stepResult,
 			"session_id":  sessionID,
@@ -1292,7 +1296,7 @@ func callDriverAgent(
 			reqBody["llm_config"] = llmConfig
 		}
 		if artifactsSummary != "" {
-			reqBody["plugin_artifacts_summary"] = artifactsSummary
+			reqBody["workflow_artifacts_summary"] = artifactsSummary
 		}
 		body, _ := json.Marshal(reqBody)
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, driverEndpoint(), bytes.NewReader(body))
@@ -1355,7 +1359,7 @@ func buildWorkflowArtifactsSummary(ctx context.Context, db *gorm.DB, sessionID, 
 	err := db.WithContext(ctx).Raw(`
 		SELECT sa.slot, sa.value, sa.task_id
 		FROM sub_agent_artifacts sa
-		JOIN plugin_session_steps pss ON pss.task_id = sa.task_id
+		JOIN plugin_session_steps pss ON pss.task_id = sa.task_id  // workflow-naming: persistence
 		WHERE pss.session_id = ? AND pss.status = 'succeeded'
 		ORDER BY sa.task_id, sa.slot, sa.seq
 	`, sessionID).Scan(&rows).Error

@@ -32,7 +32,7 @@ func TestCreateTask_And_CancelTask(t *testing.T) {
 	task := &orm.TaskCenterTask{
 		UserID:         "user-1",
 		ConversationID: "conv-1",
-		TaskType:       "plugin_run",
+		TaskType:       "workflow_run",
 		Status:         "running",
 	}
 	if err := CreateTask(ctx, db.DB, task); err != nil {
@@ -66,9 +66,9 @@ func TestListTasks_FilterByStatus(t *testing.T) {
 	ctx := context.Background()
 
 	rows := []orm.TaskCenterTask{
-		{UserID: "user-2", ConversationID: "conv-2", TaskType: "plugin_run", Status: "running"},
-		{UserID: "user-2", ConversationID: "conv-2", TaskType: "plugin_run", Status: "succeeded"},
-		{UserID: "user-2", ConversationID: "conv-2", TaskType: "plugin_run", Status: "failed"},
+		{UserID: "user-2", ConversationID: "conv-2", TaskType: "workflow_run", Status: "running"},
+		{UserID: "user-2", ConversationID: "conv-2", TaskType: "workflow_run", Status: "succeeded"},
+		{UserID: "user-2", ConversationID: "conv-2", TaskType: "workflow_run", Status: "failed"},
 	}
 	for i := range rows {
 		if err := CreateTask(ctx, db.DB, &rows[i]); err != nil {

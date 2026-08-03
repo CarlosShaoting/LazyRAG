@@ -33,7 +33,7 @@ func ListWorkflowVersions(w http.ResponseWriter, r *http.Request) {
 	for _, v := range rows {
 		items = append(items, map[string]any{"revision_id": v.ID, "revision_no": v.RevisionNo, "tree_hash": v.TreeHash, "message": v.Message, "created_by": v.CreatedBy, "created_at": v.CreatedAt, "current": v.ID == p.HeadRevisionID})
 	}
-	common.ReplyOK(w, map[string]any{"plugin_ref": p.WorkflowRef, "current_revision_id": p.HeadRevisionID, "current_revision_no": p.Version, "versions": items})
+	common.ReplyOK(w, map[string]any{"workflow_ref": p.WorkflowRef, "current_revision_id": p.HeadRevisionID, "current_revision_no": p.Version, "versions": items})
 }
 
 func revisionFiles(p orm.WorkflowResource, revisionID string) (map[string]string, error) {
@@ -76,7 +76,7 @@ func workflowVersionPayload(p orm.WorkflowResource, revisionID string) (map[stri
 	scriptsJSON, _ := json.Marshal(scripts)
 	var rev orm.WorkflowRevision
 	_ = store.DB().Where("id=?", revisionID).First(&rev).Error
-	return map[string]any{"plugin_ref": p.WorkflowRef, "revision_id": rev.ID, "revision_no": rev.RevisionNo, "tree_hash": rev.TreeHash, "plugin_yaml_content": files["plugin.yaml"], "state_yaml_content": files["scenario/state.yml"], "scenario_content": files["scenario/scenario.md"], "driver_content": files["scenario/driver.md"], "scripts_content": string(scriptsJSON), "readonly": true}, nil
+	return map[string]any{"workflow_ref": p.WorkflowRef, "revision_id": rev.ID, "revision_no": rev.RevisionNo, "tree_hash": rev.TreeHash, "workflow_yaml_content": files["plugin.yaml"], "state_yaml_content": files["scenario/state.yml"], "scenario_content": files["scenario/scenario.md"], "driver_content": files["scenario/driver.md"], "scripts_content": string(scriptsJSON), "readonly": true}, nil
 }
 
 func GetWorkflowVersion(w http.ResponseWriter, r *http.Request) {
@@ -116,7 +116,7 @@ func ReplaceDraftFromWorkflowVersion(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	scriptsJSON, _ := json.Marshal(scripts)
-	updates := map[string]any{"plugin_yaml_content": files["plugin.yaml"], "state_yaml_content": files["scenario/state.yml"], "scenario_content": files["scenario/scenario.md"], "scripts_content": string(scriptsJSON), "state_layout_content": "", "base_revision_id": common.PathVar(r, "revision_id"), "version": draft.Version + 1, "updated_at": time.Now().UTC()}
+	updates := map[string]any{"workflow_yaml_content": files["plugin.yaml"], "state_yaml_content": files["scenario/state.yml"], "scenario_content": files["scenario/scenario.md"], "scripts_content": string(scriptsJSON), "state_layout_content": "", "base_revision_id": common.PathVar(r, "revision_id"), "version": draft.Version + 1, "updated_at": time.Now().UTC()}
 	if err := store.DB().Model(&draft).Updates(updates).Error; err != nil {
 		common.ReplyErr(w, err.Error(), http.StatusInternalServerError)
 		return

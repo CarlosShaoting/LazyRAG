@@ -319,7 +319,7 @@ def _resolve_task(task_ref: str, tasks: List[Dict[str, Any]]) -> Optional[Dict[s
     return None
 
 
-def save_plugin_artifact(
+def save_workflow_artifact(
     slot: str,
     value: Any,
     content_type: str = 'text',
@@ -332,7 +332,7 @@ def save_plugin_artifact(
     file into a slot, or writing a short text value) without running a full SubAgent.
 
     Reads session_id and step_id from agentic_config (same as advance_step).
-    Calls Go core POST /plugin-sessions/{session_id}/artifacts to write a slot revision.
+    Calls Go core POST /workflow-sessions/{session_id}/artifacts to write a slot revision.
 
     Args:
         slot (str): The slot id to write (must have a slot binding in the workflow).
@@ -352,9 +352,9 @@ def save_plugin_artifact(
         A confirmation that the artifact was saved.
     """
     cfg = _agentic_config()
-    session_id: str = cfg.get('plugin_session_id', '')
+    session_id: str = cfg.get('workflow_session_id', '')
     if not session_id:
-        return tool_success('save_plugin_artifact', {
+        return tool_success('save_workflow_artifact', {
             'status': 'error',
             'message': 'No active workflow session found.',
         })
@@ -391,30 +391,30 @@ def save_plugin_artifact(
         body['sort_order'] = sort_order
     if caption is not None:
         body['caption'] = caption
-    step_id: str = cfg.get('plugin_step', '')
+    step_id: str = cfg.get('workflow_step', '')
     if step_id:
         body['step_id'] = step_id
 
     try:
         resp = httpx.post(
-            f'{core_url}/plugin-sessions/{session_id}/artifacts',
+            f'{core_url}/workflow-sessions/{session_id}/artifacts',
             json=body,
             timeout=10.0,
         )
         if resp.status_code != 200:
-            return tool_success('save_plugin_artifact', {
+            return tool_success('save_workflow_artifact', {
                 'status': 'error',
                 'message': f'Go core returned {resp.status_code}: {resp.text[:200]}',
             })
         data = resp.json()
         msg = f"Artifact '{slot}' saved to workflow session {session_id}."
-        return tool_success('save_plugin_artifact', {
+        return tool_success('save_workflow_artifact', {
             'status': 'ok',
             'message': msg,
             'revision': data.get('data', {}).get('revision'),
         })
     except Exception as exc:
-        return tool_success('save_plugin_artifact', {
+        return tool_success('save_workflow_artifact', {
             'status': 'error',
             'message': f'Request failed: {exc}',
         })

@@ -14,13 +14,13 @@ is checked and linked to executable evidence.
 
 ## PR 2 — Workflow naming and persistence mapping
 
-- [ ] Go public types, handlers, configuration and payloads use Workflow naming.
-- [ ] Python business modules, configuration, tools and payloads use Workflow naming.
-- [ ] Frontend public types, stores, hooks, components and routes use Workflow naming.
-- [ ] Legacy physical names are restricted to the persistence/compatibility allowlist.
-- [ ] Old-schema round-trip, old binary rolling-deploy and unbackfilled-row tests pass.
-- [ ] Schema capability gate, route flag, adapter metrics and deletion gate exist.
-- [ ] Repository scan rejects non-allowlisted legacy domain names.
+- [x] Go public types, handlers, configuration and payloads use Workflow naming.
+- [x] Python business modules, configuration, tools and payloads use Workflow naming.
+- [x] Frontend public types, stores, hooks, components and routes use Workflow naming.
+- [x] Legacy physical names are restricted to the persistence/compatibility allowlist.
+- [x] Old-schema round-trip, old binary rolling-deploy and unbackfilled-row tests pass.
+- [x] Schema capability gate, route flag, adapter metrics and deletion gate exist.
+- [x] Repository scan rejects non-allowlisted legacy domain names.
 
 ## PR 3 — shared Skill and Host Profiles
 
