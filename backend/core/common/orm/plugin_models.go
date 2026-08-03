@@ -45,13 +45,35 @@ type WorkflowSessionStep struct {
 	Attempt   int    `gorm:"column:attempt;not null;default:1"`
 	TaskID    string `gorm:"column:task_id;type:varchar(36);not null"`
 	// Status mirrors sub_agent_tasks.status (synced by Go on each event).
-	Status    string    `gorm:"column:status;type:varchar(16);not null;default:pending"`
-	Validity  string    `gorm:"column:validity;type:varchar(16);not null;default:effective"`
-	CreatedAt time.Time `gorm:"column:created_at;not null"`
-	UpdatedAt time.Time `gorm:"column:updated_at;not null"`
+	Status            string     `gorm:"column:status;type:varchar(16);not null;default:pending"`
+	Validity          string     `gorm:"column:validity;type:varchar(16);not null;default:effective"`
+	LeaseOwner        string     `gorm:"column:lease_owner;type:varchar(255);not null;default:''"`
+	LeaseToken        string     `gorm:"column:lease_token;type:varchar(255);not null;default:''"`
+	FencingGeneration int64      `gorm:"column:fencing_generation;not null;default:0"`
+	LeaseExpiresAt    *time.Time `gorm:"column:lease_expires_at"`
+	HeartbeatAt       *time.Time `gorm:"column:heartbeat_at"`
+	ProgressJSON      string     `gorm:"column:progress_json;type:jsonb;not null;default:'{}'"`
+	TerminalCode      string     `gorm:"column:terminal_code;type:varchar(64);not null;default:''"`
+	ResultJSON        string     `gorm:"column:result_json;type:jsonb;not null;default:'{}'"`
+	CreatedAt         time.Time  `gorm:"column:created_at;not null"`
+	UpdatedAt         time.Time  `gorm:"column:updated_at;not null"`
 }
 
 func (WorkflowSessionStep) TableName() string { return "plugin_session_steps" }
+
+// WorkflowOutbox is isolated from plugin_run_outbox so legacy workers cannot
+// claim Executor protocol messages they do not understand.
+type WorkflowOutbox struct {
+	ID          string          `gorm:"column:id;type:varchar(36);primaryKey"`
+	AttemptID   string          `gorm:"column:attempt_id;type:varchar(36);not null;uniqueIndex"`
+	SessionID   string          `gorm:"column:session_id;type:varchar(36);not null;index"`
+	PayloadJSON json.RawMessage `gorm:"column:payload_json;type:jsonb;not null"`
+	Status      string          `gorm:"column:status;type:varchar(16);not null;default:pending;index"`
+	CreatedAt   time.Time       `gorm:"column:created_at;not null"`
+	UpdatedAt   time.Time       `gorm:"column:updated_at;not null"`
+}
+
+func (WorkflowOutbox) TableName() string { return "workflow_outbox" }
 
 // WorkflowSlotRevision records one artifact write into a plugin panel slot.
 // selected=true means this revision is the currently displayed version of the slot.

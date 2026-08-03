@@ -39,8 +39,8 @@ func TestRepositoryStructuredMigrationCatalogLoads(t *testing.T) {
 		mode.Aggregate == nil || mode.Aggregate.Version != 20260723183515 {
 		t.Fatalf("unexpected v0_2 mode: %#v", mode)
 	}
-	if len(mode.Dev) != 94 {
-		t.Fatalf("v0_2 dev migration count=%d, want 94", len(mode.Dev))
+	if len(mode.Dev) != 95 {
+		t.Fatalf("v0_2 dev migration count=%d, want 95", len(mode.Dev))
 	}
 	if !containsMigrationFileVersion(mode.Dev, 20260703130000) {
 		t.Fatal("v0_2 dev migrations are missing create_plugin_step_intents")
