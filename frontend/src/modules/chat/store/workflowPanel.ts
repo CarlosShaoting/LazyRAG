@@ -3,6 +3,17 @@ import { WorkflowInfoApi, WorkflowSessionApi, TempUploadServiceApi } from "@/mod
 import i18n from "@/i18n";
 import type { ChatConfig } from "@/modules/chat/components/ChatConfigs";
 import { extractErrorCode, getLocalizedErrorMessage } from "@/components/request";
+import {
+  emptyWorkflowProjection,
+  markWorkflowResyncRequired,
+  reduceWorkflowEvent,
+  type WorkflowProjectionState,
+  type WorkflowStreamEvent,
+} from '@/modules/chat/store/workflowProjection';
+import {
+  subscribeWorkflowEventStream,
+  type WorkflowEventStreamSubscription,
+} from '@/modules/chat/utils/workflowEventStream';
 
 export function buildWorkflowSearchConfig(
   chatConfig?: Pick<ChatConfig, "knowledgeBaseId" | "creators" | "tags">,
@@ -340,6 +351,8 @@ interface WorkflowStore {
    *  so server refreshes don't overwrite the user's tab / sort_order focus. */
   focusedTabByConversation: Record<string, string | undefined>;
   focusedSortOrderByConversation: Record<string, number | undefined>;
+  /** Canonical Event Stream projection shared by in-chat and standalone panels. */
+  projectionBySession: Record<string, WorkflowProjectionState>;
 
   setSession: (conversationId: string, session: WorkflowSession | null) => void;
   updateSlot: (conversationId: string, slot: SlotRevision) => void;
@@ -373,7 +386,11 @@ interface WorkflowStore {
   // value persists across `setSession()` refreshes that would otherwise wipe it.
   setFocusedTab: (conversationId: string, tabId: string) => void;
   setFocusedSortOrder: (conversationId: string, sortOrder: number | undefined) => void;
+  applyWorkflowEvent: (conversationId: string, sessionId: string, event: WorkflowStreamEvent) => void;
+  subscribeWorkflowSession: (conversationId: string, sessionId: string) => () => void;
 }
+
+const workflowStreams = new Map<string, { refs: number; subscription: WorkflowEventStreamSubscription }>();
 
 export const useWorkflowStore = create<WorkflowStore>()((set, get) => ({
   sessionByConversation: {},
@@ -384,6 +401,7 @@ export const useWorkflowStore = create<WorkflowStore>()((set, get) => ({
   dismissedSessionsByConversation: {},
   focusedTabByConversation: {},
   focusedSortOrderByConversation: {},
+  projectionBySession: {},
 
   bumpDismissedRefresh: (conversationId) => {
     set((s) => ({
@@ -639,5 +657,64 @@ export const useWorkflowStore = create<WorkflowStore>()((set, get) => ({
         sessionByConversation: nextSessionMap,
       };
     });
+  },
+
+  applyWorkflowEvent: (conversationId, sessionId, event) => {
+    set((state) => {
+      const previous = state.projectionBySession[sessionId] ?? emptyWorkflowProjection();
+      const projectionState = reduceWorkflowEvent(previous, event);
+      const session = state.sessionByConversation[conversationId];
+      if (!session || session.session_id !== sessionId) {
+        return { projectionBySession: { ...state.projectionBySession, [sessionId]: projectionState } };
+      }
+      const projection = projectionState.projection as WorkflowRuntimeProjection & { status?: string };
+      const streamStatus = projection.status;
+      const status = streamStatus === 'running' ? 'active' : streamStatus;
+      const allowedStatus = status === 'active' || status === 'completed' || status === 'failed' || status === 'waiting'
+        ? status
+        : session.status;
+      return {
+        projectionBySession: { ...state.projectionBySession, [sessionId]: projectionState },
+        sessionByConversation: {
+          ...state.sessionByConversation,
+          [conversationId]: { ...session, status: allowedStatus, projection },
+        },
+      };
+    });
+    const projectionState = get().projectionBySession[sessionId];
+    if (projectionState?.resyncRequired) {
+      // Closing and reconnecting without Last-Event-ID asks the server for a fresh snapshot.
+      workflowStreams.get(sessionId)?.subscription.resync();
+    }
+  },
+
+  subscribeWorkflowSession: (conversationId, sessionId) => {
+    const existing = workflowStreams.get(sessionId);
+    if (existing) {
+      existing.refs += 1;
+    } else {
+      const current = get().projectionBySession[sessionId] ?? emptyWorkflowProjection();
+      const subscription = subscribeWorkflowEventStream(
+        sessionId,
+        current.resyncRequired ? 0 : current.cursor,
+        (event) => get().applyWorkflowEvent(conversationId, sessionId, event),
+        () => set((state) => ({
+          projectionBySession: {
+            ...state.projectionBySession,
+            [sessionId]: markWorkflowResyncRequired(state.projectionBySession[sessionId] ?? emptyWorkflowProjection()),
+          },
+        })),
+      );
+      workflowStreams.set(sessionId, { refs: 1, subscription });
+    }
+    return () => {
+      const current = workflowStreams.get(sessionId);
+      if (!current) return;
+      current.refs -= 1;
+      if (current.refs <= 0) {
+        current.subscription.close();
+        workflowStreams.delete(sessionId);
+      }
+    };
   },
 }));

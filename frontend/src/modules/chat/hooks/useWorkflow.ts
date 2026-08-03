@@ -10,10 +10,16 @@ export function useWorkflowSession(conversationId: string) {
   const loading = useWorkflowStore((s) => s.loadingByConversation[conversationId] ?? false);
   const loadActiveSession = useWorkflowStore((s) => s.loadActiveSession);
   const patchSlot = useWorkflowStore((s) => s.patchSlot);
+  const subscribeWorkflowSession = useWorkflowStore((s) => s.subscribeWorkflowSession);
 
   useEffect(() => {
     loadActiveSession(conversationId);
   }, [conversationId, loadActiveSession]);
+
+  useEffect(() => {
+    if (!session?.session_id) return;
+    return subscribeWorkflowSession(conversationId, session.session_id);
+  }, [conversationId, session?.session_id, subscribeWorkflowSession]);
 
   // Use loadActiveSession so we always get the latest session status (not just slots).
   // This is important for detecting when the session transitions from 'active' to
