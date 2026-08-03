@@ -1,0 +1,8 @@
+version: workflow.v1
+profile: default
+advance_tools: [advance_step]
+parallel_ready_steps: true
+approval: platform
+handoff: false
+driver: false
+
