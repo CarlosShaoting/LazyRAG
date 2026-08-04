@@ -160,8 +160,10 @@ def check_sensitive_content(query: str) -> Optional[SensitiveMatch]:
     return sensitive_filter.evaluate(query)
 
 
-def _should_skip_sensitive_filter(query: str, workflow_context: Dict[str, Any]) -> bool:
+def _should_skip_sensitive_filter(query: str, workflow_context: Optional[Dict[str, Any]]) -> bool:
     """Bypass user-input filtering only for trusted Workflow synthetic turns."""
+    if not isinstance(workflow_context, dict):
+        return False
     if not workflow_context.get('workflow_id') or not workflow_context.get('session_id'):
         return False
     if workflow_context.get('synthetic_source') == 'driver':
@@ -331,12 +333,11 @@ async def handle_chat(request: ChatRequest) -> Union[Dict[str, Any], StreamingRe
     if not provisional.routing_review_required:
         return await _handle_chat_impl(request, task_profile_override=provisional)
 
-    from lazymind.chat.workflow.workflow_manager import is_workflow_driver_turn
     raw_query = str(request.message.query or '')
     filter_query, _ = _normalize_cite_message_query_for_agent(raw_query)
     skip_sensitive_filter = (
         request.runtime.skip_sensitive_filter
-        or is_workflow_driver_turn(request.workflow.workflow_context)
+        or _should_skip_sensitive_filter(filter_query, request.workflow.workflow_context)
         or request.runtime.context_usage_preview
         or request.runtime.context_prompt_export
     )
@@ -409,7 +410,6 @@ async def _handle_chat_impl(
     from lazymind.chat.workflow.workflow_manager import (
         _build_chat_agent_task_context,
         guard_workflow_agent_stream,
-        is_workflow_driver_turn,
         resolve_workflow_injection,
         update_intentwriter,
     )
@@ -437,10 +437,9 @@ async def _handle_chat_impl(
     if user_cited_context:
         cited_message_context = user_cited_context
     language_query = user_input.strip()
-    is_driver_turn = is_workflow_driver_turn(workflow.workflow_context)
     skip_sensitive_filter = (
         runtime.skip_sensitive_filter
-        or is_driver_turn
+        or _should_skip_sensitive_filter(query, workflow.workflow_context)
         or runtime.context_usage_preview
         or runtime.context_prompt_export
     )

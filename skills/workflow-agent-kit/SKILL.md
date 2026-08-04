@@ -8,10 +8,41 @@ version: workflow.v1
 
 ## Required reading
 
-1. Load exactly one file from `profiles/`; absent Host metadata means `default`.
-2. Read `references/decision-policy.md` before making a lifecycle decision.
-3. Read `references/artifact-and-authoring.md` before reviewing output or authoring.
-4. Treat the latest Runtime projection and its `state_version` as authoritative.
+1. If Workflow tools are absent, read `references/installation-and-connection.md`
+   and help the user connect LazyMind before promising execution.
+2. Call `workflow_connection_status` when available. Never guess a port.
+3. Load exactly one file from `profiles/`; absent Host metadata means `default`.
+4. Read `references/lifecycle.md`, `references/decision-policy.md`, and
+   `references/execution-policy.md` before changing Workflow state.
+5. Read and enforce `references/model-execution-boundary.md` for every tool call.
+6. Read `references/artifact-policy.md` and `references/recovery-policy.md`
+   before reviewing output or recovering an Attempt.
+7. Read `references/skill-to-workflow.md` and `references/workflow-format.md`
+   completely before converting a Skill package.
+8. Use `references/tool-contracts.md` for exact arguments and responses.
+9. Treat the latest Runtime projection and its `state_version` as authoritative.
+
+## ChatAgent operating procedure
+
+For a new request, call `list_workflows`, choose by capability rather than name
+similarity alone, then call `get_workflow`. Explain the chosen Workflow when the
+match is ambiguous or the run has material external effects. Do not start merely
+because discovery returned one result.
+
+Call `prepare_workflow` with explicit durable input bindings. If it reports
+missing inputs, obtain or import those inputs and prepare again. When status is
+ready, create a stable Session id and call `start_workflow` with the returned
+preparation id. Preparation and start are separate operations.
+
+After start and after every transition, read the latest projection. Select only
+from `ready_steps`; obey conditions, approval requirements, user scope, and the
+active Host profile. Call `advance_step` with the exact `state_version`. Review
+the returned Attempt and required Artifacts before advancing again. Continue until
+the projection is terminal, waiting when Attempts are active and asking the user
+only when required information or authority cannot be obtained safely.
+
+If a tool returns an error, follow `references/recovery-policy.md`. Never convert
+an error into success, invent state, or write Runtime persistence directly.
 
 ## Discover and prepare
 
@@ -27,7 +58,7 @@ permits parallel execution; alternatives must be narrowed from Runtime condition
 and user intent. Never submit a blocked or downstream step speculatively.
 
 Use `advance_step` when the Host must wait for the Attempt result. Use
-`advance_step_and_handoff` only when the active profile permits handoff and a
+`advance_step_and_hand_off` only when the active profile permits handoff and a
 durable Supervisor has accepted ownership. Handoff is a turn boundary, not a
 different transition. Never choose retry versus rewind: name a Ready or previously
 attempted target and let Runtime return `resolved_operation`. On a version conflict,
@@ -45,16 +76,25 @@ cancel, and retry through Workflow tools; never edit projection state.
 If a required Artifact is absent when an Executor reports success, report a
 structured failure. Do not manufacture output or mark the Attempt complete.
 
-## Authority during migration
+## Authority and rollback
 
-The shared policy may run in shadow mode. A shadow trace is observational and must
-record both decisions, comparison dimensions, policy/profile versions, and
-`authority: legacy`. It must never invoke a tool or mutate Runtime state.
+The shared policy is authoritative by default. A Host may expose an explicit,
+bounded rollback flag for the former Host policy. Shadow traces are observational:
+they must record both decisions, comparison dimensions, policy/profile versions,
+and the actual authority, and must never invoke a tool or mutate Runtime state.
 
-For authoring, follow `references/artifact-and-authoring.md`: analyze a pinned
+For authoring, follow `references/skill-to-workflow.md`: analyze a pinned
 Skill revision, generate a draft outside Runtime, submit it to deterministic
 diagnostics, repair reported diagnostics, and publish only a validated revision.
 Authoring tools never invoke a model.
+
+## Capability honesty
+
+Tool availability is authoritative. The bundled MCP adapter currently exposes the
+implemented discovery, prepare/start, projection/Ready, and synchronous advance
+facades. Do not claim stop/resume or Artifact patch support unless those tools are
+actually present in the Host tool list. Explain the unavailable capability and
+preserve the Session state instead of substituting an internal or product API.
 
 The source audit for migrated LazyMind rules is in
 `references/source-to-policy-mapping.md`.
