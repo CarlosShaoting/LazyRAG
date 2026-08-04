@@ -43,11 +43,15 @@ Full generation:
 - `material_summary` is optional; missing materials must not cause RETRY
 - Do **not** require a PPTX file. Export is UI-click only; never RETRY for missing PPTX
 
-Partial page edit (user/runtime asked to change specific sort_order pages only):
+Single-page edit (user/runtime asked to change specific sort_order pages only):
 
 - The requested page(s) have updated `preview_html` HTML (+ notes only if
   requested) with the matching sort_order -> DONE
 - Do not require regenerating untouched pages
+- For content changes (bullet removed/reworded, retitled), the page outline should
+  have been patched via `ppt_patch_page_outline` before `page-html`. If the page
+  was redrawn without that patch and the requested content change is clearly
+  absent -> RETRY once asking to patch the outline first
 
 Any required preview slot family missing for the requested scope, or
 `preview_html` is slide JSON / missing HTML structure -> RETRY

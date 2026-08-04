@@ -43,7 +43,7 @@ All reader-visible text fields (`title`, `subtitle`, every `bullets[].head`/`det
 ## Rules
 
 - `pages` length MUST equal `page_count` exactly.
-- **Page structure MUST include all of**: exactly 1 `cover` (page 1) + 1 `closing` (last page) + at least 1 `section_header` between `cover` and `closing` (if `page_count >= 5`, include 1–3 section_headers to break up the deck). Never mark every page as `content`.
+- **Page structure**: if `page_count == 1`, output exactly one page and mark it `cover` (no `closing` / `section_header`). If `page_count >= 2`, include exactly 1 `cover` (page 1) + 1 `closing` (last page) + at least 1 `section_header` between `cover` and `closing` (if `page_count >= 5`, include 1–3 section_headers to break up the deck). Never mark every page as `content`.
 - `title` <= 24 chars. Always required.
 - `subtitle`: required on `cover` and `section_header`; optional on `closing`; absent on `content`/`data`.
 - `bullets`: **3-6 items per page** (not 2, not fewer). Each item is an object with `head` (short punchy line) + `detail` (one-sentence expansion drawing from document_digest if available). Target **~4 bullets for content pages**, ~3 for cover / closing, ~5-6 for dense data pages.

@@ -17,6 +17,9 @@ let _currentChartOptions = {};
 // pptxgenjs exposes ChartType only on *instances*, so we stash the enum from
 // the active pptx instance at slide-build time.
 let _currentChartTypeEnum = null;
+// Deck-level default font from style_spec.json, used when a node's CSS
+// font-family yields nothing usable. Set by buildPptx.
+let _deckDefaultFontFace = null;
 
 // Gradient handler for the current buildPptx() call. buildShapeElement reads
 // this when it encounters a gradient backgroundImage, registers the gradient
@@ -145,34 +148,37 @@ function splitBackgroundLayers(bg) {
  * p4/p9 tables sitting under .wrapper > overlays were lost entirely).
  */
 function addElement(pptx, slide, el) {
+  const named = (opts) => (
+    el.elId && opts && !opts.objectName ? { ...opts, objectName: el.elId } : opts
+  );
   switch (el.type) {
     case 'shape': {
       const shapeType = el.data._isEllipse
         ? pptx.ShapeType.ellipse
         : (el.data.rectRadius ? pptx.ShapeType.roundRect : pptx.ShapeType.rect);
-      slide.addShape(shapeType, el.data);
+      slide.addShape(shapeType, named(el.data));
       break;
     }
     case 'text':
-      slide.addText(el.data.text, el.data.options);
+      slide.addText(el.data.text, named(el.data.options));
       break;
     case 'image':
-      slide.addImage(el.data);
+      slide.addImage(named(el.data));
       break;
     case 'line':
-      slide.addShape(pptx.ShapeType.line, el.data);
+      slide.addShape(pptx.ShapeType.line, named(el.data));
       break;
     case 'svg':
-      slide.addImage(el.data);
+      slide.addImage(named(el.data));
       break;
     case 'chart':
       addChartElement(slide, el.data);
       break;
     case 'table':
-      slide.addTable(el.data.rows, el.data.options);
+      slide.addTable(el.data.rows, named(el.data.options));
       break;
     case 'list':
-      slide.addText(el.data.text, el.data.options);
+      slide.addText(el.data.text, named(el.data.options));
       break;
   }
 }
@@ -881,7 +887,6 @@ export function buildTextElement(node) {
   const fontSizePx = parseFloat(s.fontSize) || 16;
   const oneCharPx = fontSizePx * 1.0;
   const bufferPx = Math.max(b.w * 0.12, oneCharPx);
-  const textW = pxToInch(b.w + bufferPx);
 
   // E-vi: word-break: keep-all / white-space: nowrap → 不允许 wrap
   const wb = s.wordBreak;
@@ -891,22 +896,29 @@ export function buildTextElement(node) {
   // E-iv: 极短文本（≤4 字符）容器经常宽度刚够字符，PPTX 字体细微差异会让
   // "01" 拆成 "0/1" —— 强制不 wrap，并把文本框略加宽。
   const shortText = !textRuns && text && text.trim().length <= 4;
-  const shortTextW = shortText
-    ? pxToInch(Math.max(b.w, fontSizePx * text.trim().length * 0.7) + bufferPx)
-    : null;
+  const boxWidthPx = shortText
+    ? Math.max(b.w, fontSizePx * text.trim().length * 0.7) + bufferPx
+    : b.w + bufferPx;
+
+  // 余量全加在右侧会把居中/右对齐的文字整体推向右边（整页宽标题可偏 0.6in，
+  // 肉眼可见不居中，文本框还会伸出画布）。按对齐方式分摊余量，让文本框的
+  // 对齐基准边与 HTML 一致。
+  const align = mapTextAlign(s.textAlign);
+  const extraPx = boxWidthPx - b.w;
+  const alignShiftPx = align === 'center' ? extraPx / 2 : (align === 'right' ? extraPx : 0);
 
   const options = {
-    x: pxToInch(b.x),
+    x: pxToInch(b.x - alignShiftPx),
     y: pxToInch(b.y),
-    w: shortTextW || textW,
+    w: pxToInch(boxWidthPx),
     h: pxToInch(b.h),
     fontSize: pxToPt(parseFloat(s.fontSize) || 16),
-    fontFace: parseFontFamily(s.fontFamily),
+    fontFace: parseFontFamily(s.fontFamily) || _deckDefaultFontFace,
     color: getTextColor(s).color,
     bold: parseInt(s.fontWeight) >= 700,
     italic: s.fontStyle === 'italic',
     underline: s.textDecoration?.includes('underline') ? { style: 'sng' } : undefined,
-    align: mapTextAlign(s.textAlign),
+    align,
     valign: mapVerticalAlign(s.verticalAlign),
     // E-iii: 禁用 autoFit。autoFit 会悄悄把字号缩小或自动 wrap，行为不可预测。
     // 我们已经从 HTML 测出真实 fontSize 和 bounds，直接用即可。
@@ -986,7 +998,7 @@ export function buildTextElement(node) {
       }
       const runOpts = {
           fontSize: pxToPt(run.fontSize || 16),
-          fontFace: parseFontFamily(run.fontFamily),
+          fontFace: parseFontFamily(run.fontFamily) || _deckDefaultFontFace,
           color: runColor,
           bold: run.bold,
           italic: run.italic,
@@ -1409,7 +1421,7 @@ export function buildListElement(node) {
       text: item.text,
       options: {
         fontSize: pxToPt(parseFloat(item.styles?.fontSize) || 16),
-        fontFace: parseFontFamily(item.styles?.fontFamily),
+        fontFace: parseFontFamily(item.styles?.fontFamily) || _deckDefaultFontFace,
         color: cssColorToHex(item.styles?.color) || '000000',
         bold: parseInt(item.styles?.fontWeight) >= 700,
         // I-ii: list item 自身对齐（不被父容器 textAlign 误覆盖）
@@ -1522,9 +1534,23 @@ function buildBorderLines(node) {
 }
 
 /**
- * 递归扁平化 IR 节点，生成 slide 元素列表
+ * 递归扁平化 IR 节点，生成 slide 元素列表。
+ *
+ * 每个元素带上最近祖先的 data-el（node.el），导出时写成 PPTX 形状名，
+ * 于是 .pptx 里的每个内容元素都能按 id 定位。
  */
 export function flattenIRToElements(node, deckDir, parentBorderRadius = 0, parentBgColor = null) {
+  const elements = flattenNode(node, deckDir, parentBorderRadius, parentBgColor);
+  if (node?.el) {
+    // 子节点已在各自递归层打过更精确的 id，这里只补未标记的。
+    for (const el of elements) {
+      if (!el.elId) el.elId = node.el;
+    }
+  }
+  return elements;
+}
+
+function flattenNode(node, deckDir, parentBorderRadius = 0, parentBgColor = null) {
   const elements = [];
   if (!node) return elements;
 
@@ -1742,6 +1768,22 @@ export function flattenIRToElements(node, deckDir, parentBorderRadius = 0, paren
   }
 
   return elements;
+}
+
+/**
+ * page_NNN.notes.txt → PPTX 备注页。
+ *
+ * 前端导出把每页讲稿写在 HTML 同名的 .notes.txt 里；不搬进 PPTX 的话，
+ * 用户在 PowerPoint 里就丢了全部讲稿。
+ */
+function addSpeakerNotes(slide, htmlPath) {
+  if (!slide || !htmlPath) return;
+  const notesPath = htmlPath.replace(/\.html?$/i, '.notes.txt');
+  if (!existsSync(notesPath)) return;
+  try {
+    const notes = readFileSync(notesPath, 'utf-8').trim();
+    if (notes) slide.addNotes(notes);
+  } catch { /* 备注非必需 */ }
 }
 
 /**
@@ -2015,14 +2057,15 @@ export async function buildPptx(pages, deckDir, outputPath) {
     } catch { /* 非必需 */ }
   }
 
-  // 尝试读取 style-spec.json 获取默认字体
-  let defaultFont = null;
-  const styleSpecPath = resolve(deckDir, 'style-spec.json');
+  // 读 style_spec.json 的默认字体，兜住 font-family 解析不出可用字体的文本
+  // （否则 PowerPoint 会退回 Calibri，中文变宋体）。
+  _deckDefaultFontFace = null;
+  const styleSpecPath = resolve(deckDir, 'style_spec.json');
   if (existsSync(styleSpecPath)) {
     try {
       const styleSpec = JSON.parse(readFileSync(styleSpecPath, 'utf-8'));
       if (styleSpec.typography?.font_family) {
-        defaultFont = parseFontFamily(styleSpec.typography.font_family);
+        _deckDefaultFontFace = parseFontFamily(styleSpec.typography.font_family);
       }
     } catch { /* 非必需 */ }
   }
@@ -2036,7 +2079,7 @@ export async function buildPptx(pages, deckDir, outputPath) {
       try {
         // 每页根据 HTML 实际画布宽度设置坐标换算比例
         setCanvasWidth(page.ir.canvasWidth || 1280);
-        buildSlideFromIR(pptx, page.ir, deckDir);
+        addSpeakerNotes(buildSlideFromIR(pptx, page.ir, deckDir), page.path);
         successCount++;
       } catch (err) {
         console.error(`[WARN] 构建 slide 失败: ${page.path} - ${err.message}`);

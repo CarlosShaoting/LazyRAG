@@ -64,7 +64,8 @@ or rerun the relevant step. Completed PPT sessions remain editable.
 | After analysis, build the deck | `generate_ppt` | **preferred** next step; skip collect when facts suffice |
 | Add or update references/materials | `collect_materials` | KB/web facts and/or register images for HTML |
 | Regenerate the whole deck | `generate_ppt` | no page filter; full stage pipeline |
-| Modify one or more specific pages | `generate_ppt` | **partial edit** (see below) |
+| Modify one or more specific pages | `generate_ppt` | **single-page edit** (see below) |
+| Change one page's bullets / title / wording | `generate_ppt` | **single-page edit**, outline patched first |
 
 After analysis, call:
 
@@ -80,7 +81,8 @@ Only use `collect_materials` when the Ready set shows it and the user still need
 
 #### Modify a specific page
 
-When the user asks to change page N / "第N页" / "这一页":
+When the user asks to change page N / "第N页" / "这一页", including content edits
+such as "删掉最后一个要点" or "第二条改成…":
 
 1. Resolve the target page number:
    - Explicit page numbers in the user message win.
@@ -91,7 +93,7 @@ When the user asks to change page N / "第N页" / "这一页":
 advance_step_and_hand_off(steps=[{
   "step_id": "generate_ppt",
   "user_input": "<user's exact revision request>",
-  "runtime_instruction": "Partial page edit only for sort_order=<N>. Re-run ppt_run_stage page-html for that page using the existing deck_dir (auto-publishes preview_html). Do NOT ppt_read_page_html + save_artifacts for HTML. If UI missing the page, call ppt_publish_pages(deck_dir, pages=<N>). Leave other pages untouched; keep notes unless asked. Do NOT export PPTX — user clicks UI Export."
+  "runtime_instruction": "Single-page edit only for sort_order=<N>. Use the existing deck_dir (ppt_find_deck if unknown). For content changes, first ppt_read_page_outline then ppt_patch_page_outline for that page (all edits in one ops_json call, including visual_hints when it states a count). To remove or retext something already on the slide, prefer ppt_edit_page_html addressing the element by its el id from ppt_read_page_html (deterministic, no redraw, republishes itself); use ppt_run_stage page-html only when the page really needs redrawing. Never ppt_init_deck and never stage=outline/style. Do NOT ppt_read_page_html + save_artifacts for HTML. If UI missing the page, call ppt_publish_pages(deck_dir, pages=<N>). Leave other pages untouched; keep notes unless asked. Do NOT export PPTX — user clicks UI Export."
 }])
 ```
 

@@ -178,39 +178,66 @@ steps:
 
       ## Mode selection
 
-      ### A) Partial page edit
+      ### A) Single-page edit
       If user_input / runtime_instruction asks to modify specific pages
-      (e.g. "改第3页", "page 2", "这一页", or a focused sort_order):
+      (e.g. "改第3页", "page 2", "这一页", "删掉最后一个要点", or a focused sort_order):
 
       1. Resolve target 1-based page numbers.
       2. Resolve deck_dir:
            - Prefer deck_dir from earlier tool results in this task.
-           - Else call ppt_find_deck() to locate the newest workspace deck.
-           - If not found, fall back to full generation (Mode B) instead of inventing HTML.
-      3. Re-generate that page:
-           ppt_run_stage(deck_dir=<abs>, stage='page-html', page=N)
-         (page-html auto-publishes preview_html + notes stub into the UI)
-         Optional polish:
-           ppt_run_stage(deck_dir=<abs>, stage='refine-page', page=N)
-         (refined HTML is written to page_NNN.refined.html — only adopt it if clearly better;
-          otherwise keep page_NNN.html; if you adopt refined, copy/overwrite page_NNN.html
-          then call ppt_publish_pages(deck_dir, pages=N))
-      4. Do NOT ppt_read_page_html + save_artifacts for the HTML body (too large; gets stuck).
+           - Else call ppt_find_deck() — decks are shared across this conversation's
+             step tasks, so a deck from an earlier generate_ppt run is found here.
+           - Only if ppt_find_deck reports no deck at all: build the deck with Mode B,
+             and say in your reply that no previous deck was found so the whole deck
+             was generated. Never silently redraw every page for an edit request.
+      3. Always patch the page outline first for a content change (remove/replace/add
+         a bullet or data point, retitle, reword the narrative):
+           ppt_read_page_outline(deck_dir, page=N)     → see indexed bullets
+           ppt_patch_page_outline(deck_dir, page=N, ops_json=[...])
+         Put every edit for that page in one ops_json call. Skip this only when the
+         request is purely visual (layout/style/"重画好看点") and the content stands.
+         When you remove an item, check visual_hints in the same call: if it states a
+         count ("底部横向排列四个指标卡片"), patch it too with set_field, or page-html
+         keeps the old column count and invents a filler item in place of what you
+         deleted. Act on every warning the patch tool returns.
+      4. Then make the slide match, choosing ONE of:
+         a) Exact removal / retext of something already on the slide, page otherwise
+            fine — edit the HTML directly, no LLM redraw, nothing else can drift:
+              ppt_read_page_html(deck_dir, page=N)        → element list with el ids
+              ppt_edit_page_html(deck_dir, page=N, ops_json=[
+                {"op": "delete_node", "el": "kpi-4"}])
+            Address elements by the el id from ppt_read_page_html — ids are stable, so
+            this is exactly "delete this one item" with nothing else touched. Use group
+            to drop a heading plus its body together. Pages generated before ids existed
+            report repeated_classes instead: use class+index there. A bare text match is
+            the last resort; the tool refuses ambiguous matches and lists candidates.
+            It republishes the page itself.
+         b) The page needs redrawing (new/added content, changed layout):
+              ppt_run_stage(deck_dir=<abs>, stage='page-html', page=N)
+            (auto-publishes preview_html + notes stub into the UI)
+            Optional polish:
+              ppt_run_stage(deck_dir=<abs>, stage='refine-page', page=N)
+            (refined HTML is written to page_NNN.refined.html — only adopt it if clearly better;
+             otherwise keep page_NNN.html; if you adopt refined, copy/overwrite page_NNN.html
+             then call ppt_publish_pages(deck_dir, pages=N))
+      5. Do NOT ppt_read_page_html + save_artifacts for the HTML body (too large; gets stuck).
          If auto-publish did not run, call:
            ppt_publish_pages(deck_dir, pages=N)
-      5. Update notes only if asked — write a richer spoken introduction (not a one-liner):
+      6. Update notes only if asked — write a richer spoken introduction (not a one-liner):
            save_artifacts([{key:'preview_notes', content_type:'text', value:<paragraph>, sort_order:N}])
            Target ~120-280 Chinese characters (or 4–7 sentences): open with the page goal,
            walk key points/data on the slide, explain why it matters, close with a transition.
-      6. Stop after the requested page(s) appear in the UI.
+      7. Stop after the requested page(s) appear in the UI.
          Do NOT export PPTX — the user downloads via the UI Export button.
+      Never call ppt_init_deck or stage='outline'/'style' for a single-page edit —
+      that rebuilds the deck and discards the other pages the user already accepted.
 
       ### B) Full deck generation (default)
       Follow this exact tool sequence (one stage per call; do not skip):
 
       1. ppt_init_deck — pass only these (omit unused optionals; never pass null):
            user_query=<merged request>,
-           page_count=<int 2-10>,
+           page_count=<int 1-10>,
            topic=<short topic>,
            role / audience / scene=<from analysis>,
            style_hint=<visual style text>,
@@ -273,6 +300,9 @@ steps:
       - ppt_list_pages
       - ppt_publish_pages
       - ppt_read_page_html
+      - ppt_read_page_outline
+      - ppt_patch_page_outline
+      - ppt_edit_page_html
     inputs:
       - material: requirement_analysis
         required: true

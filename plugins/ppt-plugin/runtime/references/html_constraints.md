@@ -46,6 +46,17 @@ When a slide has recurring decorative motifs declared in `style_spec.json`:
 
 Without these tags the converter's gate may reject the HTML.
 
+## 4b. Content element `data-el` ids
+
+Every reader-facing element carries `data-el` on its outermost container:
+`title`, `subtitle`, `narrative`, `bullet-i`, `kpi-i`, `table`, `image-i`,
+`footer` (i is 1-based, in document order, no gaps). A small heading and its
+body share one `data-group`.
+
+These ids let a later edit delete or retext exactly one item — in the HTML and,
+via the PPTX shape name, in the exported deck — instead of redrawing the page.
+Decorative layers do not get them.
+
 ## 5. real-photo slot rule
 
 Any asset slot whose `asset_plan` intent implies a real photograph MUST reference

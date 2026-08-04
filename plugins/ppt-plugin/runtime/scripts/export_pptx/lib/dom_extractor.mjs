@@ -350,6 +350,34 @@ underline: cs.getPropertyValue('text-decoration-line').includes('underline'),
    * @param {DOMRect} wrapperRect
    * @returns {Array<Object>}
    */
+  /**
+   * 把 transform 的平移量补进伪元素 bounds。
+   *
+   * 真实元素的 bounds 来自 getBoundingClientRect（已含 transform），但伪元素
+   * 拿不到 rect，bounds 是按父元素 + top/left 手算的，平移量不会自动体现。
+   * `left:50% + translateX(-50%)` 这种居中写法因此会整条右移半个宽度。
+   * 只补平移；旋转/缩放仍由下游 parseRotation 处理。
+   */
+  function applyPseudoTransform(bounds, transform) {
+    if (!bounds || !transform || transform === 'none') return bounds;
+    const nums = transform.match(/-?[\d.]+(?:e[-+]?\d+)?/gi);
+    if (!nums) return bounds;
+    let tx, ty;
+    if (transform.startsWith('matrix3d')) {
+      if (nums.length < 14) return bounds;
+      tx = parseFloat(nums[12]);
+      ty = parseFloat(nums[13]);
+    } else if (transform.startsWith('matrix')) {
+      if (nums.length < 6) return bounds;
+      tx = parseFloat(nums[4]);
+      ty = parseFloat(nums[5]);
+    } else {
+      return bounds;
+    }
+    if (!Number.isFinite(tx) || !Number.isFinite(ty)) return bounds;
+    return { ...bounds, x: bounds.x + tx, y: bounds.y + ty };
+  }
+
   function extractPseudoElements(el, wrapperRect) {
     const pseudos = [];
     for (const pseudo of ['::before', '::after']) {
@@ -476,6 +504,8 @@ underline: cs.getPropertyValue('text-decoration-line').includes('underline'),
           }
         }
 
+        bounds = applyPseudoTransform(bounds, cs.getPropertyValue('transform'));
+
         // 构建合成 styles 对象
         const styles = {};
         for (const prop of CSS_PROPS) {
@@ -515,6 +545,10 @@ underline: cs.getPropertyValue('text-decoration-line').includes('underline'),
     const node = {
       tag,
       id: el.id || undefined,
+      // data-el / data-group：page-html 写入的稳定元素 id，导出时作为 PPTX 形状名，
+      // 使生成的 .pptx 仍可按 id 定位单个元素（删除/改文案），无需重新生成整页。
+      el: el.dataset?.el || undefined,
+      group: el.dataset?.group || undefined,
       className: el.className || undefined,
       bounds: extractBounds(el, wrapperRect),
       styles: extractStyles(el),

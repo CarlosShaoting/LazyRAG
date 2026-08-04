@@ -8,6 +8,11 @@ Pipeline:
   → ppt_publish_pages  (disk HTML → preview_html artifacts; UI updates)
   → optionally refine preview_notes via save_artifacts (richer spoken intro)
 
+Single-page content edit (no full deck rebuild):
+  ppt_find_deck → ppt_read_page_outline → ppt_patch_page_outline
+    → ppt_edit_page_html                  (exact removal / retext, no LLM redraw)
+    or ppt_run_stage(page-html, page=N)   (LLM redraw of that page)
+
 PPTX export is NOT a skill tool — the user clicks Export in PluginPanel.
 Runtime lives under plugins/ppt-plugin/runtime/ (vendored SenseNova subset).
 Do NOT ppt_read_page_html + save_artifacts for full HTML — tool results >16KB
@@ -21,8 +26,10 @@ import re
 import subprocess
 import sys
 import uuid
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, List, Optional, Union
 from urllib.parse import urlparse
@@ -92,9 +99,20 @@ def _sanitize_prompt(text: str) -> str:
     return _PROMPT_PLACEHOLDER_RE.sub(r'{ \1 }', text) if text else text
 
 
-def _workspace_root() -> Path:
+def _conversation_root() -> Path:
+    """Root shared by every step task of one conversation.
+
+    SubAgent workspaces are per task (<root>/<user>/<task_id>/), so decks and
+    material images written by one step would be invisible to the next step —
+    a follow-up single-page edit could not find the deck it must patch, and
+    collect_materials images could not be attached at ppt_init_deck. Both live
+    here instead, scoped by conversation so nothing leaks across conversations.
+    """
     ctx = require_context()
-    root = Path(ctx.workspace_path) if ctx.workspace_path else Path('/tmp')
+    conversation = _slugify(_coerce_str(getattr(ctx, 'conversation_id', '')), 'no_conversation')
+    workspace = Path(ctx.workspace_path) if ctx.workspace_path else None
+    base = workspace.parent if workspace and workspace.parent != workspace else Path('/tmp')
+    root = base / 'ppt_sessions' / conversation
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -190,7 +208,9 @@ def _extract_slide_copy(html: str) -> dict[str, Any]:
     phrases: list[str] = []
     # Prefer semantic / card classes used by the HTML pipeline.
     for pattern in (
-        r'class=["\'][^"\']*(?:kpi-title|kpi-label|kpi-value|chart-title|card-title|section-title)[^"\']*["\'][^>]*>([\s\S]*?)</',
+        r'class=["\'][^"\']*'
+        r'(?:kpi-title|kpi-label|kpi-value|chart-title|card-title|section-title)'
+        r'[^"\']*["\'][^>]*>([\s\S]*?)</',
         r'<h[2-4][^>]*>([\s\S]*?)</h[2-4]>',
         r'<li[^>]*>([\s\S]*?)</li>',
         r'<strong[^>]*>([\s\S]*?)</strong>',
@@ -420,6 +440,774 @@ def _publish_pages_from_disk(
         'published': published,
         'failed': failed or None,
     }
+
+
+_OUTLINE_TEXT_FIELDS = ('title', 'subtitle', 'narrative', 'visual_hints')
+
+# Layout hints often hard-code item counts ('底部横向排列四个指标卡片'). Left stale
+# after a delete, the page-html rewriter keeps the old column count and the
+# generator invents a filler item, so the deleted entry reappears on the slide.
+_COUNT_PHRASE_RE = re.compile(r'(?:\d+|[一二三四五六七八九十两])\s*(?:个|张|栏|列|行|块|项|大)[^，。；\s]{0,6}')
+
+_OUTLINE_OPS_HELP = (
+    'Valid ops: delete_bullet(index|match), replace_bullet(index|match, head?, detail?), '
+    'insert_bullet(head, detail?, index?), set_bullets(bullets), '
+    f'set_field(field={"|".join(_OUTLINE_TEXT_FIELDS)}, value), '
+    'delete_data_point(index|match), set_data_points(data_points).'
+)
+
+
+def _outline_path(deck: Path) -> Path:
+    return deck / 'outline.json'
+
+
+def _load_outline(deck: Path) -> dict:
+    path = _outline_path(deck)
+    if not path.exists():
+        raise FileNotFoundError(
+            f'outline.json missing in {deck}. Run the outline stage before patching.',
+        )
+    outline = json.loads(path.read_text(encoding='utf-8'))
+    if not isinstance(outline.get('pages'), list) or not outline['pages']:
+        raise ValueError(f'outline.json has no pages list: {path}')
+    return outline
+
+
+def _write_outline(deck: Path, outline: dict) -> None:
+    path = _outline_path(deck)
+    tmp = path.with_name(path.name + '.tmp')
+    tmp.write_text(json.dumps(outline, ensure_ascii=False, indent=2), encoding='utf-8')
+    os.replace(tmp, path)
+
+
+def _find_outline_page(outline: dict, page_no: int) -> dict:
+    for page in outline['pages']:
+        try:
+            if int(page.get('page_no', -1)) == page_no:
+                return page
+        except (TypeError, ValueError):
+            continue
+    available = [str(p.get('page_no')) for p in outline['pages']]
+    raise KeyError(f'outline has no page {page_no}. Pages: {", ".join(available)}')
+
+
+def _bullet_text(entry: Any) -> str:
+    if isinstance(entry, dict):
+        return f'{_coerce_str(entry.get("head"))} {_coerce_str(entry.get("detail"))}'.strip()
+    return _coerce_str(entry)
+
+
+def _data_point_text(entry: Any) -> str:
+    if isinstance(entry, dict):
+        return ' '.join(
+            _coerce_str(entry.get(key))
+            for key in ('label', 'value', 'context')
+        ).strip()
+    return _coerce_str(entry)
+
+
+def _as_bullet(value: Any) -> dict:
+    """Normalize a bullet payload into the outline {head, detail} shape."""
+    if isinstance(value, dict):
+        head = _coerce_str(value.get('head'))
+        detail = _coerce_str(value.get('detail'))
+    else:
+        head, detail = _coerce_str(value), ''
+    if not head:
+        raise ValueError('each bullet requires a non-empty head')
+    return {'head': head, 'detail': detail}
+
+
+def _resolve_entry_index(items: list, op: dict, text_of: Any, label: str) -> int:
+    """Resolve op index (1-based, negative counts from the end) or match text."""
+    if not items:
+        raise ValueError(f'page has no {label} to address')
+    raw_index = op.get('index')
+    if _coerce_str(raw_index) != '':
+        try:
+            n = int(raw_index)
+        except (TypeError, ValueError):
+            raise ValueError(f'index must be an integer, got {raw_index!r}')
+        if n == 0:
+            raise ValueError('index is 1-based: use 1 for the first item, -1 for the last')
+        idx = n - 1 if n > 0 else len(items) + n
+        if not 0 <= idx < len(items):
+            raise ValueError(f'index {n} out of range: {label} has {len(items)} items')
+        return idx
+    needle = _coerce_str(op.get('match')).lower()
+    if needle:
+        for i, entry in enumerate(items):
+            if needle in text_of(entry).lower():
+                return i
+        raise ValueError(f'no {label} entry matches {op.get("match")!r}')
+    raise ValueError(f'op needs index or match to address {label}')
+
+
+def _page_list(page: dict, key: str) -> list:
+    items = page.get(key)
+    if not isinstance(items, list):
+        items = []
+        page[key] = items
+    return items
+
+
+def _parse_ops_payload(ops_json: Union[str, list, dict, None]) -> list[dict]:
+    if ops_json is None or (isinstance(ops_json, str) and _coerce_str(ops_json) == ''):
+        raise ValueError(f'ops_json is required. {_OUTLINE_OPS_HELP}')
+    data = json.loads(ops_json) if isinstance(ops_json, str) else ops_json
+    if isinstance(data, dict):
+        data = [data]
+    if not isinstance(data, list) or not data:
+        raise ValueError(f'ops_json must be a non-empty JSON list. {_OUTLINE_OPS_HELP}')
+    for item in data:
+        if not isinstance(item, dict):
+            raise ValueError(f'each op must be an object, got {type(item).__name__}')
+    return data
+
+
+def _apply_outline_ops(page: dict, ops: list[dict]) -> list[str]:
+    """Mutate one outline page in place. Raises ValueError on an invalid op."""
+    applied: list[str] = []
+    for op in ops:
+        name = _coerce_str(op.get('op')).lower().replace('-', '_')
+        if name == 'delete_bullet':
+            bullets = _page_list(page, 'bullets')
+            idx = _resolve_entry_index(bullets, op, _bullet_text, 'bullets')
+            removed = bullets.pop(idx)
+            applied.append(f'deleted bullet #{idx + 1}: {_bullet_text(removed)[:60]}')
+        elif name == 'replace_bullet':
+            bullets = _page_list(page, 'bullets')
+            idx = _resolve_entry_index(bullets, op, _bullet_text, 'bullets')
+            current = bullets[idx]
+            entry = _as_bullet(current) if not isinstance(current, dict) else dict(current)
+            head, detail = _coerce_str(op.get('head')), _coerce_str(op.get('detail'))
+            if not head and not detail:
+                raise ValueError('replace_bullet requires head and/or detail')
+            if head:
+                entry['head'] = head
+            if detail:
+                entry['detail'] = detail
+            bullets[idx] = _as_bullet(entry)
+            applied.append(f'replaced bullet #{idx + 1}: {_bullet_text(bullets[idx])[:60]}')
+        elif name == 'insert_bullet':
+            bullets = _page_list(page, 'bullets')
+            entry = _as_bullet(op)
+            if _coerce_str(op.get('index')) == '':
+                bullets.append(entry)
+                position = len(bullets)
+            else:
+                try:
+                    n = int(op['index'])
+                except (TypeError, ValueError):
+                    raise ValueError(f'index must be an integer, got {op.get("index")!r}')
+                if n == 0:
+                    raise ValueError('index is 1-based: use 1 to insert first')
+                position = n if n > 0 else len(bullets) + n + 2
+                if not 1 <= position <= len(bullets) + 1:
+                    raise ValueError(
+                        f'index {n} out of range: page has {len(bullets)} bullets',
+                    )
+                bullets.insert(position - 1, entry)
+            applied.append(f'inserted bullet #{position}: {_bullet_text(entry)[:60]}')
+        elif name == 'set_bullets':
+            raw = op.get('bullets')
+            if not isinstance(raw, list) or not raw:
+                raise ValueError('set_bullets requires a non-empty bullets list')
+            page['bullets'] = [_as_bullet(item) for item in raw]
+            applied.append(f'set {len(page["bullets"])} bullets')
+        elif name == 'set_field':
+            field = _coerce_str(op.get('field')).lower()
+            if field not in _OUTLINE_TEXT_FIELDS:
+                raise ValueError(
+                    f'set_field field must be one of {", ".join(_OUTLINE_TEXT_FIELDS)}',
+                )
+            value = _coerce_str(op.get('value'))
+            if not value:
+                raise ValueError(f'set_field {field} requires a non-empty value')
+            page[field] = value
+            applied.append(f'set {field}: {value[:60]}')
+        elif name == 'delete_data_point':
+            points = _page_list(page, 'data_points')
+            idx = _resolve_entry_index(points, op, _data_point_text, 'data_points')
+            removed = points.pop(idx)
+            applied.append(f'deleted data_point #{idx + 1}: {_data_point_text(removed)[:60]}')
+        elif name == 'set_data_points':
+            raw = op.get('data_points')
+            if not isinstance(raw, list):
+                raise ValueError('set_data_points requires a data_points list')
+            points = []
+            for item in raw:
+                if not isinstance(item, dict) or not _coerce_str(item.get('label')):
+                    raise ValueError('each data_point requires a label')
+                points.append({
+                    'label': _coerce_str(item.get('label')),
+                    'value': _coerce_str(item.get('value')),
+                    'context': _coerce_str(item.get('context')),
+                })
+            page['data_points'] = points
+            applied.append(f'set {len(points)} data_points')
+        else:
+            raise ValueError(f'unknown op {op.get("op")!r}. {_OUTLINE_OPS_HELP}')
+    return applied
+
+
+def _stale_count_hints(page: dict, ops: list[dict]) -> list[str]:
+    """Warn when visual_hints still states a count the page may no longer match."""
+    changed_counts = False
+    hints_updated = False
+    for op in ops:
+        name = _coerce_str(op.get('op')).lower().replace('-', '_')
+        if name in {'delete_bullet', 'insert_bullet', 'set_bullets',
+                    'delete_data_point', 'set_data_points'}:
+            changed_counts = True
+        elif name == 'set_field' and _coerce_str(op.get('field')).lower() == 'visual_hints':
+            hints_updated = True
+    if not changed_counts or hints_updated:
+        return []
+    phrases = _COUNT_PHRASE_RE.findall(_coerce_str(page.get('visual_hints')))
+    if not phrases:
+        return []
+    return [
+        f'visual_hints still says "{"、".join(phrases[:3])}" while the page now has '
+        f'{len(page.get("bullets") or [])} bullets and '
+        f'{len(page.get("data_points") or [])} data_points. If that count is now wrong, '
+        'patch visual_hints with set_field before redrawing — otherwise page-html keeps '
+        'the old column count and invents a filler item to replace what you deleted.'
+    ]
+
+
+def _outline_page_view(page: dict) -> dict:
+    bullets = [
+        {'index': i, 'head': _coerce_str(b.get('head')) if isinstance(b, dict) else _coerce_str(b),
+         'detail': _coerce_str(b.get('detail')) if isinstance(b, dict) else ''}
+        for i, b in enumerate(page.get('bullets') or [], start=1)
+    ]
+    data_points = [
+        {'index': i, **{k: _coerce_str(p.get(k)) for k in ('label', 'value', 'context')}}
+        for i, p in enumerate(page.get('data_points') or [], start=1)
+        if isinstance(p, dict)
+    ]
+    return {
+        'page': int(page.get('page_no', 0)),
+        'page_kind': _coerce_str(page.get('page_kind')),
+        'title': _coerce_str(page.get('title')),
+        'subtitle': _coerce_str(page.get('subtitle')),
+        'narrative': _coerce_str(page.get('narrative')),
+        'visual_hints': _coerce_str(page.get('visual_hints')),
+        'bullets': bullets,
+        'data_points': data_points,
+        'use_table': page.get('use_table'),
+        'use_image': page.get('use_image'),
+        'asset_slot_count': len(page.get('asset_slots') or []),
+    }
+
+
+_VOID_TAGS = frozenset({
+    'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
+    'link', 'meta', 'param', 'source', 'track', 'wbr',
+})
+
+# Structural containers a text-driven delete must never remove.
+_PROTECTED_TAGS = frozenset({'html', 'head', 'body', 'style', 'script'})
+_PROTECTED_IDS = frozenset({'bg', 'ct'})
+_PROTECTED_CLASSES = frozenset({'wrapper'})
+
+# Element kinds that can stand alone as "one item" when no repeated sibling exists.
+_ITEM_TAGS = ('li', 'tr', 'td', 'div', 'section', 'article', 'p', 'span')
+
+_GRID_REPEAT_RE = re.compile(
+    r'(grid-template-(?:columns|rows)\s*:\s*repeat\(\s*)(\d+)(\s*,)',
+)
+
+_HTML_EDIT_OPS_HELP = (
+    'Valid ops: delete_node(el|group|class|match, index?), '
+    'replace_text(el|match, value, all?).'
+)
+
+
+class _HtmlTree(HTMLParser):
+    """Minimal element tree carrying exact source spans (stdlib only).
+
+    Enough to delete or retext one element of an already generated slide without
+    re-running the page-html LLM. Not a general HTML5 parser: it tolerates stray
+    end tags and unclosed elements, which is all the generated decks contain.
+    """
+
+    def __init__(self, html: str) -> None:
+        super().__init__(convert_charrefs=True)
+        self.html = html
+        self._line_starts = [0] + [i + 1 for i, ch in enumerate(html) if ch == '\n']
+        self.nodes: list[dict[str, Any]] = []
+        self.texts: list[dict[str, Any]] = []
+        self._open: list[int] = []
+        self.feed(html)
+        self.close()
+        for node in self.nodes:
+            if node['end'] is None:
+                node['end'] = len(html)
+
+    def _offset(self) -> int:
+        line, col = self.getpos()
+        return self._line_starts[line - 1] + col
+
+    def handle_starttag(self, tag: str, attrs: list) -> None:
+        start = self._offset()
+        raw = self.get_starttag_text() or f'<{tag}>'
+        attr_map = {k: (v or '') for k, v in attrs}
+        node = {
+            'tag': tag,
+            'id': attr_map.get('id', ''),
+            'el': attr_map.get('data-el', '').strip(),
+            'group': attr_map.get('data-group', '').strip(),
+            'classes': attr_map.get('class', '').split(),
+            'start': start,
+            'open_end': start + len(raw),
+            'end': None,
+            'parent': self._open[-1] if self._open else None,
+            'children': [],
+        }
+        index = len(self.nodes)
+        self.nodes.append(node)
+        if node['parent'] is not None:
+            self.nodes[node['parent']]['children'].append(index)
+        if tag in _VOID_TAGS or raw.rstrip().endswith('/>'):
+            node['end'] = node['open_end']
+        else:
+            self._open.append(index)
+
+    def handle_startendtag(self, tag: str, attrs: list) -> None:
+        self.handle_starttag(tag, attrs)
+
+    def handle_endtag(self, tag: str) -> None:
+        for depth in range(len(self._open) - 1, -1, -1):
+            if self.nodes[self._open[depth]]['tag'] != tag:
+                continue
+            close = self.html.find('>', self._offset())
+            end = close + 1 if close != -1 else self._offset()
+            for index in self._open[depth:]:
+                if self.nodes[index]['end'] is None:
+                    self.nodes[index]['end'] = end
+            del self._open[depth:]
+            return
+
+    def handle_data(self, data: str) -> None:
+        if data.strip():
+            self.texts.append({
+                'start': self._offset(),
+                'text': data,
+                'parent': self._open[-1] if self._open else None,
+            })
+
+    def ancestors(self, index: int) -> list[int]:
+        chain = []
+        parent = self.nodes[index]['parent']
+        while parent is not None:
+            chain.append(parent)
+            parent = self.nodes[parent]['parent']
+        return chain
+
+    def is_protected(self, index: int) -> bool:
+        node = self.nodes[index]
+        return (
+            node['tag'] in _PROTECTED_TAGS
+            or node['id'] in _PROTECTED_IDS
+            or bool(set(node['classes']) & _PROTECTED_CLASSES)
+        )
+
+    def inside_raw_text(self, offset: int) -> bool:
+        """True when offset falls inside a <style> / <script> body."""
+        return any(
+            node['tag'] in ('style', 'script') and node['open_end'] <= offset < node['end']
+            for node in self.nodes
+        )
+
+    def node_text(self, index: int) -> str:
+        node = self.nodes[index]
+        return _strip_tags(self.html[node['open_end']:node['end']])
+
+    def find_repeated_item(self, index: int) -> int:
+        """Walk up to the element that is one item of a repeated group.
+
+        A KPI card lives as `.stat-card` among sibling `.stat-card`s; deleting
+        that element (not its inner text node) is what removes the item.
+        """
+        for candidate in [index] + self.ancestors(index):
+            if self.is_protected(candidate):
+                break
+            if len(self.siblings_like(candidate)) > 1:
+                return candidate
+        for candidate in [index] + self.ancestors(index):
+            if self.is_protected(candidate):
+                break
+            if self.nodes[candidate]['tag'] in _ITEM_TAGS:
+                return candidate
+        return index
+
+    def siblings_like(self, index: int) -> list[int]:
+        """Siblings sharing this element's tag and class list, including itself."""
+        node = self.nodes[index]
+        parent = node['parent']
+        if parent is None:
+            return [index]
+        signature = (node['tag'], tuple(node['classes']))
+        return [
+            sibling for sibling in self.nodes[parent]['children']
+            if (self.nodes[sibling]['tag'], tuple(self.nodes[sibling]['classes'])) == signature
+        ]
+
+
+def _shrink_grid_tracks(
+    html: str, tree: _HtmlTree, parent: Optional[int], old_count: int, deleted: int = 1,
+) -> Optional[str]:
+    """Drop tracks from the parent's CSS grid so the row does not keep holes."""
+    if parent is None or old_count - deleted < 1:
+        return None
+    selectors = [f'.{cls}' for cls in tree.nodes[parent]['classes']]
+    if tree.nodes[parent]['id']:
+        selectors.append(f'#{tree.nodes[parent]["id"]}')
+    for selector in selectors:
+        for match in re.finditer(re.escape(selector) + r'\s*\{([^}]*)\}', html):
+            body = match.group(1)
+            hit = _GRID_REPEAT_RE.search(body)
+            if not hit or int(hit.group(2)) != old_count:
+                continue
+            new_body = (
+                body[:hit.start()] + hit.group(1) + str(old_count - deleted) + hit.group(3)
+                + body[hit.end():]
+            )
+            return html[:match.start(1)] + new_body + html[match.end(1):]
+    return None
+
+
+def _text_occurrences(tree: _HtmlTree, needle: str) -> list[int]:
+    """Offsets of needle inside rendered text (never markup, CSS or JS)."""
+    found: list[int] = []
+    start = 0
+    while True:
+        at = tree.html.find(needle, start)
+        if at < 0:
+            return found
+        start = at + 1
+        open_bracket = tree.html.rfind('<', 0, at)
+        close_bracket = tree.html.rfind('>', 0, at)
+        if open_bracket > close_bracket or tree.inside_raw_text(at):
+            continue
+        found.append(at)
+
+
+def _delete_span(html: str, start: int, end: int) -> str:
+    """Cut [start, end) plus the blank line it leaves behind."""
+    tail = end
+    while tail < len(html) and html[tail] in ' \t':
+        tail += 1
+    if tail < len(html) and html[tail] == '\n':
+        tail += 1
+        head = start
+        while head > 0 and html[head - 1] in ' \t':
+            head -= 1
+        start = head
+    return html[:start] + html[tail:]
+
+
+def _element_inventory(tree: _HtmlTree) -> dict[str, Any]:
+    """Addressable content elements of a slide — the JSON view used for edits.
+
+    Prefers the `data-el` / `data-group` anchors emitted by page-html. Decks
+    generated before those existed fall back to repeated class groups, which is
+    what `delete_node(class=..., index=...)` addresses.
+    """
+    elements = [
+        {
+            'el': node['el'],
+            'group': node['group'] or None,
+            'tag': node['tag'],
+            'classes': node['classes'] or None,
+            'text': tree.node_text(index).strip()[:80],
+        }
+        for index, node in enumerate(tree.nodes) if node['el']
+    ]
+    groups: dict[str, list[str]] = {}
+    for item in elements:
+        if item['group']:
+            groups.setdefault(item['group'], []).append(item['el'])
+    repeated: list[dict[str, Any]] = []
+    if not elements:
+        seen: set[tuple] = set()
+        for index, node in enumerate(tree.nodes):
+            signature = (node['tag'], tuple(node['classes']))
+            if not node['classes'] or signature in seen:
+                continue
+            siblings = tree.siblings_like(index)
+            if len(siblings) < 2:
+                continue
+            seen.add(signature)
+            repeated.append({
+                'class': node['classes'][0],
+                'count': len(siblings),
+                'items': [tree.node_text(s).strip()[:40] for s in siblings],
+            })
+    seen_ids = Counter(item['el'] for item in elements)
+    return {
+        'elements': elements or None,
+        'groups': {k: v for k, v in groups.items() if len(v) > 1} or None,
+        'duplicate_ids': sorted(k for k, n in seen_ids.items() if n > 1) or None,
+        'repeated_classes': repeated or None,
+        'addressing': (
+            'delete_node/replace_text accept el (or group) for these ids.'
+            if elements else
+            'This page predates data-el anchors: address items with class + index, '
+            'or redraw it once with page-html to get stable ids.'
+        ),
+    }
+
+
+def _known_element_ids(tree: _HtmlTree) -> str:
+    ids = [node['el'] for node in tree.nodes if node['el']]
+    return ', '.join(ids[:12]) if ids else '(this page has no data-el anchors)'
+
+
+def _describe_nodes(tree: _HtmlTree, indexes: list[int]) -> str:
+    return '; '.join(
+        f'{i}='
+        + (f'el="{tree.nodes[c]["el"]}" ' if tree.nodes[c]['el'] else '')
+        + f'<{tree.nodes[c]["tag"]}'
+        + (f'.{".".join(tree.nodes[c]["classes"])}' if tree.nodes[c]['classes'] else '')
+        + f'> "{tree.node_text(c).strip()[:40]}"'
+        for i, c in enumerate(indexes, start=1)
+    )
+
+
+def _resolve_el(tree: _HtmlTree, el: str, op: dict) -> list[int]:
+    """Nodes carrying data-el=`el`, refusing to guess when the id is not unique.
+
+    page-html is told to keep ids unique, but a generator sometimes reuses one
+    (e.g. a section label and the first list item both tagged bullet-1). Editing
+    or deleting every match would silently hit unrelated content, so require an
+    index instead.
+    """
+    matches = [i for i, node in enumerate(tree.nodes) if node['el'] == el]
+    if not matches:
+        raise ValueError(f'no element has data-el="{el}". Known: {_known_element_ids(tree)}')
+    if len(matches) == 1:
+        return matches
+    nth = _coerce_int(op.get('index'), 0, lo=1)
+    if _coerce_str(op.get('index')) != '':
+        if len(matches) < nth:
+            raise ValueError(f'el="{el}" matches {len(matches)} elements, no #{nth}')
+        return [matches[nth - 1]]
+    raise ValueError(
+        f'el="{el}" is not unique — {len(matches)} elements carry it, '
+        f'pass index to pick one: {_describe_nodes(tree, matches)}',
+    )
+
+
+def _select_delete_targets(tree: _HtmlTree, op: dict) -> list[int]:
+    """Resolve one delete_node op to the element(s) it removes.
+
+    Addressing precedence: el (one item) > group (a titled block) > class+index >
+    visible text. Ids come from page-html's data-el anchors and never move when
+    unrelated content changes, so they are the safe way to say "this one".
+    """
+    el = _coerce_str(op.get('el'))
+    group = _coerce_str(op.get('group'))
+    wanted = _coerce_str(op.get('class'))
+    needle = _coerce_str(op.get('match'))
+    explicit = _coerce_str(op.get('index')) != ''
+    nth = _coerce_int(op.get('index'), 1, lo=1)
+
+    if el:
+        return _resolve_el(tree, el, op)
+    if group:
+        matches = [i for i, node in enumerate(tree.nodes) if node['group'] == group]
+        if not matches:
+            raise ValueError(f'no element has data-group="{group}"')
+        return matches
+    if wanted:
+        matches = [i for i, node in enumerate(tree.nodes) if wanted in node['classes']]
+        if len(matches) < nth:
+            raise ValueError(
+                f'class {wanted!r} matches {len(matches)} elements, no #{nth}',
+            )
+        return [matches[nth - 1]]
+    if not needle:
+        raise ValueError('delete_node requires el, group, class or match')
+
+    hits = _text_occurrences(tree, needle)
+    if not hits:
+        raise ValueError(f'no visible text matches {needle!r}')
+    candidates = [_resolve_delete_target(tree, offset) for offset in hits]
+    if explicit:
+        if len(candidates) < nth:
+            raise ValueError(f'{needle!r} appears {len(candidates)} times, no #{nth}')
+        return [candidates[nth - 1]]
+    repeated = [c for c in candidates if len(tree.siblings_like(c)) > 1]
+    if len(repeated) == 1:
+        return [repeated[0]]
+    if len(candidates) == 1:
+        return [candidates[0]]
+    raise ValueError(
+        f'{needle!r} appears {len(candidates)} times — pass el, or index to pick one: '
+        + _describe_nodes(tree, candidates),
+    )
+
+
+def _resolve_delete_target(tree: _HtmlTree, offset: int) -> int:
+    """Element a text hit at `offset` should delete: its repeated-item ancestor."""
+    holder = max(
+        (i for i, node in enumerate(tree.nodes) if node['open_end'] <= offset < node['end']),
+        key=lambda i: tree.nodes[i]['start'],
+        default=None,
+    )
+    if holder is None:
+        raise ValueError('match is not inside any element')
+    return tree.find_repeated_item(holder)
+
+
+def _drop_emptied_parents(html: str, parent_start: int) -> str:
+    """Remove a container left with no content by the deletion."""
+    for _ in range(3):
+        tree = _HtmlTree(html)
+        node = next((n for n in tree.nodes if n['start'] == parent_start), None)
+        if node is None:
+            return html
+        index = tree.nodes.index(node)
+        if tree.is_protected(index) or node['children'] or tree.node_text(index).strip():
+            return html
+        parent_start = tree.nodes[node['parent']]['start'] if node['parent'] is not None else -1
+        html = _delete_span(html, node['start'], node['end'])
+        if parent_start < 0:
+            return html
+    return html
+
+
+def _sync_doc_title(html: str, old: str, new: str, applied: list[str]) -> str:
+    """Keep <head><title> in step with a retexted on-slide title.
+
+    The UI page label and title_hint come from <title> (see _title_from_html),
+    so leaving it behind makes a renamed slide keep its old name in the deck
+    sidebar. Only rewrite it when it still holds exactly the replaced text —
+    a <title> that says something else is deliberate.
+    """
+    if not old or old == new:
+        return html
+    match = re.search(r'(<title[^>]*>)(.*?)(</title>)', html, re.I | re.S)
+    if not match or match.group(2).strip() != old:
+        return html
+    applied.append(f'synced <title> -> {new!r}')
+    return html[:match.start()] + match.group(1) + new + match.group(3) + html[match.end():]
+
+
+def _apply_html_ops(html: str, ops: list[dict]) -> tuple[str, list[str], list[str], list[str]]:
+    """Apply deterministic edits to one page's HTML. Raises ValueError on bad ops.
+
+    Returns (html, applied, layout_notes, removed_texts).
+    """
+    applied: list[str] = []
+    notes: list[str] = []
+    removed_texts: list[str] = []
+    for op in ops:
+        name = _coerce_str(op.get('op')).lower().replace('-', '_')
+        if name == 'delete_node':
+            tree = _HtmlTree(html)
+            targets = _select_delete_targets(tree, op)
+            for target in targets:
+                if tree.is_protected(target):
+                    raise ValueError(
+                        f'refusing to delete <{tree.nodes[target]["tag"]}> — it is page '
+                        'structure, not a content item',
+                    )
+            deleted_per_parent: dict[int, list[int]] = {}
+            # Delete back-to-front so the spans of earlier elements stay valid.
+            for target in sorted(targets, key=lambda i: tree.nodes[i]['start'], reverse=True):
+                node = tree.nodes[target]
+                removed = tree.node_text(target).strip()
+                removed_texts.append(removed)
+                html = _delete_span(html, node['start'], node['end'])
+                applied.append(
+                    'deleted '
+                    + (f'el="{node["el"]}" ' if node['el'] else '')
+                    + f'<{node["tag"]}'
+                    + (f' class="{" ".join(node["classes"])}"' if node['classes'] else '')
+                    + f'> containing: {removed[:60]}'
+                )
+                if node['parent'] is not None:
+                    deleted_per_parent.setdefault(node['parent'], []).append(target)
+            for parent, removed_children in deleted_per_parent.items():
+                old_count = len(tree.siblings_like(removed_children[0]))
+                reflowed = _shrink_grid_tracks(
+                    html, tree, parent, old_count, len(removed_children),
+                )
+                if reflowed:
+                    html = reflowed
+                    notes.append(
+                        f'grid tracks reduced {old_count} -> {old_count - len(removed_children)}',
+                    )
+                    continue
+                shrunk = _drop_emptied_parents(html, tree.nodes[parent]['start'])
+                if shrunk != html:
+                    html = shrunk
+                    notes.append('removed the container left empty by the deletion')
+        elif name == 'replace_text':
+            value = _coerce_str(op.get('value'))
+            if not value:
+                raise ValueError('replace_text requires value')
+            needle = _coerce_str(op.get('match'))
+            el = _coerce_str(op.get('el'))
+            tree = _HtmlTree(html)
+            if el:
+                target = _resolve_el(tree, el, op)[0]
+                node = tree.nodes[target]
+                inner = html[node['open_end']:node['end']]
+                body_end = inner.rfind('</')
+                body = inner[:body_end] if body_end >= 0 else inner
+                if '<' in body.strip():
+                    if not needle:
+                        raise ValueError(
+                            f'el="{el}" wraps nested markup; pass match as well to say which '
+                            'text to replace, or target the inner element directly',
+                        )
+                    if needle not in body:
+                        raise ValueError(f'el="{el}" does not contain {needle!r}')
+                    start = node['open_end'] + body.index(needle)
+                    html = html[:start] + value + html[start + len(needle):]
+                    applied.append(f'retexted el="{el}": {needle!r} -> {value!r}')
+                    html = _sync_doc_title(html, needle, value, applied)
+                else:
+                    start = node['open_end']
+                    html = html[:start] + value + html[start + len(body):]
+                    applied.append(f'retexted el="{el}" -> {value!r}')
+                    html = _sync_doc_title(html, body.strip(), value, applied)
+            else:
+                if not needle:
+                    raise ValueError('replace_text requires el or match')
+                hits = _text_occurrences(tree, needle)
+                if not hits:
+                    raise ValueError(f'no visible text matches {needle!r}')
+                targets = hits if op.get('all') else hits[:1]
+                for offset in reversed(targets):
+                    html = html[:offset] + value + html[offset + len(needle):]
+                applied.append(f'replaced {needle!r} -> {value!r} ({len(targets)}x)')
+        else:
+            raise ValueError(f'unknown op {op.get("op")!r}. {_HTML_EDIT_OPS_HELP}')
+    return html, applied, notes, removed_texts
+
+
+def _outline_still_has(deck: Path, page_no: int, removed_texts: list[str]) -> list[str]:
+    """Words removed from the slide that the page outline still carries."""
+    if not removed_texts:
+        return []
+    try:
+        blob = json.dumps(
+            _find_outline_page(_load_outline(deck), page_no), ensure_ascii=False,
+        )
+    except (FileNotFoundError, ValueError, KeyError, json.JSONDecodeError):
+        return []
+    stale = []
+    for text in removed_texts:
+        for token in re.split(r'\s+', text):
+            if len(token) >= 2 and token in blob and token not in stale:
+                stale.append(token)
+    return stale
 
 
 def _outline_page_numbers(
@@ -694,7 +1482,7 @@ _IMAGE_URL_KEYS = (
 
 
 def _material_root() -> Path:
-    root = _workspace_root() / _MATERIAL_DIR_NAME
+    root = _conversation_root() / _MATERIAL_DIR_NAME
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -1153,7 +1941,12 @@ def ppt_init_deck(
     ppt_mode: Optional[str] = None,
     key_points_json: Union[str, list, None] = None,
 ) -> dict:
-    """Create deck workspace with task_pack.json + info_pack.json.
+    """Create a NEW deck workspace with task_pack.json + info_pack.json.
+
+    Only for building a deck from scratch. Never call this to edit an existing
+    deck: it starts an empty deck, so every page the user already accepted has to
+    be redrawn. To change a page, call ppt_find_deck then ppt_patch_page_outline
+    plus ppt_run_stage(stage='page-html', page=N).
 
     Prefer omitting optional fields instead of passing null. image_source must be
     the string 'none' (not JSON null) when no photos are needed.
@@ -1164,7 +1957,7 @@ def ppt_init_deck(
 
     Args:
         user_query (str): Full presentation request (required).
-        page_count (int): Target slide count (2-12). Default 4.
+        page_count (int): Target slide count (1-12). Default 4.
         topic (str): Short topic; inferred from user_query when empty.
         role (str): Speaker role.
         audience (str): Target audience.
@@ -1192,7 +1985,7 @@ def ppt_init_deck(
     if not query:
         return tool_error('ppt_init_deck', 'user_query is required')
 
-    pages = _coerce_int(page_count, 4, lo=2, hi=12)
+    pages = _coerce_int(page_count, 4, lo=1, hi=12)
     mode = _coerce_str(ppt_mode, 'fast').lower()
     if mode not in ('fast', 'standard'):
         mode = 'fast'
@@ -1214,7 +2007,7 @@ def ppt_init_deck(
 
     topic_text = _coerce_str(topic) or query.split('\n', 1)[0][:80]
     deck_id = f"ppt_{_slugify(topic_text)}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    deck_dir = _workspace_root() / 'ppt_decks' / deck_id
+    deck_dir = _conversation_root() / 'ppt_decks' / deck_id
     deck_dir.mkdir(parents=True, exist_ok=True)
     (deck_dir / 'pages').mkdir(exist_ok=True)
     (deck_dir / 'images').mkdir(exist_ok=True)
@@ -1266,21 +2059,28 @@ def ppt_init_deck(
 
 
 def ppt_find_deck() -> dict:
-    """Find newest deck under this SubAgent workspace ppt_decks/.
+    """Find the newest deck of this conversation, including earlier step tasks.
+
+    Call this at the start of any edit of an existing deck. Decks are shared
+    across the conversation's step tasks, so a deck built by an earlier
+    generate_ppt run is found here.
 
     Returns:
         On success: deck_dir, deck_id, page_count, html_count.
+        On error: no deck exists for this conversation yet — only then is full
+        generation via ppt_init_deck appropriate.
     """
-    root = _workspace_root() / 'ppt_decks'
-    if not root.is_dir():
-        return tool_error('ppt_find_deck', 'No ppt_decks under workspace; run full generation first.')
+    root = _conversation_root() / 'ppt_decks'
     candidates = sorted(
         [p for p in root.iterdir() if p.is_dir() and (p / 'task_pack.json').exists()],
         key=lambda p: p.stat().st_mtime,
         reverse=True,
-    )
+    ) if root.is_dir() else []
     if not candidates:
-        return tool_error('ppt_find_deck', 'No deck with task_pack.json found.')
+        return tool_error(
+            'ppt_find_deck',
+            'No deck exists for this conversation yet; run full generation first.',
+        )
     deck = candidates[0]
     html_count = len([
         p for p in (deck / 'pages').glob('page_*.html') if '.refined.' not in p.name
@@ -1298,6 +2098,7 @@ def ppt_find_deck() -> dict:
         'deck_id': deck_id,
         'page_count': page_count,
         'html_count': html_count,
+        'older_deck_count': len(candidates) - 1,
     })
 
 
@@ -1468,17 +2269,25 @@ def ppt_publish_pages(
 
 
 def ppt_read_page_html(deck_dir: str, page: int) -> dict:
-    """Inspect one page metadata (does NOT return full HTML).
+    """Inspect one page's addressable elements (does NOT return full HTML).
 
-    Full HTML is too large for the model context and gets offloaded, which used
-    to make save_artifacts stuck. Use ppt_publish_pages to put slides into the UI.
+    Returns the slide as a small JSON element list — each content element with its
+    stable `el` id (from page-html's data-el anchors) and a text preview. Read this
+    before ppt_edit_page_html to pick the exact element to delete or retext, the
+    same way you would filter an element array by id.
+
+    Full HTML is never returned: it is too large for the model context and gets
+    offloaded, which used to make save_artifacts stuck. Use ppt_publish_pages to
+    put slides into the UI.
 
     Args:
         deck_dir (str): Absolute deck directory.
         page (int): 1-based page number.
 
     Returns:
-        page, html_path, title_hint, bytes — never the HTML body.
+        page, html_path, title_hint, bytes, elements (el / group / tag / text),
+        groups, and — for decks generated before data-el existed —
+        repeated_classes to address with class + index.
     """
     try:
         deck = _resolve_deck_dir(deck_dir)
@@ -1498,8 +2307,268 @@ def ppt_read_page_html(deck_dir: str, page: int) -> dict:
         'html_path': str(path.resolve()),
         'title_hint': _title_from_html(html),
         'bytes': len(html.encode('utf-8')),
+        **_element_inventory(_HtmlTree(html)),
         'note': (
             'HTML body omitted on purpose. Call ppt_publish_pages(deck_dir, pages=page) '
             'to save into preview_html for the UI.'
         ),
+    })
+
+
+def ppt_read_page_outline(deck_dir: str, page: int) -> dict:
+    """Read one page's outline content (title / bullets / data_points) before editing it.
+
+    Call this FIRST for any single-page content edit, so the requested change can
+    be turned into a concrete index — e.g. "删掉最后一个要点" becomes
+    delete_bullet with the real bullet count in hand. The payload is small
+    (structured outline only, never slide HTML), so it is always safe to read.
+
+    Args:
+        deck_dir (str): Absolute deck directory (from ppt_init_deck / ppt_find_deck).
+        page (int): 1-based page number.
+
+    Returns:
+        page, page_kind, title, subtitle, narrative, visual_hints, 1-based indexed
+        bullets and data_points, use_table / use_image, asset_slot_count.
+
+    Next step: call ppt_patch_page_outline to change this page's content, then
+    ppt_run_stage(stage='page-html', page=<same page>) to redraw only that page.
+    """
+    try:
+        deck = _resolve_deck_dir(deck_dir)
+    except FileNotFoundError as exc:
+        return tool_error('ppt_read_page_outline', str(exc))
+    page_no = _coerce_int(page, 0, lo=0)
+    if page_no < 1:
+        return tool_error('ppt_read_page_outline', 'page must be >= 1')
+
+    try:
+        outline = _load_outline(deck)
+        page_outline = _find_outline_page(outline, page_no)
+    except (FileNotFoundError, ValueError, KeyError, json.JSONDecodeError) as exc:
+        return tool_error('ppt_read_page_outline', str(exc))
+
+    return tool_success('ppt_read_page_outline', {
+        'deck_dir': str(deck),
+        **_outline_page_view(page_outline),
+    })
+
+
+def ppt_patch_page_outline(
+    deck_dir: str,
+    page: int,
+    ops_json: Union[str, list, dict, None] = None,
+) -> dict:
+    """Patch ONE page's outline content in place (single-page content edit).
+
+    Use this for content-level page edits such as "第3页删掉最后一个要点",
+    "把第2页第一条改成…", "这一页标题换成…". It edits only the target page of
+    outline.json — other pages, style_spec and asset_plan are untouched, and the
+    outline stage is NOT re-run.
+
+    Do NOT use ppt_init_deck or ppt_run_stage(stage='outline'/'style') for a
+    single-page edit; that rebuilds the whole deck and loses the other pages'
+    approved content.
+
+    Args:
+        deck_dir (str): Absolute deck directory (from ppt_init_deck / ppt_find_deck).
+        page (int): 1-based page number to patch.
+        ops_json: JSON list of ops (a single op object is also accepted). Indexes
+            are 1-based; a negative index counts from the end (-1 = last item).
+            Instead of index, `match` selects the first entry containing that text.
+            Supported ops:
+              {"op": "delete_bullet", "index": -1}
+              {"op": "delete_bullet", "match": "成本"}
+              {"op": "replace_bullet", "index": 2, "head": "...", "detail": "..."}
+              {"op": "insert_bullet", "head": "...", "detail": "...", "index": 3}
+              {"op": "set_bullets", "bullets": [{"head": "...", "detail": "..."}]}
+              {"op": "set_field", "field": "title", "value": "..."}
+                 field is one of title | subtitle | narrative | visual_hints
+              {"op": "delete_data_point", "index": 1}
+              {"op": "set_data_points", "data_points": [{"label": "...", "value": "..."}]}
+
+            When removing an item, also fix visual_hints in the same call if it
+            states a count ('底部横向排列四个指标卡片'); a stale count makes
+            page-html keep the old column count and invent a filler item.
+
+    Returns:
+        applied op descriptions, warnings, bullet counts before/after, and the
+        patched page view. Nothing is written when any op is invalid.
+        Act on every returned warning before redrawing the page.
+
+    Next step (required): ppt_run_stage(stage='page-html', page=<same page>) to
+    redraw that page from the patched outline; it auto-publishes preview_html.
+    Keep all edits for one page in a single call so the page is redrawn once.
+    """
+    try:
+        deck = _resolve_deck_dir(deck_dir)
+    except FileNotFoundError as exc:
+        return tool_error('ppt_patch_page_outline', str(exc))
+    page_no = _coerce_int(page, 0, lo=0)
+    if page_no < 1:
+        return tool_error('ppt_patch_page_outline', 'page must be >= 1')
+
+    try:
+        ops = _parse_ops_payload(ops_json)
+    except (ValueError, json.JSONDecodeError) as exc:
+        return tool_error('ppt_patch_page_outline', f'invalid ops_json: {exc}')
+
+    try:
+        outline = _load_outline(deck)
+        page_outline = _find_outline_page(outline, page_no)
+    except (FileNotFoundError, ValueError, KeyError, json.JSONDecodeError) as exc:
+        return tool_error('ppt_patch_page_outline', str(exc))
+
+    bullets_before = len(page_outline.get('bullets') or [])
+    try:
+        applied = _apply_outline_ops(page_outline, ops)
+    except ValueError as exc:
+        return tool_error(
+            'ppt_patch_page_outline',
+            f'op rejected, outline unchanged: {exc}',
+        )
+
+    bullets_after = len(page_outline.get('bullets') or [])
+    if bullets_after == 0:
+        return tool_error(
+            'ppt_patch_page_outline',
+            'refusing to leave the page with zero bullets; keep at least one or '
+            'set narrative-driven content explicitly via set_bullets.',
+        )
+
+    try:
+        _write_outline(deck, outline)
+    except OSError as exc:
+        return tool_error('ppt_patch_page_outline', f'writing outline.json failed: {exc}')
+
+    warnings = _stale_count_hints(page_outline, ops)
+    if bullets_after < 3:
+        warnings.append(
+            f'page now has {bullets_after} bullets; slides below 3 bullets can render sparse.',
+        )
+    elif bullets_after > 6:
+        warnings.append(
+            f'page now has {bullets_after} bullets; above 6 the slide may overflow.',
+        )
+
+    return tool_success('ppt_patch_page_outline', {
+        'deck_dir': str(deck),
+        'applied': applied,
+        'warnings': warnings or None,
+        'bullets_before': bullets_before,
+        'bullets_after': bullets_after,
+        'patched_page': _outline_page_view(page_outline),
+        'next_step': (
+            f"ppt_run_stage(deck_dir, stage='page-html', page={page_no}) to redraw "
+            'only this page (auto-publishes preview_html).'
+        ),
+    })
+
+
+def ppt_edit_page_html(
+    deck_dir: str,
+    page: int,
+    ops_json: Union[str, list, dict, None] = None,
+) -> dict:
+    """Edit one slide's existing HTML in place, without re-running the page LLM.
+
+    Use this when the user wants a small, exact change to a slide that is already
+    correct otherwise — remove one KPI card / bullet / row, or fix a wrong number
+    or word. The edit is deterministic: the rest of the page stays byte-identical,
+    so nothing else can drift and no filler item can appear. The page is
+    republished automatically, so the UI updates.
+
+    Prefer ppt_run_stage(stage='page-html') instead when the page genuinely needs
+    redrawing (new layout, added content, "重画好看点").
+
+    Call ppt_read_page_html first to get the element list and pick an `el` id.
+
+    Also patch the outline for the same page (ppt_patch_page_outline) so a later
+    redraw keeps the change; this tool warns when the outline still disagrees.
+
+    Args:
+        deck_dir (str): Absolute deck directory (from ppt_find_deck).
+        page (int): 1-based page number.
+        ops_json: JSON list of ops (a single op object is also accepted).
+            Address elements by id whenever the page has them — ids do not move
+            when other content changes, so this is the reliable form:
+              {"op": "delete_node", "el": "kpi-4"}
+              {"op": "delete_node", "group": "kpi-3"}
+                 Deletes every element of that group (e.g. a small heading plus
+                 its body text) in one go.
+              {"op": "replace_text", "el": "kpi-2", "value": "256K"}
+                 Retexts that element; add match too when it wraps nested markup.
+            Fallbacks for decks generated before data-el anchors existed:
+              {"op": "delete_node", "class": "stat-card", "index": 4}
+              {"op": "delete_node", "match": "36T"}
+                 Deletes the item containing that visible text — the enclosing
+                 repeated element, not just the text. Ambiguous matches are
+                 refused with the candidate list instead of guessing.
+              {"op": "replace_text", "match": "128K", "value": "256K"}
+                 Add "all": true for every hit.
+            A CSS grid on the parent is narrowed by the number of removed items so
+            the row keeps no empty cell. match/class only ever address rendered
+            content, never CSS, JS or attributes. Page structure
+            (html/body/.wrapper/#bg/#ct) is refused.
+
+    Returns:
+        applied edits, layout notes, warnings, bytes before/after, publish result.
+        Nothing is written when any op fails to resolve.
+    """
+    try:
+        deck = _resolve_deck_dir(deck_dir)
+    except FileNotFoundError as exc:
+        return tool_error('ppt_edit_page_html', str(exc))
+    page_no = _coerce_int(page, 0, lo=0)
+    if page_no < 1:
+        return tool_error('ppt_edit_page_html', 'page must be >= 1')
+    path = _page_html_path(deck, page_no)
+    if not path.exists():
+        return tool_error(
+            'ppt_edit_page_html',
+            f'missing {path.name}; run ppt_run_stage(stage="page-html", page={page_no}) first.',
+        )
+    try:
+        ops = _parse_ops_payload(ops_json)
+    except (ValueError, json.JSONDecodeError) as exc:
+        return tool_error('ppt_edit_page_html', f'invalid ops_json: {exc}')
+
+    original = path.read_text(encoding='utf-8')
+    try:
+        edited, applied, notes, removed_texts = _apply_html_ops(original, ops)
+    except ValueError as exc:
+        return tool_error('ppt_edit_page_html', f'op rejected, page unchanged: {exc}')
+    if '<html' not in edited.lower() or 'wrapper' not in edited:
+        return tool_error(
+            'ppt_edit_page_html',
+            'edit would break the page skeleton (missing <html> or .wrapper); page unchanged.',
+        )
+
+    tmp = path.with_name(path.name + '.tmp')
+    try:
+        tmp.write_text(edited, encoding='utf-8')
+        os.replace(tmp, path)
+    except OSError as exc:
+        return tool_error('ppt_edit_page_html', f'writing {path.name} failed: {exc}')
+
+    warnings = []
+    stale = _outline_still_has(deck, page_no, removed_texts)
+    if stale:
+        warnings.append(
+            f'outline for page {page_no} still contains {", ".join(stale[:5])}. '
+            'Patch it with ppt_patch_page_outline, otherwise the next page-html '
+            'redraw brings the deleted content back.'
+        )
+
+    published = _publish_pages_from_disk(deck, [page_no], with_notes=False)
+    return tool_success('ppt_edit_page_html', {
+        'deck_dir': str(deck),
+        'page': page_no,
+        'applied': applied,
+        'layout_notes': notes or None,
+        'warnings': warnings or None,
+        'bytes_before': len(original.encode('utf-8')),
+        'bytes_after': len(edited.encode('utf-8')),
+        'published_count': published['published_count'],
+        'publish_failed': published['failed'],
     })

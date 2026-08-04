@@ -28,6 +28,9 @@ tool_scripts:
       - ppt_list_pages
       - ppt_publish_pages
       - ppt_read_page_html
+      - ppt_read_page_outline
+      - ppt_patch_page_outline
+      - ppt_edit_page_html
 
 steps:
   - id: analyze_requirements

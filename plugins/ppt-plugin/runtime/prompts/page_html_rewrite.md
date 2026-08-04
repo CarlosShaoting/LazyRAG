@@ -36,23 +36,24 @@
 ## 重写要求
 
 1. **保留所有信息**：title / subtitle / bullets（每条 head + detail）/ narrative / data_points / inherited_table 的所有行和列 / inherited_image 的存在及其语义 —— 全部必须落到 query 里，不得省略、不得改写数字 / 专有名词 / 百分比。
-2. **明确版面意图**：按 `page_kind` 和 `page_outline.visual_hints` 给出具体的版面倾向。例如 "顶部是大标题 + 副标题，中部左右分栏：左侧是 4 张 KPI 卡片，右侧是一张条形图" 或 "整页满屏，标题居左上大号，右侧是一张占约 60% 面积的配图"。
-3. **page_kind 对应语气**：
+2. **数量必须照实（硬性）**：query 里说的要点数、指标卡片数、栏数，必须等于 `page_outline` 里 bullets / data_points 的**实际条数**。**不得新增** outline 里没有的要点或指标，**不得**为了凑满栅格而补一格、留空一格或写"第 N 格可留空 / 用文字补充"。`visual_hints` 里若写着与实际条数不符的数量（例如只有 3 个 data_points 却说"四个指标卡片"），以实际条数为准，并按实际条数描述版面（3 条就说三栏）。用户删掉过条目时，多写一格等于把删掉的内容又补回页面上。
+3. **明确版面意图**：按 `page_kind` 和 `page_outline.visual_hints` 给出具体的版面倾向。例如 "顶部是大标题 + 副标题，中部左右分栏：左侧是 4 张 KPI 卡片，右侧是一张条形图" 或 "整页满屏，标题居左上大号，右侧是一张占约 60% 面积的配图"。
+4. **page_kind 对应语气**：
    - `title`/`cover` 封面 —— 强调视觉冲击和仪式感，标题超大，留白克制。
    - `section`/`section_header` 过渡 —— 章节感，大号数字或章节名，留白多。
    - `content` 内容页 —— 标题 + 2-4 个要点卡片 + 叙事串联，多栏布局。
    - `data` 数据页 —— KPI 或图表作为视觉主角，数字突出。
    - `closing` 结尾 —— 收束感，简短总结或 call-to-action。
-4. **继承 style_spec**：把 deck 的整体风格用一两句自然语言带出来（例："风格专业清新，主色是宝石蓝，辅以浅灰和小范围的琥珀色点缀；字体以黑体为主"），不要只说 "现代、简洁、专业" 这种套话。具体 hex 值、字体名可以写进去。
-5. **不要在 query 里重复 HTML 机械规范**：`.wrapper` 结构、`#bg` / `#ct` 分层、1600×900 画布、ECharts 容器 id 命名、`{renderer:'svg'}`、`__pptxChartsReady` 计数器、`../assets/echarts.min.js` script 路径、伪元素 `<span>` 包裹、单层背景、图片 `../images/` 前缀 —— 这些统一由下游生成器的 system prompt 管理，rewriter 只负责**内容、版面、风格指引**。忽略这条规则的唯一例外是 inherited_image 的具体相对路径（见下条），那个必须在 query 里显式写出来让生成器知道用哪张图。
-6. **处理 inherited_table**：如果输入里有 `inherited_table`，query 里必须明确说出 "这一页的核心是一张表格，包含以下几列……第一行是表头，内容如下……"，并把所有单元格原样列出（可以写成"第 1 行 X 列 Y，值为 …"这样的自然语言描述，或者直接用句子把每行写清楚）。
-7. **处理 inherited_image（硬性要求，不得忽略）**：如果输入里有 `inherited_image_local_path`，query 里必须**明确、显著、不可省略地**写出：
+5. **继承 style_spec**：把 deck 的整体风格用一两句自然语言带出来（例："风格专业清新，主色是宝石蓝，辅以浅灰和小范围的琥珀色点缀；字体以黑体为主"），不要只说 "现代、简洁、专业" 这种套话。具体 hex 值、字体名可以写进去。
+6. **不要在 query 里重复 HTML 机械规范**：`.wrapper` 结构、`#bg` / `#ct` 分层、1600×900 画布、ECharts 容器 id 命名、`{renderer:'svg'}`、`__pptxChartsReady` 计数器、`../assets/echarts.min.js` script 路径、伪元素 `<span>` 包裹、单层背景、图片 `../images/` 前缀 —— 这些统一由下游生成器的 system prompt 管理，rewriter 只负责**内容、版面、风格指引**。忽略这条规则的唯一例外是 inherited_image 的具体相对路径（见下条），那个必须在 query 里显式写出来让生成器知道用哪张图。
+7. **处理 inherited_table**：如果输入里有 `inherited_table`，query 里必须明确说出 "这一页的核心是一张表格，包含以下几列……第一行是表头，内容如下……"，并把所有单元格原样列出（可以写成"第 1 行 X 列 Y，值为 …"这样的自然语言描述，或者直接用句子把每行写清楚）。
+8. **处理 inherited_image（硬性要求，不得忽略）**：如果输入里有 `inherited_image_local_path`，query 里必须**明确、显著、不可省略地**写出：
    - 路径：`../<那个路径>`（精确引用，前缀 `../` 不能丢）。
    - **图的内容描述**：取 `inherited_image_caption_hint`（首选）或 `inherited_image_alt`（备选）作为这张图"画的是什么"的语义说明，明文写进 query。例："这张图是 DRAM 市场份额饼图，三大原厂占比对比"。**没有这一条，生成器只能瞎猜，写出的配文会跑题**。
    - **图的尺寸**：若 `inherited_image_size` 非空，把宽高 + aspect 也明文写出（例："原生 1280×720，aspect 约 1.78"），并给生成器一个具体的 width / height 建议（例："建议在版面里占 800px 宽，按原生比例算高约 450px"），保持图片不失真、不留黑边。
    - 摆放：作为前景 `<img>` 放在版面中显著位置（建议占页面 30-50% 视觉面积）。**不能当成背景（background-image）、不能放在蒙版下、不能用遮罩/渐变压暗覆盖文字**。
    - 如果页面还有要点和数据，应该与这张图形成"图 + 文"的并列布局；宁可删减部分文字也要保住这张图的可见性。
-8. **处理 available_slot_images（硬性）**：如果 `available_slot_images` 非空，query 里要**逐张点名**，每张都讲清楚：
+9. **处理 available_slot_images（硬性）**：如果 `available_slot_images` 非空，query 里要**逐张点名**，每张都讲清楚：
    - **path**（必写）。
    - **图的内容描述**（必写）：取 `intent`（首选）或 `image_prompt`（次选）的语义，用一句中文写明这张图画的是什么。例："`images/page_005_hero.png` 是一张服务器机房氛围照，远景蓝光 + 机柜剪影"。
    - **尺寸**（如有 `w`/`h`/`aspect`）：把宽高 + aspect 明文写出，并给出建议显示尺寸（保持原生 aspect ratio，绝不强制拉伸）。例："原生 1280×768、aspect 约 1.67，建议放在右侧约占 600×360 的区域里"。

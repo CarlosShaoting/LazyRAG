@@ -10,7 +10,7 @@
 #
 # After compose is up you can instead:
 #   curl -sS -X POST http://localhost:8099/export -H 'Content-Type: application/json' \
-#     -d "{\"deck_dir\":\"/data/subagent/<task>/ppt_decks/<deck_id>\"}"
+#     -d "{\"deck_dir\":\"/data/subagent/<user>/ppt_sessions/<conversation>/ppt_decks/<deck_id>\"}"
 set -euo pipefail
 
 DECK_DIR="${1:-}"
