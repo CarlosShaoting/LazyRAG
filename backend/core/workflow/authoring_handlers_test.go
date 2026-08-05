@@ -16,17 +16,28 @@ import (
 
 func seedAuthoringSkill(t *testing.T, db *orm.DB) {
 	t.Helper()
-	for _, statement := range []string{
-		`CREATE TABLE IF NOT EXISTS skills(id text primary key, owner_user_id text, skill_name text, head_revision_id text, deleted_at datetime)`,
-		`CREATE TABLE IF NOT EXISTS skill_revisions(id text primary key, skill_id text, revision_no integer, tree_hash text)`,
-		`CREATE TABLE IF NOT EXISTS skill_revision_entries(revision_id text, path text, entry_type text, blob_hash text, size integer, mime text, file_type text, binary boolean)`,
-		`CREATE TABLE IF NOT EXISTS skill_blobs(hash text primary key, content blob)`,
-		`INSERT INTO skills VALUES('skill-1','user-1','Pinned Skill','revision-1',NULL)`,
-		`INSERT INTO skill_revisions VALUES('revision-1','skill-1',1,'tree-fixed')`,
-		`INSERT INTO skill_blobs VALUES('blob-1','# Pinned Skill')`,
-		`INSERT INTO skill_revision_entries VALUES('revision-1','SKILL.md','file','blob-1',14,'text/markdown','markdown',0)`,
-	} {
-		if err := db.Exec(statement).Error; err != nil {
+	if err := db.AutoMigrate(
+		&orm.SkillV2Skill{}, &orm.SkillV2Revision{},
+		&orm.SkillV2RevisionEntry{}, &orm.SkillV2Blob{},
+	); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	revisionID := "revision-1"
+	blobHash := "blob-1"
+	rows := []any{
+		&orm.SkillV2Skill{ID: "skill-1", OwnerUserID: "user-1", CreateUserID: "user-1",
+			Category: "test", SkillName: "Pinned Skill", RelativeRoot: "test/pinned-skill",
+			HeadRevisionID: &revisionID, CreatedAt: now, UpdatedAt: now},
+		&orm.SkillV2Revision{ID: revisionID, SkillID: "skill-1", RevisionNo: 1,
+			TreeHash: "tree-fixed", CreatedAt: now},
+		&orm.SkillV2Blob{Hash: blobHash, Size: 14, Mime: "text/markdown", FileType: "markdown",
+			StorageBackend: "database", Content: []byte("# Pinned Skill"), CreatedAt: now},
+		&orm.SkillV2RevisionEntry{RevisionID: revisionID, Path: "SKILL.md", EntryType: "file",
+			BlobHash: &blobHash, Size: 14, Mime: "text/markdown", FileType: "markdown"},
+	}
+	for _, row := range rows {
+		if err := db.Create(row).Error; err != nil {
 			t.Fatal(err)
 		}
 	}

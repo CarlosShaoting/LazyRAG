@@ -294,7 +294,8 @@ func estimateContext(w http.ResponseWriter, r *http.Request, exportPrompt bool) 
 		}
 	}
 	if convID != "" {
-		if active, activeErr := workflow.GetLatestSession(r.Context(), db, convID); activeErr == nil && active != nil {
+		if active, activeErr := workflow.GetLatestSession(r.Context(), db, convID); activeErr == nil &&
+			!workflowSessionTerminal(active) {
 			workflowContext["session_id"] = active.ID
 			workflowContext["workflow_id"] = active.WorkflowID
 			workflowContext["current_step"] = active.CurrentStepID
@@ -306,8 +307,17 @@ func estimateContext(w http.ResponseWriter, r *http.Request, exportPrompt bool) 
 		}
 	}
 	reqBody["workflow_context"] = workflowContext
+	workflowEnabled, _ := reqBody["enable_plugin"].(bool)
+	effectiveWorkflowRefs, bindingErr := resolveConversationWorkflowBinding(
+		r.Context(), db, convID, mentioned.WorkflowRefs, mentioned.ExcludedWorkflowRefs,
+		workflowEnabled, false,
+	)
+	if bindingErr != nil {
+		common.ReplyErr(w, "resolve conversation plugin binding failed", http.StatusInternalServerError)
+		return
+	}
 	if err := applyWorkflowSelection(
-		r.Context(), db, userID, reqBody, mentioned.WorkflowRefs, mentioned.ExcludedWorkflowRefs,
+		r.Context(), db, userID, reqBody, effectiveWorkflowRefs, mentioned.ExcludedWorkflowRefs,
 	); err != nil {
 		common.ReplyErr(w, err.Error(), http.StatusForbidden)
 		return

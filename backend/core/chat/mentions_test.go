@@ -1,8 +1,10 @@
 package chat
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"lazymind/core/common/orm"
 )
@@ -19,6 +21,62 @@ func TestParseChatMentionsDeduplicatesByTypeAndResource(t *testing.T) {
 	}
 	if len(mentions) != 2 {
 		t.Fatalf("len(mentions) = %d, want 2", len(mentions))
+	}
+}
+
+func TestConversationWorkflowBindingSurvivesFollowUpAndClearsAtSessionEnd(t *testing.T) {
+	db := orm.MigrateTestDB(t, &orm.Conversation{}, &orm.WorkflowSession{})
+	now := time.Now().UTC()
+	if err := db.Create(&orm.Conversation{ID: "conversation-1", Ext: json.RawMessage(`{"keep":"value"}`),
+		BaseModel: orm.BaseModel{CreateUserID: "user-1", CreatedAt: now, UpdatedAt: now}}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	refs, err := resolveConversationWorkflowBinding(context.Background(), db.DB, "conversation-1",
+		[]string{"builtin:image-plugin"}, nil, true, true)
+	if err != nil || len(refs) != 1 || refs[0] != "builtin:image-plugin" {
+		t.Fatalf("initial binding refs=%v err=%v", refs, err)
+	}
+	refs, err = resolveConversationWorkflowBinding(context.Background(), db.DB, "conversation-1",
+		nil, nil, true, true)
+	if err != nil || len(refs) != 1 || refs[0] != "builtin:image-plugin" {
+		t.Fatalf("follow-up binding refs=%v err=%v", refs, err)
+	}
+
+	if err := db.Create(&orm.WorkflowSession{ID: "session-1", ConversationID: "conversation-1",
+		WorkflowID: "image-plugin", WorkflowRef: "builtin:image-plugin", Status: "completed",
+		CreateUserID: "user-1", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	refs, err = resolveConversationWorkflowBinding(context.Background(), db.DB, "conversation-1",
+		nil, nil, true, true)
+	if err != nil || len(refs) != 0 {
+		t.Fatalf("terminal session must clear binding refs=%v err=%v", refs, err)
+	}
+	var conversation orm.Conversation
+	if err := db.First(&conversation, "id = ?", "conversation-1").Error; err != nil {
+		t.Fatal(err)
+	}
+	if string(conversation.Ext) != `{"keep":"value"}` {
+		t.Fatalf("unrelated conversation ext was not preserved: %s", conversation.Ext)
+	}
+}
+
+func TestConversationWorkflowBindingExplicitCancellationClearsSelection(t *testing.T) {
+	db := orm.MigrateTestDB(t, &orm.Conversation{}, &orm.WorkflowSession{})
+	now := time.Now().UTC()
+	if err := db.Create(&orm.Conversation{ID: "conversation-1",
+		BaseModel: orm.BaseModel{CreateUserID: "user-1", CreatedAt: now, UpdatedAt: now}}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := writeConversationWorkflowBinding(context.Background(), db.DB, "conversation-1",
+		"builtin:image-plugin"); err != nil {
+		t.Fatal(err)
+	}
+	refs, err := resolveConversationWorkflowBinding(context.Background(), db.DB, "conversation-1",
+		nil, []string{"builtin:image-plugin"}, true, true)
+	if err != nil || len(refs) != 0 {
+		t.Fatalf("explicit cancellation refs=%v err=%v", refs, err)
 	}
 }
 

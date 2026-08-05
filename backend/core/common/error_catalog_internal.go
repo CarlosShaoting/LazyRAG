@@ -463,7 +463,8 @@ func init() {
 		"encrypt api key failed", "failed to create waiting task",
 		"unsupported model provider credential ciphertext", "decode sensitive-word check",
 		"built-in workflow package directory not found", "workflow.yaml missing from revision",
-		"pin legacy workflow session revision",
+		"pin legacy workflow session revision", "resolve conversation plugin binding failed",
+		"decode conversation ext",
 	} {
 		registerAdditionalErrorAlias(source, "Internal server error", http.StatusInternalServerError, 2000000)
 	}

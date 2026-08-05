@@ -20,17 +20,13 @@ import (
 func remoteSubagentFixture(t *testing.T) *orm.DB {
 	t.Helper()
 	db := newTestDB(t)
-	if err := db.AutoMigrate(&orm.WorkflowSessionStep{}); err != nil {
+	if err := db.AutoMigrate(
+		&orm.WorkflowSessionStep{},
+		&orm.UserSelectedModel{},
+		&orm.UserModelProviderGroupModel{},
+		&orm.UserModelProviderGroup{},
+	); err != nil {
 		t.Fatal(err)
-	}
-	for _, statement := range []string{
-		`CREATE TABLE user_selected_models (id TEXT, user_id TEXT, model_type TEXT, share BOOLEAN, user_model_provider_group_model_id TEXT)`,
-		`CREATE TABLE user_model_provider_group_models (id TEXT, create_user_id TEXT, deleted_at DATETIME, provider_name TEXT, name TEXT, user_model_provider_group_id TEXT, max_input_tokens TEXT)`,
-		`CREATE TABLE user_model_provider_groups (id TEXT, create_user_id TEXT, deleted_at DATETIME, base_url TEXT, api_key TEXT, api_key_ciphertext TEXT)`,
-	} {
-		if err := db.Exec(statement).Error; err != nil {
-			t.Fatal(err)
-		}
 	}
 	now := time.Now().UTC()
 	if err := db.Create(&orm.SubAgentTask{ID: "task-remote", ConversationID: "conversation-1",

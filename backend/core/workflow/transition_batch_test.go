@@ -34,6 +34,7 @@ func setupBatchTransitionSession(t *testing.T) (*orm.DB, string) {
 		&orm.ChatHistory{},
 		&orm.TaskCenterTask{},
 		&orm.WorkflowRevision{},
+		&orm.WorkflowInputBinding{},
 		&orm.WorkflowAttemptInputBinding{},
 		&orm.WorkflowRouteDecision{},
 		&orm.WorkflowTransitionCommand{},

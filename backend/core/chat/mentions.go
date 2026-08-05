@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -266,6 +267,122 @@ func mergeMentionedDatasets(raw map[string]any, ids []string) {
 
 const recentMentionTurnLimit = 6
 const recentMentionResourceLimit = 10
+
+const conversationWorkflowBindingKey = "workflow_binding"
+
+func workflowSessionTerminal(session *orm.WorkflowSession) bool {
+	return session == nil || session.Dismissed || session.Status == workflow.SessionStatusCompleted ||
+		session.Status == workflow.SessionStatusFailed
+}
+
+func resolveConversationWorkflowBinding(
+	ctx context.Context,
+	db *gorm.DB,
+	conversationID string,
+	currentRefs, excludedRefs []string,
+	enabled, persist bool,
+) ([]string, error) {
+	if conversationID == "" {
+		return currentRefs, nil
+	}
+	if !enabled {
+		if persist {
+			return nil, writeConversationWorkflowBinding(ctx, db, conversationID, "")
+		}
+		return nil, nil
+	}
+	if len(currentRefs) > 0 {
+		if persist {
+			return currentRefs, writeConversationWorkflowBinding(
+				ctx, db, conversationID, currentRefs[0],
+			)
+		}
+		return currentRefs, nil
+	}
+
+	boundRef, err := readConversationWorkflowBinding(ctx, db, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	for _, ref := range excludedRefs {
+		if ref == boundRef {
+			if persist {
+				return nil, writeConversationWorkflowBinding(ctx, db, conversationID, "")
+			}
+			return nil, nil
+		}
+	}
+
+	var latest orm.WorkflowSession
+	err = db.WithContext(ctx).Where("conversation_id = ?", conversationID).
+		Order("created_at DESC").First(&latest).Error
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	if err == nil {
+		if workflowSessionTerminal(&latest) {
+			if persist && boundRef != "" {
+				return nil, writeConversationWorkflowBinding(ctx, db, conversationID, "")
+			}
+			return nil, nil
+		}
+		if latest.WorkflowRef != "" {
+			boundRef = latest.WorkflowRef
+			if persist {
+				if err := writeConversationWorkflowBinding(ctx, db, conversationID, boundRef); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	if boundRef == "" {
+		return nil, nil
+	}
+	return []string{boundRef}, nil
+}
+
+func readConversationWorkflowBinding(ctx context.Context, db *gorm.DB, conversationID string) (string, error) {
+	var conversation orm.Conversation
+	if err := db.WithContext(ctx).Select("ext").Where("id = ?", conversationID).First(&conversation).Error; err != nil {
+		return "", err
+	}
+	var ext map[string]any
+	if len(conversation.Ext) > 0 {
+		if err := json.Unmarshal(conversation.Ext, &ext); err != nil {
+			return "", fmt.Errorf("decode conversation ext: %w", err)
+		}
+	}
+	binding, _ := ext[conversationWorkflowBindingKey].(map[string]any)
+	if binding == nil {
+		return "", nil
+	}
+	workflowRef, _ := binding["workflow_ref"].(string)
+	return strings.TrimSpace(workflowRef), nil
+}
+
+func writeConversationWorkflowBinding(ctx context.Context, db *gorm.DB, conversationID, workflowRef string) error {
+	var conversation orm.Conversation
+	if err := db.WithContext(ctx).Select("ext").Where("id = ?", conversationID).First(&conversation).Error; err != nil {
+		return err
+	}
+	ext := map[string]any{}
+	if len(conversation.Ext) > 0 {
+		if err := json.Unmarshal(conversation.Ext, &ext); err != nil {
+			return fmt.Errorf("decode conversation ext: %w", err)
+		}
+	}
+	if workflowRef == "" {
+		delete(ext, conversationWorkflowBindingKey)
+	} else {
+		ext[conversationWorkflowBindingKey] = map[string]any{"workflow_ref": workflowRef}
+	}
+	payload, err := json.Marshal(ext)
+	if err != nil {
+		return err
+	}
+	return db.WithContext(ctx).Model(&orm.Conversation{}).Where("id = ?", conversationID).
+		Update("ext", payload).Error
+}
 
 // buildMentionResourceContext gives the model an unambiguous display-name to
 // resource-id mapping without persisting that internal context in chat history.

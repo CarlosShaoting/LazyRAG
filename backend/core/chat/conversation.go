@@ -273,7 +273,8 @@ func ChatConversations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(mentionedResources.WorkflowRefs) == 1 {
-		if active, activeErr := workflow.GetLatestSession(r.Context(), db, convID); activeErr == nil && active != nil && active.WorkflowRef != mentionedResources.WorkflowRefs[0] {
+		if active, activeErr := workflow.GetLatestSession(r.Context(), db, convID); activeErr == nil &&
+			!workflowSessionTerminal(active) && active.WorkflowRef != mentionedResources.WorkflowRefs[0] {
 			common.ReplyErr(w, "another plugin session is active; finish or close it before mentioning a different plugin", http.StatusConflict)
 			return
 		}
@@ -355,15 +356,25 @@ func ChatConversations(w http.ResponseWriter, r *http.Request) {
 				reqBody["enable_subagent"] = v
 			}
 		}
+		workflowEnabled, _ := reqBody["enable_plugin"].(bool)
+		effectiveWorkflowRefs, bindingErr := resolveConversationWorkflowBinding(
+			r.Context(), db, convID, mentionedResources.WorkflowRefs,
+			mentionedResources.ExcludedWorkflowRefs, workflowEnabled, true,
+		)
+		if bindingErr != nil {
+			common.ReplyErr(w, "resolve conversation plugin binding failed", http.StatusInternalServerError)
+			return
+		}
 		if err := applyWorkflowSelection(
-			r.Context(), db, userID, reqBody, mentionedResources.WorkflowRefs,
+			r.Context(), db, userID, reqBody, effectiveWorkflowRefs,
 			mentionedResources.ExcludedWorkflowRefs,
 		); err != nil {
 			common.ReplyErr(w, err.Error(), http.StatusForbidden)
 			return
 		}
 
-		if activeSess, err := workflow.GetLatestSession(r.Context(), db, convID); err == nil && activeSess != nil {
+		if activeSess, err := workflow.GetLatestSession(r.Context(), db, convID); err == nil &&
+			!workflowSessionTerminal(activeSess) {
 			existing, hasPC := reqBody["workflow_context"].(map[string]any)
 			if !hasPC || existing == nil {
 				// Case 1: inject from DB.
