@@ -85,6 +85,7 @@ interface ApiProvider {
 
 interface ApiModel {
   id: string;
+  is_editable?: boolean;
   name: string;
   model_type?: string;
   is_default?: boolean;
@@ -94,6 +95,7 @@ interface ApiModel {
 interface SelectedModelApiItem {
   base_url?: string;
   group_name: string;
+  is_editable?: boolean;
   max_input_tokens?: string;
   model_id: string;
   model_key: string;
@@ -359,22 +361,23 @@ function getModelTypeByCapability(capability: ModelCapability): string {
   return entry ? entry[0] : capability;
 }
 
-// Catalog keeps the real provider model name; image_editing models get a
-// display-only "(可编辑)" suffix when shown in the unified 文生图 dropdown.
-const EDITABLE_MODEL_SUFFIX = "(可编辑)";
-
-function formatImageEditingDisplayName(name: string) {
-  return name.endsWith(EDITABLE_MODEL_SUFFIX)
+// Catalog keeps the real provider model name; editable models get a localized,
+// display-only suffix when shown in the unified image-generation dropdown.
+function formatImageEditingDisplayName(name: string, suffix: string) {
+  return name.endsWith(suffix)
     ? name
-    : `${name}${EDITABLE_MODEL_SUFFIX}`;
+    : `${name}${suffix}`;
 }
 
-function formatUnifiedImageDisplayName(option: {
-  model: { name: string };
-  isEditable?: boolean;
-}) {
+function formatUnifiedImageDisplayName(
+  option: {
+    model: { name: string };
+    isEditable?: boolean;
+  },
+  editableSuffix: string,
+) {
   return option.isEditable
-    ? formatImageEditingDisplayName(option.model.name)
+    ? formatImageEditingDisplayName(option.model.name, editableSuffix)
     : option.model.name;
 }
 
@@ -653,7 +656,7 @@ export default function DefaultModelConfigPanel() {
         // Unify image_editing into the 文生图 slot; prefer editable when both exist.
         const capability: ModelCapability =
           rawCapability === "image_editor" ? "image_generator" : rawCapability;
-        const isEditable = selection.model_key === "image_editing";
+        const isEditable = !!selection.is_editable;
         if (
           capability === "image_generator" &&
           !isEditable &&
@@ -871,8 +874,7 @@ export default function DefaultModelConfigPanel() {
 
       const fetchedOptions: ModelOptionItem[] = [];
       const seenValues = new Set<string>();
-      fetchedLists.forEach(({ modelType, models }) => {
-        const isEditable = modelType === "image_editing";
+      fetchedLists.forEach(({ models }) => {
         models
           .filter((model) =>
             trimmedKeyword
@@ -915,7 +917,7 @@ export default function DefaultModelConfigPanel() {
             );
             if (seenValues.has(value)) {
               // Prefer the editable entry when the same model id appears twice.
-              if (isEditable) {
+              if (model.is_editable) {
                 const index = fetchedOptions.findIndex(
                   (item) => item.value === value,
                 );
@@ -934,7 +936,7 @@ export default function DefaultModelConfigPanel() {
               group,
               model: providerModel,
               value,
-              isEditable,
+              isEditable: !!model.is_editable,
             });
           });
       });
@@ -1439,34 +1441,37 @@ export default function DefaultModelConfigPanel() {
                   const { provider, group, model, value } = option;
                   const displayName =
                     module.key === "image_generator"
-                      ? formatUnifiedImageDisplayName(option)
+                      ? formatUnifiedImageDisplayName(
+                          option,
+                          t("modelProvider.editableModelSuffix"),
+                        )
                       : model.name;
                   return (
-                  <Select.Option
-                    key={value}
-                    label={
-                      <span className="model-provider-select-value">
+                    <Select.Option
+                      key={value}
+                      label={
+                        <span className="model-provider-select-value">
+                          <ProviderLogo provider={provider} compact />
+                          <span className="model-provider-select-value-text">
+                            {displayName} · {group.name}
+                          </span>
+                        </span>
+                      }
+                      value={value}
+                    >
+                      <span className="model-provider-select-option">
                         <ProviderLogo provider={provider} compact />
-                        <span className="model-provider-select-value-text">
-                          {displayName} · {group.name}
+                        <span className="model-provider-select-copy">
+                          <strong>{displayName}</strong>
+                          <small>
+                            {provider.name} / {group.name}
+                            {model.builtIn
+                              ? t("modelProvider.builtInModelSuffix")
+                              : t("modelProvider.customModelSuffix")}
+                          </small>
                         </span>
                       </span>
-                    }
-                    value={value}
-                  >
-                    <span className="model-provider-select-option">
-                      <ProviderLogo provider={provider} compact />
-                      <span className="model-provider-select-copy">
-                        <strong>{displayName}</strong>
-                        <small>
-                          {provider.name} / {group.name}
-                          {model.builtIn
-                            ? t("modelProvider.builtInModelSuffix")
-                            : t("modelProvider.customModelSuffix")}
-                        </small>
-                      </span>
-                    </span>
-                  </Select.Option>
+                    </Select.Option>
                   );
                 })}
               </Select>
