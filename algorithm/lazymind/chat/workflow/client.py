@@ -84,9 +84,13 @@ class RemoteExecutorClient:
 
     async def fail(self, client: httpx.AsyncClient, attempt: str, lease: str,
                    message: str) -> httpx.Response:
+        payload = {
+            'lease_token': lease,
+            'error_code': 'LAZYMIND_EXECUTION_FAILED',
+            'result': {'error': message},
+        }
         response = await client.post(f'{self.base_url}/internal/workflow-attempts/{attempt}:fail',
-                                     headers=self.headers(lease), json={'lease_token': lease,
-                                     'error_code': 'LAZYMIND_EXECUTION_FAILED', 'result': {'error': message}})
+                                     headers=self.headers(lease), json=payload)
         response.raise_for_status()
         return response
 
