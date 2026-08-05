@@ -92,14 +92,14 @@ func PatchConversationWorkflowSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if raw, present := body["workflow_mode"]; present {
 		if raw == nil {
-			updates["workflow_mode"] = nil
+			updates["plugin_mode"] = nil
 		} else if v, ok := raw.(string); ok {
 			v = strings.TrimSpace(v)
 			if v != "auto" && v != "dynamic" {
 				common.ReplyErr(w, "workflow_mode must be 'auto' or 'dynamic'", http.StatusBadRequest)
 				return
 			}
-			updates["workflow_mode"] = v
+			updates["plugin_mode"] = v
 		}
 	}
 	if len(updates) == 0 {

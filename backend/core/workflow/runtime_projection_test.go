@@ -11,9 +11,9 @@ import (
 	"lazymind/core/workflow/graphengine"
 )
 
-func TestLoadSessionGraphDoesNotFallbackWhenRevisionIsMissing(t *testing.T) {
+func TestLoadSessionGraphFailsWhenLegacyWorkflowResourceIsMissing(t *testing.T) {
 	db := newTestDB(t)
-	if err := db.AutoMigrate(&orm.WorkflowRevision{}); err != nil {
+	if err := db.AutoMigrate(&orm.WorkflowResource{}, &orm.WorkflowRevision{}); err != nil {
 		t.Fatalf("migrate revision: %v", err)
 	}
 	_, err := loadSessionGraph(context.Background(), db.DB, &orm.WorkflowSession{
@@ -22,6 +22,39 @@ func TestLoadSessionGraphDoesNotFallbackWhenRevisionIsMissing(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "missing-revision") {
 		t.Fatalf("missing pinned revision must be rejected, got %v", err)
+	}
+}
+
+func TestLoadSessionGraphPinsLegacySessionToCoreRevision(t *testing.T) {
+	db := newTestDB(t)
+	if err := db.AutoMigrate(&orm.WorkflowResource{}, &orm.WorkflowRevision{}); err != nil {
+		t.Fatalf("migrate catalog: %v", err)
+	}
+	now := time.Now().UTC()
+	graph := &graphengine.CompiledStateGraph{SchemaVersion: graphengine.SchemaVersion,
+		GraphHash: "legacy-upgrade-hash", Nodes: map[string]graphengine.CompiledNode{}}
+	if err := db.Create(&orm.WorkflowResource{ID: "resource-a", WorkflowRef: "builtin:workflow-a",
+		WorkflowID: "workflow-a", Status: "active", HeadRevisionID: "revision-a", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatalf("create resource: %v", err)
+	}
+	if err := db.Create(&orm.WorkflowRevision{ID: "revision-a", WorkflowResourceID: "resource-a",
+		CompiledGraph: graph.JSON(), GraphHash: graph.GraphHash, GraphSchemaVersion: graph.SchemaVersion, CreatedAt: now}).Error; err != nil {
+		t.Fatalf("create revision: %v", err)
+	}
+	session := &orm.WorkflowSession{ID: "legacy-session", WorkflowID: "workflow-a"}
+	if err := db.Create(session).Error; err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	loaded, err := loadSessionGraph(context.Background(), db.DB, session)
+	if err != nil || loaded.GraphHash != graph.GraphHash {
+		t.Fatalf("load legacy graph: graph=%#v err=%v", loaded, err)
+	}
+	var stored orm.WorkflowSession
+	if err := db.First(&stored, "id = ?", session.ID).Error; err != nil {
+		t.Fatalf("reload session: %v", err)
+	}
+	if stored.WorkflowRevisionID != "revision-a" || stored.GraphHash != graph.GraphHash {
+		t.Fatalf("legacy session was not pinned: %#v", stored)
 	}
 }
 

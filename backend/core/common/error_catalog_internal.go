@@ -454,6 +454,7 @@ func init() {
 		registerAdditionalErrorAlias(source, "Conflict", http.StatusConflict, 2000107)
 	}
 	registerAdditionalErrorAlias("knowledge base is not readable", "forbidden", http.StatusForbidden, 2000102)
+	registerAdditionalErrorAlias("workflow not found", "Resource not found", http.StatusNotFound, 2000408)
 	registerAdditionalErrorAlias("feishu authorization required", "unauthorized", http.StatusUnauthorized, 2000104)
 	registerAdditionalErrorAlias("dataset_ids is required", "dataset_ids required", http.StatusBadRequest, 2001349)
 	for _, source := range []string{
@@ -461,6 +462,8 @@ func init() {
 		"marshal writerdocument artifact failed", "artifact save failed", "decrypt api key failed",
 		"encrypt api key failed", "failed to create waiting task",
 		"unsupported model provider credential ciphertext", "decode sensitive-word check",
+		"built-in workflow package directory not found", "workflow.yaml missing from revision",
+		"pin legacy workflow session revision",
 	} {
 		registerAdditionalErrorAlias(source, "Internal server error", http.StatusInternalServerError, 2000000)
 	}
@@ -472,6 +475,7 @@ func init() {
 	}
 	registerAdditionalErrorPattern("chat service returned status %d", "Upstream service error", http.StatusBadGateway, 2000110)
 	registerAdditionalErrorPattern("migrate model provider credential %s", "Internal server error", http.StatusInternalServerError, 2000000)
+	registerAdditionalErrorPattern("load workflow head revision %s", "Internal server error", http.StatusInternalServerError, 2000000)
 	registerAdditionalErrorPattern("session_ids must belong to user %q and must not contain plugin conversations", "Invalid request", http.StatusBadRequest, 2000103)
 	registerAdditionalErrorAlias("cron expression produces no future times within 5 years", "Invalid request", http.StatusBadRequest, 2000103)
 	registerAdditionalErrorAlias("cron expression has no previous time within 5 years", "Invalid request", http.StatusBadRequest, 2000103)

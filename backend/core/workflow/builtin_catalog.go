@@ -40,7 +40,7 @@ func builtinWorkflowRoot() string {
 func SeedBuiltinWorkflows(ctx context.Context, db *gorm.DB) error {
 	root := builtinWorkflowRoot()
 	if root == "" {
-		return nil
+		return fmt.Errorf("built-in Workflow package directory not found")
 	}
 	entries, err := os.ReadDir(root)
 	if err != nil {

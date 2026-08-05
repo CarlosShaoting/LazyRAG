@@ -1164,7 +1164,7 @@ func buildWorkflowArtifactsSummary(ctx context.Context, db *gorm.DB, sessionID, 
 	err := db.WithContext(ctx).Raw(`
 		SELECT sa.slot, sa.value, sa.task_id
 		FROM sub_agent_artifacts sa
-		JOIN plugin_session_steps pss ON pss.task_id = sa.task_id  // workflow-naming: persistence
+		JOIN plugin_session_steps pss ON pss.task_id = sa.task_id
 		WHERE pss.session_id = ? AND pss.status = 'succeeded'
 		ORDER BY sa.task_id, sa.slot, sa.seq
 	`, sessionID).Scan(&rows).Error

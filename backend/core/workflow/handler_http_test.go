@@ -1,6 +1,8 @@
 package workflow
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -215,5 +217,107 @@ func TestPatchUserWorkflowSetting_NonBuiltinNotFound(t *testing.T) {
 	PatchUserWorkflowSetting(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("got %d, want %d", rec.Code, http.StatusNotFound)
+	}
+}
+
+func seedCatalogWorkflow(t *testing.T, db *orm.DB, id string) {
+	t.Helper()
+	now := time.Now().UTC()
+	body := []byte("id: " + id + "\nname: Test Workflow\ndescription: Fast test\nsteps:\n  - {id: first, label: First}\nslots:\n  - {id: output, label: Output, type: text, cardinality: single}\nui:\n  tabs:\n    - id: result\n      label: Result\n      layout: list\n      slots: [{id: output}]\ni18n:\n  zh-CN:\n    name: 测试工作流\n    tabs:\n      result: {label: 结果}\n")
+	sum := sha256.Sum256(body)
+	hash := hex.EncodeToString(sum[:])
+	resourceID, revisionID := "resource-"+id, "revision-"+id
+	if err := db.Create(&orm.WorkflowResource{ID: resourceID, WorkflowRef: "builtin:" + id,
+		WorkflowID: id, Name: "Test Workflow", OwnerScope: "builtin", SourceType: "builtin",
+		Status: "active", HeadRevisionID: revisionID, Version: 1, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatalf("create resource: %v", err)
+	}
+	if err := db.Create(&orm.WorkflowRevision{ID: revisionID, WorkflowResourceID: resourceID,
+		RevisionNo: 1, TreeHash: hash, CreatedAt: now}).Error; err != nil {
+		t.Fatalf("create revision: %v", err)
+	}
+	if err := db.Create(&orm.WorkflowBlob{Hash: hash, Size: int64(len(body)), Mime: "application/yaml",
+		Content: body, CreatedAt: now}).Error; err != nil {
+		t.Fatalf("create blob: %v", err)
+	}
+	if err := db.Create(&orm.WorkflowRevisionEntry{RevisionID: revisionID, Path: "plugin.yaml",
+		EntryType: "file", BlobHash: &hash, Size: int64(len(body)), Mime: "application/yaml"}).Error; err != nil {
+		t.Fatalf("create entry: %v", err)
+	}
+	for path, content := range map[string][]byte{
+		"scenario/state.yml":   []byte("transitions:\n  __start__: [{to: first}]\n  first: [{to: __end__}]\n"),
+		"scenario/scenario.md": []byte("# Test scenario\n"),
+		"scripts/tools.py":     []byte("def test_tool():\n    return 'ok'\n"),
+	} {
+		fileSum := sha256.Sum256(content)
+		fileHash := hex.EncodeToString(fileSum[:])
+		if err := db.Create(&orm.WorkflowBlob{Hash: fileHash, Size: int64(len(content)), Content: content, CreatedAt: now}).Error; err != nil {
+			t.Fatalf("create %s blob: %v", path, err)
+		}
+		if err := db.Create(&orm.WorkflowRevisionEntry{RevisionID: revisionID, Path: path,
+			EntryType: "file", BlobHash: &fileHash, Size: int64(len(content))}).Error; err != nil {
+			t.Fatalf("create %s entry: %v", path, err)
+		}
+	}
+}
+
+func TestWorkflowCatalogHandlersReadCoreRevisionWithoutChatUpstream(t *testing.T) {
+	db := newHandlerTestDB(t)
+	seedCatalogWorkflow(t, db, "catalog-test")
+	seedWorkflowResource(t, db, "user:paper-search", "paper-search", "user-1")
+	if err := db.Create(&orm.UserWorkflowSetting{UserID: "user-1", WorkflowRef: "builtin:catalog-test", Enabled: false}).Error; err != nil {
+		t.Fatalf("disable workflow: %v", err)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/workflows", nil)
+	listReq.Header.Set("X-User-Id", "user-1")
+	listRec := httptest.NewRecorder()
+	ListWorkflows(listRec, listReq)
+	if listRec.Code != http.StatusOK || !strings.Contains(listRec.Body.String(), `"id":"catalog-test"`) {
+		t.Fatalf("list must include disabled catalog workflow: status=%d body=%s", listRec.Code, listRec.Body.String())
+	}
+	if strings.Contains(listRec.Body.String(), "paper-search") {
+		t.Fatalf("published user workflow must not be duplicated in built-in catalog: %s", listRec.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/workflows/catalog-test", nil)
+	getReq = mux.SetURLVars(getReq, map[string]string{"workflow_id": "catalog-test"})
+	getReq.Header.Set("X-User-Id", "user-1")
+	getReq.Header.Set("Accept-Language", "zh-CN")
+	getRec := httptest.NewRecorder()
+	GetWorkflowInfo(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("get status=%d body=%s", getRec.Code, getRec.Body.String())
+	}
+	var spec map[string]any
+	if err := json.Unmarshal(getRec.Body.Bytes(), &spec); err != nil {
+		t.Fatalf("decode catalog response: %v", err)
+	}
+	if spec["name"] != "测试工作流" {
+		t.Fatalf("localized name missing: %#v", spec["name"])
+	}
+	ui, _ := spec["ui"].(map[string]any)
+	if ui == nil || ui["tabs"] == nil {
+		t.Fatalf("panel UI declaration missing: %#v", spec)
+	}
+	for _, field := range []string{"workflow_yaml_raw", "state_yaml_raw", "scenario_raw", "scripts_raw"} {
+		if value, _ := spec[field].(string); value == "" {
+			t.Fatalf("built-in detail field %s is empty: %#v", field, spec)
+		}
+	}
+}
+
+func TestEnrichSlotsExecutesRevisionCountQuery(t *testing.T) {
+	db := newTestDB(t)
+	index := 0
+	if err := db.Create(&orm.WorkflowSlotRevision{SessionID: "session-1", SlotID: "output",
+		Revision: 1, ListIndex: &index, Selected: true, Slot: "output", ContentSnapshot: json.RawMessage(`{"value":"ok"}`)}).Error; err != nil {
+		t.Fatalf("create slot revision: %v", err)
+	}
+	slots := []slotDTO{{SlotID: "output", Slot: "output", Revision: 1, ListIndex: &index,
+		ContentSnapshot: json.RawMessage(`{"value":"ok"}`)}}
+	enrichSlots(t.Context(), db.DB, "session-1", slots)
+	if slots[0].RevisionCount != 1 {
+		t.Fatalf("revision count: got %d, want 1", slots[0].RevisionCount)
 	}
 }

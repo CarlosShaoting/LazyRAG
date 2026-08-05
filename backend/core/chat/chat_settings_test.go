@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"lazymind/core/common"
 	"lazymind/core/common/orm"
@@ -183,5 +184,30 @@ func TestPatchConversationWorkflowSettings_InvalidWorkflowMode(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status: got %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+func TestPatchConversationWorkflowSettings_PersistsPhysicalPluginModeColumn(t *testing.T) {
+	setupChatSettingsTest(t)
+	db := corestore.DB()
+	now := time.Now().UTC()
+	if err := db.Create(&orm.Conversation{ID: "conv-mode", BaseModel: orm.BaseModel{
+		CreateUserID: "user-1", CreatedAt: now, UpdatedAt: now,
+	}}).Error; err != nil {
+		t.Fatalf("create conversation: %v", err)
+	}
+	req := newSettingsRequest(http.MethodPatch, "/chat/conversations/conv-mode/workflow-settings",
+		`{"workflow_mode":"auto"}`, "user-1", map[string]string{"conversation_id": "conv-mode"})
+	w := httptest.NewRecorder()
+	PatchConversationWorkflowSettings(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d, body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	var stored orm.Conversation
+	if err := db.First(&stored, "id = ?", "conv-mode").Error; err != nil {
+		t.Fatalf("reload conversation: %v", err)
+	}
+	if stored.WorkflowMode == nil || *stored.WorkflowMode != "auto" {
+		t.Fatalf("plugin_mode was not persisted: %#v", stored.WorkflowMode)
 	}
 }

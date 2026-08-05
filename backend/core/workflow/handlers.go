@@ -212,7 +212,7 @@ func enrichSlots(ctx context.Context, db *gorm.DB, sessionID string, slots []slo
 	}
 	var rcRows []revCountRow
 	db.WithContext(ctx).Raw(
-		`SELECT slot_id, list_index, COUNT(*) AS cnt FROM plugin_slot_revisions  // workflow-naming: persistence
+		`SELECT slot_id, list_index, COUNT(*) AS cnt FROM plugin_slot_revisions
 		 WHERE session_id = ? GROUP BY slot_id, list_index`,
 		sessionID,
 	).Scan(&rcRows)
@@ -646,92 +646,6 @@ type stepAttemptDTO struct {
 	DurationSec   float64 `json:"duration_sec"`   // -1 if not finished
 	ArtifactCount int     `json:"artifact_count"` // slot-revision count for this attempt
 	StartedAt     string  `json:"started_at"`
-}
-
-// GetWorkflowInfo handles GET /plugins/{workflow_id}.
-// Proxies to the Python chat service /api/workflows/{workflow_id} and returns the plugin spec
-// including the ui.tabs declaration needed by the frontend WorkflowPanel.
-func GetWorkflowInfo(w http.ResponseWriter, r *http.Request) {
-	workflowID := common.PathVar(r, "workflow_id")
-	if workflowID == "" {
-		common.ReplyErr(w, "workflow_id required", http.StatusBadRequest)
-		return
-	}
-	upstream := common.ChatServiceEndpoint() + "/api/workflows/" + workflowID
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, upstream, nil)
-	if err != nil {
-		common.ReplyErr(w, "build upstream request failed", http.StatusInternalServerError)
-		return
-	}
-	if lang := r.Header.Get("Accept-Language"); lang != "" {
-		req.Header.Set("Accept-Language", lang)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		common.ReplyErr(w, "upstream request failed", http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
-		common.ReplyErr(w, "plugin not found", http.StatusNotFound)
-		return
-	}
-	if resp.StatusCode != http.StatusOK {
-		common.ReplyErr(w, "upstream error", http.StatusBadGateway)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	buf := make([]byte, 4096)
-	for {
-		n, readErr := resp.Body.Read(buf)
-		if n > 0 {
-			_, _ = w.Write(buf[:n])
-		}
-		if readErr != nil {
-			break
-		}
-	}
-}
-
-// ListWorkflows handles GET /plugins.
-// Proxies to the Python chat service /api/workflows.
-func ListWorkflows(w http.ResponseWriter, r *http.Request) {
-	upstream := common.ChatServiceEndpoint() + "/api/workflows"
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, upstream, nil)
-	if err != nil {
-		common.ReplyErr(w, "build upstream request failed", http.StatusInternalServerError)
-		return
-	}
-	if lang := r.Header.Get("Accept-Language"); lang != "" {
-		req.Header.Set("Accept-Language", lang)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		common.ReplyErr(w, "upstream request failed", http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		common.ReplyErr(w, "upstream error", http.StatusBadGateway)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	buf := make([]byte, 4096)
-	for {
-		n, readErr := resp.Body.Read(buf)
-		if n > 0 {
-			_, _ = w.Write(buf[:n])
-		}
-		if readErr != nil {
-			break
-		}
-	}
 }
 
 // SyncSessionSearchConfig handles POST /workflow-sessions/{session_id}:sync-search-config.

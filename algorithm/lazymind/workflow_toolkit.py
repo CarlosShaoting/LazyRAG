@@ -11,7 +11,9 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from lazymind.workflow_sdk import AdvanceRequest, StepCommand, WorkflowClient
+from lazymind.workflow_sdk import (
+    AdvanceRequest, StepCommand, WorkflowClient, WorkflowClientError,
+)
 
 
 WORKFLOW_SKILL_NAME = 'workflow-agent-kit'
@@ -31,11 +33,23 @@ def workflow_skills_dir() -> str:
 class HostWorkflowToolkit:
     """Expose the complete public Workflow SDK as Agent-callable functions."""
 
-    def __init__(self, client_factory: Callable[[], WorkflowClient]):
+    def __init__(self, client_factory: Callable[[], WorkflowClient],
+                 allowed_workflow_ids: Optional[List[str]] = None):
         self._client_factory = client_factory
+        self._allowed_workflow_ids = frozenset(
+            value.strip() for value in (allowed_workflow_ids or []) if value.strip()
+        )
 
     def _client(self) -> WorkflowClient:
         return self._client_factory()
+
+    def _require_allowed(self, workflow_id: str) -> None:
+        if self._allowed_workflow_ids and workflow_id not in self._allowed_workflow_ids:
+            raise WorkflowClientError(
+                'WORKFLOW_NOT_SELECTED',
+                f"Workflow '{workflow_id}' is not selected for this turn.",
+                details={'allowed_workflow_ids': sorted(self._allowed_workflow_ids)},
+            )
 
     def workflow_connection_status(self) -> Dict[str, Any]:
         """Verify public Workflow API discovery and connectivity."""
@@ -43,15 +57,30 @@ class HostWorkflowToolkit:
 
     def list_workflows(self) -> Dict[str, Any]:
         """List enabled Workflows visible to the current user."""
-        return self._client().list_workflows().result
+        result = self._client().list_workflows().result
+        if not self._allowed_workflow_ids:
+            return result
+        workflows = result.get('workflows')
+        if not isinstance(workflows, list):
+            return result
+        return {
+            **result,
+            'workflows': [
+                item for item in workflows
+                if isinstance(item, dict)
+                and str(item.get('workflow_id') or '') in self._allowed_workflow_ids
+            ],
+        }
 
     def get_workflow(self, workflow_id: str, revision_id: str = '') -> Dict[str, Any]:
         """Read one public Workflow package and its pinned revision."""
+        self._require_allowed(workflow_id)
         return self._client().get_workflow(workflow_id, revision_id).result
 
     def prepare_workflow(self, workflow_id: str, input_bindings: Optional[Dict[str, Any]] = None,
                          command_id: str = '') -> Dict[str, Any]:
         """Validate a Workflow and durable inputs without creating a Session."""
+        self._require_allowed(workflow_id)
         return self._client().prepare_workflow(
             workflow_id, input_bindings=input_bindings, command_id=command_id).result
 

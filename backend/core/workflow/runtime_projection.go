@@ -35,33 +35,70 @@ func ensureLegacySessionGraphUnchanged(session *orm.WorkflowSession, graph *grap
 }
 
 func loadSessionGraph(ctx context.Context, db *gorm.DB, session *orm.WorkflowSession) (*graphengine.CompiledStateGraph, error) {
+	if session.WorkflowRevisionID == "" {
+		var resource orm.WorkflowResource
+		if err := db.WithContext(ctx).Where("status = 'active' AND (plugin_id = ? OR plugin_ref = ?)",
+			session.WorkflowID, session.WorkflowID).First(&resource).Error; err != nil {
+			return nil, fmt.Errorf("workflow session has no pinned public revision: %w", err)
+		}
+		if resource.HeadRevisionID == "" {
+			return nil, fmt.Errorf("workflow session has no pinned public revision")
+		}
+		var revision orm.WorkflowRevision
+		if err := db.WithContext(ctx).Where("id = ? AND plugin_resource_id = ?", resource.HeadRevisionID, resource.ID).
+			First(&revision).Error; err != nil {
+			return nil, fmt.Errorf("load workflow head revision %s: %w", resource.HeadRevisionID, err)
+		}
+		graph, err := decodeSessionRevisionGraph(session, &revision)
+		if err != nil {
+			return nil, err
+		}
+		if err := ensureLegacySessionGraphUnchanged(session, graph); err != nil {
+			return nil, err
+		}
+		result := db.WithContext(ctx).Model(&orm.WorkflowSession{}).
+			Where("id = ? AND (plugin_revision_id IS NULL OR plugin_revision_id = '')", session.ID).
+			Updates(map[string]any{"plugin_revision_id": revision.ID, "graph_hash": graph.GraphHash,
+				"graph_schema_version": graph.SchemaVersion})
+		if result.Error != nil {
+			return nil, fmt.Errorf("pin legacy workflow session revision: %w", result.Error)
+		}
+		session.WorkflowRevisionID = revision.ID
+		session.GraphHash = graph.GraphHash
+		session.GraphSchemaVersion = graph.SchemaVersion
+		return graph, nil
+	}
 	if session.WorkflowRevisionID != "" {
 		var revision orm.WorkflowRevision
 		if err := db.WithContext(ctx).Where("id = ?", session.WorkflowRevisionID).First(&revision).Error; err != nil {
 			return nil, fmt.Errorf("load plugin revision %s: %w", session.WorkflowRevisionID, err)
 		}
-		if len(revision.CompiledGraph) == 0 {
-			return nil, fmt.Errorf("plugin revision %s has no compiled graph", session.WorkflowRevisionID)
-		}
-		var graph graphengine.CompiledStateGraph
-		if err := json.Unmarshal(revision.CompiledGraph, &graph); err != nil {
-			return nil, fmt.Errorf("decode compiled graph: %w", err)
-		}
-		if graph.SchemaVersion != graphengine.SchemaVersion || revision.GraphSchemaVersion != graphengine.SchemaVersion {
-			return nil, fmt.Errorf("unsupported compiled graph schema: graph=%q revision=%q supported=%q", graph.SchemaVersion, revision.GraphSchemaVersion, graphengine.SchemaVersion)
-		}
-		if graph.GraphHash == "" || revision.GraphHash == "" || graph.GraphHash != revision.GraphHash {
-			return nil, fmt.Errorf("compiled graph hash does not match revision metadata")
-		}
-		if session.GraphSchemaVersion != "" && session.GraphSchemaVersion != graph.SchemaVersion {
-			return nil, fmt.Errorf("session graph schema mismatch: session=%q revision=%q", session.GraphSchemaVersion, graph.SchemaVersion)
-		}
-		if session.GraphHash != "" && session.GraphHash != graph.GraphHash {
-			return nil, fmt.Errorf("session graph hash mismatch: session=%q revision=%q", session.GraphHash, graph.GraphHash)
-		}
-		return &graph, nil
+		return decodeSessionRevisionGraph(session, &revision)
 	}
 	return nil, fmt.Errorf("workflow session has no pinned public revision")
+}
+
+func decodeSessionRevisionGraph(session *orm.WorkflowSession, revision *orm.WorkflowRevision) (*graphengine.CompiledStateGraph, error) {
+	if len(revision.CompiledGraph) == 0 {
+		return nil, fmt.Errorf("plugin revision %s has no compiled graph", revision.ID)
+	}
+	var graph graphengine.CompiledStateGraph
+	if err := json.Unmarshal(revision.CompiledGraph, &graph); err != nil {
+		return nil, fmt.Errorf("decode compiled graph: %w", err)
+	}
+	if graph.SchemaVersion != graphengine.SchemaVersion || revision.GraphSchemaVersion != graphengine.SchemaVersion {
+		return nil, fmt.Errorf("unsupported compiled graph schema: graph=%q revision=%q supported=%q", graph.SchemaVersion, revision.GraphSchemaVersion, graphengine.SchemaVersion)
+	}
+	if graph.GraphHash == "" || revision.GraphHash == "" || graph.GraphHash != revision.GraphHash {
+		return nil, fmt.Errorf("compiled graph hash does not match revision metadata")
+	}
+	if session.GraphSchemaVersion != "" && session.GraphSchemaVersion != graph.SchemaVersion {
+		return nil, fmt.Errorf("session graph schema mismatch: session=%q revision=%q", session.GraphSchemaVersion, graph.SchemaVersion)
+	}
+	if session.GraphHash != "" && session.GraphHash != graph.GraphHash {
+		return nil, fmt.Errorf("session graph hash mismatch: session=%q revision=%q", session.GraphHash, graph.GraphHash)
+	}
+	return &graph, nil
 }
 
 func loadRuntimeSnapshot(ctx context.Context, db *gorm.DB, sessionID string) (graphengine.RuntimeSnapshot, error) {

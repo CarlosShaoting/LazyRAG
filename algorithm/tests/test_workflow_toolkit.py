@@ -1,7 +1,10 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from lazymind.workflow_toolkit import HostWorkflowToolkit, WORKFLOW_SKILL_NAME, workflow_skills_dir
+from lazymind.workflow_sdk import WorkflowClientError
 
 
 def test_common_toolkit_exposes_complete_skill_capabilities():
@@ -22,6 +25,26 @@ def test_common_toolkit_contains_no_model_dependency():
     assert 'AutoModel' not in source
     assert 'lazyllm' not in source
     assert 'llm_config' not in source
+
+
+def test_explicit_workflow_selection_filters_discovery_and_guards_reads_and_prepare():
+    client = MagicMock()
+    client.list_workflows.return_value.result = {'workflows': [
+        {'workflow_id': 'selected', 'workflow_ref': 'builtin:selected'},
+        {'workflow_id': 'other', 'workflow_ref': 'builtin:other'},
+    ]}
+    toolkit = HostWorkflowToolkit(lambda: client, allowed_workflow_ids=['selected'])
+
+    assert toolkit.list_workflows() == {'workflows': [
+        {'workflow_id': 'selected', 'workflow_ref': 'builtin:selected'},
+    ]}
+    with pytest.raises(WorkflowClientError, match='not selected') as read_error:
+        toolkit.get_workflow('other')
+    assert read_error.value.code == 'WORKFLOW_NOT_SELECTED'
+    with pytest.raises(WorkflowClientError, match='not selected'):
+        toolkit.prepare_workflow('other')
+    client.get_workflow.assert_not_called()
+    client.prepare_workflow.assert_not_called()
 
 
 def test_shared_skill_is_discoverable_by_in_process_hosts():

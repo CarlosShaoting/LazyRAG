@@ -139,7 +139,27 @@ def resolve_workflow_injection(
     mode = str(context.get('workflow_mode') or 'dynamic')
     patch: Dict[str, Any] = {'workflow_mode': mode}
 
-    tools = [*HostWorkflowToolkit(_client).tools(), _attachment_import_tool()]
+    catalog = workflow_catalog or []
+    allowed_refs = {
+        str(value).strip() for value in (allowed_workflow_refs or []) if str(value).strip()
+    }
+    allowed_items = [
+        item for item in catalog
+        if str(item.get('workflow_ref') or '') in allowed_refs
+    ]
+    allowed_ids = [
+        str(item.get('workflow_id') or '').strip() for item in allowed_items
+        if str(item.get('workflow_id') or '').strip()
+    ]
+    for ref in allowed_refs:
+        if ref.startswith('builtin:'):
+            allowed_ids.append(ref.removeprefix('builtin:'))
+    allowed_ids = list(dict.fromkeys(allowed_ids))
+
+    tools = [
+        *HostWorkflowToolkit(_client, allowed_workflow_ids=allowed_ids).tools(),
+        _attachment_import_tool(),
+    ]
     if session_id:
         patch.update({
             'workflow_id': workflow_id,
@@ -158,9 +178,23 @@ def resolve_workflow_injection(
             patch, runtime_context,
         )
 
-    del workflow_catalog, disabled_builtin_workflows, allowed_workflow_refs
+    del disabled_builtin_workflows
+    selection_context = ''
+    if allowed_refs:
+        selection_context = (
+            '## Explicit Workflow Selection [AUTHORITATIVE]\n'
+            'The user explicitly selected exactly one Workflow for this turn. '
+            'Do not discover, select, or prepare any other Workflow. Read the selected '
+            'Workflow with `get_workflow`, then follow `workflow-agent-kit` using the exact '
+            'pinned id and revision. The public tools enforce this selection.\n'
+            + json.dumps({
+                'allowed_workflow_refs': sorted(allowed_refs),
+                'selected_workflows': allowed_items,
+                'allowed_workflow_ids': allowed_ids,
+            }, ensure_ascii=False, default=str)
+        )
     return WorkflowAgentContribution(
-        tools, [], patch, '',
+        tools, [], patch, selection_context,
     )
 
 

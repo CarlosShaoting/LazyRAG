@@ -27,6 +27,26 @@ func makeSubAgentTask(t *testing.T, db interface {
 	t.Helper()
 }
 
+func TestBuildWorkflowArtifactsSummaryExecutesJoinQuery(t *testing.T) {
+	db := newTestDB(t)
+	now := time.Now().UTC()
+	if err := db.Create(&orm.WorkflowSessionStep{ID: "attempt-1", SessionID: "session-1", StepID: "step-1",
+		Attempt: 1, TaskID: "task-1", Status: "succeeded", Validity: "effective", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatalf("create session step: %v", err)
+	}
+	if err := db.Create(&orm.SubAgentArtifact{ID: "artifact-1", TaskID: "task-1", Slot: "output",
+		ContentType: "text", Value: json.RawMessage(`{"value":"done"}`), Seq: 1, CreatedAt: now}).Error; err != nil {
+		t.Fatalf("create artifact: %v", err)
+	}
+	summary, err := buildWorkflowArtifactsSummary(t.Context(), db.DB, "session-1", "step-1")
+	if err != nil {
+		t.Fatalf("build summary: %v", err)
+	}
+	if !strings.Contains(summary, "output: done") {
+		t.Fatalf("unexpected summary: %q", summary)
+	}
+}
+
 // seedSession creates a session + step + sub_agent_task record for a given step.
 // Returns the task ID used.
 func seedSessionAndTask(t *testing.T, ctx context.Context, gdb interface {
