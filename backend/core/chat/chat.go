@@ -128,6 +128,7 @@ type ChatWorkflowOptions struct {
 	Catalog                  []map[string]any `json:"catalog,omitempty"`
 	DisabledBuiltinWorkflows []string         `json:"disabled_builtin_plugins,omitempty"`
 	AllowedWorkflowRefs      []string         `json:"allowed_workflow_refs,omitempty"`
+	Activations              []map[string]any `json:"activations,omitempty"`
 }
 
 // LazyChatData text data text。
@@ -536,6 +537,9 @@ func buildLazyChatRequest(body map[string]any) *LazyChatRequest {
 	}
 	if refs, ok := body["allowed_workflow_refs"].([]string); ok {
 		req.Workflow.AllowedWorkflowRefs = refs
+	}
+	if activations, ok := body["workflow_activations"].([]map[string]any); ok {
+		req.Workflow.Activations = activations
 	}
 	if bindings, ok := body["explicit_resource_bindings"].(map[string]any); ok {
 		req.ExplicitResources = ExplicitResourceBindings{

@@ -472,6 +472,7 @@ func applyWorkflowSelection(
 		reqBody["enable_plugin"] = true
 		reqBody["allowed_workflow_refs"] = mentionedRefs
 	}
+	delete(reqBody, "workflow_activations")
 	if enabled, _ := reqBody["enable_plugin"].(bool); !enabled {
 		reqBody["workflow_catalog"] = []map[string]any{}
 		reqBody["disabled_builtin_plugins"] = []string{}
@@ -498,6 +499,25 @@ func applyWorkflowSelection(
 	if err != nil {
 		return err
 	}
+	if len(mentionedRefs) == 1 {
+		var selected map[string]any
+		for _, item := range catalog {
+			if fmt.Sprint(item["workflow_ref"]) != mentionedRefs[0] {
+				continue
+			}
+			selected = item
+			break
+		}
+		if selected == nil && strings.HasPrefix(mentionedRefs[0], "builtin:") {
+			selected = map[string]any{
+				"workflow_ref": mentionedRefs[0],
+				"workflow_id":  strings.TrimPrefix(mentionedRefs[0], "builtin:"),
+			}
+		}
+		if activation := buildWorkflowActivation(selected, mentionedRefs[0]); activation != nil {
+			reqBody["workflow_activations"] = []map[string]any{activation}
+		}
+	}
 	disabledBuiltins, err := workflow.DisabledBuiltinWorkflowIDs(db, userID)
 	if err != nil {
 		return fmt.Errorf("load builtin plugin settings: %w", err)
@@ -517,4 +537,35 @@ func applyWorkflowSelection(
 		disabledBuiltins, forcedBuiltins,
 	)
 	return nil
+}
+
+func buildWorkflowActivation(item map[string]any, workflowRef string) map[string]any {
+	workflowID := strings.TrimSpace(fmt.Sprint(item["workflow_id"]))
+	if item == nil || workflowID == "" {
+		return nil
+	}
+	stem := strings.Trim(strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' {
+			return r
+		}
+		return '_'
+	}, strings.ToLower(workflowID)), "_")
+	if stem == "" {
+		stem = "workflow"
+	}
+	name := strings.TrimSpace(fmt.Sprint(item["name"]))
+	if name == "" {
+		name = workflowID
+	}
+	return map[string]any{
+		"workflow_ref": workflowRef,
+		"workflow_id":  workflowID,
+		"revision_id":  strings.TrimSpace(fmt.Sprint(item["revision_id"])),
+		"tool_name":    "trigger_" + stem + "_workflow",
+		"tool_description": strings.TrimSpace(fmt.Sprintf(
+			"Load the exact %q Workflow selected by the user. %s %s",
+			name, fmt.Sprint(item["description"]), fmt.Sprint(item["when_to_use"]),
+		)),
+		"prompt": "The user explicitly selected this Workflow. Call its bound trigger directly; do not call list_workflows or select another Workflow.",
+	}
 }

@@ -65,6 +65,7 @@ class ChatWorkflowOptions(BaseModel):
     catalog: List[Dict[str, Any]] = Field(default_factory=list)
     disabled_builtin_workflows: List[str] = Field(default_factory=list)
     allowed_workflow_refs: List[str] = Field(default_factory=list)
+    activations: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class ExplicitResourceBindingsOptions(BaseModel):

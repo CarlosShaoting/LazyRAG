@@ -119,12 +119,62 @@ def _attachment_import_tool() -> Any:
     return import_workflow_attachment
 
 
+def _workflow_trigger_tools(
+    activations: List[Dict[str, Any]], allowed_refs: set[str],
+) -> List[Any]:
+    """Bind backend-prepared activations to public package reads."""
+    candidates = [
+        item for item in activations
+        if not allowed_refs or str(item.get('workflow_ref') or '') in allowed_refs
+    ]
+    tools: List[Any] = []
+    used_names: set[str] = set()
+    for item in candidates:
+        workflow_id = str(item.get('workflow_id') or '').strip()
+        workflow_ref = str(item.get('workflow_ref') or '').strip()
+        revision_id = str(item.get('revision_id') or '').strip()
+        if not workflow_id or not workflow_ref:
+            continue
+        name = str(item.get('tool_name') or '').strip()
+        if not name.startswith('trigger_') or not name.endswith('_workflow') or not name.isidentifier():
+            continue
+        if name in used_names:
+            continue
+        used_names.add(name)
+
+        def make_trigger(bound_id: str, bound_ref: str, bound_revision: str) -> Any:
+            def bound_trigger(request_context: str = '') -> Dict[str, Any]:
+                """Load the exact remotely published Workflow selected for this request."""
+                package = _client().get_workflow(bound_id, bound_revision).result
+                return {
+                    'status': 'loaded',
+                    'workflow_ref': bound_ref,
+                    'workflow_id': bound_id,
+                    'revision_id': str(package.get('revision_id') or bound_revision),
+                    'request_context': request_context,
+                    'workflow': package,
+                    'next_action': (
+                        'Follow workflow-agent-kit. Import required inputs, then call '
+                        'prepare_workflow with this exact workflow_id.'
+                    ),
+                }
+            return bound_trigger
+
+        trigger_workflow = make_trigger(workflow_id, workflow_ref, revision_id)
+
+        trigger_workflow.__name__ = name
+        trigger_workflow.__doc__ = str(item.get('tool_description') or '').strip()
+        tools.append(trigger_workflow)
+    return tools
+
+
 def resolve_workflow_injection(
     workflow_context: Optional[Dict[str, Any]],
     conversation_id: str = '',
     workflow_catalog: Optional[List[Dict[str, Any]]] = None,
     disabled_builtin_workflows: Optional[List[str]] = None,
     allowed_workflow_refs: Optional[List[str]] = None,
+    workflow_activations: Optional[List[Dict[str, Any]]] = None,
 ) -> WorkflowAgentContribution:
     """Map public Workflow APIs to LazyMind Chat tools; no Runtime decisions live here."""
     del conversation_id
@@ -156,7 +206,10 @@ def resolve_workflow_injection(
             allowed_ids.append(ref.removeprefix('builtin:'))
     allowed_ids = list(dict.fromkeys(allowed_ids))
 
+    activations = workflow_activations or []
+    trigger_tools = _workflow_trigger_tools(activations, allowed_refs)
     tools = [
+        *trigger_tools,
         *HostWorkflowToolkit(_client, allowed_workflow_ids=allowed_ids).tools(),
         _attachment_import_tool(),
     ]
@@ -181,15 +234,17 @@ def resolve_workflow_injection(
     del disabled_builtin_workflows
     selection_context = ''
     if allowed_refs:
+        activation_prompts = [
+            str(item.get('prompt') or '').strip() for item in activations
+            if str(item.get('workflow_ref') or '') in allowed_refs
+            and str(item.get('prompt') or '').strip()
+        ]
         selection_context = (
             '## Explicit Workflow Selection [AUTHORITATIVE]\n'
-            'The user explicitly selected exactly one Workflow for this turn. '
-            'Do not discover, select, or prepare any other Workflow. Read the selected '
-            'Workflow with `get_workflow`, then follow `workflow-agent-kit` using the exact '
-            'pinned id and revision. The public tools enforce this selection.\n'
+            + '\n'.join(activation_prompts) + '\n'
             + json.dumps({
                 'allowed_workflow_refs': sorted(allowed_refs),
-                'selected_workflows': allowed_items,
+                'activations': activations,
                 'allowed_workflow_ids': allowed_ids,
             }, ensure_ascii=False, default=str)
         )

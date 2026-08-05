@@ -42,6 +42,12 @@ def test_skill_is_the_complete_model_free_workflow_operating_procedure():
     assert 'explicit SubAgent' in skill
 
 
+def test_skill_skips_catalog_listing_when_host_exposes_bound_trigger():
+    skill = (KIT / 'SKILL.md').read_text()
+    assert 'Call the matching trigger directly instead of' in skill
+    assert 'a trigger never starts a Session' in skill
+
+
 def test_host_profiles_cover_contract_capabilities():
     profiles = {
         path.stem: yaml.safe_load(path.read_text())

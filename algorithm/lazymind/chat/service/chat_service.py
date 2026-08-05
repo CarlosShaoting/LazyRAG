@@ -619,6 +619,7 @@ async def _handle_chat_impl(
         workflow_catalog=effective_workflow_catalog,
         disabled_builtin_workflows=list(dict.fromkeys(effective_disabled_builtin_workflows)),
         allowed_workflow_refs=effective_allowed_workflow_refs,
+        workflow_activations=workflow.activations,
     )
     workflow_tools = workflow_contribution.tools
     agentic_config.update(workflow_contribution.agentic_config_patch)

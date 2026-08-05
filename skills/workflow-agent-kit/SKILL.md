@@ -34,6 +34,14 @@ explicit SubAgent by the framework Supervisor. Read
 
 ## Discover a Workflow
 
+When the Host exposes a `trigger_<workflow>_workflow` tool, its definition is a
+catalog-bound selection hint. Call the matching trigger directly instead of
+`list_workflows`; it reads the exact public package and pinned revision. An explicit
+user selection permits only its matching trigger. Continue with preparation through
+the same public lifecycle tools below; a trigger never starts a Session.
+
+When no matching trigger is exposed:
+
 1. Call `workflow_connection_status` when the Host exposes it. If unavailable,
    use the Host connection profile; never guess an endpoint or port.
 2. Call `list_workflows` for the authenticated catalog.

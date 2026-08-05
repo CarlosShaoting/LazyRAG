@@ -129,6 +129,21 @@ func TestBuildLazyChatRequestPropagatesPreviewLLMConfirmation(t *testing.T) {
 	}
 }
 
+func TestBackendBuildsAndPropagatesWorkflowActivation(t *testing.T) {
+	activation := buildWorkflowActivation(map[string]any{
+		"workflow_id": "image-plugin", "revision_id": "revision-1", "name": "Image",
+	}, "builtin:image-plugin")
+	if activation["tool_name"] != "trigger_image_plugin_workflow" {
+		t.Fatalf("activation = %#v", activation)
+	}
+	req := buildLazyChatRequest(map[string]any{
+		"workflow_activations": []map[string]any{activation},
+	})
+	if len(req.Workflow.Activations) != 1 || req.Workflow.Activations[0]["revision_id"] != "revision-1" {
+		t.Fatalf("Activations = %#v", req.Workflow.Activations)
+	}
+}
+
 func TestMergeMentionedDatasetsPreservesDefaultsAndDeduplicates(t *testing.T) {
 	raw := map[string]any{"conversation": map[string]any{"search_config": map[string]any{
 		"dataset_list": []any{map[string]any{"id": "default"}},
