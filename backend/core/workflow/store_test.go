@@ -2,7 +2,6 @@ package workflow
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 
 	"lazymind/core/common/orm"
@@ -11,23 +10,19 @@ import (
 // newTestDB creates an in-memory SQLite database and auto-migrates all plugin tables.
 func newTestDB(t *testing.T) *orm.DB {
 	t.Helper()
-	db, err := orm.Connect(orm.DriverSQLite, filepath.Join(t.TempDir(), "plugin.db"))
-	if err != nil {
-		t.Fatalf("connect db: %v", err)
-	}
-	if err := db.AutoMigrate(
+	return orm.MigrateTestDB(t,
 		&orm.SubAgentTask{},
 		&orm.SubAgentStep{},
 		&orm.SubAgentArtifact{},
+		&orm.ChatHistory{},
+		&orm.TaskCenterTask{},
 		&orm.WorkflowSession{},
 		&orm.WorkflowSessionStep{},
 		&orm.WorkflowSlotRevision{},
+		&orm.WorkflowOutbox{},
 		&orm.WorkflowSlotOrder{},
 		&orm.WorkflowStepIntent{},
-	); err != nil {
-		t.Fatalf("auto migrate: %v", err)
-	}
-	return db
+	)
 }
 
 // ──────────────────────────────────────────────
