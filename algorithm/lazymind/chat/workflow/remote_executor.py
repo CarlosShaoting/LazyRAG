@@ -78,12 +78,19 @@ class RemoteWorkflowExecutor:
     async def _run_claim(self, client: httpx.AsyncClient, claim: Dict[str, Any]) -> None:
         attempt_id = str(claim['attempt_id'])
         lease = str(claim['lease_token'])
-        context = await self.runtime.context(client, attempt_id, lease)
-        metadata = context.get('metadata') or {}
-        task_id = str(metadata.get('task_id') or attempt_id)
-        spec = await self.runtime.execution_spec(client, task_id, lease)
-        workspace = tempfile.mkdtemp(prefix=f'lazymind-workflow-{attempt_id}-')
-        inputs = await self._materialize_inputs(client, attempt_id, lease, context, workspace)
+        workspace = ''
+        try:
+            context = await self.runtime.context(client, attempt_id, lease)
+            metadata = context.get('metadata') or {}
+            task_id = str(metadata.get('task_id') or attempt_id)
+            spec = await self.runtime.execution_spec(client, task_id, lease)
+            workspace = tempfile.mkdtemp(prefix=f'lazymind-workflow-{attempt_id}-')
+            inputs = await self._materialize_inputs(client, attempt_id, lease, context, workspace)
+        except Exception as exc:
+            # A claimed Attempt must never remain stuck merely because Host setup
+            # failed before the SubAgent stream started.
+            await self.runtime.fail(client, attempt_id, lease, f'executor setup failed: {exc}')
+            return
 
         stopped = asyncio.Event()
         lease_lost = asyncio.Event()

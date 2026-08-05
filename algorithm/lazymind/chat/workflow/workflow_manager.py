@@ -177,7 +177,6 @@ def resolve_workflow_injection(
     workflow_activations: Optional[List[Dict[str, Any]]] = None,
 ) -> WorkflowAgentContribution:
     """Map public Workflow APIs to LazyMind Chat tools; no Runtime decisions live here."""
-    del conversation_id
     cfg = _agentic_config()
     if not cfg.get('enable_workflow', True):
         return WorkflowAgentContribution([], [], {}, '')
@@ -210,7 +209,9 @@ def resolve_workflow_injection(
     trigger_tools = _workflow_trigger_tools(activations, allowed_refs)
     tools = [
         *trigger_tools,
-        *HostWorkflowToolkit(_client, allowed_workflow_ids=allowed_ids).tools(),
+        *HostWorkflowToolkit(
+            _client, allowed_workflow_ids=allowed_ids, origin_ref=conversation_id,
+        ).tools(),
         _attachment_import_tool(),
     ]
     if session_id:

@@ -51,6 +51,7 @@ PERSISTENCE_FILES = {
     'backend/core/workflow/domain/models_test.go',
     'backend/core/workflow/domain/session_repository.go',
     'backend/core/workflow/domain/session_repository_test.go',
+    'backend/core/workflow/draft_handlers_test.go',
     'backend/core/workflow/migration_contract_test.go',
     'backend/core/workflow/store.go',
     'backend/core/workflow/store_test.go',

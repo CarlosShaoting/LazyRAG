@@ -297,6 +297,28 @@ func MarkInterrupted(ctx context.Context, db *gorm.DB, maxAge time.Duration) (in
 	return res.RowsAffected, res.Error
 }
 
+// InterruptConversation marks every active ordinary SubAgent task in a conversation
+// terminal and returns the task IDs whose live runner streams must be canceled.
+func InterruptConversation(ctx context.Context, db *gorm.DB, convID, summary string) ([]string, error) {
+	var taskIDs []string
+	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&orm.SubAgentTask{}).
+			Where("conversation_id = ? AND status IN ?", convID, []string{StatusPending, StatusRunning}).
+			Pluck("id", &taskIDs).Error; err != nil {
+			return err
+		}
+		if len(taskIDs) == 0 {
+			return nil
+		}
+		now := time.Now().UTC()
+		return tx.Model(&orm.SubAgentTask{}).Where("id IN ?", taskIDs).Updates(map[string]any{
+			"status": StatusInterrupted, "summary": summary,
+			"last_heartbeat": now, "updated_at": now,
+		}).Error
+	})
+	return taskIDs, err
+}
+
 // IsNotFound reports whether the error is a gorm record-not-found error.
 func IsNotFound(err error) bool {
 	return errors.Is(err, gorm.ErrRecordNotFound)

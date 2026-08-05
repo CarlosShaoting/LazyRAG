@@ -45,7 +45,8 @@ def test_workflow_manager_is_a_public_sdk_and_handoff_adapter():
     manager = Path(__file__).parents[3] / 'lazymind' / 'chat' / 'workflow' / 'workflow_manager.py'
     text = manager.read_text()
     assert 'from lazymind.workflow_sdk import' in text
-    assert 'HostWorkflowToolkit(_client).tools()' in text
+    assert 'HostWorkflowToolkit(' in text
+    assert 'origin_ref=conversation_id' in text
     assert "['advance_step_and_hand_off']" in text
     assert 'WorkflowSession' not in text
     assert 'WorkflowSlotRevision' not in text

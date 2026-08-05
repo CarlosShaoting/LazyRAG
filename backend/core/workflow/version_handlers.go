@@ -124,7 +124,8 @@ func ReplaceDraftFromWorkflowVersion(w http.ResponseWriter, r *http.Request) {
 	if workflowYAML == "" {
 		workflowYAML = files["plugin.yaml"]
 	}
-	updates := map[string]any{"workflow_yaml_content": workflowYAML, "state_yaml_content": files["scenario/state.yml"], "scenario_content": files["scenario/scenario.md"], "driver_content": files["scenario/driver.md"], "scripts_content": string(scriptsJSON), "state_layout_content": "", "base_revision_id": common.PathVar(r, "revision_id"), "version": draft.Version + 1, "updated_at": time.Now().UTC()}
+	updates := map[string]any{"state_yaml_content": files["scenario/state.yml"], "scenario_content": files["scenario/scenario.md"], "driver_content": files["scenario/driver.md"], "scripts_content": string(scriptsJSON), "state_layout_content": "", "base_revision_id": common.PathVar(r, "revision_id"), "version": draft.Version + 1, "updated_at": time.Now().UTC()}
+	setWorkflowYAMLUpdate(updates, workflowYAML)
 	if err := store.DB().Model(&draft).Updates(updates).Error; err != nil {
 		common.ReplyErr(w, err.Error(), http.StatusInternalServerError)
 		return

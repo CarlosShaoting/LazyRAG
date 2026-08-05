@@ -440,7 +440,7 @@ func (r *Repository) SetSessionStopped(ctx context.Context, owner, sessionID, co
 	return version, err
 }
 
-func (r *Repository) CreateHostSession(ctx context.Context, owner, sessionID, originHost,
+func (r *Repository) CreateHostSession(ctx context.Context, owner, sessionID, conversationID, originHost,
 	originRef, controllerHost string, workflow WorkflowPackage) (orm.WorkflowSession, bool, error) {
 	var existing orm.WorkflowSession
 	if err := r.db.WithContext(ctx).Where("id = ?", sessionID).First(&existing).Error; err == nil {
@@ -458,7 +458,7 @@ func (r *Repository) CreateHostSession(ctx context.Context, owner, sessionID, or
 		controllerHost = originHost
 	}
 	now := time.Now().UTC()
-	created := orm.WorkflowSession{ID: sessionID, ConversationID: "", OriginHost: originHost,
+	created := orm.WorkflowSession{ID: sessionID, ConversationID: conversationID, OriginHost: originHost,
 		OriginRef: originRef, ControllerHost: controllerHost, WorkflowID: workflow.WorkflowID,
 		WorkflowRef: workflow.WorkflowRef, WorkflowRevisionID: workflow.RevisionID,
 		WorkflowRevisionNo: workflow.RevisionNo, WorkflowTreeHash: workflow.TreeHash,

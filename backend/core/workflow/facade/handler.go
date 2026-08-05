@@ -611,7 +611,11 @@ func (h Handler) Consume(w http.ResponseWriter, r *http.Request) {
 	if workflowPackage, packageErr := h.Store.GetWorkflowPackage(r.Context(), owner, prepared.WorkflowID, revisionID); packageErr == nil {
 		var original prepareRequest
 		_ = json.Unmarshal(prepared.RequestJSON, &original)
-		session, _, createErr := h.Store.CreateHostSession(r.Context(), owner, req.SessionID,
+		conversationID := ""
+		if original.OriginHost == "lazymind" {
+			conversationID = original.OriginRef
+		}
+		session, _, createErr := h.Store.CreateHostSession(r.Context(), owner, req.SessionID, conversationID,
 			original.OriginHost, original.OriginRef, original.ControllerHost, workflowPackage)
 		if createErr != nil {
 			fail(w, http.StatusConflict, "SESSION_CREATE_FAILED", createErr.Error(), false)

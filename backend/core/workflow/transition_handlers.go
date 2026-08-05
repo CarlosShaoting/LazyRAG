@@ -613,7 +613,7 @@ func TransitionWorkflowSession(w http.ResponseWriter, r *http.Request) {
 			}
 			taskID := target.TaskID
 			if session.ConversationID == "" {
-				if err := queueHostAttempt(tx, session, target, nodeDef, now); err != nil {
+				if err := queueHostAttempt(r.Context(), tx, session, target, nodeDef, inputKeys, req.WorkflowMode, now); err != nil {
 					return err
 				}
 			} else {
@@ -662,8 +662,8 @@ func TransitionWorkflowSession(w http.ResponseWriter, r *http.Request) {
 	writeTransitionResponse(w, response, http.StatusOK)
 }
 
-func queueHostAttempt(tx *gorm.DB, session orm.WorkflowSession, target transitionTarget,
-	node graphengine.CompiledNode, now time.Time) error {
+func queueHostAttempt(ctx context.Context, tx *gorm.DB, session orm.WorkflowSession, target transitionTarget,
+	node graphengine.CompiledNode, inputKeys []string, workflowMode string, now time.Time) error {
 	var count int64
 	if err := tx.Model(&orm.WorkflowSessionStep{}).Where("session_id = ? AND step_id = ?", session.ID, target.TargetStepID).Count(&count).Error; err != nil {
 		return err
@@ -682,6 +682,24 @@ func queueHostAttempt(tx *gorm.DB, session orm.WorkflowSession, target transitio
 		Attempt: value.AttemptNo, TaskID: target.TaskID, Status: "queued", Validity: "effective",
 		ProgressJSON: `{}`, ResultJSON: `{}`, CreatedAt: now, UpdatedAt: now}
 	if err := tx.Create(&row).Error; err != nil {
+		return err
+	}
+	params, _ := json.Marshal(map[string]any{
+		"workflow_id": session.WorkflowID, "step_id": target.TargetStepID, "session_id": session.ID,
+		"user_input": target.UserInput, "workflow_mode": workflowMode,
+		"retry_hint": target.RuntimeInstruction, "partial_indices": target.PartialIndices,
+		"required_output_artifact_keys": node.RequiredOutputs, "user_id": session.CreateUserID,
+	})
+	inputs, _ := json.Marshal(inputKeys)
+	outputs, _ := json.Marshal(node.Outputs)
+	if _, err := subagent.CreateTask(ctx, tx, subagent.CreateTaskInput{
+		TaskID: target.TaskID, ConversationID: session.ConversationID,
+		TriggerHistoryID: session.TriggerHistoryID, AgentType: "workflow_step",
+		Title: session.WorkflowID + ":" + target.TargetStepID, Objective: target.Objective,
+		Mode: "manual", Params: params, InputSlots: inputs, OutputSlots: outputs,
+		WorkspacePath: subagent.WorkspacePath(session.CreateUserID, target.TaskID),
+		CreateUserID:  session.CreateUserID,
+	}); err != nil {
 		return err
 	}
 	return tx.Create(&orm.WorkflowOutbox{ID: uuid.NewString(), AttemptID: row.ID, SessionID: session.ID,

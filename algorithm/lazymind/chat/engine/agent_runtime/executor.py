@@ -33,12 +33,15 @@ class ToolCallGuard:
         manager: Any,
         failure_limits: dict[str, int] | None = None,
         expanded_round_limit: int | None = None,
+        repeated_call_limit: int = 3,
     ):
         self._manager = manager
         self._failure_limits = dict(failure_limits or {})
         self._failed_signatures: set[str] = set()
         self._consecutive_failures: dict[str, int] = {}
         self._expanded_round_limit = expanded_round_limit
+        self._repeated_call_limit = max(2, int(repeated_call_limit))
+        self._signature_calls: dict[str, int] = {}
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._manager, name)
@@ -86,6 +89,14 @@ class ToolCallGuard:
             'msg': f'[Repeated Tool Failure] {name}: {message}',
         }
 
+    @staticmethod
+    def _loop_blocked(name: str, message: str) -> dict[str, Any]:
+        return {
+            'ok': False,
+            'value': None,
+            'msg': f'[Repeated Tool Call] {name}: {message}',
+        }
+
     def __call__(self, tools: Any, verbose: bool = False) -> Any:
         tool_calls = [tools] if isinstance(tools, dict) else list(tools or [])
         results: list[Any] = [None] * len(tool_calls)
@@ -109,6 +120,18 @@ class ToolCallGuard:
                         f'tool round limit to {self._expanded_round_limit}.'
                     )
             signature = self._signature(tool_call)
+            signature_calls = self._signature_calls.get(signature, 0) + 1
+            self._signature_calls[signature] = signature_calls
+            if signature_calls > self._repeated_call_limit:
+                results[index] = self._loop_blocked(
+                    name,
+                    f'the exact same call was already made {self._repeated_call_limit} times; '
+                    'stop retrying it and synthesize from existing results or choose another tool.',
+                )
+                lazyllm.LOG.warning(
+                    f'[ToolCallGuard] blocked no-progress repeated call: {name}'
+                )
+                continue
             guarded = name in self._failure_limits
             if guarded and signature in self._failed_signatures:
                 results[index] = self._blocked(

@@ -141,6 +141,34 @@ func TestBatchTransitionAcceptsAllReadyTargetsAtomically(t *testing.T) {
 	}
 }
 
+func TestHostTransitionCreatesRemoteExecutableSubAgentTask(t *testing.T) {
+	db, graphHash := setupBatchTransitionSession(t)
+	if err := db.Model(&orm.WorkflowSession{}).Where("id = ?", "batch-session").
+		Update("conversation_id", "").Error; err != nil {
+		t.Fatal(err)
+	}
+	w, data := runBatchTransition(t, db, graphHash, "execute", []map[string]any{
+		{"target_step_id": "branch_b", "task_id": "host-task-b", "objective": "run b", "user_input": "hello"},
+	})
+	if w.Code != http.StatusOK || data["accepted"] != true {
+		t.Fatalf("host transition rejected: status=%d body=%s", w.Code, w.Body.String())
+	}
+	var task orm.SubAgentTask
+	if err := db.Where("id = ?", "host-task-b").First(&task).Error; err != nil {
+		t.Fatalf("remote execution task missing: %v", err)
+	}
+	if task.AgentType != "workflow_step" || task.Objective != "run b" || task.CreateUserID != "batch-user" {
+		t.Fatalf("unexpected task: %#v", task)
+	}
+	var params map[string]any
+	if err := json.Unmarshal(task.Params, &params); err != nil {
+		t.Fatal(err)
+	}
+	if params["session_id"] != "batch-session" || params["step_id"] != "branch_b" || params["user_input"] != "hello" {
+		t.Fatalf("unexpected task params: %#v", params)
+	}
+}
+
 func TestBatchTransitionRejectsWholeBatchWhenOneTargetBlocked(t *testing.T) {
 	db, graphHash := setupBatchTransitionSession(t)
 	w, data := runBatchTransition(t, db, graphHash, "execute_batch", []map[string]any{

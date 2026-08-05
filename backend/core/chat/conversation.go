@@ -863,6 +863,19 @@ func StopChatGeneration(w http.ResponseWriter, r *http.Request) {
 	// Interrupt any active plugin session steps.
 	if db := store.DB(); db != nil {
 		workflow.StopActiveWorkflowSession(r.Context(), db, stateStore, convID)
+		taskIDs, err := subagent.InterruptConversation(r.Context(), db, convID, "stopped by user")
+		if err == nil {
+			for _, taskID := range taskIDs {
+				_ = subagent.WriteStatus(r.Context(), stateStore, taskID, map[string]any{
+					"status": subagent.StatusInterrupted, "summary": "stopped by user",
+				})
+				_ = subagent.AppendStreamEvent(r.Context(), stateStore, taskID, subagent.TaskEvent{
+					Type: "error", TaskID: taskID, Status: subagent.StatusInterrupted,
+					Message: "stopped by user",
+				})
+			}
+			subagent.CancelRuns(taskIDs)
+		}
 	}
 
 	// Notify Python ChatAgent to cancel any active chat session for this conversation.

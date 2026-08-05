@@ -36,6 +36,13 @@ func extractWorkflowID(yamlContent string) string {
 	return ""
 }
 
+func setWorkflowYAMLUpdate(updates map[string]any, yamlContent string) {
+	// GORM treats map keys as physical column names. The persistence schema
+	// deliberately retains plugin_id as a compatibility boundary. // workflow-naming: persistence
+	updates["plugin_yaml_content"] = yamlContent          // workflow-naming: persistence
+	updates["plugin_id"] = extractWorkflowID(yamlContent) // workflow-naming: persistence
+}
+
 // isBuiltinWorkflowID returns true when id does not look like a UUID.
 // Built-in plugin IDs are human-readable strings (e.g. "image-plugin"),
 // while user draft IDs are always UUID v4 strings generated on creation.
@@ -319,9 +326,8 @@ func SaveWorkflowDraft(w http.ResponseWriter, r *http.Request) {
 		updates["content"] = *body.Content
 	}
 	if body.WorkflowYAMLContent != nil {
-		updates["workflow_yaml_content"] = *body.WorkflowYAMLContent
 		// Keep workflow_id in sync so the per-user unique index can enforce deduplication.
-		updates["workflow_id"] = extractWorkflowID(*body.WorkflowYAMLContent)
+		setWorkflowYAMLUpdate(updates, *body.WorkflowYAMLContent)
 	}
 	if body.StateYAMLContent != nil {
 		updates["state_yaml_content"] = *body.StateYAMLContent
@@ -346,8 +352,9 @@ func SaveWorkflowDraft(w http.ResponseWriter, r *http.Request) {
 	result := query.Updates(updates)
 	if result.Error != nil {
 		err := result.Error
-		if strings.Contains(err.Error(), "idx_workflow_drafts_user_workflow_id") ||
-			strings.Contains(err.Error(), "unique") && strings.Contains(err.Error(), "workflow_id") {
+		errText := strings.ToLower(err.Error())
+		if strings.Contains(errText, "idx_plugin_drafts_user_plugin_id") || // workflow-naming: persistence
+			strings.Contains(errText, "unique") && strings.Contains(errText, "plugin_id") { // workflow-naming: persistence
 			common.ReplyErr(w, "plugin id already exists for this user", http.StatusConflict)
 			return
 		}

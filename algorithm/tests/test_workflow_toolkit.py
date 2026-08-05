@@ -20,6 +20,39 @@ def test_common_toolkit_exposes_complete_skill_capabilities():
     } <= names
 
 
+def test_advance_step_exposes_strict_step_command_schema_and_accepts_it():
+    from lazyllm.tools.agent import ToolManager
+    from lazymind.workflow_toolkit import StepCommandInput
+
+    client = MagicMock()
+    client.advance.return_value.result = {'accepted': True}
+    toolkit = HostWorkflowToolkit(lambda: client)
+    manager = ToolManager([toolkit.advance_step])
+    schema = manager.tools_description[0]['function']['parameters']
+    step_schema = schema['$defs']['StepCommandInput']
+    assert set(step_schema['properties']) == {
+        'step_id', 'task_id', 'objective', 'user_input',
+        'runtime_instruction', 'partial_indices',
+    }
+    assert step_schema['additionalProperties'] is False
+    assert step_schema['required'] == ['step_id']
+
+    toolkit.advance_step('session-1', 1, [StepCommandInput(step_id='prompt')], 'command-1')
+    request = client.advance.call_args.args[0]
+    assert request.command_id == 'command-1'
+    assert request.steps[0].step_id == 'prompt'
+
+
+def test_prepare_workflow_binds_host_origin_reference():
+    client = MagicMock()
+    client.prepare_workflow.return_value.result = {'status': 'ready'}
+    toolkit = HostWorkflowToolkit(lambda: client, origin_ref='conversation-1')
+    assert toolkit.prepare_workflow('writer') == {'status': 'ready'}
+    assert client.prepare_workflow.call_args.kwargs['fields'] == {
+        'origin_ref': 'conversation-1',
+    }
+
+
 def test_common_toolkit_contains_no_model_dependency():
     source = (Path(__file__).parents[1] / 'lazymind/workflow_toolkit.py').read_text()
     assert 'AutoModel' not in source

@@ -11,9 +11,25 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from lazymind.workflow_sdk import (
     AdvanceRequest, StepCommand, WorkflowClient, WorkflowClientError,
 )
+
+
+class StepCommandInput(BaseModel):
+    """One Ready Workflow target; command metadata belongs to advance_step."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    step_id: str = Field(description='Exact Ready step_id returned by get_ready_steps.')
+    task_id: str = Field(default='', description='Optional caller-generated task id.')
+    objective: str = Field(default='', description='Objective for this step execution.')
+    user_input: str = Field(default='', description='User input forwarded to the step.')
+    runtime_instruction: str = Field(default='', description='Attempt-only execution instruction.')
+    partial_indices: Dict[str, List[int]] = Field(
+        default_factory=dict, description='Optional slot-to-list-index retry selector.')
 
 
 WORKFLOW_SKILL_NAME = 'workflow-agent-kit'
@@ -34,8 +50,10 @@ class HostWorkflowToolkit:
     """Expose the complete public Workflow SDK as Agent-callable functions."""
 
     def __init__(self, client_factory: Callable[[], WorkflowClient],
-                 allowed_workflow_ids: Optional[List[str]] = None):
+                 allowed_workflow_ids: Optional[List[str]] = None,
+                 origin_ref: str = ''):
         self._client_factory = client_factory
+        self._origin_ref = origin_ref.strip()
         self._allowed_workflow_ids = frozenset(
             value.strip() for value in (allowed_workflow_ids or []) if value.strip()
         )
@@ -82,7 +100,8 @@ class HostWorkflowToolkit:
         """Validate a Workflow and durable inputs without creating a Session."""
         self._require_allowed(workflow_id)
         return self._client().prepare_workflow(
-            workflow_id, input_bindings=input_bindings, command_id=command_id).result
+            workflow_id, input_bindings=input_bindings, command_id=command_id,
+            fields={'origin_ref': self._origin_ref} if self._origin_ref else None).result
 
     def start_workflow(self, preparation_id: str, session_id: str,
                        command_id: str = '') -> Dict[str, Any]:
@@ -99,11 +118,13 @@ class HostWorkflowToolkit:
         return self._client().get_ready_steps(session_id)
 
     def advance_step(self, session_id: str, expected_state_version: int,
-                     steps: List[Dict[str, Any]], command_id: str = '') -> Dict[str, Any]:
-        """Submit Ready targets; Runtime deterministically resolves execute/retry/rewind."""
+                     steps: List[StepCommandInput], command_id: str = '') -> Dict[str, Any]:
+        """Submit Ready targets; command_id is top-level and never belongs inside steps."""
+        commands = [StepCommand(**item.model_dump()) if isinstance(item, StepCommandInput)
+                    else StepCommand(**item) for item in steps]
         return self._client().advance(AdvanceRequest(
             session_id=session_id, expected_state_version=expected_state_version,
-            steps=[StepCommand(**item) for item in steps],
+            steps=commands,
             command_id=command_id or str(uuid.uuid4()),
         )).result
 

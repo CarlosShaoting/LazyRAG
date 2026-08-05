@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
@@ -21,6 +22,17 @@ const runPath = "/api/subagent/run"
 
 // subagentRunTimeout bounds a single SubAgent execution. Long tasks rely on ctx, not this ceiling.
 const subagentRunTimeout = 2 * time.Hour
+
+var activeRunCancels sync.Map
+
+// CancelRuns interrupts the HTTP streams driving the requested SubAgent tasks.
+func CancelRuns(taskIDs []string) {
+	for _, taskID := range taskIDs {
+		if value, ok := activeRunCancels.Load(taskID); ok {
+			value.(context.CancelFunc)()
+		}
+	}
+}
 
 // RunRequest is the body posted to the algorithm layer /api/subagent/run.
 // task_id doubles as the request sid (independent FileSystemQueue bucket).
@@ -80,6 +92,8 @@ func Run(ctx context.Context, db *gorm.DB, stateStore state.Store, req RunReques
 // the SSE stream a second time.
 func RunObserved(ctx context.Context, db *gorm.DB, stateStore state.Store, req RunRequest, observe func(TaskEvent) error) error {
 	runCtx, cancel := context.WithTimeout(ctx, subagentRunTimeout)
+	activeRunCancels.Store(req.TaskID, context.CancelFunc(cancel))
+	defer activeRunCancels.Delete(req.TaskID)
 	defer cancel()
 
 	bodyBytes, err := json.Marshal(req)
