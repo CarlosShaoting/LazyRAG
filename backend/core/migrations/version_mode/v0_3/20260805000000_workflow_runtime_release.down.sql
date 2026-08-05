@@ -26,6 +26,7 @@ ALTER TABLE plugin_sessions
     DROP COLUMN IF EXISTS controller_host,
     DROP COLUMN IF EXISTS origin_ref,
     DROP COLUMN IF EXISTS origin_host;
+ALTER TABLE user_plugin_settings DROP COLUMN IF EXISTS call_mode;
 
 -- +migrate Dialect sqlite
 ALTER TABLE plugin_drafts DROP COLUMN driver_content;
@@ -52,3 +53,4 @@ DROP INDEX IF EXISTS idx_plugin_sessions_origin;
 ALTER TABLE plugin_sessions DROP COLUMN controller_host;
 ALTER TABLE plugin_sessions DROP COLUMN origin_ref;
 ALTER TABLE plugin_sessions DROP COLUMN origin_host;
+ALTER TABLE user_plugin_settings DROP COLUMN call_mode;
