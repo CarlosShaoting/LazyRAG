@@ -319,12 +319,13 @@ class WorkflowClient:
             headers=self._headers(command_id), timeout=self.timeout,
         ))
 
-    def start_workflow(self, preparation_id: str, session_id: str,
+    def start_workflow(self, preparation_id: str, session_id: str = '',
                        *, command_id: str = '') -> WorkflowResponse:
         command_id = command_id or preparation_id
         return self._decode(self.transport.post(
             f'{self.base_url}/workflow-preparations/{preparation_id}:consume',
-            json={'session_id': session_id}, headers=self._headers(command_id), timeout=self.timeout,
+            json={'session_id': session_id} if session_id else {},
+            headers=self._headers(command_id), timeout=self.timeout,
         ))
 
     def advance(self, request: AdvanceRequest) -> WorkflowResponse:

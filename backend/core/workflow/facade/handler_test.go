@@ -126,6 +126,21 @@ func TestConsumeHTTPChecksOwnerAndConsumesExactlyOnce(t *testing.T) {
 	}
 }
 
+func TestConsumeHTTPRejectsOversizedSessionIDBeforePersistence(t *testing.T) {
+	h, _ := testHandler(t)
+	r := request(http.MethodPost, "/workflow-preparations/prep/consume", "owner",
+		[]byte(`{"session_id":"1234567890123456789012345678901234567"}`))
+	r = mux.SetURLVars(r, map[string]string{"preparation_id": "prep"})
+	w := httptest.NewRecorder()
+	h.Consume(w, r)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	if got := decodeEnvelope(t, w).Error; got == nil || got.Code != "INVALID_REQUEST" {
+		t.Fatalf("unexpected error: %#v", got)
+	}
+}
+
 func TestCommandHTTPChecksVersionPermissionAndExecutesLegacyOnce(t *testing.T) {
 	h, db := testHandler(t)
 	if err := db.Exec(`INSERT INTO plugin_sessions(id, create_user_id) VALUES ('s1','owner')`).Error; err != nil {

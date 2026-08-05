@@ -43,14 +43,72 @@ def test_advance_step_exposes_strict_step_command_schema_and_accepts_it():
     assert request.steps[0].step_id == 'prompt'
 
 
+def test_generated_command_id_is_returned_for_later_reconciliation():
+    client = MagicMock()
+    client.stop_workflow.return_value.result = {'status': 'waiting'}
+    toolkit = HostWorkflowToolkit(lambda: client)
+
+    result = toolkit.stop_workflow('session-1')
+
+    assert result['status'] == 'waiting'
+    assert result['command_id']
+    client.stop_workflow.assert_called_once_with('session-1', result['command_id'])
+
+
 def test_prepare_workflow_binds_host_origin_reference():
     client = MagicMock()
-    client.prepare_workflow.return_value.result = {'status': 'ready'}
+    client.prepare_workflow.return_value.result = {'status': 'missing_inputs'}
     toolkit = HostWorkflowToolkit(lambda: client, origin_ref='conversation-1')
-    assert toolkit.prepare_workflow('writer') == {'status': 'ready'}
+    assert toolkit.prepare_workflow('writer') == {'status': 'missing_inputs'}
     assert client.prepare_workflow.call_args.kwargs['fields'] == {
         'origin_ref': 'conversation-1',
     }
+
+
+def test_chat_prepare_starts_session_and_returns_authoritative_ready_frontier():
+    client = MagicMock()
+    client.prepare_workflow.return_value.result = {
+        'id': 'preparation-1', 'status': 'ready', 'workflow_id': 'writer',
+    }
+    client.start_workflow.return_value.result = {
+        'session_id': 'server-session', 'status': 'active', 'state_version': 1,
+    }
+    client.get_ready_steps.return_value = {
+        'session_id': 'server-session', 'state_version': 1, 'ready_steps': ['prompt'],
+    }
+    toolkit = HostWorkflowToolkit(lambda: client, origin_ref='conversation-1')
+
+    result = toolkit.prepare_workflow('writer')
+
+    assert result['session_id'] == 'server-session'
+    assert result['ready_steps'] == ['prompt']
+    assert result['next_action']['tool'] == 'advance_step'
+    client.start_workflow.assert_called_once_with(
+        'preparation-1', '', command_id='',
+    )
+    client.advance.assert_not_called()
+
+
+def test_non_chat_host_can_supply_session_id_without_auto_dispatch():
+    client = MagicMock()
+    client.start_workflow.return_value.result = {'session_id': 'host-session', 'status': 'active'}
+    toolkit = HostWorkflowToolkit(lambda: client)
+
+    assert toolkit.start_workflow('preparation-1', 'host-session')['session_id'] == 'host-session'
+    client.start_workflow.assert_called_once_with(
+        'preparation-1', 'host-session', command_id='',
+    )
+    client.get_ready_steps.assert_not_called()
+    client.advance.assert_not_called()
+
+
+def test_chat_toolset_hides_low_level_start_workflow():
+    names = {tool.__name__ for tool in HostWorkflowToolkit(
+        MagicMock(), origin_ref='conversation-1',
+    ).tools()}
+    assert 'prepare_workflow' in names
+    assert 'advance_step' in names
+    assert 'start_workflow' not in names
 
 
 def test_common_toolkit_contains_no_model_dependency():

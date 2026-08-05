@@ -1086,6 +1086,7 @@ export function WorkflowPanel({
   const autoRunning = useWorkflowStore((s) =>
     conversationId ? (s.autoRunningByConversation[conversationId] ?? false) : false,
   );
+  const setAutoRunning = useWorkflowStore((s) => s.setAutoRunning);
   const [activeTabIdx, setActiveTabIdx] = React.useState(0);
   const [collapsed, setCollapsed] = useState(false);
   const fetchWorkflowUI = useWorkflowStore((s) => s.fetchWorkflowUI);
@@ -1115,6 +1116,14 @@ export function WorkflowPanel({
       detail: { conversationId, expanded: nextExpanded },
     }));
   }, [conversationId]);
+
+  const handleStop = useCallback(() => {
+    setAutoRunning(conversationId, false);
+    onStop?.();
+    window.setTimeout(() => {
+      void refresh();
+    }, 250);
+  }, [conversationId, onStop, refresh, setAutoRunning]);
 
   useEffect(() => {
     window.dispatchEvent(new CustomEvent(PLUGIN_PANEL_EXPANDED_EVENT, {
@@ -1487,7 +1496,7 @@ export function WorkflowPanel({
             <button
               type='button'
               className='workflow-panel__action-btn workflow-panel__action-btn--danger'
-              onClick={onStop}
+              onClick={handleStop}
               title={t('chat.workflowStop')}
             >
               {t('chat.workflowStop')}

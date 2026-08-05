@@ -225,7 +225,7 @@ func notifyTaskCancel(taskID string) {
 	body, _ := json.Marshal(map[string]string{
 		"task_id": taskID,
 	})
-	url := common.JoinURL(common.ChatServiceEndpoint(), "/api/plugin/task-cancel")
+	url := common.JoinURL(common.ChatServiceEndpoint(), "/api/workflow/task-cancel")
 	resp, err := http.Post(url, "application/json", bytes.NewReader(body)) //nolint:noctx
 	if err != nil {
 		fmt.Printf("[plugin] notifyTaskCancel: %v\n", err)
@@ -241,7 +241,7 @@ func NotifyChatCancel(convID string) {
 	body, _ := json.Marshal(map[string]string{
 		"conversation_id": convID,
 	})
-	url := common.JoinURL(common.ChatServiceEndpoint(), "/api/plugin/task-cancel")
+	url := common.JoinURL(common.ChatServiceEndpoint(), "/api/workflow/task-cancel")
 	resp, err := http.Post(url, "application/json", bytes.NewReader(body)) //nolint:noctx
 	if err != nil {
 		fmt.Printf("[plugin] NotifyChatCancel: %v\n", err)

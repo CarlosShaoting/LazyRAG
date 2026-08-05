@@ -32,6 +32,16 @@ class StepCommandInput(BaseModel):
         default_factory=dict, description='Optional slot-to-list-index retry selector.')
 
 
+class InputResourceRef(BaseModel):
+    """Immutable resource reference returned by import_input_resource."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    resource_id: str
+    revision: int
+    content_hash: str
+
+
 WORKFLOW_SKILL_NAME = 'workflow-agent-kit'
 
 
@@ -97,17 +107,50 @@ class HostWorkflowToolkit:
 
     def prepare_workflow(self, workflow_id: str, input_bindings: Optional[Dict[str, Any]] = None,
                          command_id: str = '') -> Dict[str, Any]:
-        """Validate a Workflow and durable inputs without creating a Session."""
+        """Prepare a Workflow; in LazyMind create its Session and return Ready steps."""
         self._require_allowed(workflow_id)
-        return self._client().prepare_workflow(
+        client = self._client()
+        prepared = client.prepare_workflow(
             workflow_id, input_bindings=input_bindings, command_id=command_id,
             fields={'origin_ref': self._origin_ref} if self._origin_ref else None).result
+        if not self._origin_ref or prepared.get('status') != 'ready':
+            return prepared
+        preparation_id = str(prepared.get('id') or prepared.get('preparation_id') or '')
+        if not preparation_id:
+            raise WorkflowClientError(
+                'INVALID_PREPARATION_RESPONSE',
+                'ready preparation did not return preparation_id.',
+            )
+        started = client.start_workflow(preparation_id, '', command_id='').result
+        session_id = str(started.get('session_id') or started.get('workflow_session_id') or '')
+        if not session_id:
+            raise WorkflowClientError(
+                'INVALID_START_RESPONSE',
+                'started Workflow did not return session_id.',
+            )
+        ready = client.get_ready_steps(session_id)
+        return {
+            **prepared,
+            **started,
+            'preparation_id': preparation_id,
+            'session_id': session_id,
+            'state_version': ready.get('state_version', started.get('state_version')),
+            'ready_steps': ready.get('ready_steps') or [],
+            'next_action': {
+                'tool': 'advance_step',
+                'instruction': (
+                    'Call advance_step with this session_id, state_version, and every returned '
+                    'ready step. Do not invent or infer step IDs.'
+                ),
+            },
+        }
 
-    def start_workflow(self, preparation_id: str, session_id: str,
+    def start_workflow(self, preparation_id: str, session_id: str = '',
                        command_id: str = '') -> Dict[str, Any]:
-        """Consume a ready preparation and create its public Workflow Session."""
+        """Start a prepared Workflow; omit session_id so the server generates it."""
         return self._client().start_workflow(
-            preparation_id, session_id, command_id=command_id).result
+            preparation_id, '' if self._origin_ref else session_id,
+            command_id=command_id).result
 
     def get_workflow_state(self, session_id: str) -> Dict[str, Any]:
         """Read the authoritative public projection and state_version."""
@@ -122,22 +165,28 @@ class HostWorkflowToolkit:
         """Submit Ready targets; command_id is top-level and never belongs inside steps."""
         commands = [StepCommand(**item.model_dump()) if isinstance(item, StepCommandInput)
                     else StepCommand(**item) for item in steps]
-        return self._client().advance(AdvanceRequest(
+        resolved_command_id = command_id or str(uuid.uuid4())
+        result = self._client().advance(AdvanceRequest(
             session_id=session_id, expected_state_version=expected_state_version,
             steps=commands,
-            command_id=command_id or str(uuid.uuid4()),
+            command_id=resolved_command_id,
         )).result
+        return {**result, 'command_id': resolved_command_id}
 
     def stop_workflow(self, session_id: str, command_id: str = '') -> Dict[str, Any]:
         """Stop a Workflow while preserving durable state and Artifact history."""
-        return self._client().stop_workflow(session_id, command_id).result
+        resolved_command_id = command_id or str(uuid.uuid4())
+        result = self._client().stop_workflow(session_id, resolved_command_id).result
+        return {**result, 'command_id': resolved_command_id}
 
     def resume_workflow(self, session_id: str, command_id: str = '') -> Dict[str, Any]:
         """Resume a stopped Workflow from its persisted public projection."""
-        return self._client().resume_workflow(session_id, command_id).result
+        resolved_command_id = command_id or str(uuid.uuid4())
+        result = self._client().resume_workflow(session_id, resolved_command_id).result
+        return {**result, 'command_id': resolved_command_id}
 
     def get_workflow_command(self, command_id: str) -> Dict[str, Any]:
-        """Reconcile the durable result of an idempotent Workflow command."""
+        """Reconcile an uncertain transition using its previously returned command_id."""
         return self._client().get_command(command_id).result
 
     def import_input_resource(self, name: str, mime_type: str,
@@ -158,10 +207,13 @@ class HostWorkflowToolkit:
         return self._client().list_workflow_inputs(session_id).result
 
     def bind_workflow_input(self, session_id: str, material_id: str,
-                            resource: Dict[str, Any], command_id: str = '') -> Dict[str, Any]:
+                            resource: InputResourceRef, command_id: str = '') -> Dict[str, Any]:
         """Bind an exact immutable resource revision to a Session material."""
-        return self._client().bind_workflow_input(
-            session_id, material_id, resource, command_id).result
+        resolved_command_id = command_id or str(uuid.uuid4())
+        value = resource.model_dump() if isinstance(resource, InputResourceRef) else resource
+        result = self._client().bind_workflow_input(
+            session_id, material_id, value, resolved_command_id).result
+        return {**result, 'command_id': resolved_command_id}
 
     def list_artifacts(self, session_id: str) -> Dict[str, Any]:
         """List selected output Artifact revisions, including deletion tombstones."""
@@ -175,13 +227,18 @@ class HostWorkflowToolkit:
                        content_type: str = 'json', caption: str = '',
                        command_id: str = '') -> Dict[str, Any]:
         """Create a new selected Artifact revision without overwriting history."""
-        return self._client().patch_artifact(
-            artifact_id, base_revision, value, content_type, caption, command_id).result
+        resolved_command_id = command_id or str(uuid.uuid4())
+        result = self._client().patch_artifact(
+            artifact_id, base_revision, value, content_type, caption, resolved_command_id).result
+        return {**result, 'command_id': resolved_command_id}
 
     def delete_artifact(self, artifact_id: str, base_revision: int,
                         command_id: str = '') -> Dict[str, Any]:
         """Create a selected deletion tombstone revision; never erase history."""
-        return self._client().delete_artifact(artifact_id, base_revision, command_id).result
+        resolved_command_id = command_id or str(uuid.uuid4())
+        result = self._client().delete_artifact(
+            artifact_id, base_revision, resolved_command_id).result
+        return {**result, 'command_id': resolved_command_id}
 
     def list_skills(self) -> Dict[str, Any]:
         """List Skills visible for deterministic Skill-to-Workflow conversion."""
@@ -243,7 +300,7 @@ class HostWorkflowToolkit:
 
     def tools(self) -> List[Callable[..., Any]]:
         """Return the complete common tool set in stable lifecycle order."""
-        return [
+        tools = [
             self.workflow_connection_status, self.list_workflows, self.get_workflow,
             self.prepare_workflow, self.start_workflow,
             self.get_workflow_state, self.get_ready_steps, self.advance_step,
@@ -259,3 +316,6 @@ class HostWorkflowToolkit:
             self.publish_workflow, self.list_workflow_versions,
             self.archive_workflow, self.restore_workflow,
         ]
+        if self._origin_ref:
+            tools.remove(self.start_workflow)
+        return tools

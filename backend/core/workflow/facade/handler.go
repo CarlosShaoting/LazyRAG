@@ -14,6 +14,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"gorm.io/gorm"
+	"lazymind/core/common"
 	workflowexecutor "lazymind/core/workflow/executor"
 	workflowstore "lazymind/core/workflow/store"
 )
@@ -584,8 +585,15 @@ func (h Handler) Consume(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		SessionID string `json:"session_id"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.SessionID == "" {
-		fail(w, 422, "INVALID_REQUEST", "session_id is required", false)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		fail(w, 422, "INVALID_REQUEST", "invalid consume request", false)
+		return
+	}
+	if req.SessionID == "" {
+		req.SessionID = common.GenerateID()
+	}
+	if len(req.SessionID) > 36 {
+		fail(w, 422, "INVALID_REQUEST", "session_id must be at most 36 characters", false)
 		return
 	}
 	prepared, _, err := h.Store.Consume(r.Context(), id, owner, req.SessionID)

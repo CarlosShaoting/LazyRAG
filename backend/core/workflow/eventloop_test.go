@@ -493,7 +493,7 @@ func TestStopActiveWorkflowSession_SendsTaskCancel(t *testing.T) {
 
 	taskCancelCalls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "task-cancel") {
+		if r.URL.Path == "/api/workflow/task-cancel" {
 			taskCancelCalls++
 		}
 		w.WriteHeader(http.StatusOK)
@@ -507,7 +507,7 @@ func TestStopActiveWorkflowSession_SendsTaskCancel(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	if taskCancelCalls == 0 {
-		t.Fatal("expected at least one /api/plugin/task-cancel call")
+		t.Fatal("expected at least one /api/workflow/task-cancel call")
 	}
 }
 
@@ -547,7 +547,7 @@ func TestStopActiveWorkflowSession_CancelsAllPendingAndRunningAttempts(t *testin
 	var mu sync.Mutex
 	cancelled := map[string]bool{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "task-cancel") {
+		if r.URL.Path == "/api/workflow/task-cancel" {
 			var body map[string]string
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			mu.Lock()
