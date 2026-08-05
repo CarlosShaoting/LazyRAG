@@ -560,6 +560,7 @@ export const useTaskCenterStore = create<TaskCenterStore>()((set, get) => ({
               useWorkflowStore.getState().setAutoRunning(conversationId, true);
             });
           } else if (
+			type === 'workflow_runtime_updated' ||
             type === 'step_waiting' ||
             type === 'workflow_completed' ||
             type === 'workflow_error'

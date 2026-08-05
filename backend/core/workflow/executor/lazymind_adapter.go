@@ -36,6 +36,14 @@ func (loader DBContextLoader) LoadAttemptContext(ctx context.Context, id string)
 		return AttemptContext{}, err
 	}
 	value.WorkflowRevision = session.WorkflowRevisionID
+	if value.Metadata == nil {
+		value.Metadata = map[string]string{}
+	}
+	value.Metadata["controller_host"] = session.ControllerHost
+	value.Metadata["origin_host"] = session.OriginHost
+	value.Metadata["conversation_id"] = session.ConversationID
+	value.Metadata["owner_user_id"] = session.CreateUserID
+	value.Metadata["task_id"] = row.TaskID
 	if session.WorkflowRevisionID != "" {
 		var revision orm.WorkflowRevision
 		if err := loader.DB.WithContext(ctx).Where("id = ?", session.WorkflowRevisionID).First(&revision).Error; err == nil {
@@ -43,7 +51,8 @@ func (loader DBContextLoader) LoadAttemptContext(ctx context.Context, id string)
 			if json.Unmarshal(revision.CompiledGraph, &graph) == nil {
 				if node, ok := graph.Nodes[row.StepID]; ok {
 					value.Prompt, value.Acceptance = node.Prompt, node.Acceptance
-					value.RequiredOutputs, value.Capabilities, value.LegacyTools = node.RequiredOutputs, node.Capabilities, node.LegacyTools
+					value.DeclaredOutputs, value.RequiredOutputs = node.Outputs, node.RequiredOutputs
+					value.Capabilities, value.LegacyTools = node.Capabilities, node.LegacyTools
 				}
 			}
 		}
@@ -56,30 +65,9 @@ func (loader DBContextLoader) LoadAttemptContext(ctx context.Context, id string)
 		for _, binding := range bindings {
 			value.Inputs[binding.MaterialID] = map[string]any{"source_type": binding.SourceType,
 				"source_id": binding.SourceID, "source_revision": binding.SourceRevision,
-				"content_hash": binding.ContentHash, "bind_as": binding.BindAs}
+				"source_revision_id": binding.MaterialRevisionID, "content_hash": binding.ContentHash,
+				"bind_as": binding.BindAs}
 		}
 	}
 	return value, nil
-}
-
-// Mode is an explicit rollback switch. legacy performs no canonical claim;
-// shadow compares output but leaves legacy authoritative; canary enables it for
-// the configured percentage; canonical enables all eligible Attempts.
-type Mode string
-
-const (
-	ModeLegacy    Mode = "legacy"
-	ModeShadow    Mode = "shadow"
-	ModeCanary    Mode = "canary"
-	ModeCanonical Mode = "canonical"
-)
-
-func UseCanonical(mode Mode, canaryPercent, bucket int, schemaCapable bool) bool {
-	if !schemaCapable || mode == ModeLegacy || mode == ModeShadow {
-		return false
-	}
-	if mode == ModeCanonical {
-		return true
-	}
-	return mode == ModeCanary && canaryPercent > 0 && bucket >= 0 && bucket%100 < canaryPercent
 }

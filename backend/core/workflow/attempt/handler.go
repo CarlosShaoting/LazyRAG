@@ -1,9 +1,11 @@
 package attempt
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/gorilla/mux"
@@ -36,6 +38,14 @@ func respond(w http.ResponseWriter, status int, data any, err *toolError) {
 }
 
 func executorID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	expected := strings.TrimSpace(os.Getenv("LAZYMIND_WORKFLOW_EXECUTOR_TOKEN"))
+	if expected != "" {
+		provided := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+		if len(provided) != len(expected) || subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) != 1 {
+			respond(w, http.StatusUnauthorized, nil, &toolError{Code: "EXECUTOR_UNAUTHORIZED", Message: "invalid Executor credential"})
+			return "", false
+		}
+	}
 	id := strings.TrimSpace(r.Header.Get("X-Workflow-Executor-Id"))
 	if id == "" {
 		respond(w, http.StatusUnauthorized, nil, &toolError{Code: "EXECUTOR_IDENTITY_REQUIRED", Message: "executor identity is required"})

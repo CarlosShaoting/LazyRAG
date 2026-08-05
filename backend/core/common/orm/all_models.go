@@ -31,7 +31,6 @@ func AllModelsForDDL() []interface{} {
 		&WorkflowAttemptInputBinding{},
 		&WorkflowRouteDecision{},
 		&WorkflowTransitionCommand{},
-		&WorkflowRunOutbox{},
 		&WorkflowOutbox{},
 		&WorkflowSlotOrder{},
 		&WorkflowStepIntent{},

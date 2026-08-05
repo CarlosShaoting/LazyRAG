@@ -117,6 +117,35 @@ class SubAgentDB:
         return [json.dumps(row, ensure_ascii=False, default=str) for row in rows]
 
 
+class MemorySubAgentStore:
+    """Per-execution state for remote hosts that must not connect to Core DB."""
+
+    def __init__(self, task: Dict[str, Any], steps: Optional[List[Dict[str, Any]]] = None) -> None:
+        self._task = dict(task)
+        self._steps = [dict(step) for step in (steps or [])]
+
+    def load_task(self, task_id: str) -> Optional[Dict[str, Any]]:
+        return dict(self._task) if str(self._task.get('id')) == task_id else None
+
+    def append_step(self, task_id: str, seq: int, role: str, content: Dict[str, Any]) -> None:
+        self._steps.append({'seq': seq, 'role': role, 'content': dict(content)})
+
+    def load_steps(self, task_id: str) -> List[Dict[str, Any]]:
+        return [dict(step) for step in sorted(self._steps, key=lambda value: value['seq'])]
+
+    def max_step_seq(self, task_id: str) -> int:
+        return max((int(step['seq']) for step in self._steps), default=-1)
+
+    def next_artifact_seq(self, task_id: str, key: str) -> int:
+        return 1
+
+    def load_artifacts(self, task_id: str, keys: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        return []
+
+    def dispose(self) -> None:
+        pass
+
+
 _query_engine: Optional[Engine] = None
 
 

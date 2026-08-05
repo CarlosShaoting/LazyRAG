@@ -45,7 +45,7 @@ func TestQueueIsAtomicAndOutboxIsolated(t *testing.T) {
 	if err := db.First(&outbox, "attempt_id = ?", "a1").Error; err != nil || outbox.Status != "pending" {
 		t.Fatalf("outbox=%#v err=%v", outbox, err)
 	}
-	if db.Migrator().HasTable(&orm.WorkflowRunOutbox{}) {
+	if db.Migrator().HasTable("plugin_run_outbox") {
 		t.Fatal("new protocol must not create the legacy worker outbox")
 	}
 }
@@ -157,6 +157,53 @@ func TestHeartbeatExtendsLeaseAndTransitionsRunning(t *testing.T) {
 	row, _ := service.Attempt(context.Background(), "a1")
 	if row.Status != "running" {
 		t.Fatal(row.Status)
+	}
+}
+
+func TestValidateLeaseAcceptsOnlyCurrentLiveOwner(t *testing.T) {
+	service, _ := testService(t)
+	now := time.Date(2026, 8, 3, 0, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+	queue(t, service, "a1", "s1", "step")
+	claim, _ := service.Claim(context.Background(), "executor")
+	if err := service.ValidateLease(context.Background(), "a1", claim.LeaseToken); err != nil {
+		t.Fatalf("live lease rejected: %v", err)
+	}
+	if err := service.ValidateLease(context.Background(), "a1", "stale"); !errors.Is(err, ErrLeaseLost) {
+		t.Fatalf("stale lease error=%v", err)
+	}
+	now = now.Add(2 * time.Minute)
+	if err := service.ValidateLease(context.Background(), "a1", claim.LeaseToken); !errors.Is(err, ErrLeaseLost) {
+		t.Fatalf("expired lease error=%v", err)
+	}
+}
+
+func TestClaimForHostDoesNotStealAnotherHostAttempt(t *testing.T) {
+	service, db := testService(t)
+	if err := db.AutoMigrate(&orm.WorkflowSession{}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, session := range []orm.WorkflowSession{
+		{ID: "session-codex", ConversationID: "c1", WorkflowID: "w", ControllerHost: "codex", Status: "active", CreatedAt: now, UpdatedAt: now},
+		{ID: "session-lazymind", ConversationID: "c2", WorkflowID: "w", ControllerHost: "lazymind", Status: "active", CreatedAt: now, UpdatedAt: now},
+	} {
+		if err := db.Create(&session).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	queue(t, service, "codex-attempt", "session-codex", "step")
+	queue(t, service, "lazymind-attempt", "session-lazymind", "step")
+	claim, err := service.ClaimForHost(context.Background(), "lazy-executor", "lazymind")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claim.AttemptID != "lazymind-attempt" {
+		t.Fatalf("claimed=%s", claim.AttemptID)
+	}
+	codex, _ := service.Attempt(context.Background(), "codex-attempt")
+	if codex.Status != "queued" {
+		t.Fatalf("codex status=%s", codex.Status)
 	}
 }
 

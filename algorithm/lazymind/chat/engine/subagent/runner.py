@@ -35,7 +35,7 @@ from lazymind.chat.service.component.tool_registry import (
 from lazyllm.tools.tool_config_inject import inject_tool_config
 
 from .context import SubAgentContext, set_context, LARGE_TOOL_RESULT_THRESHOLD
-from .db import SubAgentDB
+from .db import MemorySubAgentStore, SubAgentDB
 from . import tools as subagent_tools
 from . import SUBAGENT_ATTACHMENT_CONTEXT_KEY, SUBAGENT_CORE_TOOL_NAMES
 
@@ -472,12 +472,14 @@ def _persist_step(ctx: SubAgentContext, seq: int, event: Dict[str, Any]) -> None
 
 async def run_subagent_stream(
     task_id: str,
-    db_dsn: str,
+    db_dsn: str = '',
     resume: bool = False,
     model_config: Optional[Dict[str, Any]] = None,
     tool_config: Optional[Dict[str, Any]] = None,
     agent_type: Optional[str] = None,
     tools: Optional[List[str]] = None,
+    task_spec: Optional[Dict[str, Any]] = None,
+    initial_steps: Optional[List[Dict[str, Any]]] = None,
 ):
     """Async generator yielding Task SSE lines.
 
@@ -496,7 +498,8 @@ async def run_subagent_stream(
         return 'data: ' + json.dumps(ev, ensure_ascii=False, default=str) + '\n\n'
 
     try:
-        db = SubAgentDB(db_dsn)
+        db = (MemorySubAgentStore(task_spec, initial_steps)
+              if task_spec is not None else SubAgentDB(db_dsn))
         task = db.load_task(task_id)
         if not task:
             yield _sse({'type': 'error', 'status': 'failed', 'message': f'task {task_id} not found'})

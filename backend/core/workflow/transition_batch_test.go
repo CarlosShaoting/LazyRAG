@@ -35,6 +35,8 @@ func setupBatchTransitionSession(t *testing.T) (*orm.DB, string) {
 		&orm.WorkflowAttemptInputBinding{},
 		&orm.WorkflowRouteDecision{},
 		&orm.WorkflowTransitionCommand{},
+		&orm.WorkflowOutbox{},
+		&orm.WorkflowEvent{},
 	); err != nil {
 		t.Fatalf("migrate batch transition tables: %v", err)
 	}
@@ -100,16 +102,6 @@ func runBatchTransition(t *testing.T, db *orm.DB, graphHash, operation string, t
 	req = mux.SetURLVars(req, map[string]string{"session_id": "batch-session"})
 	w := httptest.NewRecorder()
 	TransitionWorkflowSession(w, req)
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		var live int64
-		_ = db.Model(&orm.WorkflowRunOutbox{}).
-			Where("status IN ?", []string{"pending", "dispatching"}).Count(&live).Error
-		if live == 0 {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
 	var envelope map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
 		t.Fatalf("decode response: %v body=%s", err, w.Body.String())

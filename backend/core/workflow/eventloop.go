@@ -22,7 +22,6 @@ import (
 	"lazymind/core/store"
 	"lazymind/core/subagent"
 	"lazymind/core/taskcenter"
-	"lazymind/core/workflow/legacydispatch"
 )
 
 type chatStatusCacheEntry struct {
@@ -605,34 +604,11 @@ func launchWorkflowAttempt(
 		return sessionID, task.ID, false, fmt.Errorf("plugin: enqueue attempt runner: %w", enqueueErr)
 	}
 
-	if launchNow {
-		dispatchWorkflowAttemptRunner(db, stateStore, task.ID)
-	}
-
 	return sessionID, task.ID, false, nil
 }
 
 func enqueueWorkflowAttemptRunner(ctx context.Context, db *gorm.DB, request subagent.RunRequest) error {
-	if QueuedDispatchEnabled(db) {
-		return enqueueCanonicalAttempt(ctx, db, request)
-	}
-	payload, err := json.Marshal(request)
-	if err != nil {
-		return err
-	}
-	now := time.Now().UTC()
-	return db.WithContext(ctx).Create(&orm.WorkflowRunOutbox{
-		TaskID: request.TaskID, Payload: payload, Status: "pending", CreatedAt: now, UpdatedAt: now,
-	}).Error
-}
-
-// dispatchWorkflowAttemptRunner atomically claims a durable outbox item. It is
-// called only after the transaction that accepted the transition has committed.
-func dispatchWorkflowAttemptRunner(db *gorm.DB, stateStore state.Store, taskID string) {
-	if QueuedDispatchEnabled(db) {
-		return
-	}
-	legacydispatch.Dispatch(db, stateStore, taskID)
+	return enqueueCanonicalAttempt(ctx, db, request)
 }
 
 // OnSubAgentDone is called when a workflow_step task reaches terminal status.

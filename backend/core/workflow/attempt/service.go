@@ -149,7 +149,8 @@ func (s *Service) ClaimForHost(ctx context.Context, executorID, host string) (Cl
 	now := s.now()
 	var candidate orm.WorkflowSessionStep
 	query := s.db.WithContext(ctx).Model(&orm.WorkflowSessionStep{}).Where(
-		"validity = 'effective' AND (status = 'queued' OR (status IN ('claimed','running') AND lease_expires_at < ?))", now,
+		"plugin_session_steps.validity = 'effective' AND (plugin_session_steps.status = 'queued' OR "+
+			"(plugin_session_steps.status IN ('claimed','running') AND plugin_session_steps.lease_expires_at < ?))", now,
 	)
 	if host != "" {
 		query = query.Joins("JOIN plugin_sessions ps ON ps.id = plugin_session_steps.session_id").
@@ -198,6 +199,21 @@ func (s *Service) validLeaseQuery(attemptID, token string, now time.Time) *gorm.
 		"id = ? AND lease_token = ? AND lease_expires_at >= ? AND status IN ('claimed','running')",
 		attemptID, token, now,
 	)
+}
+
+// ValidateLease verifies that a remote Executor still owns a live Attempt lease.
+// Remote context, input and Artifact endpoints use this same check so a stale
+// worker cannot observe or mutate execution state after fencing advances.
+func (s *Service) ValidateLease(ctx context.Context, attemptID, token string) error {
+	var count int64
+	err := s.validLeaseQuery(attemptID, token, s.now()).WithContext(ctx).Count(&count).Error
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return ErrLeaseLost
+	}
+	return nil
 }
 
 func (s *Service) Heartbeat(ctx context.Context, attemptID, token string) (time.Time, error) {

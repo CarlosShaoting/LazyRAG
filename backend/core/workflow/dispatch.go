@@ -3,8 +3,6 @@ package workflow
 import (
 	"context"
 	"encoding/json"
-	"os"
-	"strings"
 	"time"
 
 	"lazymind/core/common/orm"
@@ -15,19 +13,6 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
-
-const QueuedDispatchEnv = "LAZYMIND_WORKFLOW_QUEUED_DISPATCH"
-
-// QueuedDispatchEnabled is default-on only when both the expand schema and the
-// in-process Attempt protocol service are available. Rollback changes this one
-// dispatch flag; queued data is retained and needs no down migration.
-func QueuedDispatchEnabled(db *gorm.DB) bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv(QueuedDispatchEnv))) {
-	case "0", "false", "off", "disabled", "legacy":
-		return false
-	}
-	return attempt.SchemaCapable(db) && attempt.ServiceCapable()
-}
 
 func enqueueCanonicalAttempt(ctx context.Context, db *gorm.DB, request subagent.RunRequest) error {
 	var step orm.WorkflowSessionStep
@@ -44,7 +29,10 @@ func enqueueCanonicalAttempt(ctx context.Context, db *gorm.DB, request subagent.
 	}
 	value := executor.AttemptContext{ContractVersion: attempt.ContractVersion, SessionID: step.SessionID,
 		AttemptID: step.ID, StepID: step.StepID, AttemptNo: step.Attempt, Operation: operation, Objective: task.Objective}
-	_ = json.Unmarshal(task.OutputSlots, &value.RequiredOutputs)
+	_ = json.Unmarshal(task.OutputSlots, &value.DeclaredOutputs)
+	if required, ok := request.Params["required_output_artifact_keys"].([]string); ok {
+		value.RequiredOutputs = required
+	}
 	if objective, ok := request.Params["objective"].(string); ok {
 		value.Objective = objective
 	}

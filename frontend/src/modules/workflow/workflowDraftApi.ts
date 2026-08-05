@@ -263,7 +263,13 @@ export interface RepairWorkflowDraftPayload {
 
 export interface WorkflowCandidate { id: string; name?: string; goal?: string; inputs?: unknown; outputs?: unknown; steps?: unknown; evidence_paths?: string[] }
 export interface WorkflowGenerationAnalysis { analysis_id: string; status: string; verdict_code: string; message: string; source_skill_revision_id: string; source_skill_revision_no: number; source_skill_tree_hash: string; candidates: WorkflowCandidate[]; selected_candidate_id: string; coverage: unknown; tool_mappings: unknown; scripts: Record<string,{classification:string;reason?:string}> }
-export async function getWorkflowGenerationAnalysis(id: string): Promise<WorkflowGenerationAnalysis> { const r=await axiosInstance.get<CoreResponse<WorkflowGenerationAnalysis>>(`${coreBasePath}/workflow-drafts/${id}/generation-analysis`); return r.data.data }
+export async function getWorkflowGenerationAnalysis(id: string): Promise<WorkflowGenerationAnalysis> {
+  const r = await axiosInstance.get<CoreResponse<WorkflowGenerationAnalysis>>(
+    `${coreBasePath}/workflow-drafts/${id}/generation-analysis`,
+    { silentError: true } as never,
+  );
+  return r.data.data;
+}
 export async function confirmWorkflowWorkflow(id: string, payload: {analysis_id:string;candidate_id:string;source_skill_revision_id:string;draft_version:number}): Promise<void> { await axiosInstance.post(`${coreBasePath}/workflow-drafts/${id}:confirm-workflow`,payload) }
 
 // Trigger AI repair for a workflow draft with warnings or incomplete state.yml.

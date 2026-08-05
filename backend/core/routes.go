@@ -74,10 +74,18 @@ func handleAgentThreadAPI(r *mux.Router, method, path string, perms []string, h 
 func registerAllRoutes(r *mux.Router) {
 	resourcefs.AutoEvoEnabledScanner = resourceupdate.ScanPendingResultsForResource
 	attemptHandler := workflowattempt.Handler{Service: workflowattempt.New(corestore.DB(), workflowattempt.Config{})}
+	remoteExecutorHandler := workflowexecutor.RemoteHandler{
+		DB: corestore.DB(), Attempts: attemptHandler.Service,
+		Contexts:  workflowexecutor.DBContextLoader{DB: corestore.DB()},
+		Artifacts: workflowexecutor.DBArtifactSink{DB: corestore.DB()},
+	}
 	handleAPI(r, "POST", "/internal/workflow-attempts:claim", nil, attemptHandler.Claim)
+	handleAPI(r, "GET", "/internal/workflow-attempts/{attempt_id}/context", nil, remoteExecutorHandler.Context)
+	handleAPI(r, "GET", "/internal/workflow-attempts/{attempt_id}/inputs/{material_id}", nil, remoteExecutorHandler.Input)
+	handleAPI(r, "POST", "/internal/workflow-attempts/{attempt_id}/artifacts", nil, remoteExecutorHandler.SaveArtifact)
 	handleAPI(r, "POST", "/internal/workflow-attempts/{attempt_id}:heartbeat", nil, attemptHandler.Heartbeat)
 	handleAPI(r, "POST", "/internal/workflow-attempts/{attempt_id}:progress", nil, attemptHandler.Progress)
-	handleAPI(r, "POST", "/internal/workflow-attempts/{attempt_id}:complete", nil, attemptHandler.Complete)
+	handleAPI(r, "POST", "/internal/workflow-attempts/{attempt_id}:complete", nil, remoteExecutorHandler.Complete)
 	handleAPI(r, "POST", "/internal/workflow-attempts/{attempt_id}:fail", nil, attemptHandler.Fail)
 	handleAPI(r, "POST", "/internal/workflow-attempts/{attempt_id}:cancel", nil, attemptHandler.Cancel)
 	workflowRepository := workflowstore.New(corestore.DB())
@@ -265,16 +273,30 @@ func registerAllRoutes(r *mux.Router) {
 	// Internal endpoint for algorithm service auto polling; no request-level RBAC.
 	handleAPI(r, "GET", "/internal/subagent/tasks/{task_id}", nil, subagent.InternalGetTaskStatus)
 	handleAPI(r, "GET", "/internal/subagent/tasks/{task_id}/events", nil, subagent.InternalGetTaskEvents)
+	handleAPI(r, "GET", "/internal/subagent/tasks/{task_id}/execution-spec", nil, subagent.InternalGetExecutionSpec)
+	handleAPI(r, "POST", "/internal/subagent/tasks/{task_id}/events", nil, subagent.InternalIngestTaskEvent)
 
 	// ----- Workflow Info -----
-	handleAPI(r, "GET", "/workflows", []string{"qa.read"}, workflowFacade.ListWorkflows)
-	handleAPI(r, "GET", "/workflows/{workflow_id}", []string{"qa.read"}, workflowFacade.GetWorkflow)
+	// Keep these catalog endpoints on the legacy response shape consumed by the
+	// Workflow management UI. The versioned facade remains in use for runtime
+	// preparation, commands, inputs, and artifacts below.
+	handleAPI(r, "GET", "/workflows", []string{"qa.read"}, workflow.ListWorkflows)
+	handleAPI(r, "GET", "/workflows/{workflow_id}", []string{"qa.read"}, func(w http.ResponseWriter, req *http.Request) {
+		workflow.GetWorkflowInfo(w, req)
+	})
 	// ----- Workflow Drafts (user-created workflow authoring) -----
 	handleAPI(r, "GET", "/workflow-drafts", []string{"qa.read"}, workflow.ListWorkflowDrafts)
 	handleAPI(r, "POST", "/workflow-drafts", []string{"qa.write"}, workflow.CreateWorkflowDraft)
+	handleAPI(r, "POST", "/workflow-drafts:polish-info", []string{"qa.write"}, workflow.PolishWorkflowDraftInfo)
 	handleAPI(r, "GET", "/workflow-drafts/{draft_id}", []string{"qa.read"}, workflow.GetWorkflowDraft)
 	handleAPI(r, "POST", "/workflow-drafts/{draft_id}:save", []string{"qa.write"}, workflow.SaveWorkflowDraft)
 	handleAPI(r, "POST", "/workflow-drafts/{draft_id}:validate", []string{"qa.read"}, workflow.ValidateWorkflowDraft)
+	handleAPI(r, "POST", "/workflow-drafts/{draft_id}:ai-generate", []string{"qa.write"}, workflow.AIGenerateWorkflowDraft)
+	handleAPI(r, "POST", "/workflow-drafts/{draft_id}:ai-repair", []string{"qa.write"}, workflow.AIRepairWorkflowDraft)
+	handleAPI(r, "GET", "/workflow-drafts/{draft_id}/generation-analysis", []string{"qa.read"}, workflow.GetWorkflowGenerationAnalysis)
+	handleAPI(r, "POST", "/workflow-drafts/{draft_id}:confirm-workflow", []string{"qa.write"}, workflow.ConfirmWorkflowWorkflow)
+	handleAPI(r, "GET", "/workflow-drafts/{draft_id}/repair-runs/{repair_id}", []string{"qa.read"}, workflow.GetWorkflowRepairRun)
+	handleAPI(r, "POST", "/workflow-drafts/{draft_id}:repair-preview", []string{"qa.read"}, workflow.PreviewWorkflowRepair)
 	handleAPI(r, "POST", "/workflow-drafts/{draft_id}:publish", []string{"qa.write"}, workflow.PublishWorkflowDraft)
 	handleAPI(r, "DELETE", "/workflow-drafts/{draft_id}", []string{"qa.write"}, workflow.DeleteWorkflowDraft)
 	handleAPI(r, "GET", "/chat/settings/workflows", []string{"qa.read"}, workflow.ListUserWorkflowSettings)

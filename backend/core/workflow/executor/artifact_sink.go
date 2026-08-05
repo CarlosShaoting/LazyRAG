@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,7 +18,7 @@ type DBArtifactSink struct{ DB *gorm.DB }
 
 func (sink DBArtifactSink) Save(ctx context.Context, attempt AttemptContext, artifact Artifact) error {
 	if sink.DB == nil || attempt.AttemptID == "" || artifact.Slot == "" {
-		return executorError("artifact sink requires a database, attempt and slot")
+		return errors.New("artifact sink requires a database, attempt and slot")
 	}
 	now := time.Now().UTC()
 	return sink.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

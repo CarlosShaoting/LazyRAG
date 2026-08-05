@@ -576,37 +576,6 @@ func TestStopActiveWorkflowSession_CancelsAllPendingAndRunningAttempts(t *testin
 	}
 }
 
-func TestWorkflowRunOutboxDoesNotDispatchInterruptedTask(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-	const taskID = "outbox-interrupted-task"
-	if _, err := subagent.CreateTask(ctx, db.DB, subagent.CreateTaskInput{
-		TaskID: taskID, ConversationID: "outbox-conv", AgentType: "workflow_step",
-		Title: "outbox", Objective: "outbox", CreateUserID: "user-1",
-	}); err != nil {
-		t.Fatalf("CreateTask: %v", err)
-	}
-	if err := enqueueWorkflowAttemptRunner(ctx, db.DB, subagent.RunRequest{TaskID: taskID, AgentType: "workflow_step"}); err != nil {
-		t.Fatalf("enqueueWorkflowAttemptRunner: %v", err)
-	}
-	if err := subagent.UpdateFinalStatus(ctx, db.DB, taskID, subagent.StatusInterrupted, "stopped"); err != nil {
-		t.Fatalf("interrupt task: %v", err)
-	}
-	dispatchWorkflowAttemptRunner(db.DB, nil, taskID)
-
-	var row orm.WorkflowRunOutbox
-	if err := db.Where("task_id = ?", taskID).First(&row).Error; err != nil {
-		t.Fatalf("load outbox: %v", err)
-	}
-	if row.Status != "completed" {
-		t.Fatalf("interrupted task outbox status = %q, want completed", row.Status)
-	}
-	task, err := subagent.GetTask(ctx, db.DB, taskID)
-	if err != nil || task.Status != subagent.StatusInterrupted {
-		t.Fatalf("dispatch revived interrupted task: task=%#v err=%v", task, err)
-	}
-}
-
 // ──────────────────────────────────────────────
 // OnSubAgentDone — parallel step completion
 // ──────────────────────────────────────────────

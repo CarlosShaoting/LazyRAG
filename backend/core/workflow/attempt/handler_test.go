@@ -68,3 +68,29 @@ func TestHandlerClaimCompleteAndIdempotentRepeat(t *testing.T) {
 		}
 	}
 }
+
+func TestHandlerRejectsInvalidExecutorCredentialAndContractVersion(t *testing.T) {
+	service, _ := testService(t)
+	queue(t, service, "a1", "s1", "step")
+	handler := Handler{Service: service}
+	t.Setenv("LAZYMIND_WORKFLOW_EXECUTOR_TOKEN", "secret")
+
+	badToken := httptest.NewRequest(http.MethodPost, "/attempts:claim", nil)
+	badToken.Header.Set("X-Workflow-Executor-Id", "executor-1")
+	badToken.Header.Set("Authorization", "Bearer wrong")
+	badTokenRecorder := httptest.NewRecorder()
+	handler.Claim(badTokenRecorder, badToken)
+	if badTokenRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d body=%s", badTokenRecorder.Code, badTokenRecorder.Body.String())
+	}
+
+	badVersion := httptest.NewRequest(http.MethodPost, "/attempts:claim", nil)
+	badVersion.Header.Set("X-Workflow-Executor-Id", "executor-1")
+	badVersion.Header.Set("Authorization", "Bearer secret")
+	badVersion.Header.Set("Workflow-Contract-Version", "workflow.v999")
+	badVersionRecorder := httptest.NewRecorder()
+	handler.Claim(badVersionRecorder, badVersion)
+	if badVersionRecorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status=%d body=%s", badVersionRecorder.Code, badVersionRecorder.Body.String())
+	}
+}

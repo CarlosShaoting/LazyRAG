@@ -143,6 +143,10 @@ func RunObserved(ctx context.Context, db *gorm.DB, stateStore state.Store, req R
 
 // routeEvent persists a SubAgent event to DB (authoritative), then appends to Redis (live tail).
 func routeEvent(ctx context.Context, db *gorm.DB, stateStore state.Store, ev TaskEvent) error {
+	return routeEventWithWorkflowHooks(ctx, db, stateStore, ev, true, true)
+}
+
+func routeEventWithWorkflowHooks(ctx context.Context, db *gorm.DB, stateStore state.Store, ev TaskEvent, artifactHook, terminalHook bool) error {
 	switch ev.Type {
 	case "task_start":
 		accepted, _ := AcceptTaskStart(ctx, db, ev.TaskID)
@@ -151,7 +155,9 @@ func routeEvent(ctx context.Context, db *gorm.DB, stateStore state.Store, ev Tas
 		}
 		_ = WriteStatus(ctx, stateStore, ev.TaskID, map[string]any{"status": StatusRunning, "progress": 0})
 		// Mirror running status into workflow_session_steps if this is a workflow_step task.
-		routeWorkflowStepStatus(ctx, db, stateStore, ev.TaskID, StatusRunning, "")
+		if terminalHook {
+			routeWorkflowStepStatus(ctx, db, stateStore, ev.TaskID, StatusRunning, "")
+		}
 	case "progress":
 		_ = UpdateProgress(ctx, db, ev.TaskID, ev.Progress, ev.CurrentPhase, ev.EstimatedSec)
 		_ = WriteStatus(ctx, stateStore, ev.TaskID, map[string]any{
@@ -168,7 +174,9 @@ func routeEvent(ctx context.Context, db *gorm.DB, stateStore state.Store, ev Tas
 		// Write slot revision if this is a workflow_step task with a slot binding.
 		// list_index for partial retry is embedded inside the artifact JSON value and
 		// extracted by the plugin hook via extractListIndex — no need to pass it here.
-		routeWorkflowArtifact(ctx, db, stateStore, ev.TaskID, ev.ArtifactKey)
+		if artifactHook {
+			routeWorkflowArtifact(ctx, db, stateStore, ev.TaskID, ev.ArtifactKey)
+		}
 	case "done":
 		status := ev.Status
 		if status == "" {
@@ -182,7 +190,9 @@ func routeEvent(ctx context.Context, db *gorm.DB, stateStore state.Store, ev Tas
 			"status": status, "progress": 100, "summary": ev.Summary,
 		})
 		// Handle plugin step completion (auto-advance or step_waiting).
-		routeWorkflowStepStatus(ctx, db, stateStore, ev.TaskID, status, ev.Summary)
+		if terminalHook {
+			routeWorkflowStepStatus(ctx, db, stateStore, ev.TaskID, status, ev.Summary)
+		}
 	case "error":
 		status := ev.Status
 		if status == "" {
@@ -193,7 +203,9 @@ func routeEvent(ctx context.Context, db *gorm.DB, stateStore state.Store, ev Tas
 			return nil
 		}
 		_ = WriteStatus(ctx, stateStore, ev.TaskID, map[string]any{"status": status, "summary": ev.Message})
-		routeWorkflowStepStatus(ctx, db, stateStore, ev.TaskID, status, ev.Message)
+		if terminalHook {
+			routeWorkflowStepStatus(ctx, db, stateStore, ev.TaskID, status, ev.Message)
+		}
 	}
 	_ = AppendStreamEvent(ctx, stateStore, ev.TaskID, ev)
 	return nil

@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sync"
-	"time"
 
 	"gorm.io/gorm"
 
@@ -18,8 +16,6 @@ import (
 	"lazymind/core/subagent"
 	"lazymind/core/taskcenter"
 )
-
-var workflowOutboxDispatcherOnce sync.Once
 
 // RegisterSubAgentHooks wires plugin lifecycle hooks into the subagent EventHooks.
 // Must be called once at application startup (after store is initialized).
@@ -35,60 +31,6 @@ func RegisterSubAgentHooks() {
 			StopActiveWorkflowSession(ctx, db, stateStore, convID)
 		}
 		go NotifyChatCancel(convID)
-	}
-}
-
-// RecoverPendingWorkflowRuns closes the accepted-but-not-started crash window.
-// Pending items are safe to claim once; dispatching items belonged to a worker
-// in the previous process and are made explicitly interrupted instead of being
-// silently retried or left running forever.
-func RecoverPendingWorkflowRuns() {
-	workflowOutboxDispatcherOnce.Do(func() {
-		recoverWorkflowRunOutboxOnce()
-		go func() {
-			ticker := time.NewTicker(2 * time.Second)
-			defer ticker.Stop()
-			for range ticker.C {
-				dispatchPendingWorkflowRuns()
-			}
-		}()
-	})
-}
-
-func recoverWorkflowRunOutboxOnce() {
-	db := store.DB()
-	if db == nil {
-		return
-	}
-	ctx := context.Background()
-	var abandoned []orm.WorkflowRunOutbox
-	if err := db.WithContext(ctx).Where("status = ?", "dispatching").Find(&abandoned).Error; err == nil {
-		for _, row := range abandoned {
-			reason := "plugin worker interrupted by backend restart"
-			_ = subagent.UpdateFinalStatus(ctx, db, row.TaskID, subagent.StatusInterrupted, reason)
-			_ = UpdateStepStatus(ctx, db, row.TaskID, StepStatusInterrupted)
-			if pctx := loadWorkflowChatContextFromDB(ctx, db, row.TaskID); pctx != nil {
-				_ = UpdateSessionStatus(ctx, db, pctx.SessionID, SessionStatusWaiting)
-			}
-			_ = db.Model(&orm.WorkflowRunOutbox{}).Where("task_id = ?", row.TaskID).
-				Updates(map[string]any{"status": "failed", "last_error": reason, "updated_at": time.Now().UTC()}).Error
-		}
-	}
-	dispatchPendingWorkflowRuns()
-}
-
-func dispatchPendingWorkflowRuns() {
-	db := store.DB()
-	if db == nil {
-		return
-	}
-	ctx := context.Background()
-	var pending []orm.WorkflowRunOutbox
-	if err := db.WithContext(ctx).Where("status = ?", "pending").Order("created_at ASC").Find(&pending).Error; err != nil {
-		return
-	}
-	for _, row := range pending {
-		dispatchWorkflowAttemptRunner(db, store.State(), row.TaskID)
 	}
 }
 

@@ -17,6 +17,7 @@ from lazymind.chat.api import (
 )
 from lazymind.chat.service.utils.trace_archive import start_local_trace_maintenance
 from lazymind.chat.runtime_loader import start_background_chat_runtime_warmup
+from lazymind.chat.workflow.remote_executor import start_remote_workflow_executor
 from lazymind.rewrite.api import rewrite_routes
 from lazymind.review.api import memory_review_routes, skill_organize_routes, skill_review_routes
 
@@ -58,6 +59,10 @@ if os.getenv('LAZYMIND_RUNTIME_MODE', '').strip().lower() == 'local':
     start_background_chat_runtime_warmup()
 if config['background_jobs_enabled']:
     start_local_trace_maintenance()
+if not config['router_child_proxied_only']:
+    # Router children only serve proxied model traffic. The parent Chat/Router
+    # process owns the single remote Workflow Executor poller for this Host.
+    start_remote_workflow_executor()
 
 if __name__ == '__main__':
     import argparse

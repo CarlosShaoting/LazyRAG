@@ -311,3 +311,17 @@ func LoadSteps(ctx context.Context, db *gorm.DB, taskID string) ([]orm.SubAgentS
 		Find(&steps).Error
 	return steps, err
 }
+
+// AppendRemoteStep persists streamed Host events so reconnects and lease
+// reclaims have the same durable execution history as an in-process SubAgent.
+func AppendRemoteStep(ctx context.Context, db *gorm.DB, taskID, role string, content json.RawMessage) error {
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var maxSeq int
+		if err := tx.Model(&orm.SubAgentStep{}).Where("task_id = ?", taskID).
+			Select("COALESCE(MAX(seq), -1)").Scan(&maxSeq).Error; err != nil {
+			return err
+		}
+		return tx.Create(&orm.SubAgentStep{ID: "sas_" + common.GenerateID(), TaskID: taskID,
+			Seq: maxSeq + 1, Role: role, Content: normalizeJSON(content, "{}"), CreatedAt: time.Now().UTC()}).Error
+	})
+}

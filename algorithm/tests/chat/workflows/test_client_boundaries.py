@@ -59,3 +59,14 @@ def test_chat_contains_no_parallel_workflow_operating_prompt():
     assert 'prepare and start' not in manager
     assert 'chat_workflow_policy' not in service
     assert 'workflow.scenario' not in service
+
+
+def test_frontend_refreshes_panel_only_for_runtime_state_invalidation():
+    repository = Path(__file__).parents[4]
+    task_center = (repository / 'frontend/src/modules/chat/store/taskCenter.ts').read_text()
+    workflow_stream = (repository / 'frontend/src/modules/chat/utils/workflowEventStream.ts').read_text()
+    assert "type === 'workflow_runtime_updated'" in task_center
+    assert 'get().loadConversationTasks(conversationId)' in task_center
+    assert 'PLUGIN_GRAPH_REFRESH_EVENT' in task_center
+    assert "'artifact.upsert'" in workflow_stream
+    assert "'attempt.progress'" in workflow_stream

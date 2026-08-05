@@ -10,6 +10,12 @@ import (
 )
 
 func init() {
+	registerAdditionalError("executor unauthorized", http.StatusUnauthorized, 2001596)
+	registerAdditionalError("model config unavailable", http.StatusServiceUnavailable, 2001597)
+	registerAdditionalError("invalid task event", http.StatusBadRequest, 2001598)
+	registerAdditionalError("persist task event failed", http.StatusServiceUnavailable, 2001599)
+	registerAdditionalError("required output missing", http.StatusUnprocessableEntity, 2001600)
+	registerAdditionalError("artifact sink requires a database, attempt and slot", http.StatusInternalServerError, 2001992)
 	registerAdditionalError("advance, retry, and rewind require exactly one target", http.StatusUnprocessableEntity, 2001305)
 	registerAdditionalError("algorithm service unavailable", http.StatusBadGateway, 2001306)
 	registerAdditionalError("algorithm_id required", http.StatusBadRequest, 2001307)

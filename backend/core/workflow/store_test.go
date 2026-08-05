@@ -22,7 +22,6 @@ func newTestDB(t *testing.T) *orm.DB {
 		&orm.WorkflowSession{},
 		&orm.WorkflowSessionStep{},
 		&orm.WorkflowSlotRevision{},
-		&orm.WorkflowRunOutbox{},
 		&orm.WorkflowSlotOrder{},
 		&orm.WorkflowStepIntent{},
 	); err != nil {

@@ -366,7 +366,6 @@ func StartWorkflowSession(w http.ResponseWriter, r *http.Request) {
 		writeTransitionResponse(w, response, http.StatusServiceUnavailable)
 		return
 	}
-	dispatchWorkflowAttemptRunner(store.DB(), store.State(), taskID)
 	emitTaskCreatedConvEvent(r.Context(), taskID, sessionID, req.ConversationID)
 	writeTransitionResponse(w, response, http.StatusOK)
 }
@@ -658,7 +657,6 @@ func TransitionWorkflowSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, taskID := range taskIDs {
-		dispatchWorkflowAttemptRunner(store.DB(), store.State(), taskID)
 		emitTaskCreatedConvEvent(r.Context(), taskID, session.ID, session.ConversationID)
 	}
 	writeTransitionResponse(w, response, http.StatusOK)
@@ -674,7 +672,7 @@ func queueHostAttempt(tx *gorm.DB, session orm.WorkflowSession, target transitio
 		AttemptID: target.TaskID, StepID: target.TargetStepID, AttemptNo: int(count) + 1, Operation: "execute",
 		Objective: target.Objective, Prompt: node.Prompt, Acceptance: node.Acceptance,
 		Instruction: target.RuntimeInstruction, PartialSelector: target.PartialIndices,
-		WorkflowRevision: session.WorkflowRevisionID, RequiredOutputs: node.RequiredOutputs,
+		WorkflowRevision: session.WorkflowRevisionID, DeclaredOutputs: node.Outputs, RequiredOutputs: node.RequiredOutputs,
 		Capabilities: node.Capabilities, LegacyTools: node.LegacyTools}
 	payload, err := json.Marshal(value)
 	if err != nil {
