@@ -61,6 +61,7 @@
    - **Infographic images**: if an available image's intent describes a chart, diagram, or data visualization, instruct the generator to use this image INSTEAD of rendering an ECharts block. The infographic image already contains the structured diagram — do not duplicate it with ECharts.
    - 如果某项没有 w/h（读取失败），就跳过尺寸只写 path + 内容描述 + 位置。
    - 如果 `available_slot_images` 为空，query 要明说"这页没有可用的配图，请用纯文字 + CSS 装饰把版面填满，不要留大片空白"。
+10. **图表防遮挡（硬性）**：如果本页要用 ECharts（bar/line/pie 等），query 必须明确要求"图表区域内不要有任何覆盖元素"：禁止把说明卡、渐变遮罩、半透明蒙层、装饰线、悬浮标签、绝对定位文字压在图表上；图表说明文字放在图表外部并留出间距，确保图表完整可见，避免导出后只显示一半。
 
 ## 输出
 

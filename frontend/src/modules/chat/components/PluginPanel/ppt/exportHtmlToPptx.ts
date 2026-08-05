@@ -1,5 +1,6 @@
 import { toPng } from 'html-to-image';
 import PptxGenJS from 'pptxgenjs';
+import { jsPDF } from 'jspdf';
 
 const SLIDE_W_PX = 1600;
 const SLIDE_H_PX = 900;
@@ -480,3 +481,43 @@ export async function exportHtmlSlidesAsRasterPptx(
 
 /** @deprecated Use exportHtmlSlidesAsRasterPptx — name was misleading. */
 export const exportHtmlSlidesToEditablePptx = exportHtmlSlidesAsRasterPptx;
+
+export async function exportHtmlSlidesAsRasterPdf(
+  slides: HtmlSlideInput[],
+  fileName = 'deck.pdf',
+  options?: { sessionId?: string },
+): Promise<void> {
+  if (!slides.length) {
+    throw new Error('No HTML slides to export');
+  }
+  let pdf: jsPDF | null = null;
+  const sessionId = options?.sessionId || '';
+  const cache = sessionId
+    ? await import('./slideRasterCache')
+    : null;
+
+  for (const slide of slides) {
+    let png: string | null = null;
+    if (cache) {
+      const key = cache.rasterCacheKey(sessionId, cache.fingerprintText(slide.html));
+      png = await cache.ensureRasterPng(key, slide.html);
+    }
+    if (!png) {
+      png = await captureHtmlSlidePng(slide.html, { pixelRatio: 2, timeoutMs: 8000, waitMs: 280 });
+    }
+    if (!pdf) {
+      pdf = new jsPDF({
+        orientation: 'landscape',
+        unit: 'pt',
+        format: [SLIDE_W_IN * 72, SLIDE_H_IN * 72],
+      });
+    } else {
+      pdf.addPage([SLIDE_W_IN * 72, SLIDE_H_IN * 72], 'landscape');
+    }
+    pdf.addImage(png, 'PNG', 0, 0, SLIDE_W_IN * 72, SLIDE_H_IN * 72);
+  }
+  if (!pdf) {
+    throw new Error('No slides available to export as PDF');
+  }
+  pdf.save(fileName.endsWith('.pdf') ? fileName : `${fileName}.pdf`);
+}

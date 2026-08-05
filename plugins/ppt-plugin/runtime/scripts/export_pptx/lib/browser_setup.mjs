@@ -54,18 +54,24 @@ export function hiddenChromiumLaunchOptions(options = {}) {
  * Ensure the local Node and Playwright dependencies needed by HTML export are
  * available. Missing browser support is surfaced as a normal skipped export by
  * callers instead of crashing the PPT pipeline.
+ *
+ * Deps (node_modules / linux-sysroot / browsers) may live in a separate install
+ * dir pointed at by LAZYMIND_PPT_EXPORT_DEPS (the downloaded ZIP). Exporter
+ * source stays in the repo; local runtime symlinks node_modules next to the
+ * source so ESM imports resolve, and this helper also reads sysroot from DEPS.
  */
 export function ensureDependencies(baseDir) {
   installHiddenProcessHooks();
-  installBundledLinuxLibraryPath(baseDir);
-  const nodeModules = resolve(baseDir, 'node_modules');
+  const depsDir = resolveDepsDir(baseDir);
+  installBundledLinuxLibraryPath(depsDir);
+  const nodeModules = resolve(depsDir, 'node_modules');
   const pptxgenMarker = resolve(nodeModules, 'pptxgenjs');
   const playwrightMarker = resolve(nodeModules, 'playwright');
 
   if (!existsSync(pptxgenMarker) || !existsSync(playwrightMarker)) {
     console.error('[setup] 首次运行，正在安装 npm 依赖...');
     try {
-      execSync('npm install --omit=dev', { ...hiddenProcessOptions, cwd: baseDir, stdio: 'inherit' });
+      execSync('npm install --omit=dev', { ...hiddenProcessOptions, cwd: depsDir, stdio: 'inherit' });
     } catch (e) {
       throw new Error(`npm install failed: ${e.message}. Headless browser environment unavailable.`);
     }
@@ -86,7 +92,7 @@ export function ensureDependencies(baseDir) {
     const playwrightCli = resolve(nodeModules, 'playwright', 'cli.js');
     execFileSync(process.execPath, [playwrightCli, 'install', 'chromium'], {
       ...hiddenProcessOptions,
-      cwd: baseDir,
+      cwd: depsDir,
       env: process.env,
       stdio: 'inherit',
     });
@@ -95,12 +101,20 @@ export function ensureDependencies(baseDir) {
   }
 }
 
+/** Prefer the installed dependency ZIP dir when local/desktop sets it. */
+function resolveDepsDir(baseDir) {
+  const fromEnv = String(process.env.LAZYMIND_PPT_EXPORT_DEPS || '').trim();
+  if (fromEnv && existsSync(fromEnv)) return resolve(fromEnv);
+  return resolve(baseDir);
+}
+
 /** Use Chromium runtime libraries bundled for minimal Ubuntu/WSL installs. */
 export function installBundledLinuxLibraryPath(baseDir) {
   if (process.platform !== 'linux') return;
+  const depsDir = resolveDepsDir(baseDir);
   const candidates = [
-    resolve(baseDir, 'linux-sysroot', 'usr', 'lib', 'x86_64-linux-gnu'),
-    resolve(baseDir, 'linux-sysroot', 'lib', 'x86_64-linux-gnu'),
+    resolve(depsDir, 'linux-sysroot', 'usr', 'lib', 'x86_64-linux-gnu'),
+    resolve(depsDir, 'linux-sysroot', 'lib', 'x86_64-linux-gnu'),
   ].filter(existsSync);
   if (candidates.length === 0) return;
   const current = String(process.env.LD_LIBRARY_PATH || '').trim();

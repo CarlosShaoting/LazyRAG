@@ -64,9 +64,12 @@ async function main() {
     return;
   }
 
-  // 先下载远程图片并规范化 deck 结构
+  // 先下载远程图片并规范化 deck 结构；顺带把 echarts.min.js 落到 assets/，
+  // 否则 chart_* 页面在 Playwright 里脚本 404，导出后柱状图变空白卡片。
   if (args.deckDir && !args.batch) {
     await downloadRemoteImages(args.deckDir);
+    const { ensureEchartsAsset } = await import('./lib/ensure_echarts.mjs');
+    ensureEchartsAsset(args.deckDir);
   }
 
   const { htmlFiles } = ensureDeckPreconditions(args.deckDir, {

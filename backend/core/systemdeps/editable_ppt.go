@@ -22,9 +22,9 @@ const (
 	editablePPTBundlePathEnv = "LAZYMIND_EDITABLE_PPT_BUNDLE_PATH"
 
 	modelScopeEditablePPTBaseURL = "https://modelscope.cn/datasets/CarlosShaoting/lazymind-cst/resolve/master/"
-	windowsX64EditablePPTSHA     = "9c4828137a04533097c7a16029bc324c78f37f5e78fa5c4123a73f7623f05591"
-	darwinArm64EditablePPTSHA    = "12d0661ab133c50cd54ac4d16dc49afb8d5a0a44096eace00f5ae01cd67e5102"
-	linuxX64EditablePPTSHA       = "b64d43aa54e57f03c2a5f1b11e53b8b14d3fdd3dd483d76818e9a95acf69a17c"
+	windowsX64EditablePPTSHA     = "39af59d6c4126d93ca23a475b0a72266823ace2f74e45e0def9cf33b8e0272b3"
+	darwinArm64EditablePPTSHA    = "ada8928192074ad9b586653aff6cf2d650f4c188f6dab547e1d2d23008935591"
+	linuxX64EditablePPTSHA       = "1e2135cc4345b91aece29a4c623030f445020527819526970afbc7a1d5faf675"
 )
 
 type editablePPTBundleConfig struct {
@@ -73,9 +73,9 @@ func buildEditablePPTStatus(cfg EditablePPTConfig) EditablePPTStatus {
 	}
 	markers := []string{
 		filepath.Join(installDir, "bundle-manifest.json"),
-		filepath.Join(installDir, "html_to_pptx.mjs"),
 		filepath.Join(installDir, "node_modules", "pptxgenjs"),
 		filepath.Join(installDir, "node_modules", "playwright"),
+		filepath.Join(installDir, "node_modules", "echarts"),
 	}
 	for _, marker := range markers {
 		if _, err := os.Stat(marker); err != nil {

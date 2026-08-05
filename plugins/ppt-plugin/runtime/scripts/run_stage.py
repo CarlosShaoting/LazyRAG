@@ -755,11 +755,17 @@ def cmd_preflight(deck: Path) -> int:
 
     # Copy echarts.min.js into <deck_dir>/assets/echarts.min.js so pages can
     # reference it via `../assets/echarts.min.js` without a CDN.
+    # Frontend preview rewrites that src to the Vite-hosted bundle; editable
+    # PPTX export loads the raw HTML from disk and needs a real file here —
+    # otherwise Playwright gets echarts=undefined and the chart tile is empty.
+    import os
     import shutil
+    # SKILL_DIR = .../plugins/ppt-plugin/runtime → parents[2] = repo root.
+    workspace = Path(os.environ.get("LAZYMIND_SUBAGENT_WORKSPACE") or "/data/subagent")
     candidates = [
         SKILL_DIR / "scripts" / "export_pptx" / "node_modules" / "echarts" / "dist" / "echarts.min.js",
-        # Fallback: frontend dependency (dev / monorepo checkout).
-        SKILL_DIR.parents[3] / "frontend" / "node_modules" / "echarts" / "dist" / "echarts.min.js",
+        workspace / ".ppt_export_runtime" / "export_pptx" / "node_modules" / "echarts" / "dist" / "echarts.min.js",
+        SKILL_DIR.parents[2] / "frontend" / "node_modules" / "echarts" / "dist" / "echarts.min.js",
     ]
     echarts_staged = False
     for src in candidates:

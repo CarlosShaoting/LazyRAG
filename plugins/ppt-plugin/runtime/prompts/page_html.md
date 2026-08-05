@@ -35,6 +35,8 @@ Use ECharts only when no infographic image is available for the data on this pag
 - Script 标签**必须**是 `<script src="../assets/echarts.min.js"></script>`。禁止 CDN（unpkg / jsdelivr / cdnjs 等）、禁止绝对路径、禁止其他文件名。
 - 图表容器 id **必须**是 `chart_N` 的形式（N 从 1 开始，按页内顺序递增：`chart_1`、`chart_2`...），不能用 `chartDom` / `myChart` / `funnelChart` / `efficiencyChart` 这类自定义名。容器上显式写 `style="width:...px;height:...px;"`。
 - 图表容器的**长宽比不得超过 2:1**：`width / height ≤ 2`。即 600×400（1.5:1）、640×480（1.33:1）、800×500（1.6:1）都可以；像 1200×400（3:1）这种过扁的横条比例**禁止使用**，会让图表 axis label / 数据标注挤在一起难以辨认，PPTX 重建时也容易拉伸失真。如果某个图表确实需要更宽的视觉展示（例如时间轴），也要把高度同比抬高，保住 ≤ 2:1 的比例。
+- **图表可见性硬性规则**：任何图表容器（`#chart_N`）的可视区域内，禁止出现覆盖元素。不要在图表上方叠放说明卡、半透明遮罩、渐变遮盖、装饰线、绝对定位文本块、按钮、浮层，也不要用负外边距让相邻块压到图表上。图表必须完整可见（100% 可读），否则导出时会出现"折线图只显示一半"等裁切问题。
+- 若页面必须有图表说明文字，请放在图表容器**外部**（上方独立标题区或下方 caption 区），并与图表保持明确间距（建议 `margin-top` / `margin-bottom >= 16px`）。
 - 图表初始化**必须**调用 `echarts.init(el, null, {renderer: 'svg'})` —— `{renderer:'svg'}` 不得省略。
 - 每个图表的 `chart.setOption(...)` 调用之后，**必须**紧跟一行 `window.__pptxChartsReady = (window.__pptxChartsReady || 0) + 1;`。
 - 多个图表要用 IIFE 包裹避免变量冲突：

@@ -202,27 +202,43 @@ function applyChartTheme(options, option, series) {
 }
 
 /**
+ * Normalize an ECharts color value to a 6-hex string (no '#'), or null.
+ * Handles plain '#rgb' / '#rrggbb' / 'rgb()', plus LinearGradient objects
+ * that getOption() returns for `new echarts.graphic.LinearGradient(...)`.
+ */
+function normalizeColor(c) {
+  if (!c) return null;
+  if (typeof c === 'object') {
+    // Prefer the first colorStop of a linear/radial gradient.
+    const stops = c.colorStops || c._stops;
+    if (Array.isArray(stops) && stops.length > 0) {
+      return normalizeColor(stops[0].color);
+    }
+    return null;
+  }
+  if (typeof c !== 'string') return null;
+  let hex = c.trim();
+  if (hex.startsWith('#')) hex = hex.slice(1);
+  if (/^[0-9a-fA-F]{6}$/.test(hex)) return hex.toUpperCase();
+  if (/^[0-9a-fA-F]{3}$/.test(hex)) {
+    return hex.split('').map((ch) => ch + ch).join('').toUpperCase();
+  }
+  const rgb = hex.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+  if (rgb) {
+    return [+rgb[1], +rgb[2], +rgb[3]]
+      .map((n) => Math.max(0, Math.min(255, n)).toString(16).padStart(2, '0'))
+      .join('').toUpperCase();
+  }
+  return null;
+}
+
+/**
  * Per-series color (from itemStyle.color or color property).
  * Returns 6-hex without '#' or null.
  */
 function getSeriesColor(s) {
-  let c = null;
-  if (s.itemStyle && typeof s.itemStyle.color === 'string') c = s.itemStyle.color;
-  else if (typeof s.color === 'string') c = s.color;
-  if (!c) return null;
-  if (c.startsWith('#')) c = c.slice(1);
-  if (/^[0-9a-fA-F]{6}$/.test(c)) return c.toUpperCase();
-  if (/^[0-9a-fA-F]{3}$/.test(c)) {
-    // expand short hex
-    return c.split('').map(ch => ch + ch).join('').toUpperCase();
-  }
-  // rgb()/rgba() → hex
-  const rgb = c.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
-  if (rgb) {
-    return [+rgb[1], +rgb[2], +rgb[3]]
-      .map(n => Math.max(0, Math.min(255, n)).toString(16).padStart(2, '0'))
-      .join('').toUpperCase();
-  }
+  if (s.itemStyle && s.itemStyle.color != null) return normalizeColor(s.itemStyle.color);
+  if (s.color != null) return normalizeColor(s.color);
   return null;
 }
 
@@ -232,11 +248,9 @@ function getSeriesColor(s) {
  */
 function getDataItemColors(s) {
   if (!Array.isArray(s.data)) return [];
-  return s.data.map(d => {
-    if (d && typeof d === 'object' && d.itemStyle && typeof d.itemStyle.color === 'string') {
-      let c = d.itemStyle.color;
-      if (c.startsWith('#')) c = c.slice(1);
-      return /^[0-9a-fA-F]{6}$/.test(c) ? c.toUpperCase() : null;
+  return s.data.map((d) => {
+    if (d && typeof d === 'object' && d.itemStyle && d.itemStyle.color != null) {
+      return normalizeColor(d.itemStyle.color);
     }
     return null;
   });
@@ -366,7 +380,7 @@ function mapBar(option, ChartType) {
     if (seriesCols.length === series.length) chartColors = seriesCols;
   }
   if (!chartColors && Array.isArray(option.color)) {
-    chartColors = option.color.map(c => typeof c === 'string' ? c.replace('#', '').toUpperCase() : null).filter(Boolean);
+    chartColors = option.color.map(normalizeColor).filter(Boolean);
   }
 
   const valFmt = extractValueAxisFormatCode(option, orient === 'horizontal' ? 'xAxis' : 'yAxis');
@@ -453,15 +467,9 @@ function mapPie(option, ChartType, hollow) {
   const data = [{ name: s0.name || 'Series', labels, values }];
 
   // Per-slice colors from items[*].itemStyle.color, fallback to option.color
-  let sliceColors = items.map(d => {
-    if (d.itemStyle && typeof d.itemStyle.color === 'string') return d.itemStyle.color.replace('#', '').toUpperCase();
-    return null;
-  });
-  if (sliceColors.some(c => !c) && Array.isArray(option.color)) {
-    sliceColors = items.map((_, i) => {
-      const c = option.color[i % option.color.length];
-      return typeof c === 'string' ? c.replace('#', '').toUpperCase() : null;
-    });
+  let sliceColors = items.map((d) => normalizeColor(d.itemStyle && d.itemStyle.color));
+  if (sliceColors.some((c) => !c) && Array.isArray(option.color)) {
+    sliceColors = items.map((_, i) => normalizeColor(option.color[i % option.color.length]));
   }
   const chartColors = sliceColors.every(Boolean) ? sliceColors : undefined;
 
