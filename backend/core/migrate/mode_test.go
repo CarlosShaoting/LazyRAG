@@ -23,8 +23,8 @@ func TestRepositoryStructuredMigrationCatalogLoads(t *testing.T) {
 	if len(catalog.VersionMigrations) != 2 {
 		t.Fatalf("version migration count=%d, want 2", len(catalog.VersionMigrations))
 	}
-	if len(catalog.Modes) != 2 {
-		t.Fatalf("mode count=%d, want 2", len(catalog.Modes))
+	if len(catalog.Modes) != 3 {
+		t.Fatalf("mode count=%d, want 3", len(catalog.Modes))
 	}
 	v01 := catalog.Modes[0]
 	if v01.Name != "v0_1" || v01.ModeVersion != 1 ||
@@ -39,8 +39,8 @@ func TestRepositoryStructuredMigrationCatalogLoads(t *testing.T) {
 		mode.Aggregate == nil || mode.Aggregate.Version != 20260723183515 {
 		t.Fatalf("unexpected v0_2 mode: %#v", mode)
 	}
-	if len(mode.Dev) != 90 {
-		t.Fatalf("v0_2 dev migration count=%d, want 90", len(mode.Dev))
+	if len(mode.Dev) != 91 {
+		t.Fatalf("v0_2 dev migration count=%d, want 91", len(mode.Dev))
 	}
 	if !containsMigrationFileVersion(mode.Dev, 20260703130000) {
 		t.Fatal("v0_2 dev migrations are missing create_plugin_step_intents")
@@ -48,11 +48,11 @@ func TestRepositoryStructuredMigrationCatalogLoads(t *testing.T) {
 	if !containsVersion(mode.Aggregate.Supersedes, 20260703130000) {
 		t.Fatal("v0_2 aggregate Supersedes is missing create_plugin_step_intents")
 	}
-	if len(mode.Aggregate.Supersedes) != len(mode.Dev)-2 {
+	if len(mode.Aggregate.Supersedes) != len(mode.Dev)-3 {
 		t.Fatalf(
 			"v0_2 aggregate Supersedes count=%d, pre-aggregate dev migration count=%d",
 			len(mode.Aggregate.Supersedes),
-			len(mode.Dev)-2,
+			len(mode.Dev)-3,
 		)
 	}
 	for _, migration := range mode.Dev {
@@ -94,6 +94,23 @@ func TestRepositoryStructuredMigrationCatalogLoads(t *testing.T) {
 	if !strings.Contains(string(down), `DROP COLUMN "api_key_ciphertext"`) ||
 		!strings.Contains(string(down), `DROP COLUMN "credential_version"`) {
 		t.Fatal("v0_2 aggregate down is missing encrypted provider credential rollback")
+	}
+
+	v03 := catalog.Modes[2]
+	if v03.Name != "v0_3" || v03.ModeVersion != 3 || v03.Aggregate != nil {
+		t.Fatalf("unexpected v0_3 mode: %#v", v03)
+	}
+	if len(v03.Dev) != 1 || !containsMigrationFileVersion(v03.Dev, 20260730100000) {
+		t.Fatalf("v0_3 dev migrations are missing plugin call mode migration: %#v", v03.Dev)
+	}
+	for _, migration := range v03.Dev {
+		wantVersion, err := combineDevVersion(3, migration.FileVersion)
+		if err != nil {
+			t.Fatalf("combine v0_3 dev migration %d: %v", migration.FileVersion, err)
+		}
+		if migration.Version != wantVersion {
+			t.Fatalf("v0_3 dev migration %d full version=%d, want %d", migration.FileVersion, migration.Version, wantVersion)
+		}
 	}
 }
 

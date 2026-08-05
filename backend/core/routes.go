@@ -263,6 +263,7 @@ func registerAllRoutes(r *mux.Router) {
 	handleAPI(r, "GET", "/schedules", []string{"qa.read"}, scheduler.ListSchedulesHandler)
 	handleAPI(r, "POST", "/schedules", []string{"qa.write"}, scheduler.CreateScheduleHandler)
 	handleAPI(r, "PUT", "/schedules/{schedule_id}", []string{"qa.write"}, scheduler.UpdateScheduleHandler)
+	handleAPI(r, "DELETE", "/schedules/{schedule_id}", []string{"qa.write"}, scheduler.DeleteScheduleHandler)
 	handleAPI(r, "POST", "/schedules/{schedule_id}:cancel", []string{"qa.write"}, scheduler.CancelScheduleHandler)
 	handleAPI(r, "POST", "/schedules/{schedule_id}:enable", []string{"qa.write"}, scheduler.EnableScheduleHandler)
 	handleAPI(r, "POST", "/schedules/{schedule_id}:run-now", []string{"qa.write"}, scheduler.RunNowHandler)
@@ -275,8 +276,10 @@ func registerAllRoutes(r *mux.Router) {
 	// ----- User Chat Settings (global plugin/subagent defaults) -----
 	handleAPI(r, "GET", "/user/chat-settings", []string{"qa.read"}, chat.GetChatSettings)
 	handleAPI(r, "PATCH", "/user/chat-settings", []string{"qa.write"}, chat.PatchChatSettings)
-	handleAPI(r, "GET", "/user/ui-preferences", []string{"qa.read"}, userprefs.GetUIPreferences)
-	handleAPI(r, "PATCH", "/user/ui-preferences", []string{"qa.write"}, userprefs.PatchUIPreferences)
+	// Legal consent is a login prerequisite and must not depend on optional QA permissions.
+	// The handlers still require the gateway-injected X-User-Id identity.
+	handleAPI(r, "GET", "/user/ui-preferences", []string{}, userprefs.GetUIPreferences)
+	handleAPI(r, "PATCH", "/user/ui-preferences", []string{}, userprefs.PatchUIPreferences)
 	handleAPI(r, "PATCH", "/conversations/{conversation_id}/plugin-settings", []string{"qa.write"}, chat.PatchConversationPluginSettings)
 
 	// ----- Plugin Sessions -----
