@@ -184,32 +184,10 @@ def _normalize_model_config(model_config: Optional[Dict[str, Any]]) -> Optional[
     return _mirror_image_roles(normalized)
 
 
-# Display suffix used by catalog / UI for editable image models. Stripped before
-# the real provider model name is sent to the API.
-_EDITABLE_MODEL_SUFFIX = '(可编辑)'
-
-
-def _strip_editable_model_suffix(model: Any) -> Any:
-    if not isinstance(model, str):
-        return model
-    if model.endswith(_EDITABLE_MODEL_SUFFIX):
-        return model[: -len(_EDITABLE_MODEL_SUFFIX)]
-    return model
-
-
-def _sanitize_role_cfg_model_name(role_cfg: Any) -> Any:
-    if not isinstance(role_cfg, dict):
-        return role_cfg
-    sanitized = dict(role_cfg)
-    if 'model' in sanitized:
-        sanitized['model'] = _strip_editable_model_suffix(sanitized.get('model'))
-    return sanitized
-
-
 def _clone_role_cfg_with_type(role_cfg: Any, role_type: str) -> Any:
     if not isinstance(role_cfg, dict):
         return role_cfg
-    mirrored = _sanitize_role_cfg_model_name(role_cfg)
+    mirrored = dict(role_cfg)
     mirrored['type'] = role_type
     return mirrored
 
@@ -221,10 +199,7 @@ def _mirror_image_roles(model_config: Dict[str, Any]) -> Dict[str, Any]:
     - image_generator only → keep generator only (do not invent an editor)
     - both present → leave each role as configured
     '''
-    normalized = {
-        role: _sanitize_role_cfg_model_name(role_cfg)
-        for role, role_cfg in model_config.items()
-    }
+    normalized = dict(model_config)
     has_generator = 'image_generator' in normalized
     has_editor = 'image_editor' in normalized
     if has_editor and not has_generator:

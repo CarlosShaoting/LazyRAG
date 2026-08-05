@@ -200,32 +200,6 @@ def test_inject_model_config_mirrors_editable_editor_into_generator(tmp_path, mo
     lazyllm.inject_model_config(None)
 
 
-def test_inject_model_config_strips_editable_display_suffix(tmp_path, monkeypatch):
-    config_path = write_yaml(tmp_path, """
-        image_generator:
-          source: dynamic
-          type: text2image
-        image_editor:
-          source: dynamic
-          type: image_editing
-    """)
-    monkeypatch.setenv('LAZYMIND_MODEL_CONFIG_PATH', str(config_path))
-    import lazyllm
-    from lazymind.model_config import inject_model_config
-
-    inject_model_config({
-        'image_editing': {
-            'source': 'siliconflow',
-            'model': 'Kwai-Kolors/Kolors(可编辑)',
-            'api_key': 'k1',
-        },
-    })
-    cfg = lazyllm.globals['config']['dynamic_model_configs']
-    assert cfg['image_editor']['multimodal']['model'] == 'Kwai-Kolors/Kolors'
-    assert cfg['image_generator']['multimodal']['model'] == 'Kwai-Kolors/Kolors'
-    lazyllm.inject_model_config(None)
-
-
 def test_inject_model_config_keeps_both_image_roles_distinct(tmp_path, monkeypatch):
     config_path = write_yaml(tmp_path, """
         image_generator:

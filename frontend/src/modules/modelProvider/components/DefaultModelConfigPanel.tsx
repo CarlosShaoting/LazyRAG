@@ -865,16 +865,13 @@ export default function DefaultModelConfigPanel() {
               }
             >;
           }>(response.data);
-          return {
-            modelType,
-            models: data.models || [],
-          };
+          return data.models || [];
         }),
       );
 
       const fetchedOptions: ModelOptionItem[] = [];
       const seenValues = new Set<string>();
-      fetchedLists.forEach(({ models }) => {
+      fetchedLists.forEach((models) => {
         models
           .filter((model) =>
             trimmedKeyword
