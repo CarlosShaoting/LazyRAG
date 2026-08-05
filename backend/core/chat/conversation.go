@@ -415,7 +415,7 @@ func ChatConversations(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	historyExt := buildChatHistoryExt(raw, displayQuery)
+	historyExt := buildChatHistoryExtWithTrail(raw, displayQuery, histories, target)
 	if err := applyChatAttachmentConversion(r.Context(), reqBody); err != nil {
 		common.ReplyErr(w, fmt.Sprintf("%s: %v", "prepare chat attachments failed", err), http.StatusBadGateway)
 		return

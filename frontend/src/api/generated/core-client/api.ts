@@ -673,6 +673,23 @@ export interface ConversationSwitchStatusRequest {
 export interface ConversationSwitchStatusResponse {
     'status'?: number;
 }
+export interface ConversationTrailItem {
+    'create_time'?: string;
+    'depth'?: number;
+    'history_id'?: string;
+    'parent_history_id'?: string;
+    'question'?: string;
+    'seq'?: number;
+    'source'?: string;
+    'summary'?: string;
+}
+export interface ConversationTrailListResponse {
+    'conversation_id'?: string;
+    'items'?: Array<ConversationTrailItem>;
+    'name'?: string;
+    'next_page_token'?: string;
+    'total_size'?: number;
+}
 export interface CreateEvalSetByImportRequest {
     'dataset_ids'?: Array<string>;
     'description': string;
@@ -1252,6 +1269,10 @@ export interface ListModelProviderGroupModelsOpenAPIItem {
     'id': string;
     'is_default': boolean;
     /**
+     * Whether this option supports image editing
+     */
+    'is_editable': boolean;
+    /**
      * Maximum catalog LLM, VLM, or embedding-model input context window, for example 512, 128K, or 1M; null for other, custom, or unknown models
      */
     'max_input_tokens'?: string | null;
@@ -1783,6 +1804,10 @@ export interface SelectedModelOpenAPIItem {
     'base_url': string;
     'group_name': string;
     /**
+     * Whether the selected model supports image editing
+     */
+    'is_editable': boolean;
+    /**
      * Maximum selected catalog LLM, VLM, or embedding-model input context window, for example 512, 128K, or 1M; null for other, custom, or unknown models
      */
     'max_input_tokens'?: string | null;
@@ -1857,6 +1882,46 @@ export interface ShareSkillOpenAPIRequest {
     'message'?: string;
     'target_group_ids'?: Array<string>;
     'target_user_ids'?: Array<string>;
+}
+export interface ShowcaseCase {
+    'attachment_hint'?: string;
+    'category': string;
+    'description': string;
+    'id': string;
+    'image_url': string;
+    'output_label': string;
+    'output_type': string;
+    'primary_category'?: string;
+    'prompt': string;
+    'prompt_short': string;
+    'result_highlights': Array<string>;
+    'result_summary': string;
+    'secondary_options'?: Array<ShowcaseCaseOption>;
+    'steps': Array<ShowcaseCaseStep>;
+    'tasks'?: Array<ShowcaseCaseTask>;
+    'title': string;
+}
+export interface ShowcaseCaseListResponse {
+    'cases': Array<ShowcaseCase>;
+    'categories': Array<string>;
+    'total': number;
+}
+export interface ShowcaseCaseOption {
+    'description'?: string;
+    'id': string;
+    'label': string;
+    'prompt'?: string;
+}
+export interface ShowcaseCaseStep {
+    'description': string;
+    'title': string;
+}
+export interface ShowcaseCaseTask {
+    'description': string;
+    'id': string;
+    'output_label'?: string;
+    'prompt'?: string;
+    'title': string;
 }
 export interface SkillCategoriesOpenAPIResponse {
     'categories'?: Array<string>;
@@ -7823,6 +7888,50 @@ export const DefaultApiAxiosParamCreator = function (configuration?: Configurati
         },
         /**
          *
+         * @summary List conversation trail metadata (paginated)
+         * @param {string} name
+         * @param {number} [pageSize]
+         * @param {string} [pageToken]
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreConversationsNameTrailGet: async (name: string, pageSize?: number, pageToken?: string, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+            // verify required parameter 'name' is not null or undefined
+            assertParamExists('apiCoreConversationsNameTrailGet', 'name', name)
+            const localVarPath = `/api/core/conversations/{name}:trail`
+                .replace(`{${"name"}}`, encodeURIComponent(String(name)));
+            // use dummy base URL string because the URL constructor only accepts absolute URLs.
+            const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+            let baseOptions;
+            if (configuration) {
+                baseOptions = configuration.baseOptions;
+            }
+
+            const localVarRequestOptions = { method: 'GET', ...baseOptions, ...options};
+            const localVarHeaderParameter = {} as any;
+            const localVarQueryParameter = {} as any;
+
+            if (pageSize !== undefined) {
+                localVarQueryParameter['page_size'] = pageSize;
+            }
+
+            if (pageToken !== undefined) {
+                localVarQueryParameter['page_token'] = pageToken;
+            }
+
+            localVarHeaderParameter['Accept'] = 'application/json';
+
+            setSearchParams(localVarUrlObj, localVarQueryParameter);
+            let headersFromBaseOptions = baseOptions && baseOptions.headers ? baseOptions.headers : {};
+            localVarRequestOptions.headers = {...localVarHeaderParameter, ...headersFromBaseOptions, ...options.headers};
+
+            return {
+                url: toPathString(localVarUrlObj),
+                options: localVarRequestOptions,
+            };
+        },
+        /**
+         *
          * @summary Resume conversation stream
          * @param {ConversationResumeRequest} conversationResumeRequest
          * @param {*} [options] Override http request option.
@@ -12367,6 +12476,21 @@ export const DefaultApiFp = function(configuration?: Configuration) {
         },
         /**
          *
+         * @summary List conversation trail metadata (paginated)
+         * @param {string} name
+         * @param {number} [pageSize]
+         * @param {string} [pageToken]
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        async apiCoreConversationsNameTrailGet(name: string, pageSize?: number, pageToken?: string, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<ConversationTrailListResponse>> {
+            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreConversationsNameTrailGet(name, pageSize, pageToken, options);
+            const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+            const localVarOperationServerBasePath = operationServerMap['DefaultApi.apiCoreConversationsNameTrailGet']?.[localVarOperationServerIndex]?.url;
+            return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
+        },
+        /**
+         *
          * @summary Resume conversation stream
          * @param {ConversationResumeRequest} conversationResumeRequest
          * @param {*} [options] Override http request option.
@@ -14269,6 +14393,16 @@ export const DefaultApiFactory = function (configuration?: Configuration, basePa
         },
         /**
          *
+         * @summary List conversation trail metadata (paginated)
+         * @param {DefaultApiApiCoreConversationsNameTrailGetRequest} requestParameters Request parameters.
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreConversationsNameTrailGet(requestParameters: DefaultApiApiCoreConversationsNameTrailGetRequest, options?: RawAxiosRequestConfig): AxiosPromise<ConversationTrailListResponse> {
+            return localVarFp.apiCoreConversationsNameTrailGet(requestParameters.name, requestParameters.pageSize, requestParameters.pageToken, options).then((request) => request(axios, basePath));
+        },
+        /**
+         *
          * @summary Resume conversation stream
          * @param {DefaultApiApiCoreConversationsResumeChatPostRequest} requestParameters Request parameters.
          * @param {*} [options] Override http request option.
@@ -15592,6 +15726,17 @@ export interface DefaultApiApiCoreConversationsNameHistoryGetRequest {
 }
 
 /**
+ * Request parameters for apiCoreConversationsNameTrailGet operation in DefaultApi.
+ */
+export interface DefaultApiApiCoreConversationsNameTrailGetRequest {
+    readonly name: string
+
+    readonly pageSize?: number
+
+    readonly pageToken?: string
+}
+
+/**
  * Request parameters for apiCoreConversationsResumeChatPost operation in DefaultApi.
  */
 export interface DefaultApiApiCoreConversationsResumeChatPostRequest {
@@ -16680,7 +16825,18 @@ export class DefaultApi extends BaseAPI {
     }
 
     /**
-     *
+      *
+     * @summary List conversation trail metadata (paginated)
+     * @param {DefaultApiApiCoreConversationsNameTrailGetRequest} requestParameters Request parameters.
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    public apiCoreConversationsNameTrailGet(requestParameters: DefaultApiApiCoreConversationsNameTrailGetRequest, options?: RawAxiosRequestConfig) {
+        return DefaultApiFp(this.configuration).apiCoreConversationsNameTrailGet(requestParameters.name, requestParameters.pageSize, requestParameters.pageToken, options).then((request) => request(this.axios, this.basePath));
+    }
+
+    /**
+      *
      * @summary Resume conversation stream
      * @param {DefaultApiApiCoreConversationsResumeChatPostRequest} requestParameters Request parameters.
      * @param {*} [options] Override http request option.
@@ -26773,6 +26929,218 @@ export type ApiCoreRemoteFsMovePostModeEnum = typeof ApiCoreRemoteFsMovePostMode
 
 
 /**
+ * ShowcaseApi - axios parameter creator
+ */
+export const ShowcaseApiAxiosParamCreator = function (configuration?: Configuration) {
+    return {
+        /**
+         *
+         * @summary Showcase case details
+         * @param {string} caseId
+         * @param {string} [acceptLanguage] Optional UI locale. zh and zh-* use zh-CN; en and en-* use en-US. Missing or unsupported values default to zh-CN.
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreShowcaseCasesCaseIdGet: async (caseId: string, acceptLanguage?: string, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+            // verify required parameter 'caseId' is not null or undefined
+            assertParamExists('apiCoreShowcaseCasesCaseIdGet', 'caseId', caseId)
+            const localVarPath = `/api/core/showcase/cases/{case_id}`
+                .replace(`{${"case_id"}}`, encodeURIComponent(String(caseId)));
+            // use dummy base URL string because the URL constructor only accepts absolute URLs.
+            const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+            let baseOptions;
+            if (configuration) {
+                baseOptions = configuration.baseOptions;
+            }
+
+            const localVarRequestOptions = { method: 'GET', ...baseOptions, ...options};
+            const localVarHeaderParameter = {} as any;
+            const localVarQueryParameter = {} as any;
+
+            localVarHeaderParameter['Accept'] = 'application/json';
+
+            if (acceptLanguage != null) {
+                localVarHeaderParameter['Accept-Language'] = String(acceptLanguage);
+            }
+            setSearchParams(localVarUrlObj, localVarQueryParameter);
+            let headersFromBaseOptions = baseOptions && baseOptions.headers ? baseOptions.headers : {};
+            localVarRequestOptions.headers = {...localVarHeaderParameter, ...headersFromBaseOptions, ...options.headers};
+
+            return {
+                url: toPathString(localVarUrlObj),
+                options: localVarRequestOptions,
+            };
+        },
+        /**
+         *
+         * @summary Showcase case list
+         * @param {string} [acceptLanguage] Optional UI locale. zh and zh-* use zh-CN; en and en-* use en-US. Missing or unsupported values default to zh-CN.
+         * @param {string} [keyword]
+         * @param {string} [category]
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreShowcaseCasesGet: async (acceptLanguage?: string, keyword?: string, category?: string, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+            const localVarPath = `/api/core/showcase/cases`;
+            // use dummy base URL string because the URL constructor only accepts absolute URLs.
+            const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+            let baseOptions;
+            if (configuration) {
+                baseOptions = configuration.baseOptions;
+            }
+
+            const localVarRequestOptions = { method: 'GET', ...baseOptions, ...options};
+            const localVarHeaderParameter = {} as any;
+            const localVarQueryParameter = {} as any;
+
+            if (keyword !== undefined) {
+                localVarQueryParameter['keyword'] = keyword;
+            }
+
+            if (category !== undefined) {
+                localVarQueryParameter['category'] = category;
+            }
+
+            localVarHeaderParameter['Accept'] = 'application/json';
+
+            if (acceptLanguage != null) {
+                localVarHeaderParameter['Accept-Language'] = String(acceptLanguage);
+            }
+            setSearchParams(localVarUrlObj, localVarQueryParameter);
+            let headersFromBaseOptions = baseOptions && baseOptions.headers ? baseOptions.headers : {};
+            localVarRequestOptions.headers = {...localVarHeaderParameter, ...headersFromBaseOptions, ...options.headers};
+
+            return {
+                url: toPathString(localVarUrlObj),
+                options: localVarRequestOptions,
+            };
+        },
+    }
+};
+
+/**
+ * ShowcaseApi - functional programming interface
+ */
+export const ShowcaseApiFp = function(configuration?: Configuration) {
+    const localVarAxiosParamCreator = ShowcaseApiAxiosParamCreator(configuration)
+    return {
+        /**
+         *
+         * @summary Showcase case details
+         * @param {string} caseId
+         * @param {string} [acceptLanguage] Optional UI locale. zh and zh-* use zh-CN; en and en-* use en-US. Missing or unsupported values default to zh-CN.
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        async apiCoreShowcaseCasesCaseIdGet(caseId: string, acceptLanguage?: string, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<ShowcaseCase>> {
+            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreShowcaseCasesCaseIdGet(caseId, acceptLanguage, options);
+            const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+            const localVarOperationServerBasePath = operationServerMap['ShowcaseApi.apiCoreShowcaseCasesCaseIdGet']?.[localVarOperationServerIndex]?.url;
+            return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
+        },
+        /**
+         *
+         * @summary Showcase case list
+         * @param {string} [acceptLanguage] Optional UI locale. zh and zh-* use zh-CN; en and en-* use en-US. Missing or unsupported values default to zh-CN.
+         * @param {string} [keyword]
+         * @param {string} [category]
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        async apiCoreShowcaseCasesGet(acceptLanguage?: string, keyword?: string, category?: string, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<ShowcaseCaseListResponse>> {
+            const localVarAxiosArgs = await localVarAxiosParamCreator.apiCoreShowcaseCasesGet(acceptLanguage, keyword, category, options);
+            const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+            const localVarOperationServerBasePath = operationServerMap['ShowcaseApi.apiCoreShowcaseCasesGet']?.[localVarOperationServerIndex]?.url;
+            return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
+        },
+    }
+};
+
+/**
+ * ShowcaseApi - factory interface
+ */
+export const ShowcaseApiFactory = function (configuration?: Configuration, basePath?: string, axios?: AxiosInstance) {
+    const localVarFp = ShowcaseApiFp(configuration)
+    return {
+        /**
+         *
+         * @summary Showcase case details
+         * @param {ShowcaseApiApiCoreShowcaseCasesCaseIdGetRequest} requestParameters Request parameters.
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreShowcaseCasesCaseIdGet(requestParameters: ShowcaseApiApiCoreShowcaseCasesCaseIdGetRequest, options?: RawAxiosRequestConfig): AxiosPromise<ShowcaseCase> {
+            return localVarFp.apiCoreShowcaseCasesCaseIdGet(requestParameters.caseId, requestParameters.acceptLanguage, options).then((request) => request(axios, basePath));
+        },
+        /**
+         *
+         * @summary Showcase case list
+         * @param {ShowcaseApiApiCoreShowcaseCasesGetRequest} requestParameters Request parameters.
+         * @param {*} [options] Override http request option.
+         * @throws {RequiredError}
+         */
+        apiCoreShowcaseCasesGet(requestParameters: ShowcaseApiApiCoreShowcaseCasesGetRequest = {}, options?: RawAxiosRequestConfig): AxiosPromise<ShowcaseCaseListResponse> {
+            return localVarFp.apiCoreShowcaseCasesGet(requestParameters.acceptLanguage, requestParameters.keyword, requestParameters.category, options).then((request) => request(axios, basePath));
+        },
+    };
+};
+
+/**
+ * Request parameters for apiCoreShowcaseCasesCaseIdGet operation in ShowcaseApi.
+ */
+export interface ShowcaseApiApiCoreShowcaseCasesCaseIdGetRequest {
+    readonly caseId: string
+
+    /**
+     * Optional UI locale. zh and zh-* use zh-CN; en and en-* use en-US. Missing or unsupported values default to zh-CN.
+     */
+    readonly acceptLanguage?: string
+}
+
+/**
+ * Request parameters for apiCoreShowcaseCasesGet operation in ShowcaseApi.
+ */
+export interface ShowcaseApiApiCoreShowcaseCasesGetRequest {
+    /**
+     * Optional UI locale. zh and zh-* use zh-CN; en and en-* use en-US. Missing or unsupported values default to zh-CN.
+     */
+    readonly acceptLanguage?: string
+
+    readonly keyword?: string
+
+    readonly category?: string
+}
+
+/**
+ * ShowcaseApi - object-oriented interface
+ */
+export class ShowcaseApi extends BaseAPI {
+    /**
+     *
+     * @summary Showcase case details
+     * @param {ShowcaseApiApiCoreShowcaseCasesCaseIdGetRequest} requestParameters Request parameters.
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    public apiCoreShowcaseCasesCaseIdGet(requestParameters: ShowcaseApiApiCoreShowcaseCasesCaseIdGetRequest, options?: RawAxiosRequestConfig) {
+        return ShowcaseApiFp(this.configuration).apiCoreShowcaseCasesCaseIdGet(requestParameters.caseId, requestParameters.acceptLanguage, options).then((request) => request(this.axios, this.basePath));
+    }
+
+    /**
+     *
+     * @summary Showcase case list
+     * @param {ShowcaseApiApiCoreShowcaseCasesGetRequest} requestParameters Request parameters.
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    public apiCoreShowcaseCasesGet(requestParameters: ShowcaseApiApiCoreShowcaseCasesGetRequest = {}, options?: RawAxiosRequestConfig) {
+        return ShowcaseApiFp(this.configuration).apiCoreShowcaseCasesGet(requestParameters.acceptLanguage, requestParameters.keyword, requestParameters.category, options).then((request) => request(this.axios, this.basePath));
+    }
+}
+
+
+
+/**
  * SkillDiffApi - axios parameter creator
  */
 export const SkillDiffApiAxiosParamCreator = function (configuration?: Configuration) {
@@ -35613,6 +35981,5 @@ export class WriterApi extends BaseAPI {
         return WriterApiFp(this.configuration).apiCoreWorkflowSessionsSessionIdSlotsSlotIdItemsIdxListIndexSyncWriterDocumentPost(requestParameters.sessionId, requestParameters.slotId, requestParameters.listIndex, requestParameters.writerDocumentSyncOpenAPIRequest, options).then((request) => request(this.axios, this.basePath));
     }
 }
-
 
 
