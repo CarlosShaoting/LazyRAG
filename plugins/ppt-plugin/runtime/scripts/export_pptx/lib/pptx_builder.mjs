@@ -1786,6 +1786,28 @@ function addSpeakerNotes(slide, htmlPath) {
   } catch { /* 备注非必需 */ }
 }
 
+/** Add a full-page image only when editable reconstruction failed. */
+function addRasterFallbackSlide(pptx, page) {
+  if (!page?.fallbackImageDataUri) return null;
+  const slide = pptx.addSlide();
+  slide.addImage({
+    data: page.fallbackImageDataUri,
+    x: 0,
+    y: 0,
+    w: 10,
+    h: 5.625,
+    objectName: 'raster-fallback',
+  });
+  addSpeakerNotes(slide, page.path);
+  return slide;
+}
+
+/** Roll back a partially-created slide before inserting its visual fallback. */
+function rollbackSlides(pptx, previousCount) {
+  if (!Number.isInteger(previousCount) || !Array.isArray(pptx?._slides)) return;
+  while (pptx._slides.length > previousCount) pptx._slides.pop();
+}
+
 /**
  * 从 IR 构建单个 slide
  */
@@ -2072,9 +2094,12 @@ export async function buildPptx(pages, deckDir, outputPath) {
 
   let successCount = 0;
   let failCount = 0;
+  let fallbackCount = 0;
   const failures = [];
+  const fallbacks = [];
 
   for (const page of pages) {
+    const previousSlideCount = Array.isArray(pptx._slides) ? pptx._slides.length : null;
     if (page.ir) {
       try {
         // 每页根据 HTML 实际画布宽度设置坐标换算比例
@@ -2083,18 +2108,32 @@ export async function buildPptx(pages, deckDir, outputPath) {
         successCount++;
       } catch (err) {
         console.error(`[WARN] 构建 slide 失败: ${page.path} - ${err.message}`);
-        // 生成空白 slide 保持页码连续
-        pptx.addSlide();
-        failCount++;
-        failures.push({ path: page.path, message: err.message });
+        rollbackSlides(pptx, previousSlideCount);
+        if (addRasterFallbackSlide(pptx, page)) {
+          successCount++;
+          fallbackCount++;
+          fallbacks.push({ path: page.path, message: err.message });
+        } else {
+          // No browser capture was available; preserve page numbering.
+          pptx.addSlide();
+          failCount++;
+          failures.push({ path: page.path, message: err.message });
+        }
       }
     } else {
-      // IR 为空，生成空白 slide
       const message = page.error || 'DOM 提取失败';
       console.error(`[WARN] 构建 slide 失败: ${page.path} - ${message}`);
-      pptx.addSlide();
-      failCount++;
-      failures.push({ path: page.path, message });
+      if (addRasterFallbackSlide(pptx, page)) {
+        successCount++;
+        fallbackCount++;
+        fallbacks.push({ path: page.path, message });
+      } else {
+        // Browser startup failures cannot be captured, so keep a blank page
+        // and report a hard failure instead of claiming a successful export.
+        pptx.addSlide();
+        failCount++;
+        failures.push({ path: page.path, message });
+      }
     }
   }
 
@@ -2107,5 +2146,5 @@ export async function buildPptx(pages, deckDir, outputPath) {
   }
   _currentGradientHandler = null;
 
-  return { successCount, failCount, totalPages: pages.length, failures };
+  return { successCount, failCount, fallbackCount, totalPages: pages.length, failures, fallbacks };
 }

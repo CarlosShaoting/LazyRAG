@@ -10,8 +10,9 @@ This plugin helps users create a multi-slide presentation using the
   page-html stages auto-publish `preview_html` from disk (no model HTML relay)
 - Preview: full HTML pages in `preview_html` (iframe)
 - Export: **not part of the skill**. User clicks the UI **Export** button
-  (browser raster PPTX by default; optional editable path via
-  `LAZYMIND_OUTPUT_EDITABLE_PPT` + `ppt-export` when that API is enabled)
+  (browser raster PPTX by default; Local/Desktop detects its installed editable
+  dependency automatically, while containers use `LAZYMIND_OUTPUT_EDITABLE_PPT`
+  with `ppt-export`)
 
 Workflow:
 

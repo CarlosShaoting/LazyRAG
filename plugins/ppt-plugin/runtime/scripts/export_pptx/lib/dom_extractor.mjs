@@ -885,10 +885,28 @@ export async function extractPages(htmlPaths) {
     for (const htmlPath of htmlPaths) {
       try {
         const ir = await extractPage(page, htmlPath);
-        results.push({ path: htmlPath, ir });
+        // Keep a visual transaction fallback for the builder. Most pages use
+        // editable DOM IR; this image is only consumed when a page cannot be
+        // safely rebuilt. Capturing while the browser is alive lets the PPTX
+        // writer avoid producing a blank slide after a late mapping failure.
+        let fallbackImageDataUri = null;
+        try {
+          fallbackImageDataUri = `data:image/png;base64,${(
+            await page.screenshot({ type: 'png', animations: 'disabled', caret: 'hide' })
+          ).toString('base64')}`;
+        } catch (captureErr) {
+          process.stderr.write(`[dom_extractor] Fallback capture unavailable for ${htmlPath}: ${captureErr.message}\n`);
+        }
+        results.push({ path: htmlPath, ir, fallbackImageDataUri });
       } catch (err) {
         process.stderr.write(`[dom_extractor] Failed to extract ${htmlPath}: ${err.message}\n`);
-        results.push({ path: htmlPath, ir: null, error: err.message });
+        let fallbackImageDataUri = null;
+        try {
+          fallbackImageDataUri = `data:image/png;base64,${(
+            await page.screenshot({ type: 'png', animations: 'disabled', caret: 'hide' })
+          ).toString('base64')}`;
+        } catch { /* The page may not have loaded far enough to capture. */ }
+        results.push({ path: htmlPath, ir: null, error: err.message, fallbackImageDataUri });
       }
     }
   } finally {

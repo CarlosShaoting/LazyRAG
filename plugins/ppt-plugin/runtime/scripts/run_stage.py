@@ -212,6 +212,74 @@ def _env_int(name: str, default: int) -> int:
     return int(_env_float(name, default))
 
 
+def _page_prompt_mode() -> str:
+    """Select the page prompt path.
+
+    The original pipeline spent one LLM request rewriting every structured page
+    plan before making the actual HTML request.  Deterministic assembly keeps
+    the same inputs while removing that extra request.  Keep the old path as an
+    operational rollback for models that were specifically tuned on rewritten
+    natural-language prompts.
+    """
+    raw = os.environ.get("PPT_PAGE_PROMPT_MODE", "deterministic").strip().lower()
+    if raw in {"llm", "llm-rewrite", "legacy", "rewrite"}:
+        return "llm-rewrite"
+    return "deterministic"
+
+
+def _build_deterministic_page_query(payload: dict) -> str:
+    """Build the page generator query without another model round trip."""
+    page = payload.get("page_outline") or {}
+    style = payload.get("style_spec") or {}
+    lines = [
+        f"Create slide {payload.get('page_no')} from the exact content brief below.",
+        "Preserve the supplied facts, labels, values, and language. Do not invent filler items.",
+        "Use visual_hints as layout guidance, while keeping every element inside the slide canvas.",
+        "",
+        "CONTENT BRIEF (JSON):",
+        json.dumps(page, ensure_ascii=False, indent=2),
+        "",
+        "VISUAL DESIGN CONTRACT (JSON):",
+        json.dumps(style, ensure_ascii=False, indent=2),
+    ]
+
+    inherited_table = payload.get("inherited_table")
+    if inherited_table:
+        lines.extend([
+            "",
+            "INHERITED TABLE — render these exact cells as an HTML table (JSON):",
+            json.dumps(inherited_table, ensure_ascii=False, indent=2),
+        ])
+
+    inherited_path = payload.get("inherited_image_local_path")
+    if inherited_path:
+        image_contract = {
+            "path": inherited_path,
+            "size": payload.get("inherited_image_size"),
+            "alt": payload.get("inherited_image_alt"),
+            "caption_hint": payload.get("inherited_image_caption_hint"),
+        }
+        lines.extend([
+            "",
+            "INHERITED FOREGROUND IMAGE — use this exact relative path and preserve its aspect ratio (JSON):",
+            json.dumps(image_contract, ensure_ascii=False, indent=2),
+        ])
+
+    slot_images = payload.get("available_slot_images")
+    if slot_images:
+        lines.extend([
+            "",
+            "AVAILABLE GENERATED IMAGES — use only when relevant, with these exact paths (JSON):",
+            json.dumps(slot_images, ensure_ascii=False, indent=2),
+        ])
+
+    lines.extend([
+        "",
+        "Return the complete slide HTML document only. The system prompt owns all mechanical HTML/PPTX constraints.",
+    ])
+    return "\n".join(lines).strip()
+
+
 _STYLE_DIMENSIONS_PATH = SKILL_DIR.parent.parent / "reference" / "style_dimensions.json"
 
 
@@ -1430,19 +1498,11 @@ def _resolve_inherited_image(ip: dict, page_outline: dict, deck: Path, page_no: 
 
 
 def cmd_page_html(deck: Path, page_no: int) -> int:
-    """Two-step HTML generation:
+    """Generate one HTML slide from its structured page plan.
 
-    Step 1 (REWRITE): convert the structured outline + style + inherited
-      content into a single natural-language "query_detailed"-style user
-      prompt.
-    Step 2 (GENERATE): call the HTML generator LLM with a minimal system
-      prompt ("you output complete HTML, no explanations") + the rewritten
-      natural-language user prompt → final HTML.
-
-    This replaces the previous monolithic prompt loaded with schema fields,
-    CSS rules, and hard constraints. The rewriter is responsible for
-    folding all constraints into a natural-language description, matching
-    the `query_detailed` training-data style.
+    The default fast path deterministically assembles outline, style, and asset
+    data and makes a single HTML-generator LLM call.  The legacy two-call
+    rewrite path remains available through PPT_PAGE_PROMPT_MODE=llm-rewrite.
     """
     style = _load_json(deck / "style_spec.json")
     outline = _load_json(deck / "outline.json")
@@ -1567,8 +1627,9 @@ def cmd_page_html(deck: Path, page_no: int) -> int:
     if not available_slot_images:
         outline_for_rewrite['asset_slots'] = []
 
-    # --- Step 1: rewrite structured data → natural-language user prompt ---
-    rewrite_system = _load_prompt("page_html_rewrite.md")
+    # --- Step 1: assemble the page-generator query ---
+    # Default fast path is deterministic and removes one LLM call per page.
+    # Set PPT_PAGE_PROMPT_MODE=llm-rewrite to restore the legacy two-call path.
     rewrite_user_payload = {
         "style_spec": style,
         "page_outline": outline_for_rewrite,
@@ -1581,14 +1642,20 @@ def cmd_page_html(deck: Path, page_no: int) -> int:
         "available_slot_images": available_slot_images or None,
         "language": _resolve_language(tp, ip),
     }
-    try:
-        rewritten_query = llm(
-            rewrite_system,
-            json.dumps(rewrite_user_payload, ensure_ascii=False, indent=2),
-        )
-    except ModelClientError as e:
-        return _fail(f"page-html rewrite p{page_no}: {e}", page_no=page_no)
-    rewritten_query = _strip_code_fences(rewritten_query) if rewritten_query.lstrip().startswith("```") else rewritten_query
+    prompt_mode = _page_prompt_mode()
+    if prompt_mode == "llm-rewrite":
+        rewrite_system = _load_prompt("page_html_rewrite.md")
+        try:
+            rewritten_query = llm(
+                rewrite_system,
+                json.dumps(rewrite_user_payload, ensure_ascii=False, indent=2),
+            )
+        except ModelClientError as e:
+            return _fail(f"page-html rewrite p{page_no}: {e}", page_no=page_no)
+        if rewritten_query.lstrip().startswith("```"):
+            rewritten_query = _strip_code_fences(rewritten_query)
+    else:
+        rewritten_query = _build_deterministic_page_query(rewrite_user_payload)
     rewritten_query = rewritten_query.strip()
     if not rewritten_query:
         return _fail(f"page-html rewrite p{page_no}: empty rewrite output", page_no=page_no)
@@ -1633,6 +1700,7 @@ def cmd_page_html(deck: Path, page_no: int) -> int:
         page_no=page_no,
         path=str(out_path.relative_to(deck)),
         query_path=str(query_path.relative_to(deck)),
+        prompt_mode=prompt_mode,
         img_srcs_fixed=fixed,
         missing_imgs_stripped=imgs_dropped,
     )

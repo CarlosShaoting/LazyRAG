@@ -930,6 +930,18 @@ func TestKillStaleRuntimeProcessesStopsScannerOrphan(t *testing.T) {
 	}
 }
 
+func TestSelectLANIPv4SkipsLoopbackAndContainerBridges(t *testing.T) {
+	candidates := []lanIPv4Candidate{
+		{name: "lo", flags: net.FlagUp | net.FlagLoopback, ip: net.ParseIP("10.255.255.254")},
+		{name: "docker0", flags: net.FlagUp, ip: net.ParseIP("172.17.0.1")},
+		{name: "br-f16ec9f3bf18", flags: net.FlagUp, ip: net.ParseIP("172.20.0.1")},
+		{name: "eth0", flags: net.FlagUp, ip: net.ParseIP("172.24.189.31")},
+	}
+	if got := selectLANIPv4(candidates); got != "172.24.189.31" {
+		t.Fatalf("selectLANIPv4() = %q, want WSL eth0 address", got)
+	}
+}
+
 func TestDesktopProfileDoesNotRequireBundledLazyLLMSource(t *testing.T) {
 	repo := t.TempDir()
 	runner := &fakeRunner{t: t}

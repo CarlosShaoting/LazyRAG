@@ -15,16 +15,24 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
 
 const (
 	editablePPTBundlePathEnv = "LAZYMIND_EDITABLE_PPT_BUNDLE_PATH"
+
+	modelScopeEditablePPTBaseURL = "https://modelscope.cn/datasets/CarlosShaoting/lazymind-cst/resolve/master/"
+	windowsX64EditablePPTSHA     = "9c4828137a04533097c7a16029bc324c78f37f5e78fa5c4123a73f7623f05591"
+	darwinArm64EditablePPTSHA    = "12d0661ab133c50cd54ac4d16dc49afb8d5a0a44096eace00f5ae01cd67e5102"
+	linuxX64EditablePPTSHA       = "b64d43aa54e57f03c2a5f1b11e53b8b14d3fdd3dd483d76818e9a95acf69a17c"
 )
 
 type editablePPTBundleConfig struct {
-	URL       string
-	SHA256    string
-	Supported bool
+	URL            string
+	SHA256         string
+	FallbackURL    string
+	FallbackSHA256 string
+	Supported      bool
 }
 
 type EditablePPTStatus struct {
@@ -93,6 +101,10 @@ func buildEditablePPTStatus(cfg EditablePPTConfig) EditablePPTStatus {
 	}
 	if _, err := os.Stat(chromiumPath); err != nil {
 		status.Message = "Playwright Chromium executable was not found"
+		return status
+	}
+	if err := validateEditablePPTChromium(chromiumPath, installDir); err != nil {
+		status.Message = err.Error()
 		return status
 	}
 	status.Installed = true
@@ -198,7 +210,25 @@ func acquireEditablePPTBundle(ctx context.Context, destination string) error {
 	if !cfg.Supported {
 		return fmt.Errorf("editable PPTX dependency bundle is not supported on %s/%s", runtime.GOOS, runtime.GOARCH)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cfg.URL, nil)
+	return acquireEditablePPTBundleFromConfig(ctx, destination, cfg)
+}
+
+func acquireEditablePPTBundleFromConfig(ctx context.Context, destination string, cfg editablePPTBundleConfig) error {
+	primaryErr := downloadEditablePPTBundle(ctx, cfg.URL, destination, cfg.SHA256)
+	if primaryErr == nil {
+		return nil
+	}
+	if cfg.FallbackURL == "" || cfg.FallbackURL == cfg.URL {
+		return primaryErr
+	}
+	if fallbackErr := downloadEditablePPTBundle(ctx, cfg.FallbackURL, destination, cfg.FallbackSHA256); fallbackErr != nil {
+		return fmt.Errorf("editable PPTX dependency download failed: ModelScope: %v; GitHub fallback: %w", primaryErr, fallbackErr)
+	}
+	return nil
+}
+
+func downloadEditablePPTBundle(ctx context.Context, downloadURL, destination, expectedSHA256 string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
 		return err
 	}
@@ -213,23 +243,37 @@ func acquireEditablePPTBundle(ctx context.Context, destination string) error {
 	if err := writeReaderToFile(resp.Body, destination); err != nil {
 		return err
 	}
-	return verifyEditablePPTBundleChecksum(destination, cfg.SHA256)
+	return verifyEditablePPTBundleChecksum(destination, expectedSHA256)
 }
 
 func currentEditablePPTBundleConfig() editablePPTBundleConfig {
-	var prefix string
+	return editablePPTBundleConfigFor(runtime.GOOS, runtime.GOARCH)
+}
+
+func editablePPTBundleConfigFor(goos, goarch string) editablePPTBundleConfig {
+	var prefix, filename, checksum string
 	switch {
-	case runtime.GOOS == "windows" && runtime.GOARCH == "amd64":
+	case goos == "windows" && goarch == "amd64":
 		prefix = "LAZYMIND_EDITABLE_PPT_WINDOWS_X64"
-	case runtime.GOOS == "darwin" && runtime.GOARCH == "arm64":
+		filename = "lazymind-editable-ppt-windows-x64-1.0.0.zip"
+		checksum = windowsX64EditablePPTSHA
+	case goos == "darwin" && goarch == "arm64":
 		prefix = "LAZYMIND_EDITABLE_PPT_DARWIN_ARM64"
+		filename = "lazymind-editable-ppt-darwin-arm64-1.0.0.zip"
+		checksum = darwinArm64EditablePPTSHA
+	case goos == "linux" && goarch == "amd64":
+		prefix = "LAZYMIND_EDITABLE_PPT_LINUX_X64"
+		filename = "lazymind-editable-ppt-linux-x64-1.0.0.zip"
+		checksum = linuxX64EditablePPTSHA
 	default:
 		return editablePPTBundleConfig{}
 	}
 	return editablePPTBundleConfig{
-		URL:       strings.TrimSpace(os.Getenv(prefix + "_URL")),
-		SHA256:    strings.ToLower(strings.TrimSpace(os.Getenv(prefix + "_SHA256"))),
-		Supported: true,
+		URL:            modelScopeEditablePPTBaseURL + filename,
+		SHA256:         checksum,
+		FallbackURL:    strings.TrimSpace(os.Getenv(prefix + "_URL")),
+		FallbackSHA256: strings.ToLower(strings.TrimSpace(os.Getenv(prefix + "_SHA256"))),
+		Supported:      true,
 	}
 }
 
@@ -364,21 +408,68 @@ func playwrightChromiumPath(installDir string) (string, error) {
 	}
 	cmd := exec.Command(node, "-e", "process.stdout.write(require('playwright').chromium.executablePath())")
 	cmd.Dir = installDir
-	cmd.Env = append(os.Environ(), "PLAYWRIGHT_BROWSERS_PATH="+filepath.Join(installDir, "browsers"))
+	cmd.Env = editablePPTProcessEnv(installDir)
 	configureNodeCommand(cmd)
 	out, err := cmd.Output()
 	return strings.TrimSpace(string(out)), err
 }
 
+func validateEditablePPTChromium(chromiumPath, installDir string) error {
+	if runtime.GOOS != "linux" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, chromiumPath, "--version")
+	cmd.Env = editablePPTProcessEnv(installDir)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		detail := strings.TrimSpace(string(out))
+		if detail == "" {
+			detail = err.Error()
+		}
+		return fmt.Errorf("Playwright Chromium cannot start: %s", detail)
+	}
+	return nil
+}
+
+func editablePPTProcessEnv(installDir string) []string {
+	env := append(os.Environ(), "PLAYWRIGHT_BROWSERS_PATH="+filepath.Join(installDir, "browsers"))
+	if runtime.GOOS != "linux" {
+		return env
+	}
+	libraryDirs := []string{
+		filepath.Join(installDir, "linux-sysroot", "usr", "lib", "x86_64-linux-gnu"),
+		filepath.Join(installDir, "linux-sysroot", "lib", "x86_64-linux-gnu"),
+	}
+	existing := make([]string, 0, len(libraryDirs)+1)
+	for _, dir := range libraryDirs {
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			existing = append(existing, dir)
+		}
+	}
+	if current := strings.TrimSpace(os.Getenv("LD_LIBRARY_PATH")); current != "" {
+		existing = append(existing, current)
+	}
+	if len(existing) > 0 {
+		env = append(env, "LD_LIBRARY_PATH="+strings.Join(existing, string(os.PathListSeparator)))
+	}
+	return env
+}
+
 func resolveNodeExecutable() string {
 	configured := strings.TrimSpace(os.Getenv("LAZYMIND_NODE_EXECUTABLE"))
-	if configured == "" {
+	if configured != "" {
+		if info, err := os.Stat(configured); err == nil && !info.IsDir() {
+			return configured
+		}
+		if resolved, err := exec.LookPath(configured); err == nil {
+			return resolved
+		}
 		return ""
 	}
-	if info, err := os.Stat(configured); err == nil && !info.IsDir() {
-		return configured
-	}
-	return ""
+	resolved, _ := exec.LookPath("node")
+	return resolved
 }
 
 func configureNodeCommand(cmd *exec.Cmd) {

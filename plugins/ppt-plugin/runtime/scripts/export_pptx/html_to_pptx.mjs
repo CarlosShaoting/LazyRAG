@@ -131,6 +131,8 @@ async function main() {
     pages: result.totalPages,
     converted: result.successCount,
     failed: result.failCount,
+    rasterFallbacks: result.fallbackCount || 0,
+    fallbackDetails: result.fallbacks || [],
     failures: result.failures || [],
     fileSize: `${sizeKB} KB`,
     error: ok ? undefined : `${result.failCount} page(s) failed DOM→PPTX (often Chromium/Playwright mismatch)`,

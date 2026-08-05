@@ -1241,7 +1241,7 @@ def _outline_page_numbers(
 def _batch_page_html_publish_progressive(
     deck: Path,
     *,
-    concurrency: int = 2,
+    concurrency: int = 4,
     start_page: int = 0,
     end_page: int = 0,
 ) -> dict:
@@ -1252,7 +1252,7 @@ def _batch_page_html_publish_progressive(
         return {'status': 'failed', 'error': 'no pages in outline matching range', 'stage': 'page-html'}
 
     mc.set_llm_impl(_agent_llm_call)
-    workers = max(1, min(int(concurrency or 2), 8))
+    workers = max(1, min(int(concurrency or 4), 8))
     results: dict[int, dict[str, Any]] = {}
     published: list[dict[str, Any]] = []
     ready_ok: dict[int, bool] = {}
@@ -1392,7 +1392,7 @@ def _run_stage_inprocess(
     deck: Path,
     *,
     page: int = 0,
-    concurrency: int = 2,
+    concurrency: int = 4,
     start_page: int = 0,
     end_page: int = 0,
 ) -> dict:
@@ -2107,7 +2107,7 @@ def ppt_run_stage(
     stage: str,
     page: int = 0,
     slot: str = '',
-    concurrency: int = 2,
+    concurrency: int = 4,
     start_page: int = 0,
     end_page: int = 0,
 ) -> dict:
@@ -2122,7 +2122,7 @@ def ppt_run_stage(
             Export is UI-only — do not pass stage=export.
         page (int): Required for gen-image / page-html / refine-page (1-based).
         slot (str): Required for gen-image.
-        concurrency (int): For batch stages (default 2).
+        concurrency (int): For batch stages (default 4, clamped to 1-8).
         start_page (int): Optional batch-page-html start.
         end_page (int): Optional batch-page-html end.
 
@@ -2150,7 +2150,7 @@ def ppt_run_stage(
         return tool_error('ppt_run_stage', str(exc))
 
     page_no = _coerce_int(page, 0, lo=0)
-    conc = _coerce_int(concurrency, 2, lo=1, hi=8)
+    conc = _coerce_int(concurrency, 4, lo=1, hi=8)
     sp = _coerce_int(start_page, 0, lo=0)
     ep = _coerce_int(end_page, 0, lo=0)
     slot_id = _coerce_str(slot)

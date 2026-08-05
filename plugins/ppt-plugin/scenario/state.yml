@@ -259,22 +259,16 @@ steps:
       6. If image_source is not none and asset-plan has pending image slots:
            ppt_run_stage(deck_dir, stage='batch-gen-image', concurrency=2)
          Otherwise skip (material images do not need batch-gen-image).
-      7. ppt_run_stage(deck_dir, stage='batch-page-html', concurrency=2)
+      7. ppt_run_stage(deck_dir, stage='batch-page-html', concurrency=4)
          This stage auto-publishes each finished page into preview_html (+ notes draft)
          as soon as that page HTML is ready — the left filmstrip updates page-by-page.
          Do NOT call ppt_read_page_html or save_artifacts for the HTML bodies afterward.
       8. ppt_list_pages(deck_dir) to confirm count.
          If published_count looks wrong / UI empty, call once:
            ppt_publish_pages(deck_dir)
-      9. REQUIRED — rewrite preview_notes for EVERY published page into a richer spoken
-         introduction (do not leave the auto draft as-is). For each sort_order N:
-           save_artifacts([{
-             key:'preview_notes', content_type:'text', sort_order:N,
-             value:<one continuous paragraph, ~120-280 Chinese chars / 4–7 sentences>
-           }])
-         Each note must: (a) state the page purpose, (b) cover the main points/numbers
-         visible on that slide, (c) add brief interpretation for the audience, (d) end
-         with a one-sentence close or transition. Match the user's language. No bullet lists.
+      9. Keep the auto-published preview_notes draft. Do not spend additional model
+         turns rewriting every page's notes during the main generation path. Only
+         rewrite notes when the user explicitly asks to improve the speaker script.
       10. Stop. Do NOT call any export / pptx tool — PPTX is downloaded only when
          the user clicks the UI Export button.
 
@@ -316,8 +310,8 @@ steps:
     acceptance_criteria: |
       For a full run: at least 2 aligned preview_html HTML pages must be saved
       (DOCTYPE/html documents), with matching preview_notes sort_order.
-      preview_notes should be richer spoken intros (~120+ Chinese chars / multiple
-      sentences), not one-line stubs.
+      preview_notes must be aligned with preview_html; the auto-generated draft is
+      sufficient unless the user explicitly requests a richer speaker script.
       Do not require a PPTX file artifact — export is UI-only.
       For a partial page edit: only the requested sort_order rows need updating
       with HTML preview_html.

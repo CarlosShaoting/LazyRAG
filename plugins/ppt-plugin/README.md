@@ -119,5 +119,10 @@ forbid padding a grid.
 ## Defaults
 
 - Preview: iframe HTML (`preview_html`), auto-published after `page-html` stages
+- Page generation: one HTML-model call per page by default; set
+  `PPT_PAGE_PROMPT_MODE=llm-rewrite` to restore the legacy per-page rewrite call
+- Page concurrency: 4 by default (the tool accepts 1–8; lower it for rate-limited providers)
 - Export: **click Export in PluginPanel** (not part of SubAgent tools). Default =
-  browser raster PPTX; optional editable via `LAZYMIND_OUTPUT_EDITABLE_PPT=true`
+  browser raster PPTX. Local/Desktop enables editable export automatically after
+  its dependency bundle is detected; container deployments use
+  `LAZYMIND_OUTPUT_EDITABLE_PPT=true`.

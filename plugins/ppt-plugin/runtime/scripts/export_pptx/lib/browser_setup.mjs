@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { delimiter, resolve } from 'node:path';
 import { createRequire } from 'node:module';
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 
 const require = createRequire(import.meta.url);
 const hiddenProcessOptions = { windowsHide: true };
@@ -57,6 +57,7 @@ export function hiddenChromiumLaunchOptions(options = {}) {
  */
 export function ensureDependencies(baseDir) {
   installHiddenProcessHooks();
+  installBundledLinuxLibraryPath(baseDir);
   const nodeModules = resolve(baseDir, 'node_modules');
   const pptxgenMarker = resolve(nodeModules, 'pptxgenjs');
   const playwrightMarker = resolve(nodeModules, 'playwright');
@@ -70,27 +71,38 @@ export function ensureDependencies(baseDir) {
     }
   }
 
+  // Desktop guarantees Electron-as-Node, but not a system `node` or `npx` on
+  // PATH. Resolve the bundled browser through the local Playwright module.
   try {
-    const out = execSync('npx playwright install --dry-run chromium 2>&1', {
-      ...hiddenProcessOptions,
-      cwd: baseDir, encoding: 'utf-8', timeout: 10000,
-    });
-    if (out.includes('is already installed')) return;
+    const playwright = require(resolve(nodeModules, 'playwright'));
+    const executable = playwright.chromium.executablePath();
+    if (executable && existsSync(executable)) return;
   } catch {
-    // Dry-run can fail on older Playwright builds; try executable detection.
+    // Fall through to the local Playwright CLI below.
   }
 
+  console.error('[setup] 正在安装 Playwright Chromium（仅首次）...');
   try {
-    execSync('node -e "require(\'playwright\').chromium.executablePath()"', {
+    const playwrightCli = resolve(nodeModules, 'playwright', 'cli.js');
+    execFileSync(process.execPath, [playwrightCli, 'install', 'chromium'], {
       ...hiddenProcessOptions,
-      cwd: baseDir, encoding: 'utf-8', timeout: 5000,
+      cwd: baseDir,
+      env: process.env,
+      stdio: 'inherit',
     });
-  } catch {
-    console.error('[setup] 正在安装 Playwright Chromium（仅首次）...');
-    try {
-      execSync('npx playwright install chromium', { ...hiddenProcessOptions, cwd: baseDir, stdio: 'inherit' });
-    } catch (e) {
-      throw new Error(`Chromium installation failed: ${e.message}. Cannot install headless browser in this environment.`);
-    }
+  } catch (e) {
+    throw new Error(`Chromium installation failed: ${e.message}. Cannot install headless browser in this environment.`);
   }
+}
+
+/** Use Chromium runtime libraries bundled for minimal Ubuntu/WSL installs. */
+export function installBundledLinuxLibraryPath(baseDir) {
+  if (process.platform !== 'linux') return;
+  const candidates = [
+    resolve(baseDir, 'linux-sysroot', 'usr', 'lib', 'x86_64-linux-gnu'),
+    resolve(baseDir, 'linux-sysroot', 'lib', 'x86_64-linux-gnu'),
+  ].filter(existsSync);
+  if (candidates.length === 0) return;
+  const current = String(process.env.LD_LIBRARY_PATH || '').trim();
+  process.env.LD_LIBRARY_PATH = [...candidates, ...(current ? [current] : [])].join(delimiter);
 }
