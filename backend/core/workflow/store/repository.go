@@ -20,6 +20,7 @@ var (
 	ErrNotFound            error = repositoryError("WORKFLOW_NOT_FOUND")
 	ErrPermissionDenied    error = repositoryError("PERMISSION_DENIED")
 	ErrIdempotencyConflict error = repositoryError("IDEMPOTENCY_CONFLICT")
+	ErrSessionConflict     error = repositoryError("WORKFLOW_SESSION_CONFLICT")
 )
 
 type repositoryError string
@@ -95,7 +96,7 @@ func (r *Repository) GetWorkflowPackage(ctx context.Context, owner, refOrID, rev
 			return WorkflowPackage{}, err
 		}
 		path := entry.Path
-		if path == "plugin.yaml" {
+		if path == "workflow.yaml" {
 			path = "workflow.yaml"
 		}
 		files[path] = append([]byte(nil), blob.Content...)
@@ -451,6 +452,17 @@ func (r *Repository) CreateHostSession(ctx context.Context, owner, sessionID, co
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return orm.WorkflowSession{}, false, err
 	}
+	if conversationID != "" {
+		var count int64
+		if err := r.db.WithContext(ctx).Model(&orm.WorkflowSession{}).
+			Where("conversation_id = ? AND dismissed = false", conversationID).
+			Count(&count).Error; err != nil {
+			return orm.WorkflowSession{}, false, err
+		}
+		if count > 0 {
+			return orm.WorkflowSession{}, false, ErrSessionConflict
+		}
+	}
 	if originHost == "" {
 		originHost = "lazymind"
 	}
@@ -647,11 +659,17 @@ func (r *Repository) Replay(ctx context.Context, sessionID, owner string, after 
 }
 
 func (r *Repository) AuthorizeSession(ctx context.Context, sessionID, owner string) error {
-	var count int64
-	if err := r.db.WithContext(ctx).Table("plugin_sessions").Where("id = ? AND create_user_id = ?", sessionID, owner).Count(&count).Error; err != nil {
-		return err
+	var session struct {
+		CreateUserID string `gorm:"column:create_user_id"`
 	}
-	if count == 0 {
+	result := r.db.WithContext(ctx).Table("plugin_sessions").Select("create_user_id").Where("id = ?", sessionID).Take(&session)
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		return ErrNotFound
+	}
+	if result.Error != nil {
+		return result.Error
+	}
+	if session.CreateUserID != owner {
 		return ErrPermissionDenied
 	}
 	return nil

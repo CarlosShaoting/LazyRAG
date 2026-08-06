@@ -85,7 +85,7 @@ def test_skill_to_workflow_covers_complete_authoring_tool_chain():
     assert 'Only execution of a Workflow step may invoke another model' in boundary
     assert 'No other tool may hide' in boundary
     format_policy = (KIT / 'references' / 'workflow-format.md').read_text()
-    for path in ('plugin.yaml', 'scenario/state.yml', 'scenario/scenario.md'):
+    for path in ('workflow.yaml', 'scenario/state.yml', 'scenario/scenario.md'):
         assert path in format_policy
 
 
@@ -100,5 +100,5 @@ def test_host_adapters_keep_runtime_rules_out_of_host_capabilities():
 def test_mapping_ledger_points_to_current_workflow_sources():
     ledger = (KIT / 'references/source-to-policy-mapping.md').read_text()
     assert 'chat/plugin/' not in ledger
-    assert '_trigger_plugin_step' not in ledger
+    assert '_trigger_workflow_step' not in ledger
     assert 'chat/workflow/workflow_manager.py' in ledger

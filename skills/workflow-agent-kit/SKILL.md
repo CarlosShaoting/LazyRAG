@@ -70,16 +70,26 @@ When no matching trigger is exposed:
 
 ## Start a Workflow
 
-1. Identify every external material in the pinned Workflow package.
-2. For each file or byte attachment, call `import_input_resource`. Keep the
+1. Inspect the conversation's current Workflow projection. A conversation may
+   have at most one non-dismissed Session in any status. If one exists, operate
+   on that Session; never call `prepare_workflow` to replace or bypass it.
+2. Identify every external material in the pinned Workflow package.
+3. For each file or byte attachment, call `import_input_resource`. Keep the
    returned `resource_id`, `revision`, and `content_hash`; never bind a local path
    or temporary URL.
-3. Call `prepare_workflow` with explicit input bindings and one stable command id.
-   Preparation must remain separate from start.
-4. If preparation reports missing inputs, obtain/import them and prepare again.
-5. When status is ready, generate a stable Session id and call `start_workflow`
-   with the exact preparation id.
-6. Call `get_workflow_state` immediately after start.
+4. Call `prepare_workflow` with explicit input bindings and one stable command id.
+   Under the public Runtime/MCP contract, preparation remains separate from
+   `start_workflow`. In the LazyMind Chat Host profile, however, the exposed
+   `prepare_workflow` wrapper atomically consumes a ready preparation, creates
+   the Session, and returns its `session_id`, `state_version`, and `ready_steps`.
+   Treat that Host call as the single Session-creating call and never call
+   `start_workflow` for its result.
+5. If preparation reports missing inputs, obtain/import them and prepare again.
+6. Under the public Runtime/MCP contract, when status is ready, generate a
+   stable Session id and call `start_workflow` with the exact preparation id.
+   Skip this step in the LazyMind Chat Host profile because step 4 already
+   started the Session.
+7. Call `get_workflow_state` immediately after start.
 
 ## Advance steps
 
@@ -120,9 +130,18 @@ When no matching trigger is exposed:
 ## Complete or recover
 
 Continue projection-driven execution until terminal. On active Attempts, wait or
-observe; on missing authority, ask the user. Use public stop/resume tools and the
-recovery policy. Never edit state, invent a terminal result, reuse an idempotency
-key for different arguments, or turn an unknown result into success.
+observe; on missing authority, ask the user. Model-driven Agent Hosts must hide
+`stop_workflow`; explicit user stop/pause intent belongs to the Host/UI controller
+and uses the same deterministic cancellation path as its stop button. Never use
+stop as automatic error recovery. A stopped Session remains the conversation's
+one non-dismissed Session.
+To continue it, call `resume_workflow`, refresh projection, then target the
+interrupted/failed step with `advance_step` when the projection permits. Never
+call `prepare_workflow` after stop. To start a genuinely new run, the existing
+Session must first be explicitly dismissed through the product UI; stopping,
+failing, or completing it is not dismissal. Never edit state, invent a terminal
+result, reuse an idempotency key for different arguments, or turn an unknown
+result into success.
 
 ## Host profile
 

@@ -43,6 +43,7 @@ from lazymind.chat.engine.agent_runtime import (
     AgentExecutor,
     AgentRole,
     AgentRunPlan,
+    make_cancel_stop_condition,
     PromptBuilder,
     normalize_attachments,
     estimate_context_usage,
@@ -83,6 +84,14 @@ sensitive_filter = SensitiveFilter(
 # Maps conversation_id → session_id for active chat sessions.
 # Used by task-cancel endpoint to cancel ChatAgent by conversation_id.
 _active_sessions: dict[str, str] = {}
+
+
+def _unregister_active_session(conversation_id: str, session_id: str) -> None:
+    """Remove only the request that registered this exact ChatAgent session."""
+    if _active_sessions.get(conversation_id) == session_id:
+        _active_sessions.pop(conversation_id, None)
+
+
 _CITE_MESSAGE_PATTERN = re.compile(
     r'<cite_message>([\s\S]*?)</cite_message>\s*',
     re.IGNORECASE,
@@ -421,7 +430,8 @@ async def _handle_chat_impl(
         f'[{summarize_model_config_for_log(runtime.llm_config)}]'
     )
     LOG.info(
-        f'[ChatServer] [PLUGIN_CONTEXT] [sid={conversation.session_id}] [workflow_context={workflow.workflow_context!r}]'
+        f'[ChatServer] [WORKFLOW_CONTEXT] [sid={conversation.session_id}] '
+        f'[workflow_context={workflow.workflow_context!r}]'
     )
     LOG.info(
         f'[ChatServer] [TURN_SEQ] [sid={conversation.session_id}] '
@@ -637,7 +647,7 @@ async def _handle_chat_impl(
     _enable_workflow = agentic_config.get('enable_workflow', True)
     _enable_subagent = agentic_config.get('enable_subagent', True)
     LOG.info(
-        f'[ChatServer] [PLUGIN_FLAGS] [sid={conversation.session_id}] '
+        f'[ChatServer] [WORKFLOW_FLAGS] [sid={conversation.session_id}] '
         f'[enable_workflow={_enable_workflow!r}] [enable_subagent={_enable_subagent!r}] '
         f'[workflow_tools={[getattr(t, "__name__", str(t)) for t in workflow_tools]!r}]'
     )
@@ -840,6 +850,7 @@ async def _handle_chat_impl(
                 'list_knowledge_base_documents': 2,
                 'aggregate_knowledge_base_documents': 2,
             },
+            extra_stop_condition=make_cancel_stop_condition(),
         ),
     )
     executor = AgentExecutor()
@@ -925,7 +936,7 @@ async def _handle_chat_impl(
         finally:
             # Unregister the active session so the cancel endpoint no longer targets it.
             if _conv_id_key:
-                _active_sessions.pop(_conv_id_key, None)
+                _unregister_active_session(_conv_id_key, conversation.session_id)
 
         cost = round(time.time() - start_time, 3)
         final_resp['cost'] = cost

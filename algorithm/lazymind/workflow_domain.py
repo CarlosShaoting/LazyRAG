@@ -11,5 +11,5 @@ class WorkflowSessionRef:
     origin_ref: str = ''
 
 
-def public_route(workflow_names_enabled: bool = True) -> str:
-    return '/api/workflows' if workflow_names_enabled else '/api/workflows'
+def public_route() -> str:
+    return '/api/workflows'

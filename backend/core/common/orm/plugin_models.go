@@ -234,7 +234,7 @@ type WorkflowDraft struct {
 	//   ''             — never triggered AI generation
 	//   'generating'   — Phase 0 in progress (design brief)
 	//   'brief_done'   — Phase 0 complete; Phase 1 running
-	//   'skeleton_done' — Phase 1 complete (plugin.yaml available); Phase 2 running
+	//   'skeleton_done' — Phase 1 complete (workflow.yaml available); Phase 2 running
 	//   'state_done'   — Phase 2 complete (state.yml available); Phase 3 running
 	//   'done'         — All phases complete
 	//   'failed'       — A phase failed; see generate_error for details

@@ -14,5 +14,4 @@ _SPEC.loader.exec_module(_MODULE)
 def test_workflow_names_and_legacy_route_rollback():
     ref = _MODULE.WorkflowSessionRef('s', 'w')
     assert ref.workflow_id == 'w'
-    assert _MODULE.public_route(True) == '/api/workflows'
-    assert _MODULE.public_route(False) == '/api/workflows'
+    assert _MODULE.public_route() == '/api/workflows'

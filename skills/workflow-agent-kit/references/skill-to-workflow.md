@@ -30,7 +30,7 @@ outcome that cannot be observed and validated.
 
 Read `workflow-format.md` completely before generating files. Produce at least:
 
-- `plugin.yaml` — compatibility package filename containing public Workflow
+- `workflow.yaml` — compatibility package filename containing public Workflow
   metadata, steps, materials/slots, and presentation declarations;
 - `scenario/state.yml` — graph transitions and executable step contracts;
 - `scenario/scenario.md` — descriptive usage and step explanation for ChatAgent.

@@ -1,12 +1,12 @@
 # Workflow package format v1
 
-The package currently retains the physical filename `plugin.yaml` for storage
+The package currently retains the physical filename `workflow.yaml` for storage
 compatibility. Its domain content and all Agent-facing language are Workflow.
 
 ## Required tree
 
 ```text
-plugin.yaml
+workflow.yaml
 scenario/state.yml
 scenario/scenario.md
 ```
@@ -14,7 +14,7 @@ scenario/scenario.md
 Optional paths are `scenario/layout.json` and `scripts/<relative-path>`. Absolute
 paths and `..` traversal are invalid.
 
-## `plugin.yaml`
+## `workflow.yaml`
 
 Minimum shape:
 

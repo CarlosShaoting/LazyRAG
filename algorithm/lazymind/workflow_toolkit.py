@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import os
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -43,6 +44,40 @@ class InputResourceRef(BaseModel):
 
 
 WORKFLOW_SKILL_NAME = 'workflow-agent-kit'
+
+
+@dataclass(frozen=True)
+class AgentWorkflowToolProjection:
+    """Host-neutral Workflow capability projection for model-driven Agents.
+
+    Lifecycle mutation remains available through the public API for UI, human,
+    and deterministic Host controllers. This projection only controls which
+    capabilities are safe to expose to a model for the current Session state.
+    """
+
+    session_id: str = ''
+    session_status: str = ''
+
+    def expose(self, tools: List[Callable[..., Any]]) -> List[Callable[..., Any]]:
+        has_session = bool(self.session_id.strip())
+        status = self.session_status.strip().lower()
+        exposed: List[Callable[..., Any]] = []
+        for tool in tools:
+            name = str(getattr(tool, '__name__', ''))
+            # Session creation is atomic in Agent Hosts; direct start and model-
+            # initiated stop are controller capabilities, never model tools.
+            if name in {'start_workflow', 'stop_workflow'}:
+                continue
+            if has_session and (name == 'prepare_workflow' or _is_workflow_trigger(name)):
+                continue
+            if name == 'resume_workflow' and (not has_session or status != 'stopped'):
+                continue
+            exposed.append(tool)
+        return exposed
+
+
+def _is_workflow_trigger(name: str) -> bool:
+    return name.startswith('trigger_') and name.endswith('_workflow')
 
 
 def workflow_skills_dir() -> str:
@@ -174,13 +209,13 @@ class HostWorkflowToolkit:
         return {**result, 'command_id': resolved_command_id}
 
     def stop_workflow(self, session_id: str, command_id: str = '') -> Dict[str, Any]:
-        """Stop a Workflow while preserving durable state and Artifact history."""
+        """Explicitly pause one Session; preserve state and never prepare a replacement."""
         resolved_command_id = command_id or str(uuid.uuid4())
         result = self._client().stop_workflow(session_id, resolved_command_id).result
         return {**result, 'command_id': resolved_command_id}
 
     def resume_workflow(self, session_id: str, command_id: str = '') -> Dict[str, Any]:
-        """Resume a stopped Workflow from its persisted public projection."""
+        """Resume the same stopped Session; refresh projection before advancing."""
         resolved_command_id = command_id or str(uuid.uuid4())
         result = self._client().resume_workflow(session_id, resolved_command_id).result
         return {**result, 'command_id': resolved_command_id}

@@ -394,9 +394,9 @@ steps:
 }
 
 func TestBundledWorkflowsCompileForRuntime(t *testing.T) {
-	for _, workflowID := range []string{"writer-plugin", "image-plugin", "test-workflow"} {
-		root := filepath.Join("..", "..", "..", "..", "plugins", workflowID)
-		workflowYAML, err := os.ReadFile(filepath.Join(root, "plugin.yaml"))
+	for _, workflowID := range []string{"writer-workflow", "image-workflow", "test-workflow"} {
+		root := filepath.Join("..", "..", "..", "..", "workflows", workflowID)
+		workflowYAML, err := os.ReadFile(filepath.Join(root, "workflow.yaml"))
 		if err != nil {
 			t.Fatalf("read %s plugin: %v", workflowID, err)
 		}

@@ -4457,7 +4457,7 @@ components:
             required:
                 - enabled
             type: object
-        pluginRepairPreviewOpenAPIRequest:
+        workflowRepairPreviewOpenAPIRequest:
             properties:
                 mode:
                     type: string
@@ -4467,7 +4467,7 @@ components:
                 - mode
                 - target
             type: object
-        pluginWorkflowConfirmOpenAPIRequest:
+        workflowConfirmOpenAPIRequest:
             properties:
                 analysis_id:
                     type: string
@@ -7120,24 +7120,24 @@ paths:
                 "200":
                     description: OK
             summary: POST /chat
-    /api/core/chat/settings/plugins:
+    /api/core/chat/settings/workflows:
         get:
             responses:
                 "200":
                     description: OK
-            summary: GET /chat/settings/plugins
-    /api/core/chat/settings/plugins/{plugin_ref:.+}:
+            summary: GET /chat/settings/workflows
+    /api/core/chat/settings/workflows/{workflow_ref:.+}:
         patch:
             parameters:
                 - in: path
-                  name: plugin_ref:.+
+                  name: workflow_ref:.+
                   required: true
                   schema:
                     type: string
             responses:
                 "200":
                     description: OK
-            summary: PATCH /chat/settings/plugins/{plugin_ref:.+}
+            summary: PATCH /chat/settings/workflows/{workflow_ref:.+}
     /api/core/conversation:export:
         post:
             requestBody:
@@ -7238,7 +7238,7 @@ paths:
                 "200":
                     description: OK
             summary: GET /conversations/{conversation_id}/artifacts
-    /api/core/conversations/{conversation_id}/dismissed-plugin-sessions:
+    /api/core/conversations/{conversation_id}/dismissed-workflow-sessions:
         get:
             parameters:
                 - in: path
@@ -7249,7 +7249,7 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: GET /conversations/{conversation_id}/dismissed-plugin-sessions
+            summary: GET /conversations/{conversation_id}/dismissed-workflow-sessions
     /api/core/conversations/{conversation_id}/events:
         get:
             parameters:
@@ -7262,7 +7262,7 @@ paths:
                 "200":
                     description: OK
             summary: GET /conversations/{conversation_id}/events
-    /api/core/conversations/{conversation_id}/plugin-sessions:
+    /api/core/conversations/{conversation_id}/workflow-sessions:
         get:
             parameters:
                 - in: path
@@ -7273,8 +7273,8 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: GET /conversations/{conversation_id}/plugin-sessions
-    /api/core/conversations/{conversation_id}/plugin-sessions:active:
+            summary: GET /conversations/{conversation_id}/workflow-sessions
+    /api/core/conversations/{conversation_id}/workflow-sessions:active:
         get:
             parameters:
                 - in: path
@@ -7285,8 +7285,8 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: GET /conversations/{conversation_id}/plugin-sessions:active
-    /api/core/conversations/{conversation_id}/plugin-sessions:latest:
+            summary: GET /conversations/{conversation_id}/workflow-sessions:active
+    /api/core/conversations/{conversation_id}/workflow-sessions:latest:
         get:
             parameters:
                 - in: path
@@ -7297,8 +7297,8 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: GET /conversations/{conversation_id}/plugin-sessions:latest
-    /api/core/conversations/{conversation_id}/plugin-settings:
+            summary: GET /conversations/{conversation_id}/workflow-sessions:latest
+    /api/core/conversations/{conversation_id}/workflow-settings:
         patch:
             parameters:
                 - in: path
@@ -7309,7 +7309,7 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: PATCH /conversations/{conversation_id}/plugin-settings
+            summary: PATCH /conversations/{conversation_id}/workflow-settings
     /api/core/conversations/{conversation_id}/tasks:
         get:
             parameters:
@@ -9444,7 +9444,7 @@ paths:
             summary: 'Internal: apply word-group actions in batch (algorithm → core)'
             tags:
                 - word_group
-    /api/core/internal/plugin-sessions/{session_id}/projection:
+    /api/core/internal/workflow-sessions/{session_id}/projection:
         get:
             parameters:
                 - in: path
@@ -9455,8 +9455,8 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: GET /internal/plugin-sessions/{session_id}/projection
-    /api/core/internal/plugin-sessions/{session_id}:transition:
+            summary: GET /internal/workflow-sessions/{session_id}/projection
+    /api/core/internal/workflow-sessions/{session_id}:transition:
         post:
             parameters:
                 - in: path
@@ -9467,20 +9467,20 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: POST /internal/plugin-sessions/{session_id}:transition
-    /api/core/internal/plugin-sessions:plan-start:
+            summary: POST /internal/workflow-sessions/{session_id}:transition
+    /api/core/internal/workflow-sessions:plan-start:
         post:
             responses:
                 "200":
                     description: OK
-            summary: POST /internal/plugin-sessions:plan-start
-    /api/core/internal/plugin-sessions:start:
+            summary: POST /internal/workflow-sessions:plan-start
+    /api/core/internal/workflow-sessions:start:
         post:
             responses:
                 "200":
                     description: OK
-            summary: POST /internal/plugin-sessions:start
-    /api/core/internal/plugin-transition-commands/{command_id}:
+            summary: POST /internal/workflow-sessions:start
+    /api/core/internal/workflow-transition-commands/{command_id}:
         get:
             parameters:
                 - in: path
@@ -9491,7 +9491,7 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: GET /internal/plugin-transition-commands/{command_id}
+            summary: GET /internal/workflow-transition-commands/{command_id}
     /api/core/internal/subagent/tasks/{task_id}:
         get:
             parameters:
@@ -10807,18 +10807,18 @@ paths:
             summary: Set personalization setting
             tags:
                 - personalization
-    /api/core/plugin-drafts:
+    /api/core/workflow-drafts:
         get:
             responses:
                 "200":
                     description: OK
-            summary: GET /plugin-drafts
+            summary: GET /workflow-drafts
         post:
             responses:
                 "200":
                     description: OK
-            summary: POST /plugin-drafts
-    /api/core/plugin-drafts/{draft_id}:
+            summary: POST /workflow-drafts
+    /api/core/workflow-drafts/{draft_id}:
         delete:
             parameters:
                 - in: path
@@ -10829,7 +10829,7 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: DELETE /plugin-drafts/{draft_id}
+            summary: DELETE /workflow-drafts/{draft_id}
         get:
             parameters:
                 - in: path
@@ -10840,8 +10840,8 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: GET /plugin-drafts/{draft_id}
-    /api/core/plugin-drafts/{draft_id}/generation-analysis:
+            summary: GET /workflow-drafts/{draft_id}
+    /api/core/workflow-drafts/{draft_id}/generation-analysis:
         get:
             parameters:
                 - in: path
@@ -10857,10 +10857,10 @@ paths:
                                 additionalProperties: true
                                 type: object
                     description: Generation analysis
-            summary: Get Plugin generation analysis
+            summary: Get Workflow generation analysis
             tags:
                 - plugin
-    /api/core/plugin-drafts/{draft_id}/repair-runs/{repair_id}:
+    /api/core/workflow-drafts/{draft_id}/repair-runs/{repair_id}:
         get:
             parameters:
                 - in: path
@@ -10881,10 +10881,10 @@ paths:
                                 additionalProperties: true
                                 type: object
                     description: Repair run
-            summary: Get Plugin repair run
+            summary: Get Workflow repair run
             tags:
                 - plugin
-    /api/core/plugin-drafts/{draft_id}:ai-generate:
+    /api/core/workflow-drafts/{draft_id}:ai-generate:
         post:
             parameters:
                 - in: path
@@ -10895,8 +10895,8 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: POST /plugin-drafts/{draft_id}:ai-generate
-    /api/core/plugin-drafts/{draft_id}:ai-repair:
+            summary: POST /workflow-drafts/{draft_id}:ai-generate
+    /api/core/workflow-drafts/{draft_id}:ai-repair:
         post:
             parameters:
                 - in: path
@@ -10907,8 +10907,8 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: POST /plugin-drafts/{draft_id}:ai-repair
-    /api/core/plugin-drafts/{draft_id}:confirm-workflow:
+            summary: POST /workflow-drafts/{draft_id}:ai-repair
+    /api/core/workflow-drafts/{draft_id}:confirm-workflow:
         post:
             parameters:
                 - in: path
@@ -10920,7 +10920,7 @@ paths:
                 content:
                     application/json:
                         schema:
-                            $ref: '#/components/schemas/pluginWorkflowConfirmOpenAPIRequest'
+                            $ref: '#/components/schemas/workflowConfirmOpenAPIRequest'
                 required: true
             responses:
                 "200":
@@ -10933,7 +10933,7 @@ paths:
             summary: Confirm Skill workflow candidate
             tags:
                 - plugin
-    /api/core/plugin-drafts/{draft_id}:publish:
+    /api/core/workflow-drafts/{draft_id}:publish:
         post:
             parameters:
                 - in: path
@@ -10944,8 +10944,8 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: POST /plugin-drafts/{draft_id}:publish
-    /api/core/plugin-drafts/{draft_id}:repair-preview:
+            summary: POST /workflow-drafts/{draft_id}:publish
+    /api/core/workflow-drafts/{draft_id}:repair-preview:
         post:
             parameters:
                 - in: path
@@ -10957,7 +10957,7 @@ paths:
                 content:
                     application/json:
                         schema:
-                            $ref: '#/components/schemas/pluginRepairPreviewOpenAPIRequest'
+                            $ref: '#/components/schemas/workflowRepairPreviewOpenAPIRequest'
                 required: true
             responses:
                 "200":
@@ -10967,10 +10967,10 @@ paths:
                                 additionalProperties: true
                                 type: object
                     description: Repair preview
-            summary: Preview Plugin repair
+            summary: Preview Workflow repair
             tags:
                 - plugin
-    /api/core/plugin-drafts/{draft_id}:save:
+    /api/core/workflow-drafts/{draft_id}:save:
         post:
             parameters:
                 - in: path
@@ -10981,8 +10981,8 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: POST /plugin-drafts/{draft_id}:save
-    /api/core/plugin-drafts/{draft_id}:validate:
+            summary: POST /workflow-drafts/{draft_id}:save
+    /api/core/workflow-drafts/{draft_id}:validate:
         post:
             parameters:
                 - in: path
@@ -10993,14 +10993,14 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: POST /plugin-drafts/{draft_id}:validate
-    /api/core/plugin-drafts:polish-info:
+            summary: POST /workflow-drafts/{draft_id}:validate
+    /api/core/workflow-drafts:polish-info:
         post:
             responses:
                 "200":
                     description: OK
-            summary: POST /plugin-drafts:polish-info
-    /api/core/plugin-sessions/{session_id}:
+            summary: POST /workflow-drafts:polish-info
+    /api/core/workflow-sessions/{session_id}:
         get:
             parameters:
                 - in: path
@@ -11011,8 +11011,8 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: GET /plugin-sessions/{session_id}
-    /api/core/plugin-sessions/{session_id}/artifacts:
+            summary: GET /workflow-sessions/{session_id}
+    /api/core/workflow-sessions/{session_id}/artifacts:
         post:
             parameters:
                 - in: path
@@ -11023,8 +11023,8 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: POST /plugin-sessions/{session_id}/artifacts
-    /api/core/plugin-sessions/{session_id}/projection:
+            summary: POST /workflow-sessions/{session_id}/artifacts
+    /api/core/workflow-sessions/{session_id}/projection:
         get:
             parameters:
                 - in: path
@@ -11035,8 +11035,8 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: GET /plugin-sessions/{session_id}/projection
-    /api/core/plugin-sessions/{session_id}/slots:
+            summary: GET /workflow-sessions/{session_id}/projection
+    /api/core/workflow-sessions/{session_id}/slots:
         get:
             parameters:
                 - in: path
@@ -11047,8 +11047,8 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: GET /plugin-sessions/{session_id}/slots
-    /api/core/plugin-sessions/{session_id}/slots/{slot_id}:
+            summary: GET /workflow-sessions/{session_id}/slots
+    /api/core/workflow-sessions/{session_id}/slots/{slot_id}:
         patch:
             parameters:
                 - in: path
@@ -11064,8 +11064,8 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: PATCH /plugin-sessions/{session_id}/slots/{slot_id}
-    /api/core/plugin-sessions/{session_id}/slots/{slot_id}/items:
+            summary: PATCH /workflow-sessions/{session_id}/slots/{slot_id}
+    /api/core/workflow-sessions/{session_id}/slots/{slot_id}/items:
         post:
             parameters:
                 - in: path
@@ -11081,8 +11081,8 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: POST /plugin-sessions/{session_id}/slots/{slot_id}/items
-    /api/core/plugin-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}:
+            summary: POST /workflow-sessions/{session_id}/slots/{slot_id}/items
+    /api/core/workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}:
         delete:
             parameters:
                 - in: path
@@ -11103,7 +11103,7 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: DELETE /plugin-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}
+            summary: DELETE /workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}
         patch:
             parameters:
                 - in: path
@@ -11124,8 +11124,8 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: PATCH /plugin-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}
-    /api/core/plugin-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}/caption:
+            summary: PATCH /workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}
+    /api/core/workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}/caption:
         patch:
             parameters:
                 - in: path
@@ -11146,8 +11146,8 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: PATCH /plugin-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}/caption
-    /api/core/plugin-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}/rollback:
+            summary: PATCH /workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}/caption
+    /api/core/workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}/rollback:
         post:
             parameters:
                 - in: path
@@ -11168,8 +11168,8 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: POST /plugin-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}/rollback
-    /api/core/plugin-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}/versions:
+            summary: POST /workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}/rollback
+    /api/core/workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}/versions:
         get:
             parameters:
                 - in: path
@@ -11190,8 +11190,8 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: GET /plugin-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}/versions
-    /api/core/plugin-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}:sync-writer-document:
+            summary: GET /workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}/versions
+    /api/core/workflow-sessions/{session_id}/slots/{slot_id}/items/idx/{list_index}:sync-writer-document:
         post:
             parameters:
                 - in: path
@@ -11227,7 +11227,7 @@ paths:
             tags:
                 - plugin
                 - writer
-    /api/core/plugin-sessions/{session_id}/slots/{slot_id}/order:
+    /api/core/workflow-sessions/{session_id}/slots/{slot_id}/order:
         get:
             parameters:
                 - in: path
@@ -11243,7 +11243,7 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: GET /plugin-sessions/{session_id}/slots/{slot_id}/order
+            summary: GET /workflow-sessions/{session_id}/slots/{slot_id}/order
         patch:
             parameters:
                 - in: path
@@ -11259,8 +11259,8 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: PATCH /plugin-sessions/{session_id}/slots/{slot_id}/order
-    /api/core/plugin-sessions/{session_id}/state-graph:
+            summary: PATCH /workflow-sessions/{session_id}/slots/{slot_id}/order
+    /api/core/workflow-sessions/{session_id}/state-graph:
         get:
             parameters:
                 - in: path
@@ -11271,8 +11271,8 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: GET /plugin-sessions/{session_id}/state-graph
-    /api/core/plugin-sessions/{session_id}/steps:
+            summary: GET /workflow-sessions/{session_id}/state-graph
+    /api/core/workflow-sessions/{session_id}/steps:
         get:
             parameters:
                 - in: path
@@ -11283,8 +11283,8 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: GET /plugin-sessions/{session_id}/steps
-    /api/core/plugin-sessions/{session_id}:dismiss:
+            summary: GET /workflow-sessions/{session_id}/steps
+    /api/core/workflow-sessions/{session_id}:dismiss:
         post:
             parameters:
                 - in: path
@@ -11295,8 +11295,8 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: POST /plugin-sessions/{session_id}:dismiss
-    /api/core/plugin-sessions/{session_id}:restore:
+            summary: POST /workflow-sessions/{session_id}:dismiss
+    /api/core/workflow-sessions/{session_id}:restore:
         post:
             parameters:
                 - in: path
@@ -11307,8 +11307,8 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: POST /plugin-sessions/{session_id}:restore
-    /api/core/plugin-sessions/{session_id}:sync-search-config:
+            summary: POST /workflow-sessions/{session_id}:restore
+    /api/core/workflow-sessions/{session_id}:sync-search-config:
         post:
             parameters:
                 - in: path
@@ -11319,25 +11319,25 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: POST /plugin-sessions/{session_id}:sync-search-config
-    /api/core/plugins:
+            summary: POST /workflow-sessions/{session_id}:sync-search-config
+    /api/core/workflows:
         get:
             responses:
                 "200":
                     description: OK
-            summary: GET /plugins
-    /api/core/plugins/{plugin_id}:
+            summary: GET /workflows
+    /api/core/workflows/{workflow_id}:
         get:
             parameters:
                 - in: path
-                  name: plugin_id
+                  name: workflow_id
                   required: true
                   schema:
                     type: string
             responses:
                 "200":
                     description: OK
-            summary: GET /plugins/{plugin_id}
+            summary: GET /workflows/{workflow_id}
     /api/core/prompt_categories:
         get:
             responses:
@@ -11638,23 +11638,23 @@ paths:
             summary: Showcase case details
             tags:
                 - showcase
-    /api/core/published-plugins/{plugin_ref:.+}/versions:
+    /api/core/published-workflows/{workflow_ref:.+}/versions:
         get:
             parameters:
                 - in: path
-                  name: plugin_ref:.+
+                  name: workflow_ref:.+
                   required: true
                   schema:
                     type: string
             responses:
                 "200":
                     description: OK
-            summary: GET /published-plugins/{plugin_ref:.+}/versions
-    /api/core/published-plugins/{plugin_ref:.+}/versions/{revision_id}:
+            summary: GET /published-workflows/{workflow_ref:.+}/versions
+    /api/core/published-workflows/{workflow_ref:.+}/versions/{revision_id}:
         get:
             parameters:
                 - in: path
-                  name: plugin_ref:.+
+                  name: workflow_ref:.+
                   required: true
                   schema:
                     type: string
@@ -11666,12 +11666,12 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: GET /published-plugins/{plugin_ref:.+}/versions/{revision_id}
-    /api/core/published-plugins/{plugin_ref:.+}/versions/{revision_id}:edit:
+            summary: GET /published-workflows/{workflow_ref:.+}/versions/{revision_id}
+    /api/core/published-workflows/{workflow_ref:.+}/versions/{revision_id}:edit:
         post:
             parameters:
                 - in: path
-                  name: plugin_ref:.+
+                  name: workflow_ref:.+
                   required: true
                   schema:
                     type: string
@@ -11683,31 +11683,31 @@ paths:
             responses:
                 "200":
                     description: OK
-            summary: POST /published-plugins/{plugin_ref:.+}/versions/{revision_id}:edit
-    /api/core/published-plugins/{plugin_ref:.+}:archive:
+            summary: POST /published-workflows/{workflow_ref:.+}/versions/{revision_id}:edit
+    /api/core/published-workflows/{workflow_ref:.+}:archive:
         post:
             parameters:
                 - in: path
-                  name: plugin_ref:.+
+                  name: workflow_ref:.+
                   required: true
                   schema:
                     type: string
             responses:
                 "200":
                     description: OK
-            summary: POST /published-plugins/{plugin_ref:.+}:archive
-    /api/core/published-plugins/{plugin_ref:.+}:rollback:
+            summary: POST /published-workflows/{workflow_ref:.+}:archive
+    /api/core/published-workflows/{workflow_ref:.+}:rollback:
         post:
             parameters:
                 - in: path
-                  name: plugin_ref:.+
+                  name: workflow_ref:.+
                   required: true
                   schema:
                     type: string
             responses:
                 "200":
                     description: OK
-            summary: POST /published-plugins/{plugin_ref:.+}:rollback
+            summary: POST /published-workflows/{workflow_ref:.+}:rollback
     /api/core/remote-fs/content:
         get:
             description: 'Reads package content using task_id semantics: review_ sees existing draft, org_ and editor session ids see publish unless they own the current draft.'

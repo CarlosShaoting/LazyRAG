@@ -229,7 +229,7 @@ func TestResolveAdvanceOperationFromEffectiveAttempt(t *testing.T) {
 	ctx := context.Background()
 	if _, err := CreateSession(ctx, db.DB, CreateSessionInput{
 		SessionID: "advance-operation-session", ConversationID: "advance-operation-conversation",
-		WorkflowID: "writer-plugin",
+		WorkflowID: "writer-workflow",
 	}); err != nil {
 		t.Fatalf("create session: %v", err)
 	}

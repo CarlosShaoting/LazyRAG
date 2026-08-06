@@ -125,7 +125,7 @@ func TestBuildLazyChatRequestIncludesConversationIntent(t *testing.T) {
 
 func TestWorkflowStepParamsFromEventParamsPreservesChatSessionID(t *testing.T) {
 	params := workflowStepParamsFromEventParams(map[string]any{
-		"workflow_id":            "writer-plugin",
+		"workflow_id":            "writer-workflow",
 		"step_id":                "generate_outline",
 		"session_id":             "ps-1",
 		"chat_session_id":        "conv-1_123",
@@ -138,7 +138,7 @@ func TestWorkflowStepParamsFromEventParamsPreservesChatSessionID(t *testing.T) {
 		"user_id":                "user-1",
 	})
 
-	if params.WorkflowID != "writer-plugin" || params.StepID != "generate_outline" || params.SessionID != "ps-1" {
+	if params.WorkflowID != "writer-workflow" || params.StepID != "generate_outline" || params.SessionID != "ps-1" {
 		t.Fatalf("unexpected basic params: %+v", params)
 	}
 	if params.ChatSessionID != "conv-1_123" {
@@ -877,7 +877,7 @@ func TestBuildLazyChatRequestMapsAllFields(t *testing.T) {
 			},
 		},
 		"has_subagents":   true,
-		"enable_plugin":   true,
+		"enable_workflow": true,
 		"enable_subagent": false,
 		"workflow_context": map[string]any{
 			"session_id": "workflow-session-1",
@@ -949,7 +949,7 @@ func TestBuildLazyChatRequestMapsAllFields(t *testing.T) {
 		t.Fatalf("expected mcp_config to be forwarded, got %#v", req.Runtime.MCPConfig)
 	}
 	if req.Workflow.EnableWorkflow == nil || !*req.Workflow.EnableWorkflow || req.Workflow.WorkflowContext["session_id"] != "workflow-session-1" {
-		t.Fatalf("unexpected plugin options: %#v", req.Workflow)
+		t.Fatalf("unexpected workflow options: %#v", req.Workflow)
 	}
 
 	payload, err := json.Marshal(req)
@@ -960,7 +960,7 @@ func TestBuildLazyChatRequestMapsAllFields(t *testing.T) {
 	if err := json.Unmarshal(payload, &raw); err != nil {
 		t.Fatalf("unmarshal request: %v", err)
 	}
-	for _, key := range []string{"message", "conversation", "retrieval", "runtime", "personalization", "agent", "plugin"} {
+	for _, key := range []string{"message", "conversation", "retrieval", "runtime", "personalization", "agent", "workflow"} {
 		if _, ok := raw[key]; !ok {
 			t.Fatalf("expected grouped key %q in payload: %s", key, payload)
 		}

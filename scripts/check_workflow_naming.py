@@ -21,12 +21,18 @@ from typing import Iterable, Iterator, Sequence
 DEFAULT_ROOTS = (
     "api",  # noqa: Q000
     "algorithm/lazymind",  # noqa: Q000
+    "backend/channel-gateway/channel_gateway",  # noqa: Q000
     "backend/core",  # noqa: Q000
     "frontend/src",  # noqa: Q000
+    "frontend/scripts/openapi/specs/core.yaml",  # noqa: Q000
+    "i18n",  # noqa: Q000
+    "skills",  # noqa: Q000
+    "workflows",  # noqa: Q000
+    "docker-compose.yml",  # noqa: Q000
 )
 
 SCANNED_SUFFIXES = {
-    ".go", ".py", ".ts", ".tsx", ".js", ".jsx", ".json", ".yaml", ".yml",  # noqa: Q000
+    ".go", ".py", ".ts", ".tsx", ".js", ".jsx", ".json", ".yaml", ".yml", ".md",  # noqa: Q000
 }
 
 IGNORED_PARTS = {

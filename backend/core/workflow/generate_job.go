@@ -504,7 +504,7 @@ func handleWorkflowDraftRepairJob(ctx context.Context, job asyncjob.Job, _ async
 			return asyncjob.Result{ErrorCode: "repair_stale_draft"}, fmt.Errorf("repair stale draft")
 		}
 		if payload.RepairRunID != "" {
-			files := []string{"plugin.yaml", "scenario/state.yml", "scenario/scenario.md", "scripts"}
+			files := []string{"workflow.yaml", "scenario/state.yml", "scenario/scenario.md", "scripts"}
 			changes, _ := json.Marshal(map[string]any{"files": files})
 			_ = db.Model(&orm.WorkflowRepairRun{}).Where("id=?", payload.RepairRunID).Updates(map[string]any{"status": "succeeded", "changes_json": string(changes), "updated_at": time.Now().UTC()}).Error
 		}
@@ -619,7 +619,7 @@ func handleWorkflowDraftRepairJob(ctx context.Context, job asyncjob.Job, _ async
 	if payload.RepairRunID != "" {
 		files := `["scenario/state.yml"]`
 		if resp.WorkflowYAML != "" {
-			files = `["plugin.yaml","scenario/state.yml"]`
+			files = `["workflow.yaml","scenario/state.yml"]`
 		}
 		_ = db.Model(&orm.WorkflowRepairRun{}).Where("id=?", payload.RepairRunID).Updates(map[string]any{"status": "succeeded", "changes_json": `{"files":` + files + `}`, "updated_at": time.Now().UTC()}).Error
 	}

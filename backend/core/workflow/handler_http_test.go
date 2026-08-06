@@ -170,7 +170,7 @@ func TestMissingWorkflowTables(t *testing.T) {
 
 func TestListWorkflowVersions_NotFound(t *testing.T) {
 	newHandlerTestDB(t)
-	req := httptest.NewRequest(http.MethodGet, "/plugins/nonexistent/versions", nil)
+	req := httptest.NewRequest(http.MethodGet, "/workflows/nonexistent/versions", nil)
 	req = mux.SetURLVars(req, map[string]string{"workflow_ref": "nonexistent"})
 	req.Header.Set("X-User-Id", "user-1")
 	rec := httptest.NewRecorder()
@@ -182,9 +182,38 @@ func TestListWorkflowVersions_NotFound(t *testing.T) {
 
 // --- PatchUserWorkflowSetting ---
 
+func TestListUserWorkflowSettings_ReturnsWorkflowContract(t *testing.T) {
+	db := newHandlerTestDB(t)
+	seedWorkflowResource(t, db, "custom-workflow", "wf-custom", "user-1")
+
+	req := httptest.NewRequest(http.MethodGet, "/chat/settings/workflows", nil)
+	req.Header.Set("X-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+	ListUserWorkflowSettings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var resp struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if _, exists := resp.Data["plugins"]; exists {
+		t.Fatalf("legacy plugins field must not be returned: %s", rec.Body.String())
+	}
+	var workflows []map[string]any
+	if err := json.Unmarshal(resp.Data["workflows"], &workflows); err != nil {
+		t.Fatalf("decode workflows: %v, body=%s", err, rec.Body.String())
+	}
+	if len(workflows) != 1 || workflows[0]["workflow_ref"] != "custom-workflow" {
+		t.Fatalf("unexpected workflows: %#v", workflows)
+	}
+}
+
 func TestPatchUserWorkflowSetting_Unauthorized(t *testing.T) {
 	newHandlerTestDB(t)
-	req := httptest.NewRequest(http.MethodPatch, "/plugins/test/settings", nil)
+	req := httptest.NewRequest(http.MethodPatch, "/workflows/test/settings", nil)
 	req = mux.SetURLVars(req, map[string]string{"workflow_ref": "test"})
 	rec := httptest.NewRecorder()
 	PatchUserWorkflowSetting(rec, req)
@@ -197,7 +226,7 @@ func TestPatchUserWorkflowSetting_ExistingWorkflowUpserts(t *testing.T) {
 	db := newHandlerTestDB(t)
 	seedWorkflowResource(t, db, "custom-plugin", "pid-custom", "user-1")
 	body := jsonBody(`{"enabled":false}`)
-	req := httptest.NewRequest(http.MethodPatch, "/plugins/custom-plugin/settings", body)
+	req := httptest.NewRequest(http.MethodPatch, "/workflows/custom-plugin/settings", body)
 	req = mux.SetURLVars(req, map[string]string{"workflow_ref": "custom-plugin"})
 	req.Header.Set("X-User-Id", "user-1")
 	rec := httptest.NewRecorder()
@@ -210,7 +239,7 @@ func TestPatchUserWorkflowSetting_ExistingWorkflowUpserts(t *testing.T) {
 func TestPatchUserWorkflowSetting_NonBuiltinNotFound(t *testing.T) {
 	newHandlerTestDB(t)
 	body := jsonBody(`{"enabled":true}`)
-	req := httptest.NewRequest(http.MethodPatch, "/plugins/unknown-ref/settings", body)
+	req := httptest.NewRequest(http.MethodPatch, "/workflows/unknown-ref/settings", body)
 	req = mux.SetURLVars(req, map[string]string{"workflow_ref": "unknown-ref"})
 	req.Header.Set("X-User-Id", "user-1")
 	rec := httptest.NewRecorder()
@@ -240,7 +269,7 @@ func seedCatalogWorkflow(t *testing.T, db *orm.DB, id string) {
 		Content: body, CreatedAt: now}).Error; err != nil {
 		t.Fatalf("create blob: %v", err)
 	}
-	if err := db.Create(&orm.WorkflowRevisionEntry{RevisionID: revisionID, Path: "plugin.yaml",
+	if err := db.Create(&orm.WorkflowRevisionEntry{RevisionID: revisionID, Path: "workflow.yaml",
 		EntryType: "file", BlobHash: &hash, Size: int64(len(body)), Mime: "application/yaml"}).Error; err != nil {
 		t.Fatalf("create entry: %v", err)
 	}

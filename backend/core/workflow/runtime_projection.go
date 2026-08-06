@@ -16,7 +16,7 @@ import (
 	"lazymind/core/workflow/graphengine"
 )
 
-const workflowDefinitionChangedCode = "PLUGIN_DEFINITION_CHANGED"
+const workflowDefinitionChangedCode = "WORKFLOW_DEFINITION_CHANGED"
 
 type workflowDefinitionChangedError struct {
 	expected string
@@ -57,8 +57,8 @@ func loadSessionGraph(ctx context.Context, db *gorm.DB, session *orm.WorkflowSes
 			return nil, err
 		}
 		result := db.WithContext(ctx).Model(&orm.WorkflowSession{}).
-			Where("id = ? AND (plugin_revision_id IS NULL OR plugin_revision_id = '')", session.ID).
-			Updates(map[string]any{"plugin_revision_id": revision.ID, "graph_hash": graph.GraphHash,
+			Where("id = ? AND (plugin_revision_id IS NULL OR plugin_revision_id = '')", session.ID). // workflow-naming: persistence
+			Updates(map[string]any{"plugin_revision_id": revision.ID, "graph_hash": graph.GraphHash, // workflow-naming: persistence
 				"graph_schema_version": graph.SchemaVersion})
 		if result.Error != nil {
 			return nil, fmt.Errorf("pin legacy workflow session revision: %w", result.Error)

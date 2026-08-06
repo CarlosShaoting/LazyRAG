@@ -125,7 +125,7 @@ services:
       KONG_PLUGINS: bundled,rbac-auth
     volumes:
       - ./kong.yml:/kong/kong.yml
-      - ./kong/plugins/rbac-auth:/usr/local/share/lua/5.1/kong/plugins/rbac-auth
+      - ./kong/workflows/rbac-auth:/usr/local/share/lua/5.1/kong/workflows/rbac-auth
     expose:
       - "8000"
     depends_on:
@@ -426,7 +426,7 @@ services:
     expose:
       - "80"
     volumes:
-      - ./plugins:/usr/share/nginx/html/plugins:ro
+      - ./workflows:/usr/share/nginx/html/workflows:ro
     depends_on:
       kong:
         condition: service_started
@@ -726,8 +726,8 @@ services:
       - *lazyllm-src-mount
       # Router mode: mount algorithm source so child processes can load different versions.
       - ./algorithm/lazymind:/opt/lazymind
-      - ./plugins:/app/plugins:ro
-      - ./docs/plugin-format.md:/app/docs/plugin-format.md:ro
+      - ./workflows:/app/workflows:ro
+      - ./docs/workflow-format.md:/app/docs/workflow-format.md:ro
       - type: bind
         source: *file-watcher-watch-host-dir
         target: *file-watcher-watch-host-dir
@@ -775,7 +775,7 @@ services:
       LAZYMIND_ROUTER_PORTS_PER_INSTANCE: 100
       LAZYMIND_ROUTER_DEFAULT_ALGO_PATH: /opt/lazymind/chat
       LAZYMIND_ROUTER_DEFAULT_INSTANCE_COUNT: 1
-      LAZYMIND_PLUGINS_DIR: /app/plugins
+      LAZYMIND_WORKFLOWS_DIR: /app/workflows
       <<: [*runtime-home, *trace-config, *proxy-env, *db-conn, *core-db-conn, *llm-api-keys, *upload-paths, *ocr-env, *cache-env]
     command: ["python", "-m", "lazymind.router.app", "--port", "8046"]
     depends_on:

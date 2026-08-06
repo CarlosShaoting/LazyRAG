@@ -228,7 +228,7 @@ func init() {
 	registerAdditionalError("plugin source skill not found", http.StatusNotFound, 2001821)
 	registerAdditionalError("plugin step was accepted but task lookup failed", http.StatusInternalServerError, 2001822)
 	registerAdditionalError("workflow_id or step_id missing", http.StatusInternalServerError, 2001823)
-	registerAdditionalError("plugin.yaml, state.yml and scenario.md are required", http.StatusBadRequest, 2001824)
+	registerAdditionalError("workflow.yaml, state.yml and scenario.md are required", http.StatusBadRequest, 2001824)
 	registerAdditionalError("precreate target document failed", http.StatusInternalServerError, 2001825)
 	registerAdditionalErrorPattern("provider %q requires non-empty %s and %s descriptions", "Provider descriptions must not be empty", http.StatusBadRequest, 2001826)
 	registerAdditionalError("provider name is required", http.StatusBadRequest, 2001827)
@@ -483,7 +483,7 @@ func init() {
 	registerAdditionalErrorPattern("no sql block for database dialect %q", "Database migration configuration is invalid", http.StatusBadRequest, 2001991)
 	for _, source := range []string{
 		"invalid source_type", "skill_id, revision_id and tree_hash are required",
-		"workflow.yaml id required", "invalid package", "workflow id is required",
+		"invalid package", "workflow id is required",
 		"attempt_id and operation are required",
 	} {
 		registerAdditionalErrorAlias(source, "Invalid request", http.StatusBadRequest, 2000103)

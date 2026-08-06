@@ -68,7 +68,7 @@ func mustIndexAfterLine(content, matched string) int {
 
 func workflowFiles(d orm.WorkflowDraft) (map[string][]byte, error) {
 	if strings.TrimSpace(d.WorkflowYAMLContent) == "" || strings.TrimSpace(d.StateYAMLContent) == "" || strings.TrimSpace(d.ScenarioContent) == "" {
-		return nil, fmt.Errorf("plugin.yaml, state.yml and scenario.md are required")
+		return nil, fmt.Errorf("workflow.yaml, state.yml and scenario.md are required")
 	}
 	files := map[string][]byte{
 		"workflow.yaml":        []byte(d.WorkflowYAMLContent),
@@ -170,7 +170,7 @@ func PublishWorkflowDraft(w http.ResponseWriter, r *http.Request) {
 		var resource orm.WorkflowResource
 		err := tx.Where("plugin_ref = ?", ref).First(&resource).Error
 		if err == gorm.ErrRecordNotFound {
-			resource = orm.WorkflowResource{ID: uuid.NewString(), WorkflowRef: ref, WorkflowID: pid, OwnerUserID: userID, OwnerScope: scope, SourceType: d.SourceType, RelativeRoot: "plugins/" + scope + "/" + pid, Name: d.Name, Status: "active", CreatedAt: now, UpdatedAt: now}
+			resource = orm.WorkflowResource{ID: uuid.NewString(), WorkflowRef: ref, WorkflowID: pid, OwnerUserID: userID, OwnerScope: scope, SourceType: d.SourceType, RelativeRoot: "workflows/" + scope + "/" + pid, Name: d.Name, Status: "active", CreatedAt: now, UpdatedAt: now}
 			if resource.SourceType == "" {
 				resource.SourceType = "user"
 			}

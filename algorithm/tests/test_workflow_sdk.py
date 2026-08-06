@@ -67,7 +67,7 @@ def test_mcp_authoring_submits_agent_text_to_deterministic_sdk():
     })
     server = WorkflowMCPServer(lambda: client)
     files = {
-        'plugin.yaml': 'id: report\n',
+        'workflow.yaml': 'id: report\n',
         'scenario/state.yml': 'initial: __start__\n',
         'scenario/scenario.md': '# Report\n',
     }

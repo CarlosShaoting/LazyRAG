@@ -91,6 +91,71 @@ func TestPreparationIsOwnerScopedAndConsumedOnce(t *testing.T) {
 	}
 }
 
+func TestCreateHostSessionRejectsAnyExistingNonDismissedConversationSession(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+	if err := repo.db.AutoMigrate(&orm.WorkflowSession{}); err != nil {
+		t.Fatal(err)
+	}
+	workflow := WorkflowPackage{WorkflowID: "wf", WorkflowRef: "builtin:wf", RevisionID: "rev-1"}
+	for _, status := range []string{"active", "waiting", "stopped", "failed", "completed"} {
+		t.Run(status, func(t *testing.T) {
+			conversationID := "conversation-" + status
+			now := time.Now().UTC()
+			existing := orm.WorkflowSession{ID: "existing-" + status, ConversationID: conversationID,
+				WorkflowID: "wf", Status: status, CreateUserID: "u1", CreatedAt: now, UpdatedAt: now}
+			if err := repo.db.Create(&existing).Error; err != nil {
+				t.Fatal(err)
+			}
+			_, _, err := repo.CreateHostSession(ctx, "u1", "new-"+status, conversationID,
+				"lazymind", conversationID, "lazymind", workflow)
+			if !errors.Is(err, ErrSessionConflict) {
+				t.Fatalf("status %q must block a second non-dismissed session: %v", status, err)
+			}
+		})
+	}
+}
+
+func TestCreateHostSessionAllowsReplacementAfterDismiss(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+	if err := repo.db.AutoMigrate(&orm.WorkflowSession{}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := repo.db.Create(&orm.WorkflowSession{ID: "dismissed", ConversationID: "conversation",
+		WorkflowID: "wf", Status: "stopped", Dismissed: true, CreateUserID: "u1",
+		CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	created, ok, err := repo.CreateHostSession(ctx, "u1", "replacement", "conversation",
+		"lazymind", "conversation", "lazymind",
+		WorkflowPackage{WorkflowID: "wf", WorkflowRef: "builtin:wf", RevisionID: "rev-1"})
+	if err != nil || !ok || created.ID != "replacement" {
+		t.Fatalf("dismissed history must not block replacement: created=%#v ok=%v err=%v", created, ok, err)
+	}
+}
+
+func TestAuthorizeSessionDistinguishesMissingFromWrongOwner(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+	if err := repo.db.Exec(`CREATE TABLE plugin_sessions (id TEXT PRIMARY KEY, create_user_id TEXT NOT NULL)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.db.Exec(`INSERT INTO plugin_sessions(id, create_user_id) VALUES ('s1','u1')`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.AuthorizeSession(ctx, "missing", "u1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing session error=%v", err)
+	}
+	if err := repo.AuthorizeSession(ctx, "s1", "u2"); !errors.Is(err, ErrPermissionDenied) {
+		t.Fatalf("wrong owner error=%v", err)
+	}
+	if err := repo.AuthorizeSession(ctx, "s1", "u1"); err != nil {
+		t.Fatalf("owner authorization error=%v", err)
+	}
+}
+
 func TestCommandExecutesOnceAndRejectsPayloadConflict(t *testing.T) {
 	repo := testRepo(t)
 	ctx := context.Background()

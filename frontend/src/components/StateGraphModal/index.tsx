@@ -13,12 +13,12 @@ import { localizeErrorCode } from '@/components/request';
 import StateGraphView, { type StateGraphData } from './StateGraphView';
 import './index.scss';
 
-export const PLUGIN_GRAPH_REFRESH_EVENT = 'workflow:graph:refresh';
+export const WORKFLOW_GRAPH_REFRESH_EVENT = 'workflow:graph:refresh';
 
 /** Dispatch this event from the SSE handler to trigger a live graph refresh. */
 export function dispatchGraphRefresh(conversationId: string) {
   window.dispatchEvent(
-    new CustomEvent(PLUGIN_GRAPH_REFRESH_EVENT, { detail: { conversationId } }),
+    new CustomEvent(WORKFLOW_GRAPH_REFRESH_EVENT, { detail: { conversationId } }),
   );
 }
 
@@ -201,8 +201,8 @@ export default function StateGraphModal({
       if (!detail || detail.conversationId !== conversationId) return;
       void fetchGraph();
     }
-    window.addEventListener(PLUGIN_GRAPH_REFRESH_EVENT, handler);
-    return () => window.removeEventListener(PLUGIN_GRAPH_REFRESH_EVENT, handler);
+    window.addEventListener(WORKFLOW_GRAPH_REFRESH_EVENT, handler);
+    return () => window.removeEventListener(WORKFLOW_GRAPH_REFRESH_EVENT, handler);
   }, [open, liveRefresh, conversationId, fetchGraph]);
 
   // Compute Modal width based on node count: more nodes → wider modal.

@@ -3,7 +3,7 @@ import { AgentAppsAuth } from "@/components/auth";
 import { Method, SSE } from "@/modules/chat/utils/sse";
 import { TaskServiceApi, taskStreamUrl, convEventsUrl } from "@/modules/chat/utils/request";
 import UIUtils from "@/modules/chat/utils/ui";
-import { PLUGIN_GRAPH_REFRESH_EVENT } from "@/components/StateGraphModal";
+import { WORKFLOW_GRAPH_REFRESH_EVENT } from "@/components/StateGraphModal";
 import { localizeErrorCode } from "@/components/request";
 import { CHAT_FFMPEG_DEPENDENCY_MISSING_EVENT } from "@/modules/chat/constants/chat";
 
@@ -567,14 +567,14 @@ export const useTaskCenterStore = create<TaskCenterStore>()((set, get) => ({
           ) {
             get().loadConversationTasks(conversationId);
             window.dispatchEvent(
-              new CustomEvent(PLUGIN_GRAPH_REFRESH_EVENT, { detail: { conversationId } }),
+              new CustomEvent(WORKFLOW_GRAPH_REFRESH_EVENT, { detail: { conversationId } }),
             );
             import('@/modules/chat/store/workflowPanel').then(({ useWorkflowStore }) => {
               useWorkflowStore.getState().setAutoRunning(conversationId, false);
             });
           } else if (type === 'step_partial_done') {
             window.dispatchEvent(
-              new CustomEvent(PLUGIN_GRAPH_REFRESH_EVENT, { detail: { conversationId } }),
+              new CustomEvent(WORKFLOW_GRAPH_REFRESH_EVENT, { detail: { conversationId } }),
             );
           } else if (type === 'intent_updated') {
             // Workflow state changes arrive through the dedicated Workflow Stream.

@@ -148,7 +148,7 @@ func applyAuthoringFiles(draft *orm.WorkflowDraft, files map[string]string) {
 	for path, content := range files {
 		path = filepath.ToSlash(filepath.Clean(path))
 		switch path {
-		case "workflow.yaml", "plugin.yaml": // plugin.yaml is a persistence compatibility alias.
+		case "workflow.yaml":
 			draft.WorkflowYAMLContent = content
 		case "scenario/state.yml":
 			draft.StateYAMLContent = content
@@ -176,7 +176,7 @@ func validAuthoringPath(path string) bool {
 		return false
 	}
 	switch clean {
-	case "workflow.yaml", "plugin.yaml", "scenario/state.yml", "scenario/scenario.md", "scenario/driver.md", "scenario/layout.json":
+	case "workflow.yaml", "scenario/state.yml", "scenario/scenario.md", "scenario/driver.md", "scenario/layout.json":
 		return true
 	}
 	return strings.HasPrefix(clean, "scripts/") && len(strings.TrimPrefix(clean, "scripts/")) > 0
@@ -255,6 +255,6 @@ func GenerateAuthoringFixture(w http.ResponseWriter, r *http.Request) {
 	}
 	sum := sha256.Sum256([]byte(treeHash))
 	id := hex.EncodeToString(sum[:16])
-	files := map[string]string{"plugin.yaml": "id: " + id + "\nslots: []\nsteps:\n  - {id: execute, label: Execute}\n", "scenario/state.yml": "transitions:\n  __start__: [{to: execute}]\n  execute: [{to: __end__}]\nsteps:\n  execute: {outputs: []}\n", "scenario/scenario.md": "# Deterministic fixture\n\nThe execute step produces the requested result.\n"}
+	files := map[string]string{"workflow.yaml": "id: " + id + "\nslots: []\nsteps:\n  - {id: execute, label: Execute}\n", "scenario/state.yml": "transitions:\n  __start__: [{to: execute}]\n  execute: [{to: __end__}]\nsteps:\n  execute: {outputs: []}\n", "scenario/scenario.md": "# Deterministic fixture\n\nThe execute step produces the requested result.\n"}
 	common.ReplyOK(w, map[string]any{"contract_version": AuthoringContractVersion, "generator": "deterministic-fixture-v1", "files": files})
 }

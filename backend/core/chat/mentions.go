@@ -128,7 +128,7 @@ func applyChatMentions(ctx context.Context, db *gorm.DB, raw map[string]any, use
 	resolved := resolvedChatMentions{}
 	var datasetIDs, skillIDs, conversationIDs []string
 	for _, mention := range mentions {
-		denied := (mention.Type == "tool" || mention.Type == "plugin") && mentionIsDenied(query, mention)
+		denied := (mention.Type == "tool" || mention.Type == "workflow") && mentionIsDenied(query, mention)
 		switch mention.Type {
 		case "knowledge_base":
 			if !acl.Can(userID, acl.ResourceTypeDB, mention.ResourceID, acl.PermRead) {
@@ -172,7 +172,7 @@ func applyChatMentions(ctx context.Context, db *gorm.DB, raw map[string]any, use
 			} else {
 				resolved.ToolNames = append(resolved.ToolNames, mention.ResourceID)
 			}
-		case "plugin":
+		case "workflow":
 			if strings.HasPrefix(mention.ResourceID, "builtin:") {
 				if denied {
 					resolved.ExcludedWorkflowRefs = append(resolved.ExcludedWorkflowRefs, mention.ResourceID)
@@ -180,7 +180,7 @@ func applyChatMentions(ctx context.Context, db *gorm.DB, raw map[string]any, use
 				}
 				resolved.WorkflowRefs = append(resolved.WorkflowRefs, mention.ResourceID)
 				resolved.ResourceMentions = append(resolved.ResourceMentions, map[string]string{
-					"resource_type": "plugin", "resource_ref": mention.ResourceID,
+					"resource_type": "workflow", "resource_ref": mention.ResourceID,
 					"display_name": mention.DisplayName,
 				})
 				continue
@@ -196,7 +196,7 @@ func applyChatMentions(ctx context.Context, db *gorm.DB, raw map[string]any, use
 			}
 			resolved.WorkflowRefs = append(resolved.WorkflowRefs, mention.ResourceID)
 			resolved.ResourceMentions = append(resolved.ResourceMentions, map[string]string{
-				"resource_type": "plugin", "resource_ref": mention.ResourceID,
+				"resource_type": "workflow", "resource_ref": mention.ResourceID,
 				"display_name": mention.DisplayName,
 			})
 		case "conversation":
@@ -420,7 +420,7 @@ func buildMentionResourceContext(ctx context.Context, db *gorm.DB, userID string
 		case "skill":
 			var count int64
 			return db.WithContext(ctx).Model(&orm.SkillV2Skill{}).Where("id = ? AND owner_user_id = ? AND deleted_at IS NULL", mention.ResourceID, userID).Count(&count).Error == nil && count > 0
-		case "plugin":
+		case "workflow":
 			if strings.HasPrefix(mention.ResourceID, "builtin:") {
 				return true
 			}
@@ -586,13 +586,13 @@ func applyWorkflowSelection(
 		return fmt.Errorf("at most one plugin mention is allowed per turn")
 	}
 	if len(mentionedRefs) > 0 {
-		reqBody["enable_plugin"] = true
+		reqBody["enable_workflow"] = true
 		reqBody["allowed_workflow_refs"] = mentionedRefs
 	}
 	delete(reqBody, "workflow_activations")
-	if enabled, _ := reqBody["enable_plugin"].(bool); !enabled {
+	if enabled, _ := reqBody["enable_workflow"].(bool); !enabled {
 		reqBody["workflow_catalog"] = []map[string]any{}
-		reqBody["disabled_builtin_plugins"] = []string{}
+		reqBody["disabled_builtin_workflows"] = []string{}
 		return nil
 	}
 	catalog, err := workflow.EnabledCatalog(db, userID)
@@ -650,7 +650,7 @@ func applyWorkflowSelection(
 		}
 	}
 	reqBody["workflow_catalog"] = catalog
-	reqBody["disabled_builtin_plugins"] = applyMentionedTools(
+	reqBody["disabled_builtin_workflows"] = applyMentionedTools(
 		disabledBuiltins, forcedBuiltins,
 	)
 	return nil
@@ -670,6 +670,7 @@ func buildWorkflowActivation(item map[string]any, workflowRef string) map[string
 	if stem == "" {
 		stem = "workflow"
 	}
+	stem = strings.TrimSuffix(stem, "_workflow")
 	name := strings.TrimSpace(fmt.Sprint(item["name"]))
 	if name == "" {
 		name = workflowID

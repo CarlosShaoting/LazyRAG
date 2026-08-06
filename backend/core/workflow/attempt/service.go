@@ -149,8 +149,8 @@ func (s *Service) ClaimForHost(ctx context.Context, executorID, host string) (Cl
 	now := s.now()
 	var candidate orm.WorkflowSessionStep
 	query := s.db.WithContext(ctx).Model(&orm.WorkflowSessionStep{}).Where(
-		"plugin_session_steps.validity = 'effective' AND (plugin_session_steps.status = 'queued' OR "+
-			"(plugin_session_steps.status IN ('claimed','running') AND plugin_session_steps.lease_expires_at < ?))", now,
+		"plugin_session_steps.validity = 'effective' AND (plugin_session_steps.status = 'queued' OR "+ // workflow-naming: persistence
+			"(plugin_session_steps.status IN ('claimed','running') AND plugin_session_steps.lease_expires_at < ?))", now, // workflow-naming: persistence
 	)
 	if host != "" {
 		query = query.Joins("JOIN plugin_sessions ps ON ps.id = plugin_session_steps.session_id").

@@ -17,7 +17,7 @@ import lazyllm
 
 from lazymind.chat.engine.tools.intent_writer import enable_workflow_intent_scopes
 from lazymind.workflow_sdk import AdvanceRequest, StepCommand, WorkflowClient, WorkflowClientError
-from lazymind.workflow_toolkit import HostWorkflowToolkit
+from lazymind.workflow_toolkit import AgentWorkflowToolProjection, HostWorkflowToolkit
 
 LOG = logging.getLogger(__name__)
 
@@ -207,13 +207,18 @@ def resolve_workflow_injection(
 
     activations = workflow_activations or []
     trigger_tools = _workflow_trigger_tools(activations, allowed_refs)
-    tools = [
+    candidate_tools = [
         *trigger_tools,
         *HostWorkflowToolkit(
             _client, allowed_workflow_ids=allowed_ids, origin_ref=conversation_id,
         ).tools(),
         _attachment_import_tool(),
     ]
+    projection = _state(session_id) if session_id else {}
+    tools = AgentWorkflowToolProjection(
+        session_id=session_id,
+        session_status=str(projection.get('status') or context.get('status') or ''),
+    ).expose(candidate_tools)
     if session_id:
         patch.update({
             'workflow_id': workflow_id,
@@ -225,7 +230,7 @@ def resolve_workflow_injection(
         tools.append(_handoff_tool(session_id))
         runtime_context = (
             '## Workflow Runtime [AUTHORITATIVE]\n'
-            + json.dumps(_state(session_id), ensure_ascii=False, default=str)
+            + json.dumps(projection, ensure_ascii=False, default=str)
         )
         return WorkflowAgentContribution(
             tools, ['advance_step_and_hand_off'],

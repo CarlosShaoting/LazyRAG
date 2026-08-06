@@ -90,6 +90,19 @@ func fail(w http.ResponseWriter, status int, code, message string, retryable boo
 	writeJSON(w, status, envelope{Error: &Error{Code: code, Message: message, Retryable: retryable}})
 }
 
+func writePreparation(w http.ResponseWriter, prepared workflowstore.Preparation) {
+	var public map[string]any
+	if err := json.Unmarshal(prepared.ResponseJSON, &public); err != nil {
+		fail(w, http.StatusServiceUnavailable, "PREPARATION_READ_FAILED", "stored preparation plan is invalid", true)
+		return
+	}
+	public["preparation_id"] = prepared.ID
+	public["idempotency_key"] = prepared.IdempotencyKey
+	public["created_at"] = prepared.CreatedAt
+	public["updated_at"] = prepared.UpdatedAt
+	writeJSON(w, http.StatusOK, envelope{Data: public})
+}
+
 func identityAndVersion(w http.ResponseWriter, r *http.Request) (string, bool) {
 	owner := strings.TrimSpace(r.Header.Get("X-User-Id"))
 	if owner == "" {
@@ -196,6 +209,10 @@ func (h Handler) ListInputs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	values, err := h.Store.ListInputBindings(r.Context(), owner, mux.Vars(r)["session_id"])
+	if errors.Is(err, workflowstore.ErrNotFound) {
+		fail(w, http.StatusNotFound, "WORKFLOW_SESSION_NOT_FOUND", "workflow session was not found", false)
+		return
+	}
 	if errors.Is(err, workflowstore.ErrPermissionDenied) {
 		fail(w, http.StatusForbidden, "PERMISSION_DENIED", "workflow session belongs to another owner", false)
 		return
@@ -213,6 +230,10 @@ func (h Handler) ListArtifacts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	values, err := h.Store.ListArtifacts(r.Context(), owner, mux.Vars(r)["session_id"])
+	if errors.Is(err, workflowstore.ErrNotFound) {
+		fail(w, http.StatusNotFound, "WORKFLOW_SESSION_NOT_FOUND", "workflow session was not found", false)
+		return
+	}
 	if errors.Is(err, workflowstore.ErrPermissionDenied) {
 		fail(w, http.StatusForbidden, "PERMISSION_DENIED", "workflow session belongs to another owner", false)
 		return
@@ -360,6 +381,10 @@ func (h Handler) setStopped(w http.ResponseWriter, r *http.Request, stopped bool
 		return
 	}
 	version, err := h.Store.SetSessionStopped(r.Context(), owner, mux.Vars(r)["session_id"], commandID, stopped)
+	if errors.Is(err, workflowstore.ErrNotFound) {
+		fail(w, http.StatusNotFound, "WORKFLOW_SESSION_NOT_FOUND", "workflow session was not found", false)
+		return
+	}
 	if errors.Is(err, workflowstore.ErrPermissionDenied) {
 		fail(w, http.StatusForbidden, "PERMISSION_DENIED", "workflow session belongs to another owner", false)
 		return
@@ -399,7 +424,9 @@ func (h Handler) BindInput(w http.ResponseWriter, r *http.Request) {
 		ResourceType: req.ResourceType, ResourceID: req.ResourceID, ResourceRevision: req.ResourceRevision,
 		ContentHash: req.ContentHash, CreatedByCommandID: req.CommandID, CreatedAt: time.Now().UTC()}
 	if err := h.Store.BindInput(r.Context(), owner, binding); err != nil {
-		if errors.Is(err, workflowstore.ErrPermissionDenied) {
+		if errors.Is(err, workflowstore.ErrNotFound) {
+			fail(w, 404, "WORKFLOW_SESSION_NOT_FOUND", "workflow session was not found", false)
+		} else if errors.Is(err, workflowstore.ErrPermissionDenied) {
 			fail(w, 403, "PERMISSION_DENIED", "resource or session is not accessible", false)
 		} else {
 			fail(w, 409, "INPUT_BINDING_CONFLICT", err.Error(), false)
@@ -496,7 +523,7 @@ func (h Handler) Prepare(w http.ResponseWriter, r *http.Request) {
 			fail(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "idempotency key was used with another payload", false)
 			return
 		}
-		writeJSON(w, http.StatusOK, envelope{Data: existing})
+		writePreparation(w, existing)
 		return
 	} else if !errors.Is(err, workflowstore.ErrNotFound) {
 		fail(w, http.StatusServiceUnavailable, "PREPARATION_STORE_FAILED", err.Error(), true)
@@ -573,7 +600,7 @@ prepared:
 		fail(w, 503, "PREPARATION_STORE_FAILED", err.Error(), true)
 		return
 	}
-	writeJSON(w, http.StatusOK, envelope{Data: prepared})
+	writePreparation(w, prepared)
 }
 
 func (h Handler) Consume(w http.ResponseWriter, r *http.Request) {
@@ -626,7 +653,11 @@ func (h Handler) Consume(w http.ResponseWriter, r *http.Request) {
 		session, _, createErr := h.Store.CreateHostSession(r.Context(), owner, req.SessionID, conversationID,
 			original.OriginHost, original.OriginRef, original.ControllerHost, workflowPackage)
 		if createErr != nil {
-			fail(w, http.StatusConflict, "SESSION_CREATE_FAILED", createErr.Error(), false)
+			code := "SESSION_CREATE_FAILED"
+			if errors.Is(createErr, workflowstore.ErrSessionConflict) {
+				code = "WORKFLOW_SESSION_CONFLICT"
+			}
+			fail(w, http.StatusConflict, code, createErr.Error(), false)
 			return
 		}
 		for materialID, raw := range original.InputBindings {
@@ -664,6 +695,10 @@ func (h Handler) Command(delegate http.Handler) http.HandlerFunc {
 		}
 		sessionID := mux.Vars(r)["session_id"]
 		if err := h.Store.AuthorizeSession(r.Context(), sessionID, owner); err != nil {
+			if errors.Is(err, workflowstore.ErrNotFound) {
+				fail(w, 404, "WORKFLOW_SESSION_NOT_FOUND", "workflow session was not found", false)
+				return
+			}
 			fail(w, 403, "PERMISSION_DENIED", "workflow session belongs to another owner", false)
 			return
 		}

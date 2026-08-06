@@ -7,7 +7,7 @@ import yaml
 
 def _load_tools():
     root = Path(__file__).resolve().parents[3]
-    path = root / 'plugins' / 'test-workflow' / 'scripts' / 'tools.py'
+    path = root / 'workflows' / 'test-workflow' / 'scripts' / 'tools.py'
     spec = importlib.util.spec_from_file_location('workflow_smoke_tools', path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
@@ -90,10 +90,10 @@ def test_complete_smoke_workflow_with_fixed_model_io():
     tools = _load_tools()
     root = Path(__file__).resolve().parents[3]
     plugin = yaml.safe_load(
-        (root / 'plugins/test-workflow/plugin.yaml').read_text(encoding='utf-8'),
+        (root / 'workflows/test-workflow/workflow.yaml').read_text(encoding='utf-8'),
     )
     state = yaml.safe_load(
-        (root / 'plugins/test-workflow/scenario/state.yml').read_text(encoding='utf-8'),
+        (root / 'workflows/test-workflow/scenario/state.yml').read_text(encoding='utf-8'),
     )
     cardinalities = {
         slot['id']: slot.get('cardinality', 'single') for slot in plugin['slots']

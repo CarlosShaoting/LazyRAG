@@ -12,11 +12,11 @@ func TestGoReadsAllGoldenFixtures(t *testing.T) {
 		t.Fatal("cannot locate fixture test")
 	}
 	root := filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "..", "..", ".."))
-	manifest, err := ReadBaselineManifest(filepath.Join(root, "docs", "plan", "plugin", "contracts", "v1", "baseline-manifest.json"))
+	manifest, err := ReadBaselineManifest(filepath.Join(root, "docs", "plan", "workflow", "contracts", "v1", "baseline-manifest.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	paths, err := filepath.Glob(filepath.Join(root, "docs", "plan", "plugin", "contracts", "v1", "golden", "*.json"))
+	paths, err := filepath.Glob(filepath.Join(root, "docs", "plan", "workflow", "contracts", "v1", "golden", "*.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

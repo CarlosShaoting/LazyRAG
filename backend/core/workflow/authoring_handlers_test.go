@@ -90,7 +90,7 @@ func TestAuthoringFileUpdateUsesOptimisticVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	call := func(version int) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodPut, "/workflow-authoring/v1/drafts/draft-1/files", strings.NewReader(`{"path":"plugin.yaml","content":"id: fixed","expected_version":`+strconv.Itoa(version)+`}`))
+		req := httptest.NewRequest(http.MethodPut, "/workflow-authoring/v1/drafts/draft-1/files", strings.NewReader(`{"path":"workflow.yaml","content":"id: fixed","expected_version":`+strconv.Itoa(version)+`}`))
 		req.Header.Set("X-User-Id", "user-1")
 		req = mux.SetURLVars(req, map[string]string{"draft_id": "draft-1"})
 		rec := httptest.NewRecorder()

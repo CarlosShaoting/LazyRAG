@@ -44,7 +44,7 @@ func diagnoseWorkflowWithProfile(workflowYAML, stateYAML, scenario, scriptsJSON 
 			declaration, _ := raw.(map[string]any)
 			path := fmt.Sprint(declaration["path"])
 			if _, exists := scripts[path]; !exists {
-				out = append(out, repairDiagnostic{Code: "W_TOOL_SCRIPT_MISSING", Path: "plugin.yaml.tool_scripts", Message: "Declared script is unavailable and will be ignored: " + path, Severity: "warning", Fixable: true})
+				out = append(out, repairDiagnostic{Code: "W_TOOL_SCRIPT_MISSING", Path: "workflow.yaml.tool_scripts", Message: "Declared script is unavailable and will be ignored: " + path, Severity: "warning", Fixable: true})
 			}
 		}
 	}
@@ -71,7 +71,7 @@ func hasDiagnosticErrorsForTarget(items []repairDiagnostic, target string) bool 
 }
 
 func diagnosticAppliesToTarget(item repairDiagnostic, target string) bool {
-	if target == "full" || item.Code == "E_PLUGIN_YAML_INVALID" {
+	if target == "full" || item.Code == "E_WORKFLOW_YAML_INVALID" {
 		return true
 	}
 	switch target {

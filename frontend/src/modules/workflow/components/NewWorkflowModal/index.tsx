@@ -8,7 +8,7 @@ import { serializeWorkflowModel } from '../StateGraphEditor/core/workflowSeriali
 import { createEmptyWorkflowModel } from '../StateGraphEditor/core/workflowModel';
 import './index.scss';
 
-const PLUGIN_ID_REGEX = /^[a-zA-Z][a-zA-Z0-9-_]*$/;
+const WORKFLOW_ID_REGEX = /^[a-zA-Z][a-zA-Z0-9-_]*$/;
 
 type CreateMode = 'blank' | 'ai' | 'skill';
 
@@ -126,7 +126,7 @@ export default function NewWorkflowModal({ open, onCancel, onCreated }: NewWorkf
       setIdError(t('selfEvolutionRun.newWorkflowIdErrorEmpty'));
       return;
     }
-    if (!PLUGIN_ID_REGEX.test(trimmedId)) {
+    if (!WORKFLOW_ID_REGEX.test(trimmedId)) {
       setIdError(t('selfEvolutionRun.newWorkflowIdErrorInvalid'));
       return;
     }
@@ -254,7 +254,7 @@ export default function NewWorkflowModal({ open, onCancel, onCreated }: NewWorkf
                   onChange={(e) => {
                     setWorkflowId(e.target.value);
                     setIdError(
-                      e.target.value.trim() && !PLUGIN_ID_REGEX.test(e.target.value.trim())
+                      e.target.value.trim() && !WORKFLOW_ID_REGEX.test(e.target.value.trim())
                         ? t('selfEvolutionRun.newWorkflowIdErrorInvalid')
                         : '',
                     );

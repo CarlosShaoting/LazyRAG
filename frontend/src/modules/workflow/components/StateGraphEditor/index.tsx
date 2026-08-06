@@ -460,12 +460,12 @@ export default function StateGraphEditor({
       setWorkflowModel(pm);
       workflowModelRef.current = pm;
       triggerAutoSave(updatedModel, pm, scenarioDataRef.current, scriptsContentRef.current);
-      setErrors((prev) => prev.filter((e) => e.code !== 'V10_PLUGIN_YAML_SYNTAX'));
+      setErrors((prev) => prev.filter((e) => e.code !== 'V10_WORKFLOW_YAML_SYNTAX'));
     } else {
       setErrors((prev) => {
-        const alreadyHas = prev.some((e) => e.code === 'V10_PLUGIN_YAML_SYNTAX');
+        const alreadyHas = prev.some((e) => e.code === 'V10_WORKFLOW_YAML_SYNTAX');
         if (alreadyHas) return prev;
-        return [...prev, { code: 'V10_PLUGIN_YAML_SYNTAX', message: t('selfEvolutionRun.sgeWorkflowYamlSyntaxError') }];
+        return [...prev, { code: 'V10_WORKFLOW_YAML_SYNTAX', message: t('selfEvolutionRun.sgeWorkflowYamlSyntaxError') }];
       });
     }
   }, [triggerAutoSave]);

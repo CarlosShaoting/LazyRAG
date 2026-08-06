@@ -34,6 +34,7 @@ class ToolCallGuard:
         failure_limits: dict[str, int] | None = None,
         expanded_round_limit: int | None = None,
         repeated_call_limit: int = 3,
+        cancel_check: Any = None,
     ):
         self._manager = manager
         self._failure_limits = dict(failure_limits or {})
@@ -42,6 +43,7 @@ class ToolCallGuard:
         self._expanded_round_limit = expanded_round_limit
         self._repeated_call_limit = max(2, int(repeated_call_limit))
         self._signature_calls: dict[str, int] = {}
+        self._cancel_check = cancel_check
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._manager, name)
@@ -98,6 +100,8 @@ class ToolCallGuard:
         }
 
     def __call__(self, tools: Any, verbose: bool = False) -> Any:
+        if self._cancel_check is not None:
+            self._cancel_check(None)
         tool_calls = [tools] if isinstance(tools, dict) else list(tools or [])
         results: list[Any] = [None] * len(tool_calls)
         pending: list[dict[str, Any]] = []
@@ -237,6 +241,7 @@ class AgentExecutor:
             agent._tools_manager,
             options.tool_failure_limits,
             max(2, int(_cfg['agentic_expanded_max_rounds'])),
+            cancel_check=options.extra_stop_condition,
         )
         # Restore lazy Toolkit activation before the streaming helper takes over.
         # Relying only on ReactAgent._pre_process makes restoration dependent on

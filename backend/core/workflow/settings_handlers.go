@@ -62,7 +62,7 @@ func ListUserWorkflowSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		items = append(items, map[string]any{"workflow_ref": v.WorkflowRef, "workflow_id": v.WorkflowID, "name": v.Name, "description": v.Description, "when_to_use": v.WhenToUse, "source_type": v.SourceType, "revision_id": v.HeadRevisionID, "revision_no": v.Version, "remote_root": "remote://" + v.RelativeRoot, "enabled": enabled, "status": v.Status})
 	}
-	common.ReplyOK(w, map[string]any{"plugins": items})
+	common.ReplyOK(w, map[string]any{"workflows": items})
 }
 
 func EnabledCatalog(db *gorm.DB, userID string) ([]map[string]any, error) {

@@ -201,7 +201,7 @@ func ensureConversation(ctx context.Context, db *gorm.DB, convID, displayName st
 	}
 	// Resolve plugin settings for the new conversation.
 	// Priority: caller-supplied workflowSettings > user_chat_settings defaults.
-	// All three fields are always written so conversations.enable_plugin / workflow_mode /
+	// All three fields are always written so conversations.enable_workflow / workflow_mode /
 	// enable_subagent are never NULL — no per-request fallback query needed.
 	resolvedPS := resolveInitialWorkflowSettings(ctx, db, userID, workflowSettings)
 	c.EnableWorkflow = &resolvedPS.enableWorkflow
@@ -240,7 +240,7 @@ func resolveInitialWorkflowSettings(ctx context.Context, db *gorm.DB, userID str
 		}
 	}
 	// Apply caller-supplied overrides.
-	if v, ok := workflowSettings["enable_plugin"].(bool); ok {
+	if v, ok := workflowSettings["enable_workflow"].(bool); ok {
 		out.enableWorkflow = v
 	}
 	if v, ok := workflowSettings["workflow_mode"].(string); ok && (v == "dynamic" || v == "auto") {
@@ -1394,7 +1394,7 @@ func streamSingleAnswer(
 			if taskErr != nil {
 				failurePrefix := "TASK_START_FAILED: "
 				if d.TaskCreated.AgentType == "workflow_step" {
-					failurePrefix = "PLUGIN_START_FAILED: "
+					failurePrefix = "WORKFLOW_START_FAILED: "
 				}
 				failure := failurePrefix + taskErr.Error()
 				fullText += failure
@@ -2170,7 +2170,7 @@ func handleWorkflowStepCreated(
 		params.WorkflowMode = "dynamic"
 	}
 	if params.WorkflowID == "" || params.StepID == "" {
-		fmt.Println("[Core] [PLUGIN_STEP_INVALID_PARAMS] workflow_id or step_id missing")
+		fmt.Println("[Core] [WORKFLOW_STEP_INVALID_PARAMS] workflow_id or step_id missing")
 		return nil, fmt.Errorf("workflow_id or step_id missing")
 	}
 
@@ -2182,7 +2182,7 @@ func handleWorkflowStepCreated(
 		llmConfig, toolConfig,
 	)
 	if err != nil {
-		fmt.Printf("[Core] [PLUGIN_STEP_FAILED] err=%v\n", err)
+		fmt.Printf("[Core] [WORKFLOW_STEP_FAILED] err=%v\n", err)
 		return nil, err
 	}
 
@@ -2202,7 +2202,7 @@ func handleWorkflowStepCreated(
 	// Fetch the created task for the notice.
 	task, getErr := subagent.GetTask(ctx, db, taskID)
 	if getErr != nil {
-		fmt.Printf("[Core] [PLUGIN_STEP_GET_TASK_FAILED] err=%v\n", getErr)
+		fmt.Printf("[Core] [WORKFLOW_STEP_GET_TASK_FAILED] err=%v\n", getErr)
 		return nil, fmt.Errorf("plugin step was accepted but task lookup failed: %w", getErr)
 	}
 	return &TaskCreatedNotice{
@@ -2519,7 +2519,7 @@ func handleIntentUpdated(ctx context.Context, db *gorm.DB, stateStore state.Stor
 				payload, _ := json.Marshal(updated)
 				rowID := fmt.Sprintf("psi_%s", common.GenerateID())
 				_ = db.WithContext(ctx).Exec(
-					`INSERT INTO workflow_step_intents (id, session_id, step_id, intent_context, updated_at)
+					`INSERT INTO plugin_step_intents (id, session_id, step_id, intent_context, updated_at)
 				 VALUES (?, ?, ?, ?, ?)
 				 ON CONFLICT (session_id, step_id) DO UPDATE
 				 SET intent_context = EXCLUDED.intent_context, updated_at = EXCLUDED.updated_at`,

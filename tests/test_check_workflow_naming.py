@@ -82,7 +82,7 @@ class WorkflowNamingCheckTest(unittest.TestCase):
         path = ROOT / 'backend/core/workflow/store.go'
         self.assertTrue(MODULE._is_physical_name_allowed(path, '', 'plugin_sessions', 0))
         self.assertFalse(MODULE._is_physical_name_allowed(path, '', 'PluginSession', 0))
-        self.assertFalse(MODULE._is_physical_name_allowed(path, '', '/api/plugins', 0))
+        self.assertFalse(MODULE._is_physical_name_allowed(path, '', '/api/workflows', 0))
 
     def test_ignores_unrelated_plain_english_word(self):
         self.assertEqual([], self._scan("comment.py", "# load a plugin dynamically\n"))  # noqa: Q000

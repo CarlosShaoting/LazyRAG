@@ -297,7 +297,7 @@ func enforceWorkflowConversationSettings(ctx context.Context, db *gorm.DB, convI
 		return nil
 	}
 	return db.WithContext(ctx).Model(&orm.Conversation{}).Where("id = ?", convID).Updates(map[string]any{
-		"enable_plugin": true,
+		"enable_plugin": true,      // workflow-naming: persistence
 		"plugin_mode":   "dynamic", // workflow-naming: persistence
 	}).Error
 }
@@ -787,7 +787,7 @@ func advanceAutoMode(
 	onSSE func(string, map[string]any),
 	pctx *WorkflowChatContext,
 ) {
-	// Enforce global max retries (non-plugin.yaml configurable).
+	// Enforce global max retries (non-workflow.yaml configurable).
 	step, _ := GetLatestStep(ctx, db, pctx.SessionID, pctx.StepID)
 	attempt := 0
 	if step != nil {
@@ -1145,7 +1145,7 @@ func resolveSlotBinding(workflowID, slot string) (slotID, cardinality string) {
 }
 
 // defaultDriverMaxRetries is the global max retry count for DriverAgent RETRY verdicts.
-// Not configurable per plugin.yaml — global platform setting only.
+// Not configurable per workflow.yaml — global platform setting only.
 const defaultDriverMaxRetries = 3
 
 // buildWorkflowArtifactsSummary builds a text summary of all artifacts produced in this

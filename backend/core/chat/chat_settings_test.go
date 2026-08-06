@@ -55,9 +55,9 @@ func TestGetChatSettings_ReturnsDefaults(t *testing.T) {
 	var resp common.APIResponse
 	json.NewDecoder(w.Body).Decode(&resp)
 	data, _ := resp.Data.(map[string]any)
-	// Defaults: enable_plugin=true, workflow_mode=dynamic, enable_subagent=true.
-	if v, ok := data["enable_plugin"].(bool); !ok || !v {
-		t.Fatalf("enable_plugin: got %v, want true", data["enable_plugin"])
+	// Defaults: enable_workflow=true, workflow_mode=dynamic, enable_subagent=true.
+	if v, ok := data["enable_workflow"].(bool); !ok || !v {
+		t.Fatalf("enable_workflow: got %v, want true", data["enable_workflow"])
 	}
 	if v, ok := data["workflow_mode"].(string); !ok || v != "dynamic" {
 		t.Fatalf("workflow_mode: got %v, want dynamic", data["workflow_mode"])
@@ -80,7 +80,7 @@ func TestGetChatSettings_MissingUserID(t *testing.T) {
 func TestGetChatSettings_AfterPatch(t *testing.T) {
 	setupChatSettingsTest(t)
 	// First patch the settings.
-	req1 := newSettingsRequest("PATCH", "/chat/settings", `{"enable_plugin":false,"workflow_mode":"auto"}`, "user-patched", nil)
+	req1 := newSettingsRequest("PATCH", "/chat/settings", `{"enable_workflow":false,"workflow_mode":"auto"}`, "user-patched", nil)
 	w1 := httptest.NewRecorder()
 	PatchChatSettings(w1, req1)
 	if w1.Code != http.StatusOK {
@@ -97,8 +97,8 @@ func TestGetChatSettings_AfterPatch(t *testing.T) {
 	var resp common.APIResponse
 	json.NewDecoder(w2.Body).Decode(&resp)
 	data, _ := resp.Data.(map[string]any)
-	if v, ok := data["enable_plugin"].(bool); ok && v {
-		t.Fatalf("enable_plugin: expected false, got %v", v)
+	if v, ok := data["enable_workflow"].(bool); ok && v {
+		t.Fatalf("enable_workflow: expected false, got %v", v)
 	}
 	if v, ok := data["workflow_mode"].(string); ok && v != "auto" {
 		t.Fatalf("workflow_mode: expected auto, got %v", v)
@@ -134,9 +134,9 @@ func TestPatchChatSettings_InvalidWorkflowMode(t *testing.T) {
 // TestPatchChatSettings_DisabledWorkflowModeWithWorkflow returns 409 conflict.
 func TestPatchChatSettings_DisabledWorkflowModeWithWorkflow(t *testing.T) {
 	setupChatSettingsTest(t)
-	// The handler type-checks enable_plugin as bool. Pass valid bool values.
+	// The handler type-checks enable_workflow as bool. Pass valid bool values.
 	req := newSettingsRequest("PATCH", "/chat/settings",
-		`{"enable_plugin":false,"enable_subagent":true}`, "user-wf", nil)
+		`{"enable_workflow":false,"enable_subagent":true}`, "user-wf", nil)
 	w := httptest.NewRecorder()
 	PatchChatSettings(w, req)
 
@@ -208,6 +208,6 @@ func TestPatchConversationWorkflowSettings_PersistsPhysicalPluginModeColumn(t *t
 		t.Fatalf("reload conversation: %v", err)
 	}
 	if stored.WorkflowMode == nil || *stored.WorkflowMode != "auto" {
-		t.Fatalf("plugin_mode was not persisted: %#v", stored.WorkflowMode)
+		t.Fatalf("workflow mode was not persisted: %#v", stored.WorkflowMode)
 	}
 }

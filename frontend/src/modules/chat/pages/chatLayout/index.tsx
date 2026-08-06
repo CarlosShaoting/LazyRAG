@@ -30,8 +30,8 @@ import { allowedUploadTypes } from "@/modules/chat/components/ImageUpload";
 import {
   CHAT_RESUME_CONVERSATION_KEY,
   CHAT_SELECT_CONVERSATION_EVENT,
-  PLUGIN_PANEL_EXPANDED_EVENT,
-  PLUGIN_PANEL_EXPANDED_STORAGE_PREFIX,
+  WORKFLOW_PANEL_EXPANDED_EVENT,
+  WORKFLOW_PANEL_EXPANDED_STORAGE_PREFIX,
 } from "@/modules/chat/constants/chat";
 import { buildChatMessageListFromHistory } from "@/modules/chat/utils/message";
 import { buildEnvironmentContext } from "@/modules/chat/utils/environment";
@@ -116,7 +116,7 @@ const ChatLayout: FC<IChatLayoutProps> = (props) => {
     let restoredExpanded = false;
     try {
       restoredExpanded = localStorage.getItem(
-        `${PLUGIN_PANEL_EXPANDED_STORAGE_PREFIX}${sessionId}`,
+        `${WORKFLOW_PANEL_EXPANDED_STORAGE_PREFIX}${sessionId}`,
       ) === "true";
     } catch {
       // Keep the default compact layout when browser storage is unavailable.
@@ -131,8 +131,8 @@ const ChatLayout: FC<IChatLayoutProps> = (props) => {
         if (detail.expanded) setExpandedRailTab("chat");
       }
     };
-    window.addEventListener(PLUGIN_PANEL_EXPANDED_EVENT, handleExpandedChange);
-    return () => window.removeEventListener(PLUGIN_PANEL_EXPANDED_EVENT, handleExpandedChange);
+    window.addEventListener(WORKFLOW_PANEL_EXPANDED_EVENT, handleExpandedChange);
+    return () => window.removeEventListener(WORKFLOW_PANEL_EXPANDED_EVENT, handleExpandedChange);
   }, [sessionId]);
 
   // Keep pendingWorkflowSettingsRef in sync with the welcome screen while no conversation is active.
@@ -208,7 +208,7 @@ const ChatLayout: FC<IChatLayoutProps> = (props) => {
   const workflowDefinitionChanged = useWorkflowStore((s) =>
     sessionId
       ? s.sessionByConversation[sessionId]?.runtime_error_code ===
-        "PLUGIN_DEFINITION_CHANGED"
+        "WORKFLOW_DEFINITION_CHANGED"
       : false,
   );
   const chatEnabled = canChat && !workflowDefinitionChanged;

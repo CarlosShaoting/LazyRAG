@@ -104,6 +104,34 @@ func TestPrepareHTTPRejectsUnknownPublicWorkflow(t *testing.T) {
 	}
 }
 
+func TestPrepareHTTPReturnsFlatPublicContractOnCreateAndReplay(t *testing.T) {
+	h, _ := testHandler(t)
+	body := []byte(`{"workflow_id":"writer","idempotency_key":"same","input_bindings":{}}`)
+	prepared, _, err := h.Store.Prepare(t.Context(), "owner", "same", "writer", ContractVersion,
+		body, json.RawMessage(`{"status":"ready","workflow_ref":"builtin:writer","workflow_revision":"rev-1","missing_inputs":[],"warnings":[]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		w := httptest.NewRecorder()
+		h.Prepare(w, request(http.MethodPost, "/workflow-preparations", "owner", body))
+		if w.Code != http.StatusOK {
+			t.Fatalf("prepare replay=%d body=%s", w.Code, w.Body.String())
+		}
+		encoded, _ := json.Marshal(decodeEnvelope(t, w).Data)
+		var got map[string]any
+		if err := json.Unmarshal(encoded, &got); err != nil {
+			t.Fatal(err)
+		}
+		if got["preparation_id"] != prepared.ID || got["status"] != "ready" || got["workflow_revision"] != "rev-1" {
+			t.Fatalf("public preparation contract is not flat: %s", encoded)
+		}
+		if _, leaked := got["response"]; leaked {
+			t.Fatalf("persistence envelope leaked into public contract: %s", encoded)
+		}
+	}
+}
+
 func TestConsumeHTTPChecksOwnerAndConsumesExactlyOnce(t *testing.T) {
 	h, _ := testHandler(t)
 	p, _, err := h.Store.Prepare(t.Context(), "owner", "key", "writer", ContractVersion, json.RawMessage(`{}`), json.RawMessage(`{}`))
@@ -197,5 +225,45 @@ func TestCommandHTTPChecksVersionPermissionAndExecutesLegacyOnce(t *testing.T) {
 	command(w, badVersion)
 	if w.Code != http.StatusUnprocessableEntity || decodeEnvelope(t, w).Error.Code != "CONTRACT_VERSION_UNSUPPORTED" {
 		t.Fatalf("version=%d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestCommandHTTPReportsMissingSessionInsteadOfPermissionDenied(t *testing.T) {
+	h, _ := testHandler(t)
+	command := h.Command(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("missing session must not reach transition handler")
+	}))
+	body := []byte(`{"contract_version":"workflow.v1","command_id":"cmd-1","tool":"advance_step","session_id":"missing","expected_state_version":1,"steps":[{"step_id":"prompt"}]}`)
+	r := mux.SetURLVars(request(http.MethodPost, "/workflow-sessions/missing:advance-step", "owner", body), map[string]string{"session_id": "missing"})
+	w := httptest.NewRecorder()
+	command(w, r)
+	if w.Code != http.StatusNotFound || decodeEnvelope(t, w).Error.Code != "WORKFLOW_SESSION_NOT_FOUND" {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestSessionFacadeEndpointsReportMissingSessionConsistently(t *testing.T) {
+	h, _ := testHandler(t)
+	tests := []struct {
+		name    string
+		method  string
+		path    string
+		body    string
+		handler http.HandlerFunc
+	}{
+		{"inputs", http.MethodGet, "/workflow-sessions/missing/input-bindings", "", h.ListInputs},
+		{"artifacts", http.MethodGet, "/workflow-sessions/missing/artifacts", "", h.ListArtifacts},
+		{"stop", http.MethodPost, "/workflow-sessions/missing:stop", `{"command_id":"stop-1"}`, h.StopWorkflow},
+		{"bind", http.MethodPost, "/workflow-sessions/missing/input-bindings", `{"material_id":"source","resource_id":"r1","command_id":"bind-1"}`, h.BindInput},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := mux.SetURLVars(request(tc.method, tc.path, "owner", []byte(tc.body)), map[string]string{"session_id": "missing"})
+			w := httptest.NewRecorder()
+			tc.handler(w, r)
+			if w.Code != http.StatusNotFound || decodeEnvelope(t, w).Error.Code != "WORKFLOW_SESSION_NOT_FOUND" {
+				t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+			}
+		})
 	}
 }

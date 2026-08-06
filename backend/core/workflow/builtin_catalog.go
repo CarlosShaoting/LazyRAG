@@ -26,7 +26,7 @@ func builtinWorkflowRoot() string {
 	if value := strings.TrimSpace(os.Getenv("LAZYMIND_WORKFLOW_BUILTIN_ROOT")); value != "" {
 		return value
 	}
-	for _, candidate := range []string{"plugins", "../../plugins", "/app/plugins"} {
+	for _, candidate := range []string{"workflows", "../../workflows", "/app/workflows"} {
 		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
 			return candidate
 		}
@@ -80,7 +80,7 @@ func seedBuiltinWorkflow(ctx context.Context, db *gorm.DB, root string) error {
 	if err != nil {
 		return err
 	}
-	workflowYAML, stateYAML := files["plugin.yaml"], files["scenario/state.yml"]
+	workflowYAML, stateYAML := files["workflow.yaml"], files["scenario/state.yml"]
 	if len(workflowYAML) == 0 || len(stateYAML) == 0 {
 		return nil
 	}

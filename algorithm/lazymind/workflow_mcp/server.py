@@ -109,8 +109,13 @@ TOOL_DESCRIPTIONS = {
     'start_workflow': 'Consume a ready preparation and create a Workflow Session.',
     'get_workflow_state': 'Read the authoritative Workflow projection and state_version.',
     'get_ready_steps': 'Read only the current Ready frontier from the authoritative projection.',
-    'stop_workflow': 'Stop a Workflow and interrupt active Attempts while preserving outputs.',
-    'resume_workflow': 'Resume a stopped Workflow from persisted Runtime state.',
+    'stop_workflow': (
+        'Explicitly pause this Session and interrupt active Attempts while preserving outputs. '
+        'Do not use for step failure recovery and never prepare a replacement after stopping.'
+    ),
+    'resume_workflow': (
+        'Resume the same stopped Session. Refresh projection, then advance its interrupted step.'
+    ),
     'get_workflow_command': 'Reconcile the result of an idempotent Workflow command.',
     'list_artifacts': 'List selected immutable Artifact revisions for a Workflow Session.',
     'read_artifact': 'Read one authorized Artifact revision and its lineage metadata.',

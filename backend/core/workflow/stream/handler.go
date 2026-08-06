@@ -2,6 +2,7 @@ package stream
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -76,7 +77,11 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if after == 0 && h.Snapshot != nil {
 		snapshot, err := h.Snapshot(r, sessionID, owner)
 		if err != nil {
-			_ = writeEvent(w, flusher, 0, "error", streamError{Code: "PERMISSION_DENIED", Message: err.Error()})
+			code := "PERMISSION_DENIED"
+			if errors.Is(err, workflowstore.ErrNotFound) {
+				code = "WORKFLOW_SESSION_NOT_FOUND"
+			}
+			_ = writeEvent(w, flusher, 0, "error", streamError{Code: code, Message: err.Error()})
 			return
 		}
 		_ = writeEvent(w, flusher, 0, "snapshot", snapshot)

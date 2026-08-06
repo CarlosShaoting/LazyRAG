@@ -9,8 +9,8 @@ import { uploadFileInChunks } from '@/modules/chat/utils/chunkUpload';
 import { WorkflowSessionApi } from '@/modules/chat/utils/request';
 import StateGraphModal from '@/components/StateGraphModal';
 import {
-  PLUGIN_PANEL_EXPANDED_EVENT,
-  PLUGIN_PANEL_EXPANDED_STORAGE_PREFIX,
+  WORKFLOW_PANEL_EXPANDED_EVENT,
+  WORKFLOW_PANEL_EXPANDED_STORAGE_PREFIX,
 } from '@/modules/chat/constants/chat';
 import type {
   WorkflowSession,
@@ -1056,7 +1056,7 @@ const STATUS_KEY: Record<string, string> = {
 
 function readPersistedExpanded(conversationId: string): boolean {
   try {
-    return localStorage.getItem(`${PLUGIN_PANEL_EXPANDED_STORAGE_PREFIX}${conversationId}`) === 'true';
+    return localStorage.getItem(`${WORKFLOW_PANEL_EXPANDED_STORAGE_PREFIX}${conversationId}`) === 'true';
   } catch {
     return false;
   }
@@ -1065,7 +1065,7 @@ function readPersistedExpanded(conversationId: string): boolean {
 function persistExpanded(conversationId: string, expanded: boolean) {
   try {
     localStorage.setItem(
-      `${PLUGIN_PANEL_EXPANDED_STORAGE_PREFIX}${conversationId}`,
+      `${WORKFLOW_PANEL_EXPANDED_STORAGE_PREFIX}${conversationId}`,
       String(expanded),
     );
   } catch {
@@ -1112,7 +1112,7 @@ export function WorkflowPanel({
     if (nextExpanded) setCollapsed(false);
     setExpanded(nextExpanded);
     persistExpanded(conversationId, nextExpanded);
-    window.dispatchEvent(new CustomEvent(PLUGIN_PANEL_EXPANDED_EVENT, {
+    window.dispatchEvent(new CustomEvent(WORKFLOW_PANEL_EXPANDED_EVENT, {
       detail: { conversationId, expanded: nextExpanded },
     }));
   }, [conversationId]);
@@ -1126,11 +1126,11 @@ export function WorkflowPanel({
   }, [conversationId, onStop, refresh, setAutoRunning]);
 
   useEffect(() => {
-    window.dispatchEvent(new CustomEvent(PLUGIN_PANEL_EXPANDED_EVENT, {
+    window.dispatchEvent(new CustomEvent(WORKFLOW_PANEL_EXPANDED_EVENT, {
       detail: { conversationId, expanded: initialExpandedRef.current },
     }));
     return () => {
-      window.dispatchEvent(new CustomEvent(PLUGIN_PANEL_EXPANDED_EVENT, {
+      window.dispatchEvent(new CustomEvent(WORKFLOW_PANEL_EXPANDED_EVENT, {
         detail: { conversationId, expanded: false },
       }));
     };

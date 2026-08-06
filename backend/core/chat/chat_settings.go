@@ -43,7 +43,7 @@ func GetChatSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	common.ReplyOK(w, map[string]any{
-		"enable_plugin":   s.EnableWorkflow,
+		"enable_workflow": s.EnableWorkflow,
 		"workflow_mode":   s.WorkflowMode,
 		"enable_subagent": s.EnableSubagent,
 		"updated_at":      s.UpdatedAt,
@@ -51,7 +51,7 @@ func GetChatSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 // PatchConversationWorkflowSettings updates conversation-level plugin/subagent overrides.
-// Supports enable_plugin, workflow_mode, enable_subagent; null clears back to global default.
+// Supports enable_workflow, workflow_mode, enable_subagent; null clears back to global default.
 func PatchConversationWorkflowSettings(w http.ResponseWriter, r *http.Request) {
 	userID := store.UserID(r)
 	if userID == "" {
@@ -76,7 +76,7 @@ func PatchConversationWorkflowSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	updates := map[string]any{}
-	if raw, present := body["enable_plugin"]; present {
+	if raw, present := body["enable_workflow"]; present {
 		if raw == nil {
 			updates["enable_plugin"] = nil
 		} else if v, ok := raw.(bool); ok {
@@ -92,14 +92,14 @@ func PatchConversationWorkflowSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if raw, present := body["workflow_mode"]; present {
 		if raw == nil {
-			updates["plugin_mode"] = nil
+			updates["plugin_mode"] = nil // workflow-naming: persistence
 		} else if v, ok := raw.(string); ok {
 			v = strings.TrimSpace(v)
 			if v != "auto" && v != "dynamic" {
 				common.ReplyErr(w, "workflow_mode must be 'auto' or 'dynamic'", http.StatusBadRequest)
 				return
 			}
-			updates["plugin_mode"] = v
+			updates["plugin_mode"] = v // workflow-naming: persistence
 		}
 	}
 	if len(updates) == 0 {
@@ -147,16 +147,13 @@ func PatchChatSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	updates := map[string]any{"updated_at": time.Now().UTC()}
-	if v, ok := body["enable_plugin"].(bool); ok {
+	if v, ok := body["enable_workflow"].(bool); ok {
 		updates["enable_plugin"] = v
 	}
 	if v, ok := body["enable_subagent"].(bool); ok {
 		updates["enable_subagent"] = v
 	}
 	v, ok := body["workflow_mode"].(string)
-	if !ok {
-		v, ok = body["plugin_mode"].(string) // workflow-naming: persistence
-	}
 	if ok {
 		v = strings.TrimSpace(v)
 		if v != "auto" && v != "dynamic" {

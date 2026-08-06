@@ -24,7 +24,7 @@ type Attempt struct {
 // ValidateCapturedBaseline is the deterministic capture/replay harness used by
 // the legacy Runtime package tests. root is the repository root.
 func ValidateCapturedBaseline(root string) error {
-	base := filepath.Join(root, "docs", "plan", "plugin", "contracts", "v1")
+	base := filepath.Join(root, "docs", "plan", "workflow", "contracts", "v1")
 	manifest, err := ReadBaselineManifest(filepath.Join(base, "baseline-manifest.json"))
 	if err != nil {
 		return err

@@ -166,7 +166,7 @@ def test_plugin_preflight_result_renders_outcome_and_reason_in_chinese():
     result_text = _tool_result_frame_text(
         {
             'id': 'call-writer',
-            'name': 'trigger_writer_plugin',
+            'name': 'trigger_writer_workflow',
             'result': json.dumps({
                 'outcome': 'not_applicable',
                 'reason': reason,
@@ -210,7 +210,7 @@ def test_plugin_preflight_result_supports_ready_status_payload():
     result_text = _tool_result_frame_text(
         {
             'id': 'call-writer',
-            'name': 'trigger_writer_plugin',
+            'name': 'trigger_writer_workflow',
             'result': {
                 'status': 'ready',
                 'outcome': 'ready',

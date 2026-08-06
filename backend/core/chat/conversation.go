@@ -44,9 +44,9 @@ func applyBasicChatOnlyPolicy(reqBody map[string]any) {
 		agenticConfig = map[string]any{}
 		reqBody["agentic_config"] = agenticConfig
 	}
-	agenticConfig["enable_plugin"] = false
+	agenticConfig["enable_workflow"] = false
 	agenticConfig["enable_subagent"] = false
-	reqBody["enable_plugin"] = false
+	reqBody["enable_workflow"] = false
 	reqBody["enable_subagent"] = false
 	reqBody["workflow_context"] = map[string]any{}
 	reqBody["workflow_catalog"] = []map[string]any{}
@@ -125,8 +125,8 @@ func ChatConversations(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, mention := range mentions {
-			if mention.Type == "plugin" {
-				common.ReplyErr(w, "basic chat does not support plugin mentions", http.StatusConflict)
+			if mention.Type == "workflow" {
+				common.ReplyErr(w, "basic chat does not support workflow mentions", http.StatusConflict)
 				return
 			}
 		}
@@ -346,17 +346,17 @@ func ChatConversations(w http.ResponseWriter, r *http.Request) {
 			reqBody["workflow_context"] = existing
 		}
 
-		// Promote enable_plugin and enable_subagent from agentic_config to top-level
+		// Promote enable_workflow and enable_subagent from agentic_config to top-level
 		// so Python chat_routes can receive them as explicit parameters.
 		if ac, ok := reqBody["agentic_config"].(map[string]any); ok {
-			if v, ok := ac["enable_plugin"]; ok {
-				reqBody["enable_plugin"] = v
+			if v, ok := ac["enable_workflow"]; ok {
+				reqBody["enable_workflow"] = v
 			}
 			if v, ok := ac["enable_subagent"]; ok {
 				reqBody["enable_subagent"] = v
 			}
 		}
-		workflowEnabled, _ := reqBody["enable_plugin"].(bool)
+		workflowEnabled, _ := reqBody["enable_workflow"].(bool)
 		effectiveWorkflowRefs, bindingErr := resolveConversationWorkflowBinding(
 			r.Context(), db, convID, mentionedResources.WorkflowRefs,
 			mentionedResources.ExcludedWorkflowRefs, workflowEnabled, true,
@@ -385,7 +385,7 @@ func ChatConversations(w http.ResponseWriter, r *http.Request) {
 					"workflow_mode": workflowMode,
 					"workflow_ref":  activeSess.WorkflowRef, "revision_id": activeSess.WorkflowRevisionID, "revision_no": activeSess.WorkflowRevisionNo, "tree_hash": activeSess.WorkflowTreeHash, "remote_root": activeSess.WorkflowRemoteRoot,
 				}
-				fmt.Printf("[PLUGIN_CONTEXT_INJECTED] conversation_id=%s session_id=%s workflow_id=%s current_step=%s workflow_mode=%s\n",
+				fmt.Printf("[WORKFLOW_CONTEXT_INJECTED] conversation_id=%s session_id=%s workflow_id=%s current_step=%s workflow_mode=%s\n",
 					convID, activeSess.ID, activeSess.WorkflowID, activeSess.CurrentStepID, workflowMode)
 			} else {
 				// Case 2: validate/correct stale fields from frontend.
@@ -409,7 +409,7 @@ func ChatConversations(w http.ResponseWriter, r *http.Request) {
 				existing["tree_hash"] = activeSess.WorkflowTreeHash
 				existing["remote_root"] = activeSess.WorkflowRemoteRoot
 				if stale {
-					fmt.Printf("[PLUGIN_CONTEXT_CORRECTED] conversation_id=%s session_id=%s workflow_id=%s current_step=%s\n",
+					fmt.Printf("[WORKFLOW_CONTEXT_CORRECTED] conversation_id=%s session_id=%s workflow_id=%s current_step=%s\n",
 						convID, activeSess.ID, activeSess.WorkflowID, activeSess.CurrentStepID)
 				}
 			}
@@ -422,7 +422,7 @@ func ChatConversations(w http.ResponseWriter, r *http.Request) {
 			existing["workflow_mode"] = workflowMode
 			reqBody["workflow_context"] = existing
 			if _, hasPreflight := existing["workflow_preflight"]; !hasPreflight {
-				fmt.Printf("[PLUGIN_CONTEXT_CLEARED] conversation_id=%s no active session in DB\n", convID)
+				fmt.Printf("[WORKFLOW_CONTEXT_CLEARED] conversation_id=%s no active session in DB\n", convID)
 			}
 		}
 	}
@@ -1286,7 +1286,7 @@ func GetConversationDetail(w http.ResponseWriter, r *http.Request) {
 			"create_time":           c.CreatedAt.UTC().Format(time.RFC3339),
 			"update_time":           c.UpdatedAt.UTC().Format(time.RFC3339),
 			"models":                models,
-			"enable_plugin":         c.EnableWorkflow,
+			"enable_workflow":       c.EnableWorkflow,
 			"workflow_mode":         c.WorkflowMode,
 			"enable_subagent":       c.EnableSubagent,
 		},

@@ -155,7 +155,7 @@ func ListWorkflows(w http.ResponseWriter, r *http.Request) {
 	var resources []orm.WorkflowResource
 	err := db.WithContext(r.Context()).
 		Where("status = 'active' AND source_type = 'builtin' AND owner_user_id = ''").
-		Order("plugin_ref ASC").Find(&resources).Error
+		Order("plugin_ref ASC").Find(&resources).Error // workflow-naming: persistence
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		common.ReplyErr(w, err.Error(), http.StatusInternalServerError)
 		return

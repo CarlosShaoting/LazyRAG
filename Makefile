@@ -273,7 +273,10 @@ lint-state-backend-boundary: install-golangci-lint
 	done
 	@echo "✅ State backend boundary OK."
 
-lint: lint-python lint-go lint-state-backend-boundary
+lint-workflow-naming:
+	@python3 scripts/check_workflow_naming.py
+
+lint: lint-python lint-go lint-state-backend-boundary lint-workflow-naming
 
 test:
 	@./tests/run-all.sh
@@ -311,8 +314,8 @@ _COMPOSE_BIND_CRITICAL_READ_PATHS := \
 	backend/scan-control-plane/scripts \
 	backend/file-watcher/configs \
 	db-init \
-	kong/plugins \
-	plugins \
+	kong/workflows \
+	workflows \
 	scripts/db-bootstrap.sh \
 	kong.yml \
 	redis-users.acl

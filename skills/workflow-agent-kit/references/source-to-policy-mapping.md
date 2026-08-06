@@ -5,7 +5,7 @@ now authoritative by default; the former Host policy is a bounded rollback path.
 
 | Original source | Existing rule | Shared policy clause | Shadow input/evidence |
 |---|---|---|---|
-| `chat/workflow/workflow_manager.py::_COLD_START_PLUGIN_PROMPT` | Trigger only for direct intent; explicit named Workflow must trigger | Discover/prepare before start | Cold-start prompt tests remain authoritative; the constant is pending internal cleanup and is not public vocabulary |
+| `chat/workflow/workflow_manager.py::_COLD_START_WORKFLOW_PROMPT` | Trigger only for direct intent; explicit named Workflow must trigger | Discover/prepare before start | Cold-start prompt tests remain authoritative |
 | `build_cold_start_tools` preflight | `need_information` blocks start; `ready` produces one valid first step | Missing-input and preparation gates | Existing preflight tests |
 | `_build_cold_execution_policy` | Auto hands off; dynamic waits only for explicit multi-step/no-approval cases | Rules 7–9 | Golden launch cases |
 | `_build_step_status_section` | Go Ready projection is the execution frontier; conditions disambiguate choices | Rules 3 and 6 | `ready_steps`, active edges |

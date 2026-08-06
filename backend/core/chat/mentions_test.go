@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,6 +25,52 @@ func TestParseChatMentionsDeduplicatesByTypeAndResource(t *testing.T) {
 	}
 }
 
+func TestParseChatMentionsAcceptsWorkflow(t *testing.T) {
+	raw := map[string]any{"mentions": []any{
+		map[string]any{"mention_id": "m1", "type": "workflow", "resource_id": "builtin:test-workflow", "display_name": "Smoke Test"},
+	}}
+	mentions, err := parseChatMentions(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mentions) != 1 || mentions[0].Type != "workflow" {
+		t.Fatalf("mentions=%#v", mentions)
+	}
+}
+
+func TestApplyChatMentionsRejectsRemovedPluginWireType(t *testing.T) {
+	raw := map[string]any{"mentions": []any{
+		map[string]any{"mention_id": "m1", "type": "plugin", "resource_id": "builtin:test-workflow", "display_name": "Smoke Test"},
+	}}
+	db := orm.MigrateTestDB(t)
+	_, _, err := applyChatMentions(
+		context.Background(), db.DB, raw, "user-1", "conversation-1", "session-1", "run", nil,
+	)
+	if err == nil || !strings.Contains(err.Error(), "unsupported mention type") {
+		t.Fatalf("expected removed wire type to fail, got %v", err)
+	}
+}
+
+func TestApplyChatMentionsResolvesWorkflowWireType(t *testing.T) {
+	raw := map[string]any{"mentions": []any{
+		map[string]any{"mention_id": "m1", "type": "workflow", "resource_id": "builtin:test-workflow", "display_name": "Workflow Comprehensive Smoke Test"},
+	}}
+	db := orm.MigrateTestDB(t)
+	_, resolved, err := applyChatMentions(
+		context.Background(), db.DB, raw, "user-1", "conversation-1", "session-1",
+		"帮我执行一下 Workflow Comprehensive Smoke Test", nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resolved.WorkflowRefs) != 1 || resolved.WorkflowRefs[0] != "builtin:test-workflow" {
+		t.Fatalf("workflow refs=%#v", resolved.WorkflowRefs)
+	}
+	if len(resolved.ResourceMentions) != 1 || resolved.ResourceMentions[0]["resource_type"] != "workflow" {
+		t.Fatalf("resource mentions=%#v", resolved.ResourceMentions)
+	}
+}
+
 func TestConversationWorkflowBindingSurvivesFollowUpAndClearsAtSessionEnd(t *testing.T) {
 	db := orm.MigrateTestDB(t, &orm.Conversation{}, &orm.WorkflowSession{})
 	now := time.Now().UTC()
@@ -33,18 +80,18 @@ func TestConversationWorkflowBindingSurvivesFollowUpAndClearsAtSessionEnd(t *tes
 	}
 
 	refs, err := resolveConversationWorkflowBinding(context.Background(), db.DB, "conversation-1",
-		[]string{"builtin:image-plugin"}, nil, true, true)
-	if err != nil || len(refs) != 1 || refs[0] != "builtin:image-plugin" {
+		[]string{"builtin:image-workflow"}, nil, true, true)
+	if err != nil || len(refs) != 1 || refs[0] != "builtin:image-workflow" {
 		t.Fatalf("initial binding refs=%v err=%v", refs, err)
 	}
 	refs, err = resolveConversationWorkflowBinding(context.Background(), db.DB, "conversation-1",
 		nil, nil, true, true)
-	if err != nil || len(refs) != 1 || refs[0] != "builtin:image-plugin" {
+	if err != nil || len(refs) != 1 || refs[0] != "builtin:image-workflow" {
 		t.Fatalf("follow-up binding refs=%v err=%v", refs, err)
 	}
 
 	if err := db.Create(&orm.WorkflowSession{ID: "session-1", ConversationID: "conversation-1",
-		WorkflowID: "image-plugin", WorkflowRef: "builtin:image-plugin", Status: "completed",
+		WorkflowID: "image-workflow", WorkflowRef: "builtin:image-workflow", Status: "completed",
 		CreateUserID: "user-1", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -70,11 +117,11 @@ func TestConversationWorkflowBindingExplicitCancellationClearsSelection(t *testi
 		t.Fatal(err)
 	}
 	if err := writeConversationWorkflowBinding(context.Background(), db.DB, "conversation-1",
-		"builtin:image-plugin"); err != nil {
+		"builtin:image-workflow"); err != nil {
 		t.Fatal(err)
 	}
 	refs, err := resolveConversationWorkflowBinding(context.Background(), db.DB, "conversation-1",
-		nil, []string{"builtin:image-plugin"}, true, true)
+		nil, []string{"builtin:image-workflow"}, true, true)
 	if err != nil || len(refs) != 0 {
 		t.Fatalf("explicit cancellation refs=%v err=%v", refs, err)
 	}
@@ -115,7 +162,7 @@ func TestMentionIsDeniedHandlesConjunctionsAndCommonDenialWords(t *testing.T) {
 		{"不要用 paper-search 但请使用 web-search", "web-search", false},
 	}
 	for _, test := range tests {
-		mention := chatMention{Type: "plugin", ResourceID: test.name, DisplayName: test.name}
+		mention := chatMention{Type: "workflow", ResourceID: test.name, DisplayName: test.name}
 		if got := mentionIsDenied(test.query, mention); got != test.denied {
 			t.Errorf("mentionIsDenied(%q, %q) = %v, want %v", test.query, test.name, got, test.denied)
 		}
@@ -189,9 +236,9 @@ func TestBuildLazyChatRequestPropagatesPreviewLLMConfirmation(t *testing.T) {
 
 func TestBackendBuildsAndPropagatesWorkflowActivation(t *testing.T) {
 	activation := buildWorkflowActivation(map[string]any{
-		"workflow_id": "image-plugin", "revision_id": "revision-1", "name": "Image",
-	}, "builtin:image-plugin")
-	if activation["tool_name"] != "trigger_image_plugin_workflow" {
+		"workflow_id": "image-workflow", "revision_id": "revision-1", "name": "Image",
+	}, "builtin:image-workflow")
+	if activation["tool_name"] != "trigger_image_workflow" {
 		t.Fatalf("activation = %#v", activation)
 	}
 	req := buildLazyChatRequest(map[string]any{

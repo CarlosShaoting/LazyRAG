@@ -264,8 +264,8 @@ func estimateContext(w http.ResponseWriter, r *http.Request, exportPrompt bool) 
 	}
 	applyMCPRuntimeConfig(r.Context(), db, userID, reqBody)
 	if agentConfig, ok := reqBody["agentic_config"].(map[string]any); ok {
-		if value, exists := agentConfig["enable_plugin"]; exists {
-			reqBody["enable_plugin"] = value
+		if value, exists := agentConfig["enable_workflow"]; exists {
+			reqBody["enable_workflow"] = value
 		}
 		if value, exists := agentConfig["enable_subagent"]; exists {
 			reqBody["enable_subagent"] = value
@@ -274,7 +274,7 @@ func estimateContext(w http.ResponseWriter, r *http.Request, exportPrompt bool) 
 	// Runtime controls next to the composer are part of the draft, just like
 	// mentions and attachments. Prefer their current UI values over persisted
 	// conversation defaults when building a preview.
-	for _, key := range []string{"enable_plugin", "enable_subagent"} {
+	for _, key := range []string{"enable_workflow", "enable_subagent"} {
 		if value, ok := raw[key].(bool); ok {
 			reqBody[key] = value
 		}
@@ -307,7 +307,7 @@ func estimateContext(w http.ResponseWriter, r *http.Request, exportPrompt bool) 
 		}
 	}
 	reqBody["workflow_context"] = workflowContext
-	workflowEnabled, _ := reqBody["enable_plugin"].(bool)
+	workflowEnabled, _ := reqBody["enable_workflow"].(bool)
 	effectiveWorkflowRefs, bindingErr := resolveConversationWorkflowBinding(
 		r.Context(), db, convID, mentioned.WorkflowRefs, mentioned.ExcludedWorkflowRefs,
 		workflowEnabled, false,

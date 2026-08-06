@@ -54,17 +54,19 @@ type CreateSessionInput struct {
 }
 
 // CreateSession inserts a new workflow_sessions record.
-// It returns an error if an active session already exists for the conversation.
+// It returns an error if any non-dismissed session already exists for the conversation.
 func CreateSession(ctx context.Context, db *gorm.DB, in CreateSessionInput) (*orm.WorkflowSession, error) {
-	// Guard: at most one non-dismissed active session per conversation.
-	var count int64
-	if err := db.WithContext(ctx).Model(&orm.WorkflowSession{}).
-		Where("conversation_id = ? AND status = ? AND dismissed = false", in.ConversationID, SessionStatusActive).
-		Count(&count).Error; err != nil {
-		return nil, err
-	}
-	if count > 0 {
-		return nil, errors.New("active plugin session already exists for conversation")
+	// Guard: at most one non-dismissed session per conversation, regardless of status.
+	if in.ConversationID != "" {
+		var count int64
+		if err := db.WithContext(ctx).Model(&orm.WorkflowSession{}).
+			Where("conversation_id = ? AND dismissed = false", in.ConversationID).
+			Count(&count).Error; err != nil {
+			return nil, err
+		}
+		if count > 0 {
+			return nil, errors.New("non-dismissed workflow session already exists for conversation")
+		}
 	}
 
 	now := time.Now().UTC()
@@ -150,7 +152,7 @@ func DismissSession(ctx context.Context, db *gorm.DB, sessionID string) error {
 }
 
 // RestoreSession un-dismisses a previously dismissed session. Returns an error if another
-// non-dismissed active/waiting session already exists for the same conversation. If the
+// non-dismissed session already exists for the same conversation. If the
 // session was active before dismissal, it is restored to waiting (SubAgent was cancelled).
 func RestoreSession(ctx context.Context, db *gorm.DB, sessionID string) error {
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -161,16 +163,15 @@ func RestoreSession(ctx context.Context, db *gorm.DB, sessionID string) error {
 			}
 			return err
 		}
-		// Guard: no other active/waiting session in this conversation.
+		// Guard: no other non-dismissed session in this conversation.
 		var count int64
 		if err := tx.Model(&orm.WorkflowSession{}).
-			Where("conversation_id = ? AND dismissed = false AND status IN ?",
-				s.ConversationID, []string{SessionStatusActive, SessionStatusWaiting}).
+			Where("conversation_id = ? AND dismissed = false", s.ConversationID).
 			Count(&count).Error; err != nil {
 			return err
 		}
 		if count > 0 {
-			return fmt.Errorf("another active or waiting session exists for this conversation")
+			return fmt.Errorf("another non-dismissed workflow session exists for this conversation")
 		}
 		newStatus := s.Status
 		if newStatus == SessionStatusActive {

@@ -4,7 +4,6 @@ import json
 import os
 import re
 import time
-from asyncio import CancelledError
 from typing import Any, Dict, List, Optional
 
 import lazyllm
@@ -20,6 +19,7 @@ from lazymind.chat.engine.agent_runtime import (
     PromptBuilder,
     normalize_attachments,
     render_attachment_content,
+    make_cancel_stop_condition,
 )
 from lazymind.chat.engine.prompts import add_standard_system_sections
 from lazymind.chat.service.component.event_translator import AgentEventFrameTranslator
@@ -407,7 +407,7 @@ def _build_subagent_plan(
         tools=tools,
         force_summarize_context=ctx.objective,
         execution_options=AgentExecutionOptions(
-            extra_stop_condition=_make_cancel_stop_condition(),
+            extra_stop_condition=make_cancel_stop_condition(),
             max_retries=max(1, int(_cfg['agentic_expanded_max_rounds']) - 1),
         ),
     )
@@ -779,31 +779,6 @@ async def run_subagent_stream(
             pass
         if db is not None:
             db.dispose()
-
-
-def _make_cancel_stop_condition():
-    """Return a stop_condition function that raises CancelledError when a cancel signal is detected.
-
-    Called once per task run. Each ReAct iteration, the condition polls the cancel queue
-    (FileSystemQueue klass='cancel'). If a message with tag='cancel' is found, it raises
-    CancelledError so the runner follows the interrupted path.
-    """
-    def _check(output) -> bool:
-        try:
-            from lazyllm.common.queue import FileSystemQueue
-            msgs = FileSystemQueue(klass='cancel').dequeue() or []
-            for raw in msgs:
-                try:
-                    if json.loads(raw).get('tag') == 'cancel':
-                        raise CancelledError('stopped by user')
-                except (ValueError, TypeError):
-                    pass
-        except CancelledError:
-            raise
-        except Exception:
-            pass
-        return False
-    return _check
 
 
 def _auto_flush_drafts(ctx: 'SubAgentContext', db: 'SubAgentDB') -> None:

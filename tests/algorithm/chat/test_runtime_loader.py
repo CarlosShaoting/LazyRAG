@@ -24,7 +24,7 @@ def _subprocess_env():
         'LAZYLLM_INIT_DOC': 'False',
         'LAZYMIND_ENABLE_ROUTER': 'false',
         'LAZYMIND_BACKGROUND_JOBS_ENABLED': 'false',
-        'LAZYMIND_PLUGINS_DIR': str(_REPO_ROOT / 'plugins'),
+        'LAZYMIND_WORKFLOWS_DIR': str(_REPO_ROOT / 'workflows'),
     })
     return env
 

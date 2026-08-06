@@ -24,6 +24,6 @@ COPY --from=build /app/migrations /migrations
 # Model catalog YAML (seeded at startup from ./config/model_catalog.yaml)
 COPY --from=build /app/config /app/config
 # Built-in Workflow packages are imported into Core's revision store at startup.
-COPY plugins /app/plugins
+COPY workflows /app/workflows
 EXPOSE 8000
 CMD ["/core"]

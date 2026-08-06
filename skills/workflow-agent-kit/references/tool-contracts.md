@@ -46,6 +46,11 @@ Returns definition and revision metadata. Do not construct ids from display name
 Returns a preparation record containing its id and plan/status. It does not create
 a Session. Resolve missing inputs before starting.
 
+LazyMind Chat Host profile exception: its exposed `prepare_workflow` adapter
+atomically starts a ready preparation and returns `session_id`, `state_version`,
+and `ready_steps`. When those fields are returned, the Session already exists;
+do not call `start_workflow` or `prepare_workflow` again.
+
 ### `start_workflow(preparation_id, session_id, command_id?)`
 
 - `preparation_id: string` — exact id from prepare.
@@ -76,6 +81,17 @@ An empty frontier means wait/observe or terminal; it never permits guessing.
 Submit multiple steps only when they are independent members of the same Ready
 frontier. Runtime determines `resolved_operation`; never send retry/rewind as an
 operation. On state conflict, refresh and decide again rather than replaying.
+
+### `stop_workflow(session_id, command_id?)` and `resume_workflow(session_id, command_id?)`
+
+Stop interrupts active Attempts and preserves the Session, projection, inputs,
+Artifacts, and history. It does not dismiss/delete the Session and must only be
+called by a deterministic Host/UI controller for explicit user pause/stop
+intent—not by a model and not because a step failed. Model-driven Agent Hosts
+must omit `stop_workflow` from their projected tool set. Resume acts on that same
+stopped Session. After resume, refresh projection and use
+`advance_step` on the interrupted step when permitted. Never call
+`prepare_workflow` as the next action after stop.
 
 ## Errors
 

@@ -504,7 +504,7 @@ export const useWorkflowStore = create<WorkflowStore>()((set, get) => ({
           session.steps = [];
           session.projection = {};
           const errorCode = extractErrorCode(error);
-          if (errorCode === "PLUGIN_DEFINITION_CHANGED") {
+          if (errorCode === "WORKFLOW_DEFINITION_CHANGED") {
             session.runtime_error_code = errorCode;
             session.runtime_error_message = getLocalizedErrorMessage(error);
           }

@@ -51,7 +51,7 @@ func Compile(workflowYAML, stateYAML, scenario string, profile Profile) CompileR
 	result := CompileResult{Profile: profile, SchemaVersion: SchemaVersion, Diagnostics: []Diagnostic{}}
 	var plugin rawWorkflow
 	if err := yaml.Unmarshal([]byte(workflowYAML), &plugin); err != nil {
-		result.Diagnostics = append(result.Diagnostics, diag("E_PLUGIN_YAML_INVALID", "error", "plugin.yaml", err.Error()))
+		result.Diagnostics = append(result.Diagnostics, diag("E_WORKFLOW_YAML_INVALID", "error", "workflow.yaml", err.Error()))
 		return result
 	}
 	var state rawState
@@ -76,11 +76,11 @@ func Compile(workflowYAML, stateYAML, scenario string, profile Profile) CompileR
 	for i, slot := range plugin.Slots {
 		id := scalar(slot["id"])
 		if id == "" {
-			result.Diagnostics = append(result.Diagnostics, diag("E_MATERIAL_ID_REQUIRED", "error", fmt.Sprintf("plugin.yaml.slots[%d].id", i), "material id is required"))
+			result.Diagnostics = append(result.Diagnostics, diag("E_MATERIAL_ID_REQUIRED", "error", fmt.Sprintf("workflow.yaml.slots[%d].id", i), "material id is required"))
 			continue
 		}
 		if knownMaterials[id] {
-			result.Diagnostics = append(result.Diagnostics, materialDiag("E_MATERIAL_DUPLICATE", "error", fmt.Sprintf("plugin.yaml.slots[%d].id", i), id, "material id is duplicated: "+id))
+			result.Diagnostics = append(result.Diagnostics, materialDiag("E_MATERIAL_DUPLICATE", "error", fmt.Sprintf("workflow.yaml.slots[%d].id", i), id, "material id is duplicated: "+id))
 		}
 		knownMaterials[id] = true
 		external[id] = boolValue(slot["external"]) || scalar(slot["producer"]) == "external"
@@ -91,11 +91,11 @@ func Compile(workflowYAML, stateYAML, scenario string, profile Profile) CompileR
 	for i, step := range plugin.Steps {
 		id := scalar(step["id"])
 		if id == "" {
-			result.Diagnostics = append(result.Diagnostics, diag("E_STEP_ID_REQUIRED", "error", fmt.Sprintf("plugin.yaml.steps[%d].id", i), "step id is required"))
+			result.Diagnostics = append(result.Diagnostics, diag("E_STEP_ID_REQUIRED", "error", fmt.Sprintf("workflow.yaml.steps[%d].id", i), "step id is required"))
 			continue
 		}
 		if _, ok := workflowSteps[id]; ok {
-			result.Diagnostics = append(result.Diagnostics, nodeDiag("E_STEP_DUPLICATE", "error", fmt.Sprintf("plugin.yaml.steps[%d].id", i), id, "step id is duplicated: "+id))
+			result.Diagnostics = append(result.Diagnostics, nodeDiag("E_STEP_DUPLICATE", "error", fmt.Sprintf("workflow.yaml.steps[%d].id", i), id, "step id is duplicated: "+id))
 		}
 		workflowSteps[id] = step
 	}
@@ -113,7 +113,7 @@ func Compile(workflowYAML, stateYAML, scenario string, profile Profile) CompileR
 			continue
 		}
 		if _, ok := workflowSteps[id]; !ok {
-			result.Diagnostics = append(result.Diagnostics, nodeDiag("E_PLUGIN_STEP_MISSING", "error", "plugin.yaml.steps", id, "state step is not declared in plugin.yaml"))
+			result.Diagnostics = append(result.Diagnostics, nodeDiag("E_WORKFLOW_STEP_MISSING", "error", "workflow.yaml.steps", id, "state step is not declared in workflow.yaml"))
 		}
 		node := CompiledNode{ID: id, Label: step.Label, Route: step.Route, Prompt: step.Prompt,
 			Acceptance: stringList(step.Acceptance), Capabilities: stringList(step.Capabilities),
@@ -201,7 +201,7 @@ func Compile(workflowYAML, stateYAML, scenario string, profile Profile) CompileR
 	}
 	for material := range knownMaterials {
 		if _, ok := graph.MaterialProducers[material]; !ok {
-			result.Diagnostics = append(result.Diagnostics, materialDiag("E_MATERIAL_PRODUCER_MISSING", "error", "plugin.yaml.slots", material, "material must declare external producer or be produced by exactly one step"))
+			result.Diagnostics = append(result.Diagnostics, materialDiag("E_MATERIAL_PRODUCER_MISSING", "error", "workflow.yaml.slots", material, "material must declare external producer or be produced by exactly one step"))
 		}
 	}
 
@@ -740,28 +740,28 @@ func validateUI(ui map[string]any, known, exposed map[string]bool, profile Profi
 	b, _ := yaml.Marshal(ui["tabs"])
 	var tabs []map[string]any
 	if yaml.Unmarshal(b, &tabs) != nil {
-		return []Diagnostic{diag("E_UI_TABS_INVALID", "error", "plugin.yaml.ui.tabs", "ui tabs must be a list")}
+		return []Diagnostic{diag("E_UI_TABS_INVALID", "error", "workflow.yaml.ui.tabs", "ui tabs must be a list")}
 	}
 	placed := map[string]int{}
 	var out []Diagnostic
 	for i, tab := range tabs {
 		refs := parseMaterialRefs(tab["slots"])
 		if len(refs) == 0 {
-			out = append(out, diag("E_UI_TAB_EMPTY", "error", fmt.Sprintf("plugin.yaml.ui.tabs[%d].slots", i), "UI tab has no materials"))
+			out = append(out, diag("E_UI_TAB_EMPTY", "error", fmt.Sprintf("workflow.yaml.ui.tabs[%d].slots", i), "UI tab has no materials"))
 		}
 		for _, ref := range refs {
 			if !known[ref.Material] {
-				out = append(out, materialDiag("E_UI_MATERIAL_UNKNOWN", "error", fmt.Sprintf("plugin.yaml.ui.tabs[%d].slots", i), ref.Material, "UI references an unknown material"))
+				out = append(out, materialDiag("E_UI_MATERIAL_UNKNOWN", "error", fmt.Sprintf("workflow.yaml.ui.tabs[%d].slots", i), ref.Material, "UI references an unknown material"))
 			}
 			placed[ref.Material]++
 		}
 	}
 	for id := range exposed {
 		if exposed[id] && placed[id] == 0 {
-			out = append(out, materialDiag("E_UI_EXPOSED_MATERIAL_UNPLACED", "error", "plugin.yaml.ui.tabs", id, "exposed material is not placed in the UI"))
+			out = append(out, materialDiag("E_UI_EXPOSED_MATERIAL_UNPLACED", "error", "workflow.yaml.ui.tabs", id, "exposed material is not placed in the UI"))
 		}
 		if exposed[id] && placed[id] > 1 {
-			out = append(out, materialDiag("E_UI_MATERIAL_DUPLICATE", "error", "plugin.yaml.ui.tabs", id, "material is placed more than once in the UI"))
+			out = append(out, materialDiag("E_UI_MATERIAL_DUPLICATE", "error", "workflow.yaml.ui.tabs", id, "material is placed more than once in the UI"))
 		}
 	}
 	return out

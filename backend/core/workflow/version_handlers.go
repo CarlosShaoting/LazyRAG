@@ -78,7 +78,7 @@ func workflowVersionPayload(p orm.WorkflowResource, revisionID string) (map[stri
 	_ = store.DB().Where("id=?", revisionID).First(&rev).Error
 	workflowYAML := files["workflow.yaml"]
 	if workflowYAML == "" {
-		workflowYAML = files["plugin.yaml"]
+		workflowYAML = files["workflow.yaml"]
 	}
 	return map[string]any{"workflow_ref": p.WorkflowRef, "revision_id": rev.ID, "revision_no": rev.RevisionNo, "tree_hash": rev.TreeHash, "workflow_yaml_content": workflowYAML, "state_yaml_content": files["scenario/state.yml"], "scenario_content": files["scenario/scenario.md"], "driver_content": files["scenario/driver.md"], "scripts_content": string(scriptsJSON), "readonly": true}, nil
 }
@@ -122,7 +122,7 @@ func ReplaceDraftFromWorkflowVersion(w http.ResponseWriter, r *http.Request) {
 	scriptsJSON, _ := json.Marshal(scripts)
 	workflowYAML := files["workflow.yaml"]
 	if workflowYAML == "" {
-		workflowYAML = files["plugin.yaml"]
+		workflowYAML = files["workflow.yaml"]
 	}
 	updates := map[string]any{"state_yaml_content": files["scenario/state.yml"], "scenario_content": files["scenario/scenario.md"], "driver_content": files["scenario/driver.md"], "scripts_content": string(scriptsJSON), "state_layout_content": "", "base_revision_id": common.PathVar(r, "revision_id"), "version": draft.Version + 1, "updated_at": time.Now().UTC()}
 	setWorkflowYAMLUpdate(updates, workflowYAML)

@@ -58,7 +58,7 @@ type LazyChatRequest struct {
 	Runtime           ChatRuntimeOptions         `json:"runtime,omitempty"`
 	Personalization   ChatPersonalizationOptions `json:"personalization,omitempty"`
 	Agent             ChatAgentOptions           `json:"agent,omitempty"`
-	Workflow          ChatWorkflowOptions        `json:"plugin,omitempty"`
+	Workflow          ChatWorkflowOptions        `json:"workflow,omitempty"`
 	ExplicitResources ExplicitResourceBindings   `json:"explicit_resource_bindings,omitempty"`
 }
 
@@ -123,10 +123,10 @@ type ChatAgentOptions struct {
 }
 
 type ChatWorkflowOptions struct {
-	EnableWorkflow           *bool            `json:"enable_plugin,omitempty"`
+	EnableWorkflow           *bool            `json:"enable_workflow,omitempty"`
 	WorkflowContext          map[string]any   `json:"workflow_context,omitempty"`
 	Catalog                  []map[string]any `json:"catalog,omitempty"`
-	DisabledBuiltinWorkflows []string         `json:"disabled_builtin_plugins,omitempty"`
+	DisabledBuiltinWorkflows []string         `json:"disabled_builtin_workflows,omitempty"`
 	AllowedWorkflowRefs      []string         `json:"allowed_workflow_refs,omitempty"`
 	Activations              []map[string]any `json:"activations,omitempty"`
 }
@@ -532,7 +532,7 @@ func buildLazyChatRequest(body map[string]any) *LazyChatRequest {
 	if catalog, ok := body["workflow_catalog"].([]map[string]any); ok {
 		req.Workflow.Catalog = catalog
 	}
-	if ids, ok := body["disabled_builtin_plugins"].([]string); ok {
+	if ids, ok := body["disabled_builtin_workflows"].([]string); ok {
 		req.Workflow.DisabledBuiltinWorkflows = ids
 	}
 	if refs, ok := body["allowed_workflow_refs"].([]string); ok {
@@ -558,7 +558,7 @@ func buildLazyChatRequest(body map[string]any) *LazyChatRequest {
 	case float64:
 		req.Message.CurrentTurnSeq = int(v)
 	}
-	if v, ok := body["enable_plugin"].(bool); ok {
+	if v, ok := body["enable_workflow"].(bool); ok {
 		req.Workflow.EnableWorkflow = &v
 	}
 	if v, ok := body["enable_subagent"].(bool); ok {

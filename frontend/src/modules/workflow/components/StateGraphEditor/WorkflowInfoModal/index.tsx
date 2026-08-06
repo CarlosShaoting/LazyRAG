@@ -7,7 +7,7 @@ import type { ScenarioData } from '../ScenarioEditor';
 import { polishWorkflowInfo, type PolishableField } from '../../../workflowDraftApi';
 import './index.scss';
 
-const PLUGIN_ID_REGEX = /^[a-zA-Z][a-zA-Z0-9-_]*$/;
+const WORKFLOW_ID_REGEX = /^[a-zA-Z][a-zA-Z0-9-_]*$/;
 
 const POLISHABLE_FIELDS: PolishableField[] = ['description', 'when_to_use', 'overview', 'notes'];
 
@@ -54,7 +54,7 @@ export default function WorkflowInfoModal({ open, onCancel, workflowModel, scena
 
   const validateId = (val: string) => {
     if (!val.trim()) return t('selfEvolutionRun.workflowInfoIdRequired');
-    if (!PLUGIN_ID_REGEX.test(val.trim())) return t('selfEvolutionRun.workflowInfoIdInvalid');
+    if (!WORKFLOW_ID_REGEX.test(val.trim())) return t('selfEvolutionRun.workflowInfoIdInvalid');
     return '';
   };
 

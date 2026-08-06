@@ -24,11 +24,11 @@ import (
 // uuidPattern matches a standard UUID v4 string (8-4-4-4-12 hex digits with hyphens).
 var uuidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
-// workflowIDPattern extracts the `id:` field from plugin.yaml.
+// workflowIDPattern extracts the `id:` field from workflow.yaml.
 // Matches bare or single/double-quoted values on a line of its own.
 var workflowIDPattern = regexp.MustCompile(`(?m)^id:\s*["']?([^"'\n]+?)["']?\s*$`)
 
-// extractWorkflowID returns the plugin id from a plugin.yaml string, or "" if not found.
+// extractWorkflowID returns the plugin id from a workflow.yaml string, or "" if not found.
 func extractWorkflowID(yamlContent string) string {
 	if m := workflowIDPattern.FindStringSubmatch(yamlContent); len(m) > 1 {
 		return strings.TrimSpace(m[1])
@@ -44,7 +44,7 @@ func setWorkflowYAMLUpdate(updates map[string]any, yamlContent string) {
 }
 
 // isBuiltinWorkflowID returns true when id does not look like a UUID.
-// Built-in plugin IDs are human-readable strings (e.g. "image-plugin"),
+// Built-in plugin IDs are human-readable strings (e.g. "image-workflow"),
 // while user draft IDs are always UUID v4 strings generated on creation.
 // This check is a first-line defence; the DB query's WHERE created_by=userID
 // would reject any mistaken match anyway, but returning 403 explicitly avoids
@@ -281,7 +281,7 @@ func SaveWorkflowDraft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if isBuiltinWorkflowID(draftID) {
-		common.ReplyErr(w, "built-in plugins cannot be modified", http.StatusForbidden)
+		common.ReplyErr(w, "built-in workflows cannot be modified", http.StatusForbidden)
 		return
 	}
 
@@ -390,7 +390,7 @@ func DeleteWorkflowDraft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if isBuiltinWorkflowID(draftID) {
-		common.ReplyErr(w, "built-in plugins cannot be modified", http.StatusForbidden)
+		common.ReplyErr(w, "built-in workflows cannot be modified", http.StatusForbidden)
 		return
 	}
 
@@ -436,7 +436,7 @@ func AIGenerateWorkflowDraft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if isBuiltinWorkflowID(draftID) {
-		common.ReplyErr(w, "built-in plugins cannot be modified", http.StatusForbidden)
+		common.ReplyErr(w, "built-in workflows cannot be modified", http.StatusForbidden)
 		return
 	}
 
@@ -648,7 +648,7 @@ func AIRepairWorkflowDraft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if isBuiltinWorkflowID(draftID) {
-		common.ReplyErr(w, "built-in plugins cannot be modified", http.StatusForbidden)
+		common.ReplyErr(w, "built-in workflows cannot be modified", http.StatusForbidden)
 		return
 	}
 

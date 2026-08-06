@@ -45,7 +45,7 @@ func TestQueueIsAtomicAndOutboxIsolated(t *testing.T) {
 	if err := db.First(&outbox, "attempt_id = ?", "a1").Error; err != nil || outbox.Status != "pending" {
 		t.Fatalf("outbox=%#v err=%v", outbox, err)
 	}
-	if db.Migrator().HasTable("plugin_run_outbox") {
+	if db.Migrator().HasTable("plugin_run_outbox") { // workflow-naming: persistence
 		t.Fatal("new protocol must not create the legacy worker outbox")
 	}
 }

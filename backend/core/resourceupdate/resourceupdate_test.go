@@ -554,7 +554,7 @@ func TestCountSkillReviewHistoryStatsExcludesWorkflowConversations(t *testing.T)
 	if err := db.Create(&orm.WorkflowSession{
 		ID:             "workflow-session-1",
 		ConversationID: "conv-plugin",
-		WorkflowID:     "image-plugin",
+		WorkflowID:     "image-workflow",
 		Status:         "completed",
 		Dismissed:      true,
 		CreateUserID:   "user-1",
@@ -586,7 +586,7 @@ func TestValidateSkillReviewSessionsRejectsOtherUsersAndWorkflowConversations(t 
 	if err := db.Create(&orm.WorkflowSession{
 		ID:             "workflow-session-validation",
 		ConversationID: "conv-plugin",
-		WorkflowID:     "image-plugin",
+		WorkflowID:     "image-workflow",
 		Status:         "completed",
 		CreateUserID:   "user-1",
 		CreatedAt:      now,

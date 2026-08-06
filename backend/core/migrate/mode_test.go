@@ -87,7 +87,7 @@ func TestRepositoryStructuredMigrationCatalogLoads(t *testing.T) {
 		t.Fatalf("read v0_2 aggregate down: %v", err)
 	}
 	if !strings.Contains(string(up), "CREATE TABLE public.plugin_step_intents") ||
-		!strings.Contains(string(up), "CREATE UNIQUE INDEX uk_plugin_step_intent") {
+		!strings.Contains(string(up), "CREATE UNIQUE INDEX uk_workflow_step_intent") {
 		t.Fatal("v0_2 aggregate up is missing plugin_step_intents schema")
 	}
 	if !strings.Contains(string(up), `ADD COLUMN "api_key_ciphertext"`) ||

@@ -52,6 +52,29 @@ func TestProjectedEdgeKey_Fallback(t *testing.T) {
 	}
 }
 
+func TestFailedStepDoesNotExposeItsSuccessorAsReady(t *testing.T) {
+	graph := &CompiledStateGraph{
+		Nodes: map[string]CompiledNode{
+			"prompt": {ID: "prompt"},
+			"script": {ID: "script"},
+		},
+		ControlEdges: []CompiledEdge{
+			{From: "__start__", To: "prompt"},
+			{From: "prompt", To: "script"},
+		},
+	}
+	projection := Project(graph, RuntimeSnapshot{Attempts: []AttemptFact{{
+		StepID: "prompt", Status: "failed", Validity: "effective",
+	}}})
+
+	if len(projection.Ready) != 0 {
+		t.Fatalf("failed prompt must not expose script, got ready=%v", projection.Ready)
+	}
+	if projection.Nodes["script"].Reachability != "unreachable" {
+		t.Fatalf("script must remain unreachable: %#v", projection.Nodes["script"])
+	}
+}
+
 // TestDecideRoute_StartNode returns start-route activated nodes.
 func TestDecideRoute_StartNode(t *testing.T) {
 	graph := &CompiledStateGraph{

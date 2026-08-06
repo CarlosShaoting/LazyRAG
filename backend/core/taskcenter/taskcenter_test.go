@@ -133,7 +133,7 @@ func TestArchiveTaskRunPreservesNonTaskConversationAndStopsLateUpdates(t *testin
 		t.Fatal(err)
 	}
 	sessionID := "session-remove"
-	task := orm.TaskCenterTask{ID: "plugin-remove", UserID: "user-1", ConversationID: conversation.ID, WorkflowSessionID: &sessionID, TaskType: "plugin_run", Status: "running", CreatedAt: now, UpdatedAt: now}
+	task := orm.TaskCenterTask{ID: "workflow-remove", UserID: "user-1", ConversationID: conversation.ID, WorkflowSessionID: &sessionID, TaskType: "workflow_run", Status: "running", CreatedAt: now, UpdatedAt: now}
 	if err := db.Create(&task).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +264,7 @@ func TestLoadStepsIncludesNaturalStatusContext(t *testing.T) {
 		ID:                "sub-task-1",
 		ConversationID:    "conv-1",
 		SeqInConversation: 1,
-		AgentType:         "plugin_step",
+		AgentType:         "workflow_step",
 		Title:             "生成图片",
 		Params:            json.RawMessage(`{}`),
 		Mode:              "auto",
@@ -295,13 +295,13 @@ func TestLoadStepsIncludesNaturalStatusContext(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pluginSteps := loadStepsForWorkflowSession(context.Background(), db.DB, sessionStep.SessionID)
-	if len(pluginSteps) != 1 {
-		t.Fatalf("expected one plugin step, got %d", len(pluginSteps))
+	workflowSteps := loadStepsForWorkflowSession(context.Background(), db.DB, sessionStep.SessionID)
+	if len(workflowSteps) != 1 {
+		t.Fatalf("expected one workflow step, got %d", len(workflowSteps))
 	}
-	got := pluginSteps[0]
+	got := workflowSteps[0]
 	if got.Title != subTask.Title || got.CurrentPhase != subTask.CurrentPhase || got.Summary != subTask.Summary {
-		t.Fatalf("plugin step lost natural status context: %#v", got)
+		t.Fatalf("workflow step lost natural status context: %#v", got)
 	}
 
 	conversationSteps := loadStepsForConversation(context.Background(), db.DB, subTask.ConversationID)
