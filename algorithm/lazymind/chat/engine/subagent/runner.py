@@ -4,6 +4,8 @@ import json
 import os
 import re
 import time
+import base64
+import types
 from typing import Any, Dict, List, Optional
 
 import lazyllm
@@ -87,7 +89,64 @@ def _resolve_workflow_step_tools(params: Dict[str, Any]) -> Optional[List[str]]:
     return list(dict.fromkeys([*SUBAGENT_CORE_TOOL_NAMES, *map(str, declared)]))
 
 
-def _resolve_runtime_tools(explicit: Optional[List[str]]) -> List[Any]:
+def _workflow_package_tools(params: Dict[str, Any], names: List[str]) -> Dict[str, Any]:
+    """Load declared callables from the exact published Workflow revision.
+
+    Core is authoritative for both the pinned revision and the compiled
+    ``legacy_tools`` list.  The model only sees the resulting callables; it
+    cannot choose a package, revision, script, or extra function.
+    """
+    workflow_id = str(params.get('workflow_id') or '').strip()
+    revision_id = str(params.get('revision_id') or '').strip()
+    if not workflow_id or not revision_id or not names:
+        return {}
+    try:
+        import httpx
+        from lazymind.config import config
+        from lazymind.workflow_sdk import WorkflowClient
+
+        package = WorkflowClient(
+            str(config['core_api_url']).rstrip('/'),
+            str(params.get('user_id') or ''), host='lazymind', transport=httpx,
+        ).get_workflow(workflow_id, revision_id).result
+        if str(package.get('revision_id') or '') != revision_id:
+            raise RuntimeError('Core returned a different Workflow revision')
+        expected_hash = str(params.get('tree_hash') or '').strip()
+        if expected_hash and str(package.get('tree_hash') or '') != expected_hash:
+            raise RuntimeError('Core returned a Workflow package with a different tree hash')
+        files = package.get('files') if isinstance(package.get('files'), dict) else {}
+        remaining = set(names)
+        resolved: Dict[str, Any] = {}
+        for path in sorted(files):
+            if not path.startswith('scripts/') or not path.endswith('.py'):
+                continue
+            encoded = files[path]
+            raw_source = base64.b64decode(encoded) if isinstance(encoded, str) else bytes(encoded)
+            source = raw_source.decode('utf-8')
+            module = types.ModuleType(
+                f'_lazymind_workflow_{revision_id.replace("-", "_")}_{len(resolved)}'
+            )
+            module.__file__ = f'{workflow_id}@{revision_id}/{path}'
+            exec(compile(source, module.__file__, 'exec'), module.__dict__)
+            for name in tuple(remaining):
+                candidate = module.__dict__.get(name)
+                if callable(candidate):
+                    resolved[name] = candidate
+                    remaining.remove(name)
+        if remaining:
+            LOG.warning(
+                '[SubAgent] Workflow revision %s does not provide declared tools %s',
+                revision_id, sorted(remaining),
+            )
+        return resolved
+    except Exception as exc:
+        LOG.warning('[SubAgent] failed to load pinned Workflow script tools: %s', exc)
+        return {}
+
+
+def _resolve_runtime_tools(
+    explicit: Optional[List[str]], params: Optional[Dict[str, Any]] = None,
+) -> List[Any]:
     """Build the runtime tool list for a SubAgent.
 
     If explicit tool names are provided, each name is resolved in order:
@@ -106,11 +165,16 @@ def _resolve_runtime_tools(explicit: Optional[List[str]]) -> List[Any]:
             name for item in explicit
             if (name := str(item).strip()) and name not in core_tool_names
         ]
-        # Build lookup from DEFAULT_TOOLS
+        # Published Workflow script functions are resolved from the exact
+        # revision before falling back to framework/global tools.
+        package_by_name = _workflow_package_tools(params or {}, name_list)
+        # Build lookup from DEFAULT_TOOLS.
         default_by_name = {cfg.name: cfg for cfg in DEFAULT_TOOLS if tool_is_active(cfg)}
         result = []
         for name in name_list:
-            if name in default_by_name:
+            if name in package_by_name:
+                result.append(package_by_name[name])
+            elif name in default_by_name:
                 result.append(default_by_name[name].tool)
             else:
                 LOG.warning('[SubAgent] public Attempt tool %r is unavailable on LazyMind Host', name)
@@ -580,7 +644,7 @@ async def run_subagent_stream(
         yield _sse({'type': 'task_start', 'task_id': task_id})
 
         llm = AutoModel(model='llm')
-        runtime_tools = _resolve_runtime_tools(tools)
+        runtime_tools = _resolve_runtime_tools(tools, params)
         # Workflow steps often need find_user_attachment even when the current synthetic
         # chat turn has no files; keep the tools available and let the tool report empty.
         attachment_configs = (

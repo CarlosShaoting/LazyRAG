@@ -5,6 +5,7 @@ import lazyllm
 import pytest
 
 from lazymind.chat.workflow.workflow_manager import resolve_workflow_injection
+from lazymind.workflow_sdk import WorkflowClientError
 
 
 @pytest.fixture(autouse=True)
@@ -124,6 +125,51 @@ def test_dynamic_trigger_loads_pinned_remote_package_without_listing():
         }, request_context='original workflow request',
     )
     toolkit.advance_step.assert_not_called()
+
+
+def test_dynamic_trigger_activates_advance_step_in_the_same_agent_turn():
+    toolkit = MagicMock()
+    toolkit.prepare_workflow.return_value = {
+        'session_id': 'session-1', 'state_version': 1, 'ready_steps': ['prompt'],
+    }
+    toolkit.get_ready_steps.return_value = {
+        'session_id': 'session-1', 'state_version': 1,
+        'ready_steps': ['prompt'], 'retryable_steps': [], 'rewindable_steps': [],
+    }
+    toolkit.advance_step.return_value = {'status': 'succeeded'}
+    with patch('lazymind.chat.workflow.workflow_manager._client') as client_factory, patch(
+        'lazymind.chat.workflow.workflow_manager.HostWorkflowToolkit', return_value=toolkit,
+    ):
+        client_factory.return_value.get_workflow.return_value.result = {
+            'workflow_id': 'image-workflow', 'revision_id': 'revision-1',
+        }
+        client_factory.return_value.get_state.return_value = {
+            'session_id': 'session-1', 'state_version': 1,
+            'projection': {'reachable': ['prompt'], 'ready': ['prompt']},
+        }
+        contribution = resolve_workflow_injection(
+            {'workflow_mode': 'dynamic'},
+            current_query='run it', conversation_id='conversation-1',
+            workflow_catalog=[{
+                'workflow_ref': 'builtin:image-workflow',
+                'workflow_id': 'image-workflow', 'revision_id': 'revision-1',
+            }],
+            allowed_workflow_refs=['builtin:image-workflow'],
+            workflow_activations=[{
+                'workflow_ref': 'builtin:image-workflow',
+                'workflow_id': 'image-workflow', 'revision_id': 'revision-1',
+                'tool_name': 'trigger_image_workflow',
+            }],
+        )
+
+        assert 'advance_step' in _tool_names(contribution)
+        assert contribution.stop_tools == []
+        _tool(contribution, 'trigger_image_workflow')()
+        result = _tool(contribution, 'advance_step')(['prompt'])
+
+    assert result == {'status': 'succeeded'}
+    assert toolkit.advance_step.call_args.args[0] == 'session-1'
+    assert toolkit.advance_step.call_args.args[1] == 1
 
 
 def test_dynamic_trigger_defaults_request_context_to_current_query():
@@ -273,3 +319,79 @@ def test_existing_session_tools_inject_protocol_and_concurrency_fields():
     assert args[2][0].step_id == 'draft'
     assert args[2][0].objective == ''
     assert args[2][0].task_id == ''
+
+
+def test_advance_step_refreshes_state_version_once_on_conflict():
+    toolkit = MagicMock()
+    toolkit.get_ready_steps.side_effect = [
+        {'state_version': 7, 'ready_steps': ['draft']},
+        {'state_version': 8, 'ready_steps': ['draft']},
+    ]
+    toolkit.advance_step.side_effect = [
+        WorkflowClientError('STATE_VERSION_CONFLICT', 'stale'),
+        {'status': 'succeeded'},
+    ]
+    with patch('lazymind.chat.workflow.workflow_manager.HostWorkflowToolkit',
+               return_value=toolkit), patch(
+        'lazymind.chat.workflow.workflow_manager._client',
+    ) as client_factory:
+        client_factory.return_value.get_state.return_value = {
+            'status': 'active', 'state_version': 7,
+        }
+        contribution = resolve_workflow_injection(
+            {'session_id': 'session-1', 'workflow_id': 'writer'},
+            conversation_id='conversation-1',
+        )
+
+    result = _tool(contribution, 'advance_step')(['draft'])
+
+    assert result['status'] == 'succeeded'
+    assert result['state_version_refreshed'] is True
+    assert '无需提供' in result['user_notice']
+    assert [call.args[1] for call in toolkit.advance_step.call_args_list] == [7, 8]
+
+
+def test_only_handoff_advance_stops_an_active_workflow_turn():
+    toolkit = MagicMock()
+    with patch('lazymind.chat.workflow.workflow_manager.HostWorkflowToolkit',
+               return_value=toolkit), patch(
+        'lazymind.chat.workflow.workflow_manager._client',
+    ) as client_factory:
+        client_factory.return_value.get_state.return_value = {
+            'status': 'active', 'state_version': 7,
+        }
+        contribution = resolve_workflow_injection(
+            {'session_id': 'session-1', 'workflow_id': 'writer'},
+            conversation_id='conversation-1',
+        )
+
+    assert contribution.stop_tools == ['advance_step_and_hand_off']
+
+
+def test_advance_step_returns_user_notice_when_target_changes_after_conflict():
+    toolkit = MagicMock()
+    toolkit.get_ready_steps.side_effect = [
+        {'state_version': 7, 'ready_steps': ['draft']},
+        {'state_version': 8, 'ready_steps': ['review']},
+    ]
+    toolkit.advance_step.side_effect = WorkflowClientError(
+        'STATE_VERSION_CONFLICT', 'stale',
+    )
+    with patch('lazymind.chat.workflow.workflow_manager.HostWorkflowToolkit',
+               return_value=toolkit), patch(
+        'lazymind.chat.workflow.workflow_manager._client',
+    ) as client_factory:
+        client_factory.return_value.get_state.return_value = {
+            'status': 'active', 'state_version': 7,
+        }
+        contribution = resolve_workflow_injection(
+            {'session_id': 'session-1', 'workflow_id': 'writer'},
+            conversation_id='conversation-1',
+        )
+
+    result = _tool(contribution, 'advance_step')(['draft'])
+
+    assert result['outcome'] == 'workflow_state_changed'
+    assert result['ready_steps'] == ['review']
+    assert '重新确认' in result['user_notice']
+    assert toolkit.advance_step.call_count == 1

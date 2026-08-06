@@ -6,13 +6,43 @@ drive run_subagent_stream without any real database, LLM, or network calls.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 from typing import Any, Dict, List, Optional
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 import lazymind.chat.engine.subagent.runner as runner_mod
+
+
+def test_workflow_script_tool_is_loaded_from_pinned_revision():
+    source = 'def create_list_fixtures():\n    return ["one", "two"]\n'
+    response = MagicMock()
+    response.result = {
+        'revision_id': 'revision-1',
+        'tree_hash': 'tree-1',
+        'files': {
+            'scripts/tools.py': base64.b64encode(source.encode()).decode(),
+        },
+    }
+    client = MagicMock()
+    client.get_workflow.return_value = response
+
+    with patch('lazymind.workflow_sdk.WorkflowClient', return_value=client):
+        tools = runner_mod._resolve_runtime_tools(
+            ['create_list_fixtures'],
+            {
+                'workflow_id': 'test-workflow',
+                'revision_id': 'revision-1',
+                'tree_hash': 'tree-1',
+                'user_id': 'user-1',
+            },
+        )
+
+    assert [tool.__name__ for tool in tools] == ['create_list_fixtures']
+    assert tools[0]() == ['one', 'two']
+    client.get_workflow.assert_called_once_with('test-workflow', 'revision-1')
 
 
 # ---------------------------------------------------------------------------

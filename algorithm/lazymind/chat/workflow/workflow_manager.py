@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import httpx
 import lazyllm
@@ -76,24 +76,38 @@ def _state(session_id: str) -> Dict[str, Any]:
 
 def _handoff_tool(session_id: str) -> Any:
     def advance_step_and_hand_off(step_id: str) -> str:
-        """Advance one Ready Workflow step through the public runtime."""
+        """Advance one Ready Workflow step; Host injects concurrency metadata."""
         client = _client()
-        frontier = client.get_ready_steps(session_id)
-        allowed = set(frontier.get('ready_steps') or [])
-        allowed.update(frontier.get('retryable_steps') or [])
-        allowed.update(frontier.get('rewindable_steps') or [])
-        if step_id not in allowed:
-            raise WorkflowClientError(
-                'WORKFLOW_TARGET_NOT_PROJECTED', 'Handoff target is not currently actionable.',
-                details={'step_id': step_id, 'allowed': sorted(allowed)},
-            )
-        response = client.advance(AdvanceRequest(
-            session_id=session_id,
-            expected_state_version=int(frontier.get('state_version') or 0),
-            steps=[StepCommand(step_id=step_id)],
-            handoff=True,
-        ))
-        return _result_text(response)
+        state_refreshed = False
+        for attempt in range(2):
+            frontier = client.get_ready_steps(session_id)
+            allowed = set(frontier.get('ready_steps') or [])
+            allowed.update(frontier.get('retryable_steps') or [])
+            allowed.update(frontier.get('rewindable_steps') or [])
+            if step_id not in allowed:
+                if state_refreshed:
+                    return _result_text(_state_changed_result(frontier, [step_id]))
+                raise WorkflowClientError(
+                    'WORKFLOW_TARGET_NOT_PROJECTED',
+                    'Handoff target is not currently actionable.',
+                    details={'step_id': step_id, 'allowed': sorted(allowed)},
+                )
+            try:
+                response = client.advance(AdvanceRequest(
+                    session_id=session_id,
+                    expected_state_version=int(frontier.get('state_version') or 0),
+                    steps=[StepCommand(step_id=step_id)],
+                    handoff=True,
+                ))
+                result = dict(response.result)
+                if state_refreshed:
+                    result.update(_state_refresh_notice())
+                return _result_text(result)
+            except WorkflowClientError as exc:
+                if exc.code != 'STATE_VERSION_CONFLICT' or attempt > 0:
+                    raise
+                state_refreshed = True
+        raise AssertionError('unreachable')
 
     advance_step_and_hand_off.__doc__ = (
         'Submit a Ready target and end this LazyMind turn only after durable '
@@ -126,62 +140,89 @@ def _artifact_by_handle(toolkit: HostWorkflowToolkit, session_id: str,
     return matches[0]
 
 
-def _safe_session_tools(toolkit: HostWorkflowToolkit, session_id: str) -> List[Any]:
+def _safe_session_tools(
+    toolkit: HostWorkflowToolkit,
+    session: Union[str, Callable[[], str]],
+) -> List[Any]:
     """Model tools whose protocol and concurrency parameters are Host-injected."""
+    def session_id() -> str:
+        value = session() if callable(session) else session
+        selected = str(value or '').strip()
+        if not selected:
+            raise WorkflowClientError(
+                'WORKFLOW_SESSION_NOT_INITIALIZED',
+                'Call the selected trigger Workflow tool before using Session tools.',
+            )
+        return selected
+
     def get_workflow_state() -> Dict[str, Any]:
         """Read this conversation's authoritative Workflow state."""
-        return toolkit.get_workflow_state(session_id)
+        return toolkit.get_workflow_state(session_id())
 
     def get_ready_steps() -> Dict[str, Any]:
         """Read exact forward, retryable, and rewindable targets for this Session."""
-        return toolkit.get_ready_steps(session_id)
+        return toolkit.get_ready_steps(session_id())
 
     def advance_step(step_ids: List[str]) -> Dict[str, Any]:
         """Execute exact Runtime-returned target IDs; Host injects version and commands."""
-        frontier = toolkit.get_ready_steps(session_id)
-        allowed = set(frontier.get('ready_steps') or [])
-        allowed.update(frontier.get('retryable_steps') or [])
-        allowed.update(frontier.get('rewindable_steps') or [])
         requested = [str(value).strip() for value in step_ids if str(value).strip()]
-        if not requested or any(value not in allowed for value in requested):
-            raise WorkflowClientError(
-                'WORKFLOW_TARGET_NOT_PROJECTED',
-                'Every target must come from the latest Runtime target classes.',
-                details={'requested': requested, 'allowed': sorted(allowed)},
+        selected_session_id = session_id()
+        state_refreshed = False
+        for attempt in range(2):
+            frontier = toolkit.get_ready_steps(selected_session_id)
+            allowed = set(frontier.get('ready_steps') or [])
+            allowed.update(frontier.get('retryable_steps') or [])
+            allowed.update(frontier.get('rewindable_steps') or [])
+            if not requested or any(value not in allowed for value in requested):
+                if state_refreshed:
+                    return _state_changed_result(frontier, requested)
+                raise WorkflowClientError(
+                    'WORKFLOW_TARGET_NOT_PROJECTED',
+                    'Every target must come from the latest Runtime target classes.',
+                    details={'requested': requested, 'allowed': sorted(allowed)},
+                )
+            recovery = set(frontier.get('retryable_steps') or []) | set(
+                frontier.get('rewindable_steps') or [],
             )
-        recovery = set(frontier.get('retryable_steps') or []) | set(
-            frontier.get('rewindable_steps') or [],
-        )
-        if len(requested) > 1 and any(value in recovery for value in requested):
-            raise WorkflowClientError(
-                'WORKFLOW_RECOVERY_MUST_BE_SINGULAR',
-                'Retryable and rewindable targets must be submitted one at a time.',
-            )
-        return toolkit.advance_step(
-            session_id, int(frontier.get('state_version') or 0),
-            [StepCommandInput(step_id=value) for value in requested],
-        )
+            if len(requested) > 1 and any(value in recovery for value in requested):
+                raise WorkflowClientError(
+                    'WORKFLOW_RECOVERY_MUST_BE_SINGULAR',
+                    'Retryable and rewindable targets must be submitted one at a time.',
+                )
+            try:
+                result = toolkit.advance_step(
+                    selected_session_id, int(frontier.get('state_version') or 0),
+                    [StepCommandInput(step_id=value) for value in requested],
+                )
+                if state_refreshed:
+                    return {**result, **_state_refresh_notice()}
+                return result
+            except WorkflowClientError as exc:
+                if exc.code != 'STATE_VERSION_CONFLICT' or attempt > 0:
+                    raise
+                state_refreshed = True
+        raise AssertionError('unreachable')
 
     def resume_workflow() -> Dict[str, Any]:
         """Resume this stopped Session; Host injects lifecycle command metadata."""
-        return toolkit.resume_workflow(session_id)
+        return toolkit.resume_workflow(session_id())
 
     def list_workflow_inputs() -> Dict[str, Any]:
         """List durable input bindings for this Session."""
-        return toolkit.list_workflow_inputs(session_id)
+        return toolkit.list_workflow_inputs(session_id())
 
     def list_artifacts() -> Dict[str, Any]:
         """List selected Artifacts for this Session."""
-        return toolkit.list_artifacts(session_id)
+        return toolkit.list_artifacts(session_id())
 
     def read_artifact(artifact_ref: str) -> Dict[str, Any]:
         """Read a selected Artifact by exact slot handle such as report or images[0]."""
-        artifact = _artifact_by_handle(toolkit, session_id, artifact_ref)
+        artifact = _artifact_by_handle(toolkit, session_id(), artifact_ref)
         return toolkit.read_artifact(str(artifact.get('artifact_id') or artifact.get('id') or ''))
 
     def patch_artifact(artifact_ref: str, value: Any, caption: str = '') -> Dict[str, Any]:
         """Patch a selected Artifact; Host injects id, base revision, type, and command."""
-        artifact = _artifact_by_handle(toolkit, session_id, artifact_ref)
+        artifact = _artifact_by_handle(toolkit, session_id(), artifact_ref)
         artifact_id = str(artifact.get('artifact_id') or artifact.get('id') or '')
         content_type = str(artifact.get('content_type') or 'json')
         return toolkit.patch_artifact(
@@ -192,6 +233,32 @@ def _safe_session_tools(toolkit: HostWorkflowToolkit, session_id: str) -> List[A
         get_workflow_state, get_ready_steps, advance_step, resume_workflow,
         list_workflow_inputs, list_artifacts, read_artifact, patch_artifact,
     ]
+
+
+def _state_refresh_notice() -> Dict[str, Any]:
+    return {
+        'state_version_refreshed': True,
+        'user_notice': (
+            '工作流状态在提交期间发生变化，系统已自动刷新并使用最新状态继续执行；'
+            'state_version 由系统维护，您无需提供或重试版本号。'
+        ),
+    }
+
+
+def _state_changed_result(frontier: Dict[str, Any], requested: List[str]) -> Dict[str, Any]:
+    """Return a user-visible, non-mutating result when refreshed targets changed."""
+    return {
+        'status': 'waiting',
+        'outcome': 'workflow_state_changed',
+        'requested_steps': requested,
+        'ready_steps': frontier.get('ready_steps') or [],
+        'retryable_steps': frontier.get('retryable_steps') or [],
+        'rewindable_steps': frontier.get('rewindable_steps') or [],
+        'user_notice': (
+            '工作流状态已被其他执行或后台更新改变，本次没有继续提交步骤。'
+            '系统已读取最新状态；请根据当前可执行步骤重新确认下一步。'
+        ),
+    }
 
 
 def _safe_authoring_tools(toolkit: HostWorkflowToolkit) -> List[Any]:
@@ -310,7 +377,7 @@ def _import_attachment(path: str) -> Dict[str, Any]:
 
 def _workflow_trigger_tools(
     activations: List[Dict[str, Any]], allowed_refs: set[str], current_query: str = '',
-    conversation_id: str = '',
+    conversation_id: str = '', session_holder: Optional[Dict[str, str]] = None,
 ) -> List[Any]:
     """Bind backend-prepared activations to public package reads."""
     candidates = [
@@ -372,6 +439,8 @@ def _workflow_trigger_tools(
                         'request_context': effective_context,
                         'input_bindings': resolved_bindings,
                     }
+                if session_holder is not None:
+                    session_holder['session_id'] = session_id
                 state = client.get_state(session_id)
                 projection = state.get('projection') if isinstance(state.get('projection'), dict) else state
 
@@ -484,8 +553,9 @@ def resolve_workflow_injection(
     allowed_ids = list(dict.fromkeys(allowed_ids))
 
     activations = workflow_activations or []
+    session_holder: Dict[str, str] = {'session_id': session_id}
     trigger_tools = _workflow_trigger_tools(
-        activations, allowed_refs, current_query, conversation_id,
+        activations, allowed_refs, current_query, conversation_id, session_holder,
     )
     toolkit = HostWorkflowToolkit(
         _client, allowed_workflow_ids=allowed_ids, origin_ref=conversation_id,
@@ -512,7 +582,18 @@ def resolve_workflow_injection(
             or str(getattr(tool, '__name__', '')) in execution_tools
         ]
     if allowed_refs and not session_id:
-        tools = [tool for tool in tools if _is_bound_workflow_trigger(tool.__name__)]
+        # A ChatAgent tool set is fixed for the duration of one model turn. Expose
+        # Host-bound Session tools up front and resolve their Session id only after
+        # trigger_<workflow> creates it, so trigger -> advance works in the same turn.
+        tools = [
+            *[tool for tool in tools if _is_bound_workflow_trigger(tool.__name__)],
+            *[
+                tool for tool in _safe_session_tools(
+                    toolkit, lambda: session_holder.get('session_id', ''),
+                )
+                if tool.__name__ != 'resume_workflow'
+            ],
+        ]
     elif not session_id:
         tools = _safe_authoring_tools(toolkit)
     if session_id:
@@ -530,10 +611,17 @@ def resolve_workflow_injection(
         tools.append(_handoff_tool(session_id))
         runtime_context = (
             '## Workflow Runtime [AUTHORITATIVE]\n'
+            + 'The Host owns session/version concurrency fields. Never ask the user for '
+            + 'state_version or expected_state_version. If a Workflow tool returns '
+            + 'user_notice, explicitly relay that notice to the user.\n'
             + json.dumps(projection, ensure_ascii=False, default=str)
         )
         return WorkflowAgentContribution(
-            tools, ['advance_step', 'advance_step_and_hand_off'],
+            # advance_step is synchronous: its terminal result and refreshed
+            # Ready frontier must be returned to the same ChatAgent turn so a
+            # user-requested continuous run can keep advancing.  Only the
+            # explicit hand-off variant transfers ownership and ends the turn.
+            tools, ['advance_step_and_hand_off'],
             patch, runtime_context,
         )
 
@@ -560,7 +648,7 @@ def resolve_workflow_injection(
             }, ensure_ascii=False, default=str)
         )
     return WorkflowAgentContribution(
-        tools, ['advance_step'], patch, selection_context,
+        tools, [], patch, selection_context,
     )
 
 

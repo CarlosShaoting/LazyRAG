@@ -187,7 +187,7 @@ export interface WorkflowSession {
   session_id: string;
   conversation_id: string;
   workflow_id: string;
-  status: "active" | "completed" | "failed" | "waiting";
+  status: "active" | "completed" | "failed" | "waiting" | "stopped";
   current_step_id: string;
   /** Global intent/constraint for this session, JSON string e.g. {"text":"..."} */
   intent_context?: string;
@@ -671,16 +671,12 @@ export const useWorkflowStore = create<WorkflowStore>()((set, get) => ({
         return { projectionBySession: { ...state.projectionBySession, [sessionId]: projectionState } };
       }
       const projection = projectionState.projection as WorkflowRuntimeProjection & { status?: string };
-      const streamStatus = projection.status;
-      const status = streamStatus === 'running' ? 'active' : streamStatus;
-      const allowedStatus = status === 'active' || status === 'completed' || status === 'failed' || status === 'waiting'
-        ? status
-        : session.status;
+      const reconciledStatus = reconcileWorkflowSessionStatus(session.status, projection);
       return {
         projectionBySession: { ...state.projectionBySession, [sessionId]: projectionState },
         sessionByConversation: {
           ...state.sessionByConversation,
-          [conversationId]: { ...session, status: allowedStatus, projection },
+          [conversationId]: { ...session, status: reconciledStatus, projection },
         },
       };
     });

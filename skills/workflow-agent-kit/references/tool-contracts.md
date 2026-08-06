@@ -75,8 +75,10 @@ ids, objectives, user input, Runtime instructions, or partial retry selectors.
 
 Submit multiple steps only when they are independent members of the same Ready
 frontier. Submit retryable or rewindable targets one at a time. Runtime determines
-`resolved_operation`; never send retry/rewind as an operation. On state conflict,
-refresh and decide again rather than replaying.
+`resolved_operation`; never send retry/rewind as an operation. The Host handles a
+state conflict by refreshing and retrying once only when the same targets remain
+actionable. The model and user never supply a version. If refreshed targets differ,
+surface the returned `user_notice` explicitly and request a new decision.
 
 ### Stop and resume
 

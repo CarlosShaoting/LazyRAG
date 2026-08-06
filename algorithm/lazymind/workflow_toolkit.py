@@ -177,8 +177,8 @@ class HostWorkflowToolkit:
             'next_action': {
                 'tool': 'advance_step',
                 'instruction': (
-                    'Call advance_step with this session_id, state_version, and every returned '
-                    'ready step. Do not invent or infer step IDs.'
+                    'Call advance_step with exact returned ready step ids. The Host injects '
+                    'session, state version, and command identity; do not provide them.'
                 ),
             },
         }

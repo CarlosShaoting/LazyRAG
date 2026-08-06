@@ -1,7 +1,8 @@
-export type WorkflowSessionStatus = 'active' | 'completed' | 'failed' | 'waiting';
+export type WorkflowSessionStatus = 'active' | 'completed' | 'failed' | 'waiting' | 'stopped';
 
 interface RuntimeProjectionStatus {
   completed?: boolean;
+  status?: string;
   current?: string[];
   ready?: string[];
   blocked?: string[];
@@ -20,13 +21,25 @@ export function reconcileWorkflowSessionStatus(
   projection?: RuntimeProjectionStatus,
 ): WorkflowSessionStatus {
   if (!projection) return status;
+
+  // A durable Workflow Session cannot leave or change a terminal state.
+  if (status === 'completed' || status === 'failed' || status === 'stopped') return status;
   if (projection.completed) return 'completed';
+
+  const streamStatus = projection.status === 'running' ? 'active' : projection.status;
+  const projectedStatus: WorkflowSessionStatus | undefined =
+    streamStatus === 'active' || streamStatus === 'completed'
+      || streamStatus === 'failed' || streamStatus === 'waiting' || streamStatus === 'stopped'
+      ? streamStatus
+      : undefined;
+
+  const effectiveStatus = projectedStatus ?? status;
   if (
-    status === 'active'
+    effectiveStatus === 'active'
     && (projection.current?.length ?? 0) === 0
     && ((projection.ready?.length ?? 0) > 0 || (projection.blocked?.length ?? 0) > 0)
   ) {
     return 'waiting';
   }
-  return status;
+  return effectiveStatus;
 }

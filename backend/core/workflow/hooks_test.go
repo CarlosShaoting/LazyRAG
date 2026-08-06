@@ -19,6 +19,21 @@ func TestLoadWorkflowChatContextFromDB_MissingTask(t *testing.T) {
 	}
 }
 
+func TestWorkflowStepParamsExposePinnedScriptTools(t *testing.T) {
+	params := WorkflowStepParams{
+		WorkflowID: "test-workflow", RevisionID: "revision-1", TreeHash: "tree-1",
+		LegacyTools: []string{"create_list_fixtures"},
+	}
+	got := params.asMap()
+	if got["revision_id"] != "revision-1" || got["tree_hash"] != "tree-1" {
+		t.Fatalf("pinned revision metadata missing: %#v", got)
+	}
+	tools, ok := got["legacy_tools"].([]string)
+	if !ok || len(tools) != 1 || tools[0] != "create_list_fixtures" {
+		t.Fatalf("compiled script tools missing: %#v", got)
+	}
+}
+
 // TestLoadWorkflowChatContextFromDB_WrongAgentType returns nil.
 func TestLoadWorkflowChatContextFromDB_WrongAgentType(t *testing.T) {
 	db := newTestDB(t)

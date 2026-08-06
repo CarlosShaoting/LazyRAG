@@ -191,9 +191,9 @@ func Project(graph *CompiledStateGraph, snapshot RuntimeSnapshot) Projection {
 			case "succeeded":
 				projection.Past = append(projection.Past, id)
 				projection.Rewindable = append(projection.Rewindable, id)
-			case "pending", "running", "waiting", "failed", "interrupted":
+			case "pending", "queued", "claimed", "running", "waiting", "failed", "interrupted", "cancelled", "canceled":
 				projection.Current = append(projection.Current, id)
-				if attempt.Status == "failed" || attempt.Status == "interrupted" {
+				if attempt.Status == "failed" || attempt.Status == "interrupted" || attempt.Status == "cancelled" || attempt.Status == "canceled" {
 					projection.Retryable = append(projection.Retryable, id)
 				}
 			}
@@ -206,7 +206,7 @@ func Project(graph *CompiledStateGraph, snapshot RuntimeSnapshot) Projection {
 			node.Branch = "pruned"
 			projection.Pruned = append(projection.Pruned, id)
 		}
-		terminalAttempt := hasAttempt && (attempt.Status == "succeeded" || attempt.Status == "pending" || attempt.Status == "running" || attempt.Status == "waiting" || attempt.Status == "failed" || attempt.Status == "interrupted")
+		terminalAttempt := hasAttempt && (attempt.Status == "succeeded" || attempt.Status == "pending" || attempt.Status == "queued" || attempt.Status == "claimed" || attempt.Status == "running" || attempt.Status == "waiting" || attempt.Status == "failed" || attempt.Status == "interrupted" || attempt.Status == "cancelled" || attempt.Status == "canceled")
 		if activeTargets[id] && !terminalAttempt && !bypassed[id] {
 			node.Reachability = "reachable"
 			node.Evaluation = Evaluate(graph.Nodes[id].Input, materials)

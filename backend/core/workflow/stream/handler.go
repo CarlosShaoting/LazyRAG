@@ -74,7 +74,14 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
+	updates, cancel := h.Store.Subscribe(sessionID)
+	defer cancel()
 	if after == 0 && h.Snapshot != nil {
+		cursor, err := h.Store.LatestEventID(r.Context(), sessionID, owner)
+		if err != nil {
+			_ = writeEvent(w, flusher, 0, "error", streamError{Code: "STREAM_CURSOR_FAILED", Message: err.Error(), Retryable: true})
+			return
+		}
 		snapshot, err := h.Snapshot(r, sessionID, owner)
 		if err != nil {
 			code := "PERMISSION_DENIED"
@@ -84,21 +91,25 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			_ = writeEvent(w, flusher, 0, "error", streamError{Code: code, Message: err.Error()})
 			return
 		}
-		_ = writeEvent(w, flusher, 0, "snapshot", snapshot)
+		_ = writeEvent(w, flusher, cursor, "snapshot", snapshot)
+		after = cursor
 	}
-	events, err := h.Store.Replay(r.Context(), sessionID, owner, after, 1000)
-	if err != nil {
-		_ = writeEvent(w, flusher, 0, "error", streamError{Code: "STREAM_REPLAY_FAILED", Message: err.Error(), Retryable: true})
-		return
-	}
-	for _, event := range events {
-		if err := writeEvent(w, flusher, event.ID, event.EventType, event); err != nil {
+	for {
+		events, err := h.Store.Replay(r.Context(), sessionID, owner, after, 1000)
+		if err != nil {
+			_ = writeEvent(w, flusher, 0, "error", streamError{Code: "STREAM_REPLAY_FAILED", Message: err.Error(), Retryable: true})
 			return
 		}
-		after = event.ID
+		for _, event := range events {
+			if err := writeEvent(w, flusher, event.ID, event.EventType, event); err != nil {
+				return
+			}
+			after = event.ID
+		}
+		if len(events) < 1000 {
+			break
+		}
 	}
-	updates, cancel := h.Store.Subscribe(sessionID)
-	defer cancel()
 	heartbeat := h.Heartbeat
 	if heartbeat <= 0 {
 		heartbeat = 20 * time.Second

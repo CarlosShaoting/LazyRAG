@@ -78,6 +78,26 @@ func TestFailedStepDoesNotExposeItsSuccessorAsReady(t *testing.T) {
 	}
 }
 
+func TestRuntimeAttemptStatusesRemainCurrentAndNotReady(t *testing.T) {
+	graph := &CompiledStateGraph{
+		Nodes:        map[string]CompiledNode{"step": {ID: "step"}},
+		ControlEdges: []CompiledEdge{{From: "__start__", To: "step"}},
+	}
+	for _, status := range []string{"queued", "claimed", "cancelled", "canceled"} {
+		t.Run(status, func(t *testing.T) {
+			projection := Project(graph, RuntimeSnapshot{Attempts: []AttemptFact{{
+				StepID: "step", Status: status, Validity: "effective",
+			}}})
+			if len(projection.Current) != 1 || projection.Current[0] != "step" {
+				t.Fatalf("%s attempt must remain current, got %v", status, projection.Current)
+			}
+			if len(projection.Ready) != 0 {
+				t.Fatalf("%s attempt must not be resubmitted as ready, got %v", status, projection.Ready)
+			}
+		})
+	}
+}
+
 // TestDecideRoute_StartNode returns start-route activated nodes.
 func TestDecideRoute_StartNode(t *testing.T) {
 	graph := &CompiledStateGraph{

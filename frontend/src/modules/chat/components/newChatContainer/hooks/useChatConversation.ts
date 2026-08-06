@@ -316,6 +316,12 @@ export function useChatConversation({
         result.conversation_id || currentConversationIdRef.current || "";
       const tc = result.task_created;
       const taskStore = useTaskCenterStore.getState();
+      const existingTask = taskStore.getTasks(convId).find(
+        (task) => task.task_id === tc.task_id,
+      );
+      const terminal = existingTask && [
+        "succeeded", "failed", "interrupted", "canceled",
+      ].includes(existingTask.status);
       taskStore.upsertTask(convId, {
         task_id: tc.task_id,
         trigger_history_id: tc.trigger_history_id || result.history_id,
@@ -323,9 +329,9 @@ export function useChatConversation({
         title: tc.title,
         agent_type: tc.agent_type,
         mode: tc.mode,
-        status: tc.status || "pending",
+        ...(terminal ? {} : { status: tc.status || "pending" }),
       });
-      taskStore.subscribeTask(convId, tc.task_id);
+      if (!terminal) taskStore.subscribeTask(convId, tc.task_id);
       if (tc.agent_type === "workflow_step" && tc.workflow_session_id) {
         import("@/modules/chat/store/workflowPanel").then(({ useWorkflowStore }) => {
           useWorkflowStore.getState().loadActiveSession(convId);

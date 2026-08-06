@@ -98,6 +98,11 @@ When no matching trigger is exposed:
 3. Submit only exact step ids to `advance_step`. The Host fetches and injects the
    latest Session and `state_version`. Batch only independent targets from the
    same Ready frontier.
+   If the state changes between reading and submission, the Host refreshes and
+   retries once when the same targets remain actionable. Never ask the user for
+   `state_version` or `expected_state_version`. If the refreshed targets differ,
+   explicitly tell the user that the Workflow state changed and show the current
+   actionable targets before requesting a new decision.
 4. Let Runtime resolve execute, retry, or rewind. Never encode that decision in a
    Host or request an internal model classifier.
 5. After completion, refresh projection and inspect required Artifacts. Missing

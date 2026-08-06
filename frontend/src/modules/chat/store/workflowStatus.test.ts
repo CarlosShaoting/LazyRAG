@@ -26,4 +26,25 @@ describe('reconcileWorkflowSessionStatus', () => {
       blocked: [],
     })).toBe('completed');
   });
+
+  it.each(['completed', 'failed', 'stopped'] as const)(
+    'does not regress a %s session when a running snapshot is replayed',
+    (status) => {
+      expect(reconcileWorkflowSessionStatus(status, {
+        status: 'running',
+        current: ['prompt'],
+        ready: [],
+        blocked: [],
+      })).toBe(status);
+    },
+  );
+
+  it('allows a waiting session to become active when execution resumes', () => {
+    expect(reconcileWorkflowSessionStatus('waiting', {
+      status: 'running',
+      current: ['script-tool'],
+      ready: [],
+      blocked: [],
+    })).toBe('active');
+  });
 });

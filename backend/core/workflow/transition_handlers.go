@@ -298,7 +298,7 @@ func StartWorkflowSession(w http.ResponseWriter, r *http.Request) {
 		req.TaskID = uuid.NewString()
 	}
 	handOff := req.HandOff
-	params := WorkflowStepParams{WorkflowID: req.WorkflowID, WorkflowRef: req.WorkflowRef, RevisionID: req.WorkflowRevisionID, RevisionNo: req.WorkflowRevisionNo, TreeHash: req.WorkflowTreeHash, RemoteRoot: req.WorkflowRemoteRoot, StepID: req.TargetStepID, UserInput: req.UserInput, IsColdStart: true, HandOff: &handOff, PreflightID: req.PreflightID, ChatSessionID: req.ChatSessionID, WorkflowMode: req.WorkflowMode, UserID: req.UserID, HistoryFilesPerTurn: req.HistoryFilesPerTurn, Filters: req.Filters, ParentAgenticConfig: req.ParentAgenticConfig, RequiredOutputs: graph.Nodes[req.TargetStepID].RequiredOutputs}
+	params := WorkflowStepParams{WorkflowID: req.WorkflowID, WorkflowRef: req.WorkflowRef, RevisionID: req.WorkflowRevisionID, RevisionNo: req.WorkflowRevisionNo, TreeHash: req.WorkflowTreeHash, RemoteRoot: req.WorkflowRemoteRoot, StepID: req.TargetStepID, UserInput: req.UserInput, IsColdStart: true, HandOff: &handOff, PreflightID: req.PreflightID, ChatSessionID: req.ChatSessionID, WorkflowMode: req.WorkflowMode, UserID: req.UserID, HistoryFilesPerTurn: req.HistoryFilesPerTurn, Filters: req.Filters, ParentAgenticConfig: req.ParentAgenticConfig, RequiredOutputs: graph.Nodes[req.TargetStepID].RequiredOutputs, LegacyTools: graph.Nodes[req.TargetStepID].LegacyTools}
 	nodeDef := graph.Nodes[req.TargetStepID]
 	inputKeys := graphengine.Materials(nodeDef.Input)
 	for _, optional := range nodeDef.OptionalInputs {
@@ -623,7 +623,7 @@ func TransitionWorkflowSession(w http.ResponseWriter, r *http.Request) {
 					return err
 				}
 			} else {
-				params := WorkflowStepParams{WorkflowID: session.WorkflowID, WorkflowRef: session.WorkflowRef, RevisionID: session.WorkflowRevisionID, RevisionNo: session.WorkflowRevisionNo, TreeHash: session.WorkflowTreeHash, RemoteRoot: session.WorkflowRemoteRoot, StepID: target.TargetStepID, SessionID: session.ID, UserInput: target.UserInput, HandOff: &handOff, ChatSessionID: req.ChatSessionID, WorkflowMode: req.WorkflowMode, RetryHint: target.RuntimeInstruction, PartialIndices: target.PartialIndices, HistoryFilesPerTurn: req.HistoryFilesPerTurn, Filters: req.Filters, ParentAgenticConfig: req.ParentAgenticConfig, UserID: session.CreateUserID, RequiredOutputs: nodeDef.RequiredOutputs}
+				params := WorkflowStepParams{WorkflowID: session.WorkflowID, WorkflowRef: session.WorkflowRef, RevisionID: session.WorkflowRevisionID, RevisionNo: session.WorkflowRevisionNo, TreeHash: session.WorkflowTreeHash, RemoteRoot: session.WorkflowRemoteRoot, StepID: target.TargetStepID, SessionID: session.ID, UserInput: target.UserInput, HandOff: &handOff, ChatSessionID: req.ChatSessionID, WorkflowMode: req.WorkflowMode, RetryHint: target.RuntimeInstruction, PartialIndices: target.PartialIndices, HistoryFilesPerTurn: req.HistoryFilesPerTurn, Filters: req.Filters, ParentAgenticConfig: req.ParentAgenticConfig, UserID: session.CreateUserID, RequiredOutputs: nodeDef.RequiredOutputs, LegacyTools: nodeDef.LegacyTools}
 				var launchErr error
 				stepObjective := workflowStepObjective(nodeDef.Prompt, target.Objective, target.UserInput)
 				_, taskID, _, launchErr = launchWorkflowAttempt(r.Context(), tx, store.State(), session.ConversationID, session.TriggerHistoryID, session.CreateUserID, target.TaskID, session.WorkflowID+":"+target.TargetStepID, stepObjective, params, inputKeys, nodeDef.Outputs, req.LLMConfig, req.ToolConfig, false, false)

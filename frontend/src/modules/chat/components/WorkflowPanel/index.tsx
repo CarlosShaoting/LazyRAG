@@ -1052,6 +1052,7 @@ const STATUS_KEY: Record<string, string> = {
   completed: 'chat.workflowStatusDone',
   waiting: 'chat.workflowStatusWaiting',
   failed: 'chat.workflowStatusFailed',
+  stopped: 'chat.workflowStatusStopped',
 };
 
 function readPersistedExpanded(conversationId: string): boolean {
@@ -1232,7 +1233,12 @@ export function WorkflowPanel({
     session.status === 'active' ||
     session.status === 'completed' ||
     session.status === 'failed';
-  const displayStatus = autoRunning ? 'active' : session.status;
+  const terminalSession = session.status === 'completed'
+    || session.status === 'failed'
+    || session.status === 'stopped';
+  // autoRunning is only an optimistic transport hint. A durable terminal
+  // session always wins, even if a delayed/replayed conversation event arrives.
+  const displayStatus = autoRunning && !terminalSession ? 'active' : session.status;
   // Only block footer actions while the workflow is actually running (or flush-in-progress).
   // Dirty editors no longer disable retry — click flushes saves first, then proceeds.
   const sessionBusy = displayStatus === 'active' || autoRunning;
@@ -1424,7 +1430,9 @@ export function WorkflowPanel({
         <div className='workflow-panel__tabs' role='tablist'>
           {tabs.map((tab, idx) => {
             const stepID = getTabStepId(tab);
-            const step = session.steps?.find((s) => s.step_id === stepID);
+            const step = session.steps
+              ?.filter((s) => s.step_id === stepID && s.validity !== 'stale')
+              .sort((a, b) => b.attempt - a.attempt)[0];
             const stepStatus = step?.status;
             return (
               <React.Fragment key={tab.id}>

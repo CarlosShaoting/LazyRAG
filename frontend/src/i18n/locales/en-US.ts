@@ -1599,6 +1599,7 @@ const enUS = {
     workflowStatusDone: "Done",
     workflowStatusWaiting: "Waiting for approval",
     workflowStatusFailed: "Failed",
+    workflowStatusStopped: "Stopped",
     workflowBtnDisabledHint: "Step is running, please wait…",
     workflowSavingBeforeAction: "Saving edits…",
     workflowRetryFlushHint: "Saves current edits, then retries",

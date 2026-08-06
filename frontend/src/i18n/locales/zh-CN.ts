@@ -1478,6 +1478,7 @@ const zhCN = {
     workflowStatusDone: "已完成",
     workflowStatusWaiting: "等待审批",
     workflowStatusFailed: "失败",
+    workflowStatusStopped: "已停止",
     workflowBtnDisabledHint: "步骤执行中，请稍候",
     workflowSavingBeforeAction: "正在保存编辑…",
     workflowRetryFlushHint: "将先保存当前编辑，再重试",

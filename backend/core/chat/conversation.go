@@ -1795,8 +1795,14 @@ func StreamConvEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	_ = WatchConvEvents(ctx, stateStore, convID, -1, func(ev *ConvEvent) error {
-		bs, err := json.Marshal(ev)
+	// Capture the replay boundary before opening the tail. Events already in the
+	// list restore state only; later events are live and may trigger UI commands.
+	existing, _ := stateStore.LRange(ctx, convEventsKey(convID), 0, -1)
+	replayThrough := int64(len(existing) - 1)
+	_ = WatchConvEvents(ctx, stateStore, convID, -1, func(index int64, ev *ConvEvent) error {
+		wireEvent := *ev
+		wireEvent.Replayed = index <= replayThrough
+		bs, err := json.Marshal(&wireEvent)
 		if err != nil {
 			return nil
 		}

@@ -667,6 +667,20 @@ func (r *Repository) Replay(ctx context.Context, sessionID, owner string, after 
 	return events, err
 }
 
+// LatestEventID returns the cursor represented by a freshly loaded session snapshot.
+// It lets a new stream start from current state instead of replaying creation-time
+// patches on top of that newer snapshot.
+func (r *Repository) LatestEventID(ctx context.Context, sessionID, owner string) (int64, error) {
+	var row struct {
+		Cursor int64 `gorm:"column:cursor"`
+	}
+	err := r.db.WithContext(ctx).Model(&orm.WorkflowEvent{}).
+		Select("COALESCE(MAX(id), 0) AS cursor").
+		Where("session_id = ? AND owner_user_id = ?", sessionID, owner).
+		Scan(&row).Error
+	return row.Cursor, err
+}
+
 func (r *Repository) AuthorizeSession(ctx context.Context, sessionID, owner string) error {
 	var session struct {
 		CreateUserID string `gorm:"column:create_user_id"`

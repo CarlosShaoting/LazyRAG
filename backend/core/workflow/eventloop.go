@@ -79,6 +79,11 @@ type WorkflowStepParams struct {
 	// RequiredOutputs is compiled by Go. Outputs not listed here are valid
 	// conditional products but do not gate attempt success.
 	RequiredOutputs []string `json:"required_outputs,omitempty"`
+
+	// LegacyTools are immutable script-tool names compiled from the selected
+	// Workflow revision. They are resolved by the LazyMind Host when building
+	// the isolated Workflow SubAgent tool set; the model never supplies them.
+	LegacyTools []string `json:"legacy_tools,omitempty"`
 }
 
 // asMap serialises the params into the generic map expected by subagent.RunRequest.Params.
@@ -92,6 +97,12 @@ func (p WorkflowStepParams) asMap() map[string]any {
 	}
 	if p.WorkflowMode != "" {
 		m["workflow_mode"] = p.WorkflowMode
+	}
+	if p.RevisionID != "" {
+		m["revision_id"] = p.RevisionID
+	}
+	if p.TreeHash != "" {
+		m["tree_hash"] = p.TreeHash
 	}
 	if p.HandOff != nil {
 		m["hand_off"] = *p.HandOff
@@ -119,6 +130,9 @@ func (p WorkflowStepParams) asMap() map[string]any {
 	}
 	if p.UserID != "" {
 		m["user_id"] = p.UserID
+	}
+	if len(p.LegacyTools) > 0 {
+		m["legacy_tools"] = p.LegacyTools
 	}
 	return m
 }
@@ -503,10 +517,19 @@ func launchWorkflowAttempt(
 		"user_input":    params.UserInput,
 		"is_cold_start": isCold,
 	}
+	if params.RevisionID != "" {
+		rawParamsMap["revision_id"] = params.RevisionID
+	}
+	if params.TreeHash != "" {
+		rawParamsMap["tree_hash"] = params.TreeHash
+	}
 	if !legacyEvent {
 		// Compiled graph outputs are material guarantees. A v2 attempt cannot
 		// succeed unless every declared output was actually persisted.
 		rawParamsMap["required_output_artifact_keys"] = params.RequiredOutputs
+	}
+	if len(params.LegacyTools) > 0 {
+		rawParamsMap["legacy_tools"] = params.LegacyTools
 	}
 	if params.HandOff != nil {
 		rawParamsMap["hand_off"] = *params.HandOff
