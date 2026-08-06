@@ -175,7 +175,7 @@ def test_plugin_preflight_result_renders_outcome_and_reason_in_chinese():
         'zh',
     )
 
-    assert '工作流启动检查已完成，结果是 **not_applicable**' in result_text
+    assert '工作流初始化已完成，结果是 **not_applicable**' in result_text
     assert f'原因是 **{reason}**' in result_text
 
 
@@ -220,5 +220,5 @@ def test_plugin_preflight_result_supports_ready_status_payload():
         'en',
     )
 
-    assert 'Plugin preflight completed. Result: **ready**.' in result_text
+    assert 'Workflow initialization completed. Result: **ready**.' in result_text
     assert 'Reason: **The user explicitly requested this plugin.**' in result_text

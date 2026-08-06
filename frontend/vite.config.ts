@@ -27,7 +27,7 @@ function jsPreviewExcelShimPlugin(): Plugin {
 }
 
 export default defineConfig({
-  workflows: [jsPreviewExcelShimPlugin(), react(), svgr()],
+  plugins: [jsPreviewExcelShimPlugin(), react(), svgr()],
   base: "/",
   resolve: {
     // Keep application imports independent of the current file location.

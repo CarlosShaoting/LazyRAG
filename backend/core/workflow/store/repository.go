@@ -485,6 +485,15 @@ func (r *Repository) CreateHostSession(ctx context.Context, owner, sessionID, co
 	return created, true, nil
 }
 
+func (r *Repository) UpdateSessionIntent(ctx context.Context, sessionID, intentContext string) error {
+	return r.db.WithContext(ctx).Model(&orm.WorkflowSession{}).
+		Where("id = ?", sessionID).
+		Updates(map[string]any{
+			"intent_context": intentContext,
+			"updated_at":     time.Now().UTC(),
+		}).Error
+}
+
 func (r *Repository) WaitTaskStatuses(ctx context.Context, sessionID string, taskIDs []string) (map[string]string, error) {
 	statuses := map[string]string{}
 	if len(taskIDs) == 0 {

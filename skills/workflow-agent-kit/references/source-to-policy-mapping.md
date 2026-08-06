@@ -15,7 +15,7 @@ now authoritative by default; the former Host policy is a bounded rollback path.
 | `_build_mode_guidance` Rules 3–4 | Approval and explicit uninterrupted boundary choose wait vs handoff | Rules 7–9 | approval map + normalized intent tokens |
 | `build_advance_step_tool` | Wait for submitted task result and continue current turn | Waiting-tool semantics | Existing manager tests |
 | `build_advance_step_and_hand_off_tool` | Submit atomically then stop after durable acceptance | Handoff semantics | Existing manager/stream-guard tests |
-| `_trigger_workflow_step(s)` | Runtime resolves transition and accepts/rejects command | Runtime authority/idempotency | Transition submission tests |
+| Public Workflow transition facade | Runtime resolves transition and accepts/rejects command | Runtime authority/idempotency | Transition submission tests |
 | LazyMind handoff callback | Synthetic next turn after asynchronous completion | LazyMind Host profile (`synthetic_turn`) | Host handoff tests; not a Runtime policy rule |
 | `engine/subagent/runner.py::_build_subagent_plan` | Attempt objective, inputs, artifacts and output contract are isolated | Execute/review contract | SubAgent prompt-plan tests |
 | `engine/subagent/runner.py` terminal handling | Artifacts and terminal outcome are reported after execution | Required-Artifact terminal rule | SubAgent artifact tests |

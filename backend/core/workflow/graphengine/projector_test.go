@@ -70,6 +70,9 @@ func TestFailedStepDoesNotExposeItsSuccessorAsReady(t *testing.T) {
 	if len(projection.Ready) != 0 {
 		t.Fatalf("failed prompt must not expose script, got ready=%v", projection.Ready)
 	}
+	if len(projection.Retryable) != 1 || projection.Retryable[0] != "prompt" {
+		t.Fatalf("failed prompt must be an exact retry target, got retryable=%v", projection.Retryable)
+	}
 	if projection.Nodes["script"].Reachability != "unreachable" {
 		t.Fatalf("script must remain unreachable: %#v", projection.Nodes["script"])
 	}

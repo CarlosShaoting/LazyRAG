@@ -1,10 +1,9 @@
 """Dependency-light stdio MCP server backed by the shared Workflow SDK."""
 from __future__ import annotations
 
-import base64
 import json
+import os
 import sys
-import uuid
 from typing import Any, Callable, Dict
 
 from lazymind.workflow_sdk import AdvanceRequest, StepCommand, WorkflowClient, WorkflowClientError
@@ -21,116 +20,60 @@ TOOL_SCHEMAS = {
     'workflow_connection_status': _object({}),
     'list_workflows': _object({}),
     'get_workflow': _object({
-        'workflow_id': {'type': 'string'}, 'revision_id': {'type': 'string'},
-    }, ['workflow_id']),
-    'prepare_workflow': _object({
         'workflow_id': {'type': 'string'},
-        'input_bindings': {'type': 'object'},
-        'command_id': {'type': 'string'},
     }, ['workflow_id']),
-    'import_input_resource': _object({
-        'name': {'type': 'string'}, 'mime_type': {'type': 'string'},
-        'content_base64': {'type': 'string'},
-    }, ['name', 'mime_type', 'content_base64']),
-    'read_input_resource': _object({'resource_id': {'type': 'string'}}, ['resource_id']),
-    'list_workflow_inputs': _object({'session_id': {'type': 'string'}}, ['session_id']),
-    'bind_workflow_input': _object({
-        'session_id': {'type': 'string'}, 'material_id': {'type': 'string'},
-        'resource': {'type': 'object'}, 'command_id': {'type': 'string'},
-    }, ['session_id', 'material_id', 'resource']),
-    'start_workflow': _object({
-        'preparation_id': {'type': 'string'}, 'session_id': {'type': 'string'},
-        'command_id': {'type': 'string'},
-    }, ['preparation_id', 'session_id']),
-    'get_workflow_state': _object({'session_id': {'type': 'string'}}, ['session_id']),
-    'get_ready_steps': _object({'session_id': {'type': 'string'}}, ['session_id']),
-    'stop_workflow': _object({
-        'session_id': {'type': 'string'}, 'command_id': {'type': 'string'},
-    }, ['session_id']),
-    'resume_workflow': _object({
-        'session_id': {'type': 'string'}, 'command_id': {'type': 'string'},
-    }, ['session_id']),
-    'get_workflow_command': _object({'command_id': {'type': 'string'}}, ['command_id']),
-    'list_artifacts': _object({'session_id': {'type': 'string'}}, ['session_id']),
-    'read_artifact': _object({'artifact_id': {'type': 'string'}}, ['artifact_id']),
+    'list_workflow_inputs': _object({}),
+    'get_workflow_state': _object({}),
+    'get_ready_steps': _object({}),
+    'list_artifacts': _object({}),
+    'read_artifact': _object({'artifact_ref': {'type': 'string'}}, ['artifact_ref']),
     'patch_artifact': _object({
-        'artifact_id': {'type': 'string'}, 'base_revision': {'type': 'integer', 'minimum': 1},
-        'value': {}, 'content_type': {'type': 'string'}, 'caption': {'type': 'string'},
-        'command_id': {'type': 'string'},
-    }, ['artifact_id', 'base_revision', 'value']),
-    'delete_artifact': _object({
-        'artifact_id': {'type': 'string'}, 'base_revision': {'type': 'integer', 'minimum': 1},
-        'command_id': {'type': 'string'},
-    }, ['artifact_id', 'base_revision']),
+        'artifact_ref': {'type': 'string'}, 'value': {}, 'caption': {'type': 'string'},
+    }, ['artifact_ref', 'value']),
     'advance_step': _object({
-        'session_id': {'type': 'string'},
-        'expected_state_version': {'type': 'integer', 'minimum': 0},
         'steps': {'type': 'array', 'minItems': 1, 'items': _object({
-            'step_id': {'type': 'string'}, 'task_id': {'type': 'string'},
-            'objective': {'type': 'string'}, 'user_input': {'type': 'string'},
-            'runtime_instruction': {'type': 'string'}, 'partial_indices': {'type': 'object'},
+            'step_id': {'type': 'string'},
         }, ['step_id'])},
-        'command_id': {'type': 'string'},
-    }, ['session_id', 'expected_state_version', 'steps']),
+    }, ['steps']),
     'get_skill_conversion_context': _object({
-        'skill_id': {'type': 'string'}, 'revision_id': {'type': 'string'},
+        'skill_id': {'type': 'string'},
     }, ['skill_id']),
     'list_skills': _object({}),
     'create_workflow_draft': _object({
-        'name': {'type': 'string'}, 'source_type': {'type': 'string', 'enum': ['blank', 'skill', 'import']},
+        'name': {'type': 'string'},
         'skill_id': {'type': 'string'},
-        'revision_id': {'type': 'string'}, 'tree_hash': {'type': 'string'},
         'files': {'type': 'object', 'additionalProperties': {'type': 'string'}},
     }, ['name', 'files']),
     'list_workflow_drafts': _object({}),
-    'get_workflow_draft': _object({'draft_id': {'type': 'string'}}, ['draft_id']),
-    'delete_workflow_draft': _object({'draft_id': {'type': 'string'}}, ['draft_id']),
+    'select_workflow_draft': _object({'draft_id': {'type': 'string'}}, ['draft_id']),
+    'get_workflow_draft': _object({}),
     'list_workflow_versions': _object({'workflow_ref': {'type': 'string'}}, ['workflow_ref']),
-    'archive_workflow': _object({'workflow_ref': {'type': 'string'}}, ['workflow_ref']),
-    'restore_workflow': _object({'workflow_ref': {'type': 'string'}}, ['workflow_ref']),
     'update_workflow_draft_file': _object({
-        'draft_id': {'type': 'string'}, 'path': {'type': 'string'},
-        'content': {'type': 'string'}, 'expected_version': {'type': 'integer', 'minimum': 1},
-    }, ['draft_id', 'path', 'content', 'expected_version']),
-    'validate_workflow_draft': _object({'draft_id': {'type': 'string'}}, ['draft_id']),
-    'get_workflow_diagnostics': _object({'draft_id': {'type': 'string'}}, ['draft_id']),
-    'publish_workflow': _object({'draft_id': {'type': 'string'}}, ['draft_id']),
+        'path': {'type': 'string'}, 'content': {'type': 'string'},
+    }, ['path', 'content']),
+    'validate_workflow_draft': _object({}),
+    'get_workflow_diagnostics': _object({}),
+    'publish_workflow': _object({}),
 }
 
 TOOL_DESCRIPTIONS = {
     'workflow_connection_status': 'Discover LazyMind Core and verify Workflow API connectivity.',
     'list_workflows': 'List enabled Workflows visible to the current LazyMind user.',
     'get_workflow': 'Read one Workflow definition and pinned revision metadata.',
-    'prepare_workflow': 'Validate a Workflow and inputs without creating a Session.',
-    'import_input_resource': 'Import immutable Host content into the shared Workflow resource store.',
-    'read_input_resource': 'Read an authorized immutable Workflow input resource.',
     'list_workflow_inputs': 'List the immutable input bindings for a Workflow Session.',
-    'bind_workflow_input': 'Bind an imported resource revision to a Session material.',
-    'start_workflow': 'Consume a ready preparation and create a Workflow Session.',
     'get_workflow_state': 'Read the authoritative Workflow projection and state_version.',
     'get_ready_steps': 'Read only the current Ready frontier from the authoritative projection.',
-    'stop_workflow': (
-        'Explicitly pause this Session and interrupt active Attempts while preserving outputs. '
-        'Do not use for step failure recovery and never prepare a replacement after stopping.'
-    ),
-    'resume_workflow': (
-        'Resume the same stopped Session. Refresh projection, then advance its interrupted step.'
-    ),
-    'get_workflow_command': 'Reconcile the result of an idempotent Workflow command.',
     'list_artifacts': 'List selected immutable Artifact revisions for a Workflow Session.',
     'read_artifact': 'Read one authorized Artifact revision and its lineage metadata.',
     'patch_artifact': 'Create an Agent-authored immutable revision from a selected Artifact.',
-    'delete_artifact': 'Create an immutable deletion tombstone revision without erasing history.',
     'advance_step': 'Synchronously request one or more Ready targets; Runtime resolves execute/retry/rewind.',
     'get_skill_conversion_context': 'Read a complete, immutable Skill revision snapshot; never invokes a model.',
     'list_skills': 'List Skills visible to the current user for deterministic Workflow conversion.',
     'create_workflow_draft': 'Store Agent-authored Workflow package files against a pinned Skill snapshot.',
     'list_workflow_drafts': 'List Workflow drafts owned by the current user.',
+    'select_workflow_draft': 'Select one exact draft for context-bound authoring operations.',
     'get_workflow_draft': 'Read one owned Workflow draft and its current package content.',
-    'delete_workflow_draft': 'Delete one unpublished Workflow draft.',
     'list_workflow_versions': 'List immutable published revisions for one Workflow.',
-    'archive_workflow': 'Archive a published Workflow while retaining immutable history.',
-    'restore_workflow': 'Restore an archived Workflow without changing its immutable revisions.',
     'update_workflow_draft_file': 'Deterministically update one draft file with optimistic version checking.',
     'validate_workflow_draft': 'Compile the draft with the deterministic Workflow graph validator.',
     'get_workflow_diagnostics': 'Read deterministic package, graph, tool, and script diagnostics.',
@@ -139,16 +82,32 @@ TOOL_DESCRIPTIONS = {
 
 
 class WorkflowMCPServer:
-    def __init__(self, client_factory: Callable[[], WorkflowClient] = WorkflowClient):
+    _SESSION_TOOLS = {
+        'list_workflow_inputs', 'get_workflow_state', 'get_ready_steps',
+        'list_artifacts', 'read_artifact', 'patch_artifact', 'advance_step',
+    }
+
+    def __init__(self, client_factory: Callable[[], WorkflowClient] = WorkflowClient,
+                 session_id: str = '', draft_id: str = ''):
         self.client_factory = client_factory
+        self.session_id = session_id or os.getenv('LAZYMIND_WORKFLOW_SESSION_ID', '').strip()
+        self.draft_id = draft_id or os.getenv('LAZYMIND_WORKFLOW_DRAFT_ID', '').strip()
 
     def list_tools(self) -> list[Dict[str, Any]]:
-        return [{'name': name, 'description': TOOL_DESCRIPTIONS[name], 'inputSchema': schema}
-                for name, schema in TOOL_SCHEMAS.items()]
+        return [
+            {'name': name, 'description': TOOL_DESCRIPTIONS[name], 'inputSchema': schema}
+            for name, schema in TOOL_SCHEMAS.items()
+            if self.session_id or name not in self._SESSION_TOOLS
+        ]
 
     def call_tool(self, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         if name not in TOOL_SCHEMAS:
             raise WorkflowClientError('UNKNOWN_TOOL', f'Unknown Workflow tool: {name}')
+        if name in self._SESSION_TOOLS and not self.session_id:
+            raise WorkflowClientError(
+                'WORKFLOW_SESSION_CONTEXT_REQUIRED',
+                'The deterministic MCP Host must bind a Workflow Session before exposing this tool.',
+            )
         client = self.client_factory()
         if name == 'workflow_connection_status':
             result = client.connection_status()
@@ -157,99 +116,102 @@ class WorkflowMCPServer:
         elif name == 'get_workflow':
             result = client.get_workflow(
                 arguments['workflow_id'], arguments.get('revision_id', '')).result
-        elif name == 'prepare_workflow':
-            result = client.prepare_workflow(
-                arguments['workflow_id'], input_bindings=arguments.get('input_bindings'),
-                command_id=arguments.get('command_id', ''),
-            ).result
-        elif name == 'import_input_resource':
-            result = client.import_input_resource(
-                arguments['name'], arguments['mime_type'],
-                base64.b64decode(arguments['content_base64'])).result
-        elif name == 'read_input_resource':
-            value = client.read_input_resource(arguments['resource_id'])
-            content = value.pop('content', b'')
-            value['content_base64'] = base64.b64encode(content).decode('ascii')
-            result = value
         elif name == 'list_workflow_inputs':
-            result = client.list_workflow_inputs(arguments['session_id']).result
-        elif name == 'bind_workflow_input':
-            result = client.bind_workflow_input(
-                arguments['session_id'], arguments['material_id'], arguments['resource'],
-                arguments.get('command_id', '')).result
-        elif name == 'start_workflow':
-            result = client.start_workflow(
-                arguments['preparation_id'], arguments['session_id'],
-                command_id=arguments.get('command_id', ''),
-            ).result
+            result = client.list_workflow_inputs(self.session_id).result
         elif name == 'get_workflow_state':
-            result = client.get_state(arguments['session_id'])
+            result = client.get_state(self.session_id)
         elif name == 'get_ready_steps':
-            result = client.get_ready_steps(arguments['session_id'])
-        elif name == 'stop_workflow':
-            result = client.stop_workflow(
-                arguments['session_id'], arguments.get('command_id', '')).result
-        elif name == 'resume_workflow':
-            result = client.resume_workflow(
-                arguments['session_id'], arguments.get('command_id', '')).result
-        elif name == 'get_workflow_command':
-            result = client.get_command(arguments['command_id']).result
+            result = client.get_ready_steps(self.session_id)
         elif name == 'list_artifacts':
-            result = client.list_artifacts(arguments['session_id']).result
+            result = client.list_artifacts(self.session_id).result
         elif name == 'read_artifact':
-            result = client.read_artifact(arguments['artifact_id']).result
+            artifact = self._artifact(client, arguments['artifact_ref'])
+            result = client.read_artifact(str(artifact.get('artifact_id') or artifact['id'])).result
         elif name == 'patch_artifact':
+            artifact = self._artifact(client, arguments['artifact_ref'])
+            artifact_id = str(artifact.get('artifact_id') or artifact['id'])
+            current = client.read_artifact(artifact_id).result
             result = client.patch_artifact(
-                arguments['artifact_id'], arguments['base_revision'], arguments['value'],
-                arguments.get('content_type', 'json'), arguments.get('caption', ''),
-                arguments.get('command_id', '')).result
-        elif name == 'delete_artifact':
-            result = client.delete_artifact(
-                arguments['artifact_id'], arguments['base_revision'],
-                arguments.get('command_id', '')).result
+                artifact_id, int(current['revision']), arguments['value'],
+                str(current.get('content_type') or 'json'), arguments.get('caption', '')).result
         elif name == 'advance_step':
+            frontier = client.get_ready_steps(self.session_id)
+            allowed = set(frontier.get('ready_steps') or [])
+            allowed.update(frontier.get('retryable_steps') or [])
+            allowed.update(frontier.get('rewindable_steps') or [])
             steps = [StepCommand(**step) for step in arguments['steps']]
+            if any(step.step_id not in allowed for step in steps):
+                raise WorkflowClientError(
+                    'WORKFLOW_TARGET_NOT_PROJECTED',
+                    'Every step must be returned by the latest Runtime projection.',
+                )
             result = client.advance(AdvanceRequest(
-                session_id=arguments['session_id'],
-                expected_state_version=arguments['expected_state_version'], steps=steps,
-                command_id=arguments.get('command_id') or str(uuid.uuid4()),
+                session_id=self.session_id,
+                expected_state_version=int(frontier.get('state_version') or 0), steps=steps,
             )).result
         elif name == 'get_skill_conversion_context':
             result = client.get_skill_conversion_context(
-                arguments['skill_id'], arguments.get('revision_id', '')).result
+                arguments['skill_id']).result
         elif name == 'list_skills':
             result = client.list_skills().result
         elif name == 'create_workflow_draft':
-            draft_args = [arguments['name'], arguments.get('skill_id', ''),
-                          arguments.get('revision_id', ''), arguments.get('tree_hash', ''),
+            skill_id = arguments.get('skill_id', '')
+            context = client.get_skill_conversion_context(skill_id).result if skill_id else {}
+            draft_args = [arguments['name'], skill_id,
+                          context.get('revision_id', ''), context.get('tree_hash', ''),
                           arguments['files']]
-            if arguments.get('source_type'):
-                draft_args.append(arguments['source_type'])
+            draft_args.append('skill' if skill_id else 'blank')
             result = client.create_workflow_draft(*draft_args).result
+            draft = result.get('draft') if isinstance(result.get('draft'), dict) else result
+            self.draft_id = str(draft.get('draft_id') or draft.get('id') or '')
         elif name == 'list_workflow_drafts':
             result = client.list_workflow_drafts().result
-        elif name == 'get_workflow_draft':
+        elif name == 'select_workflow_draft':
             result = client.get_workflow_draft(arguments['draft_id']).result
-        elif name == 'delete_workflow_draft':
-            result = client.delete_workflow_draft(arguments['draft_id']).result
+            self.draft_id = arguments['draft_id']
+        elif name == 'get_workflow_draft':
+            result = client.get_workflow_draft(self._require_draft()).result
         elif name == 'list_workflow_versions':
             result = client.list_workflow_versions(arguments['workflow_ref']).result
-        elif name == 'archive_workflow':
-            result = client.archive_workflow(arguments['workflow_ref']).result
-        elif name == 'restore_workflow':
-            result = client.restore_workflow(arguments['workflow_ref']).result
         elif name == 'update_workflow_draft_file':
+            draft_id = self._require_draft()
+            current = client.get_workflow_draft(draft_id).result
             result = client.update_workflow_draft_file(
-                arguments['draft_id'], arguments['path'], arguments['content'],
-                arguments['expected_version']).result
+                draft_id, arguments['path'], arguments['content'],
+                int(current['version'])).result
         elif name == 'validate_workflow_draft':
-            result = client.validate_workflow_draft(arguments['draft_id']).result
+            result = client.validate_workflow_draft(self._require_draft()).result
         elif name == 'get_workflow_diagnostics':
-            result = client.get_workflow_diagnostics(arguments['draft_id']).result
+            result = client.get_workflow_diagnostics(self._require_draft()).result
         else:
-            result = client.publish_workflow(arguments['draft_id']).result
+            result = client.publish_workflow(self._require_draft()).result
         return {'content': [{'type': 'text', 'text': json.dumps(result, ensure_ascii=False)}],
                 'structuredContent': result, 'isError': False}
+
+    def _artifact(self, client: WorkflowClient, ref: str) -> Dict[str, Any]:
+        values = client.list_artifacts(self.session_id).result.get('artifacts') or []
+        matches = []
+        for item in values:
+            handles = {str(item.get('artifact_id') or item.get('id') or ''),
+                       str(item.get('slot') or '')}
+            if item.get('list_index') is not None:
+                handles.add(f'{item.get("slot")}[{item.get("list_index")}]')
+            if ref in handles:
+                matches.append(item)
+        if len(matches) != 1:
+            raise WorkflowClientError(
+                'ARTIFACT_NOT_SELECTED',
+                'artifact_ref must uniquely identify a selected Session artifact.',
+            )
+        return matches[0]
+
+    def _require_draft(self) -> str:
+        if not self.draft_id:
+            raise WorkflowClientError(
+                'WORKFLOW_DRAFT_CONTEXT_REQUIRED',
+                'Create or select one draft before using this authoring tool.',
+            )
+        return self.draft_id
 
     def handle(self, request: Dict[str, Any]) -> Dict[str, Any] | None:
         method = request.get('method')

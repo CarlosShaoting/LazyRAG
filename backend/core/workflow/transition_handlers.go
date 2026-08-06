@@ -308,7 +308,8 @@ func StartWorkflowSession(w http.ResponseWriter, r *http.Request) {
 	var response transitionCommandResponse
 	launchErr := store.DB().Transaction(func(tx *gorm.DB) error {
 		var err error
-		sessionID, taskID, _, err = launchWorkflowAttempt(r.Context(), tx, store.State(), req.ConversationID, req.TriggerHistoryID, req.UserID, req.TaskID, req.WorkflowID+":"+req.TargetStepID, req.Objective, params, inputKeys, nodeDef.Outputs, req.LLMConfig, req.ToolConfig, false, false)
+		stepObjective := workflowStepObjective(nodeDef.Prompt, req.Objective, req.UserInput)
+		sessionID, taskID, _, err = launchWorkflowAttempt(r.Context(), tx, store.State(), req.ConversationID, req.TriggerHistoryID, req.UserID, req.TaskID, req.WorkflowID+":"+req.TargetStepID, stepObjective, params, inputKeys, nodeDef.Outputs, req.LLMConfig, req.ToolConfig, false, false)
 		if err != nil {
 			return err
 		}
@@ -515,6 +516,11 @@ func TransitionWorkflowSession(w http.ResponseWriter, r *http.Request) {
 			}
 			return graphErr
 		}
+		for i := range targets {
+			if strings.TrimSpace(targets[i].UserInput) == "" {
+				targets[i].UserInput = sessionIntentText(session.IntentContext)
+			}
+		}
 		snapshot, snapshotErr := loadRuntimeSnapshot(r.Context(), tx, session.ID)
 		if snapshotErr != nil {
 			return snapshotErr
@@ -619,7 +625,8 @@ func TransitionWorkflowSession(w http.ResponseWriter, r *http.Request) {
 			} else {
 				params := WorkflowStepParams{WorkflowID: session.WorkflowID, WorkflowRef: session.WorkflowRef, RevisionID: session.WorkflowRevisionID, RevisionNo: session.WorkflowRevisionNo, TreeHash: session.WorkflowTreeHash, RemoteRoot: session.WorkflowRemoteRoot, StepID: target.TargetStepID, SessionID: session.ID, UserInput: target.UserInput, HandOff: &handOff, ChatSessionID: req.ChatSessionID, WorkflowMode: req.WorkflowMode, RetryHint: target.RuntimeInstruction, PartialIndices: target.PartialIndices, HistoryFilesPerTurn: req.HistoryFilesPerTurn, Filters: req.Filters, ParentAgenticConfig: req.ParentAgenticConfig, UserID: session.CreateUserID, RequiredOutputs: nodeDef.RequiredOutputs}
 				var launchErr error
-				_, taskID, _, launchErr = launchWorkflowAttempt(r.Context(), tx, store.State(), session.ConversationID, session.TriggerHistoryID, session.CreateUserID, target.TaskID, session.WorkflowID+":"+target.TargetStepID, target.Objective, params, inputKeys, nodeDef.Outputs, req.LLMConfig, req.ToolConfig, false, false)
+				stepObjective := workflowStepObjective(nodeDef.Prompt, target.Objective, target.UserInput)
+				_, taskID, _, launchErr = launchWorkflowAttempt(r.Context(), tx, store.State(), session.ConversationID, session.TriggerHistoryID, session.CreateUserID, target.TaskID, session.WorkflowID+":"+target.TargetStepID, stepObjective, params, inputKeys, nodeDef.Outputs, req.LLMConfig, req.ToolConfig, false, false)
 				if launchErr != nil {
 					return launchErr
 				}
@@ -662,15 +669,26 @@ func TransitionWorkflowSession(w http.ResponseWriter, r *http.Request) {
 	writeTransitionResponse(w, response, http.StatusOK)
 }
 
+func sessionIntentText(value string) string {
+	var intent struct {
+		Text string `json:"text"`
+	}
+	if json.Unmarshal([]byte(value), &intent) == nil {
+		return strings.TrimSpace(intent.Text)
+	}
+	return ""
+}
+
 func queueHostAttempt(ctx context.Context, tx *gorm.DB, session orm.WorkflowSession, target transitionTarget,
 	node graphengine.CompiledNode, inputKeys []string, workflowMode string, now time.Time) error {
+	objective := workflowStepObjective(node.Prompt, target.Objective, target.UserInput)
 	var count int64
 	if err := tx.Model(&orm.WorkflowSessionStep{}).Where("session_id = ? AND step_id = ?", session.ID, target.TargetStepID).Count(&count).Error; err != nil {
 		return err
 	}
 	value := executor.AttemptContext{ContractVersion: attempt.ContractVersion, SessionID: session.ID,
 		AttemptID: target.TaskID, StepID: target.TargetStepID, AttemptNo: int(count) + 1, Operation: "execute",
-		Objective: target.Objective, Prompt: node.Prompt, Acceptance: node.Acceptance,
+		Objective: objective, Prompt: node.Prompt, Acceptance: node.Acceptance,
 		Instruction: target.RuntimeInstruction, PartialSelector: target.PartialIndices,
 		WorkflowRevision: session.WorkflowRevisionID, DeclaredOutputs: node.Outputs, RequiredOutputs: node.RequiredOutputs,
 		Capabilities: node.Capabilities, LegacyTools: node.LegacyTools}
@@ -695,7 +713,7 @@ func queueHostAttempt(ctx context.Context, tx *gorm.DB, session orm.WorkflowSess
 	if _, err := subagent.CreateTask(ctx, tx, subagent.CreateTaskInput{
 		TaskID: target.TaskID, ConversationID: session.ConversationID,
 		TriggerHistoryID: session.TriggerHistoryID, AgentType: "workflow_step",
-		Title: session.WorkflowID + ":" + target.TargetStepID, Objective: target.Objective,
+		Title: session.WorkflowID + ":" + target.TargetStepID, Objective: objective,
 		Mode: "manual", Params: params, InputSlots: inputs, OutputSlots: outputs,
 		WorkspacePath: subagent.WorkspacePath(session.CreateUserID, target.TaskID),
 		CreateUserID:  session.CreateUserID,
@@ -704,6 +722,20 @@ func queueHostAttempt(ctx context.Context, tx *gorm.DB, session orm.WorkflowSess
 	}
 	return tx.Create(&orm.WorkflowOutbox{ID: uuid.NewString(), AttemptID: row.ID, SessionID: session.ID,
 		PayloadJSON: payload, Status: "pending", CreatedAt: now, UpdatedAt: now}).Error
+}
+
+// workflowStepObjective makes the immutable workflow step prompt authoritative.
+// A caller-supplied objective may refine it, but cannot accidentally erase it.
+func workflowStepObjective(prompt, objective, userInput string) string {
+	prompt = strings.ReplaceAll(strings.TrimSpace(prompt), "{{user_input}}", strings.TrimSpace(userInput))
+	objective = strings.TrimSpace(objective)
+	if prompt == "" {
+		return objective
+	}
+	if objective == "" || objective == prompt {
+		return prompt
+	}
+	return prompt + "\n\nRuntime objective:\n" + objective
 }
 
 func attemptInputBindingFromWitness(tx *gorm.DB, sessionID, attemptID string,

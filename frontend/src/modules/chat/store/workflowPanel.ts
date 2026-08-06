@@ -14,6 +14,7 @@ import {
   subscribeWorkflowEventStream,
   type WorkflowEventStreamSubscription,
 } from '@/modules/chat/utils/workflowEventStream';
+import { reconcileWorkflowSessionStatus } from '@/modules/chat/store/workflowStatus';
 
 export function buildWorkflowSearchConfig(
   chatConfig?: Pick<ChatConfig, "knowledgeBaseId" | "creators" | "tags">,
@@ -223,6 +224,7 @@ export interface WorkflowSessionStep {
 }
 
 export interface WorkflowRuntimeProjection {
+  completed?: boolean;
   past?: string[];
   current?: string[];
   reachable?: string[];
@@ -500,6 +502,7 @@ export const useWorkflowStore = create<WorkflowStore>()((set, get) => ({
           const rawSteps = stepsRes?.data?.data?.steps ?? [];
           session.steps = rawSteps.filter((s: WorkflowSessionStep) => s.step_id !== '__end__');
           session.projection = projectionRes?.data?.data?.projection ?? {};
+          session.status = reconcileWorkflowSessionStatus(session.status, session.projection);
         } catch (error) {
           session.steps = [];
           session.projection = {};

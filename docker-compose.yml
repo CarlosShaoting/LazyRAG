@@ -125,7 +125,7 @@ services:
       KONG_PLUGINS: bundled,rbac-auth
     volumes:
       - ./kong.yml:/kong/kong.yml
-      - ./kong/workflows/rbac-auth:/usr/local/share/lua/5.1/kong/workflows/rbac-auth
+      - ./kong/plugins/rbac-auth:/usr/local/share/lua/5.1/kong/plugins/rbac-auth
     expose:
       - "8000"
     depends_on:

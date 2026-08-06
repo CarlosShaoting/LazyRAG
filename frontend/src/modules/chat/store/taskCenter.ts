@@ -570,7 +570,12 @@ export const useTaskCenterStore = create<TaskCenterStore>()((set, get) => ({
               new CustomEvent(WORKFLOW_GRAPH_REFRESH_EVENT, { detail: { conversationId } }),
             );
             import('@/modules/chat/store/workflowPanel').then(({ useWorkflowStore }) => {
-              useWorkflowStore.getState().setAutoRunning(conversationId, false);
+              const workflowState = useWorkflowStore.getState();
+              workflowState.setAutoRunning(conversationId, false);
+              // Conversation events are the prompt terminal signal. Reload the
+              // authoritative session immediately so failed/waiting/completed is
+              // visible without requiring a page refresh.
+              void workflowState.loadActiveSession(conversationId);
             });
           } else if (type === 'step_partial_done') {
             window.dispatchEvent(

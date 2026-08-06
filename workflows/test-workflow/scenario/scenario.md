@@ -1,4 +1,4 @@
-# Workflow Comprehensive Smoke Test
+# Workflow Artifact Pipeline Test
 
 This workflow has six fast stages. Every stage performs only one small operation
 and uses no network or external product integration.

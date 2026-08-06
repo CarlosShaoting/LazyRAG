@@ -118,6 +118,30 @@ const enUS = {
       authValid: "Authenticated",
       credentialMissing: "Credentials required",
       authPending: "Authorization pending",
+      enabledCapabilitiesLabel: "Unlocked",
+      previewCapabilitiesLabel: "After connecting",
+      configuredCapabilitiesLabel: "After setup",
+      goKnowledge: "Sync in knowledge base",
+      goChat: "Try in chat",
+      capabilitySyncKnowledge: "Sync documents to knowledge base",
+      capabilityLinkCite: "Cite cloud doc links in chat",
+      capabilityChatSearch: "Search and read in chat",
+      capabilitySyncTask: "Create automated sync tasks",
+      capabilityDefaultRetrieval: "Default retrieval in new chats",
+      localScenario:
+        "After configuring directories, let AI retrieve local documents in chat or create sync tasks into a knowledge base.",
+      feishuScenario:
+        "Once connected, ask AI to summarize selected Feishu docs, or sync them to a knowledge base on a schedule.",
+      feishuPreviewScenario:
+        "After connecting Feishu, sync docs to a knowledge base and paste Feishu links in chat for Q&A.",
+      notionScenario:
+        "Once connected, sync selected Notion pages into a knowledge base for chat retrieval and Q&A.",
+      notionPreviewScenario:
+        "After connecting Notion, sync workspace pages to a knowledge base and retrieve them in chat.",
+      googleDriveScenario:
+        "Once authorized, search and read Google Drive originals in chat (they are not imported into a knowledge base).",
+      googleDrivePreviewScenario:
+        "After connecting, search and read Google Drive originals in chat. Sync to knowledge base is not supported.",
       localTitle: "Local Documents",
       localDesc:
         "Deploy local directories. {{count}} directories connected. When default retrieval is enabled, new conversations automatically use these local directories.",
@@ -1862,6 +1886,21 @@ const enUS = {
     confirmAction: "Review",
     statusAndNext: "Status and next step",
     time: "Time",
+    taskStatePending: "{{task}} is waiting to start",
+    taskStateWaiting: "{{task}} is waiting for confirmation",
+    taskStateWaitingInputs: "{{task}} is waiting for dependencies",
+    taskStateRunning: "{{task}} is in progress",
+    taskStateSucceeded: "{{task}} is complete",
+    taskStateFailed: "{{task}} failed: {{reason}}",
+    taskStateCanceled: "{{task}} was canceled",
+    taskStateInterrupted: "{{task}} was interrupted",
+    taskStateUnknown: "{{task}}: {{status}}",
+    failureReasonUnavailable: "No specific failure reason was returned",
+    progressItemsReady: "{{done}} of {{total}} items are ready",
+    taskFallbackWorkflow: "Workflow task",
+    taskFallbackBackground: "Background task",
+    taskFallbackScheduled: "Scheduled task",
+    taskFallbackGeneric: "Task",
     stepsCompleted: "{{done}}/{{total}} steps completed",
     scheduleBoardTitle: "Tasks that run on a schedule",
     scheduleBoardDescription: "Review schedule status, run times, and recent results",

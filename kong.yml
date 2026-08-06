@@ -9,7 +9,7 @@ services:
         paths:
           - /api/authservice
         strip_path: false
-        workflows:
+        plugins:
           - name: rbac-auth
             config:
               auth_service_url: http://auth-service:8000
@@ -21,7 +21,7 @@ services:
         paths:
           - /api/chat
         strip_path: false
-        workflows:
+        plugins:
           - name: rbac-auth
             config:
               auth_service_url: http://auth-service:8000
@@ -33,7 +33,7 @@ services:
         paths:
           - /api/scan
         strip_path: false
-        workflows:
+        plugins:
           - name: rbac-auth
             config:
               auth_service_url: http://auth-service:8000
@@ -45,7 +45,7 @@ services:
         paths:
           - /api/channel-gateway
         strip_path: false
-        workflows:
+        plugins:
           - name: rbac-auth
             config:
               auth_service_url: http://auth-service:8000
@@ -61,7 +61,7 @@ services:
         paths:
           - /api/core
         strip_path: true
-        workflows:
+        plugins:
           - name: rbac-auth
             config:
               auth_service_url: http://auth-service:8000
@@ -73,7 +73,7 @@ services:
         paths:
           - "~/api/evo/router(?:/|%2[fF]|$)"
         strip_path: false
-        workflows:
+        plugins:
           - name: request-termination
             config:
               status_code: 404
@@ -81,7 +81,7 @@ services:
         paths:
           - /api/evo
         strip_path: true
-        workflows:
+        plugins:
           - name: rbac-auth
             config:
               auth_service_url: http://auth-service:8000

@@ -128,6 +128,7 @@ type prepareRequest struct {
 	OriginHost     string         `json:"origin_host"`
 	OriginRef      string         `json:"origin_ref"`
 	ControllerHost string         `json:"controller_host"`
+	RequestContext string         `json:"request_context"`
 }
 
 type toolCommandRequest struct {
@@ -659,6 +660,16 @@ func (h Handler) Consume(w http.ResponseWriter, r *http.Request) {
 			}
 			fail(w, http.StatusConflict, code, createErr.Error(), false)
 			return
+		}
+		if strings.TrimSpace(original.RequestContext) != "" {
+			intentJSON, _ := json.Marshal(map[string]string{"text": original.RequestContext})
+			if intentErr := h.Store.UpdateSessionIntent(
+				r.Context(), session.ID, string(intentJSON),
+			); intentErr != nil {
+				fail(w, http.StatusServiceUnavailable, "SESSION_INTENT_STORE_FAILED", intentErr.Error(), true)
+				return
+			}
+			session.IntentContext = string(intentJSON)
 		}
 		for materialID, raw := range original.InputBindings {
 			value, _ := raw.(map[string]any)

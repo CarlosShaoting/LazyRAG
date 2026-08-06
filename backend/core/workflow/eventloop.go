@@ -18,6 +18,7 @@ import (
 
 	"lazymind/core/common"
 	"lazymind/core/common/orm"
+	"lazymind/core/modelconfig"
 	"lazymind/core/state"
 	"lazymind/core/store"
 	"lazymind/core/subagent"
@@ -645,18 +646,20 @@ func OnSubAgentDone(
 		// Non-succeeded, non-interrupted (i.e. truly failed) steps: notify the frontend
 		// and mark the session failed. Auto mode still asks DriverAgent to diagnose
 		// and recommend retry/rewind; dynamic mode leaves the failure for the user.
+		if pctx != nil && pctx.SessionID != "" {
+			_ = UpdateSessionStatus(ctx, db, pctx.SessionID, SessionStatusFailed)
+			_ = taskcenter.UpdateTaskStatusBySession(ctx, db, pctx.SessionID, "failed")
+			clearGeneratingChatStatus(ctx, stateStore, pctx.ConvID)
+			go OnSubAgentDoneSnapshot(context.Background(), db, pctx)
+		}
+		// Publish only after authoritative state is durable; consumers may reload
+		// the Session immediately when they receive this terminal event.
 		if pctx != nil {
 			onSSE("workflow_error", map[string]any{
 				"session_id": pctx.SessionID,
 				"step_id":    pctx.StepID,
 				"message":    summary,
 			})
-		}
-		if pctx != nil && pctx.SessionID != "" {
-			_ = UpdateSessionStatus(ctx, db, pctx.SessionID, SessionStatusFailed)
-			_ = taskcenter.UpdateTaskStatusBySession(ctx, db, pctx.SessionID, "failed")
-			clearGeneratingChatStatus(ctx, stateStore, pctx.ConvID)
-			go OnSubAgentDoneSnapshot(context.Background(), db, pctx)
 		}
 	}
 
@@ -815,9 +818,29 @@ func advanceAutoMode(
 		return
 	}
 
-	// LazyMind's handoff resumes Chat with the durable Host Attempt summary. Step
-	// decisions remain in the public runtime and never invoke a LazyMind model.
-	driverMsg := summary
+	llmConfig, configErr := modelconfig.LoadLLMConfig(ctx, db, pctx.UserID)
+	if configErr != nil {
+		fmt.Printf("[Workflow] load DriverAgent LLM config failed user=%s err=%v\n", pctx.UserID, configErr)
+	}
+	acceptance, driverPrompt := loadWorkflowDriverPolicy(ctx, db, pctx.SessionID, pctx.StepID)
+	artifactsSummary, _ := buildWorkflowArtifactsSummary(ctx, db, pctx.SessionID, pctx.StepID)
+	driverInput := fmt.Sprintf("Terminal status: %s\nAttempt: %d\n%s", terminalStatus, attempt, summary)
+	driverMsg, fallback := callWorkflowDriverAgent(
+		pctx.WorkflowID, pctx.StepID, driverInput, acceptance, driverPrompt, pctx.SessionID,
+		pctx.HistoryFilesPerTurn, llmConfig, artifactsSummary,
+	)
+	if fallback {
+		onSSE("driver_fallback", map[string]any{
+			"session_id": pctx.SessionID, "step_id": pctx.StepID,
+			"reason": "driver_unavailable",
+		})
+		_ = UpdateSessionStatus(ctx, db, pctx.SessionID, SessionStatusWaiting)
+		onSSE("step_waiting", map[string]any{
+			"session_id": pctx.SessionID, "step_id": pctx.StepID,
+			"reason": "driver_fallback",
+		})
+		return
+	}
 	onSSE("driver_input", map[string]any{
 		"session_id": pctx.SessionID,
 		"step_id":    pctx.StepID,
@@ -1147,6 +1170,74 @@ func resolveSlotBinding(workflowID, slot string) (slotID, cardinality string) {
 // defaultDriverMaxRetries is the global max retry count for DriverAgent RETRY verdicts.
 // Not configurable per workflow.yaml — global platform setting only.
 const defaultDriverMaxRetries = 3
+
+func callWorkflowDriverAgent(
+	workflowID, stepID, stepResult, acceptance, driverPrompt, sessionID string,
+	historyFilesPerTurn map[string][]string,
+	llmConfig map[string]any,
+	artifactsSummary string,
+) (string, bool) {
+	doCall := func() (string, bool) {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		body, _ := json.Marshal(map[string]any{
+			"workflow_id": workflowID, "step_id": stepID, "step_result": stepResult,
+			"acceptance": acceptance, "driver_prompt": driverPrompt, "session_id": sessionID,
+			"history_files_per_turn": historyFilesPerTurn, "llm_config": llmConfig,
+			"workflow_artifacts_summary": artifactsSummary,
+		})
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+			common.ChatServiceEndpoint()+"/api/workflow/driver", bytes.NewReader(body))
+		if err != nil {
+			return "", true
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return "", true
+		}
+		defer resp.Body.Close()
+		var value struct {
+			Message string `json:"message"`
+		}
+		if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&value) != nil || strings.TrimSpace(value.Message) == "" {
+			return "", true
+		}
+		return value.Message, false
+	}
+	message, fallback := doCall()
+	if fallback {
+		time.Sleep(5 * time.Second)
+		message, fallback = doCall()
+	}
+	return message, fallback
+}
+
+func loadWorkflowDriverPolicy(ctx context.Context, db *gorm.DB, sessionID, stepID string) (string, string) {
+	session, err := GetSession(ctx, db, sessionID)
+	if err != nil || session == nil {
+		return "", ""
+	}
+	acceptance := ""
+	if graph, graphErr := loadSessionGraph(ctx, db, session); graphErr == nil {
+		if node, ok := graph.Nodes[stepID]; ok {
+			acceptance = strings.Join(node.Acceptance, "\n")
+		}
+	}
+	if session.WorkflowRevisionID == "" {
+		return acceptance, ""
+	}
+	var blob orm.WorkflowBlob
+	err = db.WithContext(ctx).Table("plugin_blobs AS b").
+		Select("b.*").
+		Joins("JOIN plugin_revision_entries AS e ON e.blob_hash = b.hash").
+		Where("e.revision_id = ? AND e.path = ?", session.WorkflowRevisionID, "scenario/driver.md").
+		First(&blob).Error
+	if err != nil {
+		return acceptance, ""
+	}
+	return acceptance, string(blob.Content)
+}
 
 // buildWorkflowArtifactsSummary builds a text summary of all artifacts produced in this
 // plugin session and the current step, for injection into the DriverAgent evaluation context.

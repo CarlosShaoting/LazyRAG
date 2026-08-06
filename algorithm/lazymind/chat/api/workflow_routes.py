@@ -7,7 +7,7 @@ Routes:
 from __future__ import annotations
 
 import tempfile
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -28,6 +28,22 @@ class TaskCancelRequest(BaseModel):
 
 class TaskCancelResponse(BaseModel):
     ok: bool
+
+
+class WorkflowDriverRequest(BaseModel):
+    workflow_id: str
+    step_id: str
+    step_result: str
+    acceptance: str = ''
+    driver_prompt: str = ''
+    session_id: Optional[str] = None
+    history_files_per_turn: Optional[Dict[str, List[str]]] = None
+    llm_config: Optional[Dict[str, Any]] = None
+    workflow_artifacts_summary: Optional[str] = None
+
+
+class WorkflowDriverResponse(BaseModel):
+    message: str
 
 
 class WriterDocumentSyncRequest(BaseModel):
@@ -96,6 +112,25 @@ def _writer_sync_response(
         'patch_result': result.model_dump(),
         'persisted_document': document.model_dump(),
     }
+
+
+@router.post('/api/workflow/driver', response_model=WorkflowDriverResponse,
+             summary='Evaluate a terminal Workflow attempt')
+async def workflow_driver(req: WorkflowDriverRequest) -> WorkflowDriverResponse:
+    from lazymind.chat.workflow.driver_agent import DriverEvaluationError, evaluate_step
+
+    try:
+        result = evaluate_step(
+            workflow_id=req.workflow_id, step_id=req.step_id, step_result=req.step_result,
+            acceptance=req.acceptance, driver_prompt=req.driver_prompt,
+            session_id=req.session_id,
+            user_files=[p for paths in (req.history_files_per_turn or {}).values() for p in paths] or None,
+            llm_config=req.llm_config,
+            workflow_artifacts_summary=req.workflow_artifacts_summary,
+        )
+    except DriverEvaluationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return WorkflowDriverResponse(message=result['message'])
 
 
 @router.post('/api/workflow/task-cancel', response_model=TaskCancelResponse, summary='Cancel a running SubAgent task')

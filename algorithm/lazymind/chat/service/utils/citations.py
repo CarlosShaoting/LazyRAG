@@ -10,9 +10,9 @@ from .static_file_url import (
     static_file_url_from_any,
 )
 from .stream_scanner import (
-    BaseWorkflow,
+    BasePlugin,
     IncrementalScanner,
-    MarkdownImageHoldWorkflow,
+    MarkdownImageHoldPlugin,
 )
 
 CITATION_REFS_KEY = '_citation_sources'
@@ -283,7 +283,7 @@ def rewrite_citations(text: str, config: dict[str, Any]) -> tuple[str, list[dict
     return rewritten, list(collected.values())
 
 
-class ConfigCitationWorkflow(BaseWorkflow):
+class ConfigCitationPlugin(BasePlugin):
     prefix_set = {'['}
     _pat = CITATION_PATTERN
     _link_pat = SOURCE_LINK_PATTERN
@@ -340,9 +340,9 @@ class ConfigCitationWorkflow(BaseWorkflow):
 
 def build_stream_citation_scanner(
     config: dict[str, Any],
-) -> tuple[IncrementalScanner, ConfigCitationWorkflow]:
-    workflow = ConfigCitationWorkflow(config)
+) -> tuple[IncrementalScanner, ConfigCitationPlugin]:
+    plugin = ConfigCitationPlugin(config)
     return IncrementalScanner(
-        [workflow, MarkdownImageHoldWorkflow()],
+        [plugin, MarkdownImageHoldPlugin()],
         initial_state='BODY',
-    ), workflow
+    ), plugin

@@ -239,6 +239,12 @@ def _build_subagent_chat_tools() -> list:
     ]
 
 
+def _should_register_subagent_tools(enable_subagent: Any, workflow_refs: Any) -> bool:
+    """Keep explicit Workflow execution on its bound trigger path."""
+    refs = workflow_refs if isinstance(workflow_refs, list) else []
+    return bool(enable_subagent) and not any(str(ref).strip() for ref in refs)
+
+
 def _build_chat_artifact_tools() -> list:
     """Workspace and artifact tools for the main ChatAgent."""
     from lazymind.chat.engine.tools.chat_artifact import (
@@ -626,6 +632,7 @@ async def _handle_chat_impl(
     workflow_contribution = resolve_workflow_injection(
         effective_workflow_context,
         conversation_id=conversation_id,
+        current_query=query,
         workflow_catalog=effective_workflow_catalog,
         disabled_builtin_workflows=list(dict.fromkeys(effective_disabled_builtin_workflows)),
         allowed_workflow_refs=effective_allowed_workflow_refs,
@@ -669,9 +676,17 @@ async def _handle_chat_impl(
         user_query=language_query,
     )
     agent_tools = [cfg.tool for cfg in active_configs]
-    # Respect enable_subagent flag: when false, suppress create_subagent and related tools.
+    # A bound Workflow trigger is the only valid entry point for an explicit
+    # Workflow selection. Hide generic SubAgent tools so the model cannot route
+    # around that trigger with create_subagent(agent_type='workflow').
     enable_subagent = agentic_config.get('enable_subagent', True)
-    subagent_tools = _build_subagent_chat_tools() if enable_subagent else []
+    subagent_tools = (
+        _build_subagent_chat_tools()
+        if _should_register_subagent_tools(
+            enable_subagent, explicit_resource_payload.get('workflow_refs'),
+        )
+        else []
+    )
     mcp_tools = await _build_mcp_tools(runtime.mcp_config) if runtime.mcp_config else []
     # User attachment tools are only meaningful when the user has uploaded files.
     attachment_tools = _build_user_attachment_tools(bool(files_map))

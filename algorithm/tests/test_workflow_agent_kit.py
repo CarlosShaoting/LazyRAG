@@ -24,7 +24,7 @@ def test_skill_references_exist_and_cover_required_lifecycle():
         assert reference in skill
         assert (KIT / reference).is_file()
     for clause in ('Discover a Workflow', 'Convert a Skill', 'Start a Workflow',
-                   'Advance steps', 'Store and read attachments', 'delete_artifact'):
+                   'Advance steps', 'Inspect inputs and Artifacts', 'controller/UI-only'):
         assert clause in skill
 
 
@@ -32,10 +32,9 @@ def test_skill_is_the_complete_model_free_workflow_operating_procedure():
     skill = (KIT / 'SKILL.md').read_text()
     for tool in (
         'list_workflows', 'get_workflow', 'get_skill_conversion_context',
-        'create_workflow_draft', 'prepare_workflow', 'start_workflow',
-        'get_ready_steps', 'advance_step', 'import_input_resource',
-        'read_input_resource', 'list_artifacts', 'read_artifact',
-        'patch_artifact', 'delete_artifact',
+        'create_workflow_draft', 'trigger_<workflow>_workflow',
+        'get_ready_steps', 'advance_step', 'list_workflow_inputs',
+        'list_artifacts', 'read_artifact', 'patch_artifact',
     ):
         assert tool in skill
     assert 'Infrastructure tools must never call a model' in skill
@@ -45,7 +44,9 @@ def test_skill_is_the_complete_model_free_workflow_operating_procedure():
 def test_skill_skips_catalog_listing_when_host_exposes_bound_trigger():
     skill = (KIT / 'SKILL.md').read_text()
     assert 'Call the matching trigger directly instead of' in skill
-    assert 'a trigger never starts a Session' in skill
+    assert 'creates the Session when inputs are sufficient' in skill
+    assert 'It never advances a step' in skill
+    assert 'prepare_workflow' not in skill
 
 
 def test_host_profiles_cover_contract_capabilities():
@@ -63,10 +64,13 @@ def test_host_profiles_cover_contract_capabilities():
         assert required <= set(profile), name
         assert profile['version'] == 'workflow.v1'
     assert 'advance_step_and_hand_off' in profiles['lazymind']['advance_tools']
+    assert profiles['lazymind']['driver'] is True
+    assert profiles['codex']['driver'] is False
     assert profiles['codex']['advance_tools'] == ['advance_step']
     assert profiles['codex']['handoff'] is False
     assert 'workflow_connection_status' in profiles['codex']['workflow_tools']
     assert 'advance_step_and_hand_off' not in profiles['codex']['workflow_tools']
+    assert all('prepare_workflow' not in profile['workflow_tools'] for profile in profiles.values())
     assert all(profile['shadow_authority'] == 'shared' for profile in profiles.values())
 
 

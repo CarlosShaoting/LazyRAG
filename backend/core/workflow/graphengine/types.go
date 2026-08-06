@@ -151,6 +151,8 @@ type Projection struct {
 	Current    []string                  `json:"current"`
 	Reachable  []string                  `json:"reachable"`
 	Ready      []string                  `json:"ready"`
+	Retryable  []string                  `json:"retryable"`
+	Rewindable []string                  `json:"rewindable"`
 	Blocked    []string                  `json:"blocked"`
 	Stale      []string                  `json:"stale"`
 	Pruned     []string                  `json:"pruned"`

@@ -16,7 +16,7 @@ def test_projection_is_host_neutral_and_filters_model_unsafe_lifecycle_tools():
 
     available = AgentWorkflowToolProjection().expose(tools)
     assert {tool.__name__ for tool in available} == {
-        'trigger_demo_workflow', 'prepare_workflow',
+        'trigger_demo_workflow',
         'get_workflow_state', 'advance_step',
     }
 

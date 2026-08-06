@@ -37,5 +37,5 @@ RUN set -eu; \
     && rm -rf /var/lib/apt/lists/* && rm -rf lua-resty-http-0.17.1.tar.gz && rm -rf lua-resty-http-0.17.1
     
 USER kong
-COPY workflows/rbac-auth /usr/local/share/lua/5.1/kong/workflows/rbac-auth
+COPY plugins/rbac-auth /usr/local/share/lua/5.1/kong/plugins/rbac-auth
 ENV KONG_PLUGINS=bundled,rbac-auth

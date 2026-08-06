@@ -124,6 +124,13 @@ func TestDisabledBuiltinWorkflowIDs_Empty(t *testing.T) {
 func TestDisabledBuiltinWorkflowIDs_ReturnsDisabled(t *testing.T) {
 	db := newHandlerTestDB(t)
 	now := time.Now().UTC()
+	for _, id := range []string{"bsk_01", "bsk_02"} {
+		db.DB.Create(&orm.WorkflowResource{
+			ID: "resource-" + id, WorkflowRef: "builtin:" + id, WorkflowID: id,
+			OwnerScope: "builtin", SourceType: "builtin", RelativeRoot: "workflows/builtin/" + id,
+			Name: id, Status: "active", CreatedAt: now, UpdatedAt: now,
+		})
+	}
 	db.DB.Create(&orm.UserWorkflowSetting{
 		UserID: "user-1", WorkflowRef: "builtin:bsk_01", Enabled: false,
 		UpdatedAt: now,
@@ -241,6 +248,19 @@ func TestPatchUserWorkflowSetting_NonBuiltinNotFound(t *testing.T) {
 	body := jsonBody(`{"enabled":true}`)
 	req := httptest.NewRequest(http.MethodPatch, "/workflows/unknown-ref/settings", body)
 	req = mux.SetURLVars(req, map[string]string{"workflow_ref": "unknown-ref"})
+	req.Header.Set("X-User-Id", "user-1")
+	rec := httptest.NewRecorder()
+	PatchUserWorkflowSetting(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("got %d, want %d", rec.Code, http.StatusNotFound)
+	}
+}
+
+func TestPatchUserWorkflowSetting_UnknownBuiltinNotFound(t *testing.T) {
+	newHandlerTestDB(t)
+	body := jsonBody(`{"enabled":true}`)
+	req := httptest.NewRequest(http.MethodPatch, "/workflows/builtin:removed/settings", body)
+	req = mux.SetURLVars(req, map[string]string{"workflow_ref": "builtin:removed"})
 	req.Header.Set("X-User-Id", "user-1")
 	rec := httptest.NewRecorder()
 	PatchUserWorkflowSetting(rec, req)

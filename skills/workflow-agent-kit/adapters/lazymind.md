@@ -7,6 +7,9 @@ Artifact lineage, permissions, or state-version checks.
 
 Use `advance_step_and_hand_off` only after durable Supervisor acceptance.
 
-`import_workflow_attachment(path)` is a Host path adapter: it reads a
-user-selected LazyMind attachment and imports its bytes through the public
-`import_input_resource` API. Never persist the path or a signed URL.
+Conversation attachments remain a LazyMind framework capability. ChatAgent sees
+the current turn's attachments before its query and uses `find_user_attachment`
+or `read_user_attachment`; every SubAgent receives a snapshot of its parent
+conversation's attachment context and the same tools. Workflow adds no attachment
+listing or lookup tool. When a resolved file is used as Workflow input, the
+Host-only adapter imports it as an immutable Input Resource.

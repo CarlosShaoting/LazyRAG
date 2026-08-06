@@ -1,6 +1,6 @@
 ---
 name: workflow-agent-kit
-description: Discover, inspect, convert, create, validate, publish, start, advance, stop, resume, and recover public Workflows; manage durable Workflow input attachments and versioned output Artifacts. Use whenever an Agent needs Workflow discovery, Skill-to-Workflow conversion, Workflow execution, step decisions, or attachment/Artifact storage, reading, revision, or deletion.
+description: Discover, inspect, convert, create, validate, publish, start, advance, stop, resume, and recover public Workflows; manage durable Workflow Input Resources and versioned output Artifacts. Use whenever an Agent needs Workflow discovery, Skill-to-Workflow conversion, Workflow execution, step decisions, or Input Resource/Artifact inspection and revision.
 ---
 
 # Workflow Agent Kit
@@ -37,8 +37,10 @@ explicit SubAgent by the framework Supervisor. Read
 When the Host exposes a `trigger_<workflow>_workflow` tool, its definition is a
 catalog-bound selection hint. Call the matching trigger directly instead of
 `list_workflows`; it reads the exact public package and pinned revision. An explicit
-user selection permits only its matching trigger. Continue with preparation through
-the same public lifecycle tools below; a trigger never starts a Session.
+user selection permits only its matching trigger. The trigger pins the revision,
+performs preparation, creates the Session when inputs are sufficient, and returns
+the authoritative projection, `reachable_steps`, `ready_steps`, and `blocked_steps`.
+It never advances a step.
 
 When no matching trigger is exposed:
 
@@ -72,32 +74,30 @@ When no matching trigger is exposed:
 
 1. Inspect the conversation's current Workflow projection. A conversation may
    have at most one non-dismissed Session in any status. If one exists, operate
-   on that Session; never call `prepare_workflow` to replace or bypass it.
+   on that Session; never trigger a replacement run.
 2. Identify every external material in the pinned Workflow package.
-3. For each file or byte attachment, call `import_input_resource`. Keep the
-   returned `resource_id`, `revision`, and `content_hash`; never bind a local path
-   or temporary URL.
-4. Call `prepare_workflow` with explicit input bindings and one stable command id.
-   Under the public Runtime/MCP contract, preparation remains separate from
-   `start_workflow`. In the LazyMind Chat Host profile, however, the exposed
-   `prepare_workflow` wrapper atomically consumes a ready preparation, creates
-   the Session, and returns its `session_id`, `state_version`, and `ready_steps`.
-   Treat that Host call as the single Session-creating call and never call
-   `start_workflow` for its result.
-5. If preparation reports missing inputs, obtain/import them and prepare again.
-6. Under the public Runtime/MCP contract, when status is ready, generate a
-   stable Session id and call `start_workflow` with the exact preparation id.
-   Skip this step in the LazyMind Chat Host profile because step 4 already
-   started the Session.
-7. Call `get_workflow_state` immediately after start.
+3. Use the Host framework's ordinary conversation-attachment tools to resolve
+   each required user upload. Attachments belong to the conversation, not to the
+   Workflow; do not look for Workflow-specific attachment tools.
+4. Call the exact catalog-bound `trigger_<workflow>_workflow` with material ids
+   mapped to those framework-resolved file references. It performs
+   preparation and Session initialization as one Host operation. Do not call a
+   separate preparation or start tool.
+5. If the trigger reports missing inputs, resolve them through the Host framework
+   and follow the returned binding guidance; do not invent a Session id.
+6. Use the trigger's returned projection as authority. Select only an exact
+   member of `ready_steps`, `retryable_steps`, or `rewindable_steps` for
+   `advance_step`; the Host injects Session and version protocol fields.
 
 ## Advance steps
 
 1. Refresh `get_workflow_state` or `get_ready_steps` before every decision.
-2. Select only exact members of `ready_steps`. Apply the Workflow acceptance
+2. Select only exact members of `ready_steps`, `retryable_steps`, or
+   `rewindable_steps`. Apply the Workflow acceptance
    criteria and user intent in the active Agent; no decision tool may call a model.
-3. Submit the latest `state_version` to `advance_step`. Batch only independent
-   targets from the same Ready frontier.
+3. Submit only exact step ids to `advance_step`. The Host fetches and injects the
+   latest Session and `state_version`. Batch only independent targets from the
+   same Ready frontier.
 4. Let Runtime resolve execute, retry, or rewind. Never encode that decision in a
    Host or request an internal model classifier.
 5. After completion, refresh projection and inspect required Artifacts. Missing
@@ -106,10 +106,11 @@ When no matching trigger is exposed:
    durable Supervisor has accepted ownership. Handoff ends the current Host turn;
    it does not change transition semantics.
 
-## Store and read attachments
+## Inspect inputs and Artifacts
 
-- Store input bytes with `import_input_resource`; read them with
-  `read_input_resource`; inspect Session bindings with `list_workflow_inputs`.
+- Conversation attachments are injected and accessed by the Host framework. They
+  are not Workflow tools or Workflow Artifacts. Inspect the immutable resources
+  bound to a Session with `list_workflow_inputs`.
 - Input Resources are immutable. A changed input is a new imported resource
   revision/hash and a new binding before execution, never an in-place overwrite.
 - List selected outputs with `list_artifacts` and read exact revisions with
@@ -117,10 +118,10 @@ When no matching trigger is exposed:
 
 ## Modify and delete output Artifacts
 
-- Call `patch_artifact` with the selected Artifact id and `base_revision`. It
-  creates a new selected revision; it never overwrites history.
-- Call `delete_artifact` with the selected id and `base_revision`. Deletion creates
-  a selected tombstone revision with `deleted: true`; it never erases history.
+- Call `patch_artifact` with an exact selected Artifact handle and new value. The
+  Host resolves the id and injects the current base revision and content type.
+  It creates a new selected revision; it never overwrites history.
+- Artifact deletion is controller/UI-only and is not exposed to the model.
 - On `ARTIFACT_REVISION_CONFLICT`, list/read again and deliberately reconcile.
 - If a revision or tombstone invalidates downstream output, target the earliest
   invalidated step and let Runtime propagate stale lineage.
@@ -137,7 +138,7 @@ stop as automatic error recovery. A stopped Session remains the conversation's
 one non-dismissed Session.
 To continue it, call `resume_workflow`, refresh projection, then target the
 interrupted/failed step with `advance_step` when the projection permits. Never
-call `prepare_workflow` after stop. To start a genuinely new run, the existing
+trigger a replacement run after stop. To start a genuinely new run, the existing
 Session must first be explicitly dismissed through the product UI; stopping,
 failing, or completing it is not dismissal. Never edit state, invent a terminal
 result, reuse an idempotency key for different arguments, or turn an unknown

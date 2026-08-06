@@ -72,7 +72,7 @@ class AgentEventFrameTranslator:
         self.streamed_text = False
         self.ask_pending_emitted = False
         self.tool_call_turns = 0
-        self.text_scanner, self.citation_workflow = build_stream_citation_scanner(self.citation_state)
+        self.text_scanner, self.citation_plugin = build_stream_citation_scanner(self.citation_state)
 
     def feed(self, event: Any) -> list[dict[str, Any]]:
         frames: list[dict[str, Any]] = []
@@ -166,7 +166,7 @@ class AgentEventFrameTranslator:
         return frames
 
     def _collect_sources(self) -> Any:
-        return self.citation_workflow.collect()
+        return self.citation_plugin.collect()
 
     def finish(self, final_result: Any) -> list[dict[str, Any]]:
         frames = self.flush()

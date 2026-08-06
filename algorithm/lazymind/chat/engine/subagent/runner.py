@@ -274,6 +274,10 @@ def _build_subagent_plan(
         'subagent_role', 'SubAgent Role', (
             'You are an autonomous SubAgent. Complete the task objective using only the '
             'available tools. You may not spawn, create, or delegate to other agents.\n'
+            'You cannot interact with the user and must never ask the user a question or '
+            'request clarification. Use the authoritative task context as provided. If a '
+            'required input is genuinely absent, report that as a task failure rather than '
+            'phrasing it as a question.\n'
             'Use the selected user-visible language for progress and the final summary. '
             'Artifact content must follow the language required by the task objective or '
             'the output slot contract; do not translate an artifact when its required '

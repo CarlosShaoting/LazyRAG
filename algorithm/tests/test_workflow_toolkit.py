@@ -65,6 +65,33 @@ def test_prepare_workflow_binds_host_origin_reference():
     }
 
 
+def test_prepare_workflow_persists_request_context_for_session_defaults():
+    client = MagicMock()
+    client.prepare_workflow.return_value.result = {'status': 'missing_inputs'}
+    toolkit = HostWorkflowToolkit(lambda: client, origin_ref='conversation-1')
+
+    toolkit.prepare_workflow('writer', request_context='run this workflow')
+
+    assert client.prepare_workflow.call_args.kwargs['fields'] == {
+        'origin_ref': 'conversation-1',
+        'request_context': 'run this workflow',
+    }
+
+
+def test_advance_step_raises_when_synchronous_attempt_failed():
+    client = MagicMock()
+    client.advance.return_value.result = {
+        'accepted': True,
+        'attempt_statuses': {'task-1': 'failed'},
+    }
+    toolkit = HostWorkflowToolkit(lambda: client)
+
+    with pytest.raises(WorkflowClientError) as error:
+        toolkit.advance_step('session-1', 1, [{'step_id': 'prompt'}])
+
+    assert error.value.code == 'WORKFLOW_STEP_FAILED'
+
+
 def test_chat_prepare_starts_session_and_returns_authoritative_ready_frontier():
     client = MagicMock()
     client.prepare_workflow.return_value.result = {

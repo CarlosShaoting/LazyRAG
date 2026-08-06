@@ -25,7 +25,10 @@ func workflowRefPathVar(r *http.Request) string {
 
 func DisabledBuiltinWorkflowIDs(db *gorm.DB, userID string) ([]string, error) {
 	var rows []orm.UserWorkflowSetting
-	if err := db.Where("user_id=? AND enabled=false AND plugin_ref LIKE 'builtin:%'", userID).Find(&rows).Error; err != nil {
+	if err := db.Table("user_plugin_settings ups").
+		Joins("JOIN plugins p ON p.plugin_ref=ups.plugin_ref").
+		Where("ups.user_id=? AND ups.enabled=false AND p.source_type='builtin' AND p.owner_user_id='' AND p.status='active'", userID).
+		Select("ups.*").Scan(&rows).Error; err != nil {
 		if missingWorkflowTables(err) {
 			return []string{}, nil
 		}
@@ -108,11 +111,7 @@ func PatchUserWorkflowSetting(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var count int64
-	if strings.HasPrefix(ref, "builtin:") {
-		count = 1
-	} else {
-		store.DB().Model(&orm.WorkflowResource{}).Where("plugin_ref=? AND status='active' AND (owner_user_id=? OR owner_user_id='')", ref, userID).Count(&count)
-	}
+	store.DB().Model(&orm.WorkflowResource{}).Where("plugin_ref=? AND status='active' AND (owner_user_id=? OR owner_user_id='')", ref, userID).Count(&count) // workflow-naming: persistence
 	if count == 0 {
 		common.ReplyErr(w, "plugin not found", http.StatusNotFound)
 		return

@@ -30,10 +30,13 @@ def test_discovery_reads_dynamic_runtime_endpoint(tmp_path, monkeypatch):
 
 def test_mcp_lists_only_real_public_tools():
     names = set(TOOL_SCHEMAS)
-    assert {'list_workflows', 'prepare_workflow', 'start_workflow',
-            'get_workflow_state', 'get_ready_steps', 'advance_step'} <= names
-    assert {'stop_workflow', 'resume_workflow', 'list_artifacts', 'patch_artifact',
-            'delete_artifact', 'import_input_resource', 'bind_workflow_input'} <= names
+    assert {'list_workflows', 'get_workflow_state', 'get_ready_steps',
+            'advance_step'} <= names
+    assert 'prepare_workflow' not in names
+    assert 'start_workflow' not in names
+    assert {'list_artifacts', 'patch_artifact'} <= names
+    assert not {'stop_workflow', 'resume_workflow', 'delete_artifact',
+                'import_input_resource', 'bind_workflow_input', 'get_workflow_command'} & names
     assert {
         'get_skill_conversion_context', 'create_workflow_draft',
         'update_workflow_draft_file', 'validate_workflow_draft',
@@ -41,13 +44,28 @@ def test_mcp_lists_only_real_public_tools():
     } <= names
 
 
+def test_ready_steps_are_read_from_authoritative_projection():
+    client = MagicMock()
+    client.get_state.return_value = {
+        'state_version': 4,
+        'projection': {
+            'ready': ['draft'], 'retryable': ['review'], 'rewindable': ['source'],
+        },
+    }
+    from lazymind.workflow_sdk.client import WorkflowClient
+    value = WorkflowClient.get_ready_steps(client, 'session-1')
+    assert value['ready_steps'] == ['draft']
+    assert value['retryable_steps'] == ['review']
+    assert value['rewindable_steps'] == ['source']
+
+
 def test_mcp_uses_shared_sdk_client():
     client = MagicMock()
     client.get_ready_steps.return_value = {
         'session_id': 's1', 'state_version': 3, 'ready_steps': ['draft'],
     }
-    server = WorkflowMCPServer(lambda: client)
-    result = server.call_tool('get_ready_steps', {'session_id': 's1'})
+    server = WorkflowMCPServer(lambda: client, session_id='s1')
+    result = server.call_tool('get_ready_steps', {})
     assert result['structuredContent']['ready_steps'] == ['draft']
     client.get_ready_steps.assert_called_once_with('s1')
 
@@ -57,13 +75,17 @@ def test_mcp_initialize_and_tools_list_protocol():
     initialized = server.handle({'jsonrpc': '2.0', 'id': 1, 'method': 'initialize'})
     assert initialized['result']['capabilities']['tools'] == {'listChanged': False}
     listed = server.handle({'jsonrpc': '2.0', 'id': 2, 'method': 'tools/list'})
-    assert {tool['name'] for tool in listed['result']['tools']} == set(TOOL_SCHEMAS)
+    listed_names = {tool['name'] for tool in listed['result']['tools']}
+    assert listed_names == set(TOOL_SCHEMAS) - WorkflowMCPServer._SESSION_TOOLS
 
 
 def test_mcp_authoring_submits_agent_text_to_deterministic_sdk():
     client = MagicMock()
     client.create_workflow_draft.return_value = MagicMock(result={
         'draft': {'id': 'd1', 'version': 1},
+    })
+    client.get_skill_conversion_context.return_value = MagicMock(result={
+        'revision_id': 'r1', 'tree_hash': 'sha256:tree',
     })
     server = WorkflowMCPServer(lambda: client)
     files = {
@@ -72,12 +94,11 @@ def test_mcp_authoring_submits_agent_text_to_deterministic_sdk():
         'scenario/scenario.md': '# Report\n',
     }
     result = server.call_tool('create_workflow_draft', {
-        'name': 'Report', 'skill_id': 's1', 'revision_id': 'r1',
-        'tree_hash': 'sha256:tree', 'files': files,
+        'name': 'Report', 'skill_id': 's1', 'files': files,
     })
     assert result['structuredContent']['draft']['id'] == 'd1'
     client.create_workflow_draft.assert_called_once_with(
-        'Report', 's1', 'r1', 'sha256:tree', files,
+        'Report', 's1', 'r1', 'sha256:tree', files, 'skill',
     )
 
 

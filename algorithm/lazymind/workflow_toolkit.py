@@ -66,9 +66,9 @@ class AgentWorkflowToolProjection:
             name = str(getattr(tool, '__name__', ''))
             # Session creation is atomic in Agent Hosts; direct start and model-
             # initiated stop are controller capabilities, never model tools.
-            if name in {'start_workflow', 'stop_workflow'}:
+            if name in {'prepare_workflow', 'start_workflow', 'stop_workflow'}:
                 continue
-            if has_session and (name == 'prepare_workflow' or _is_workflow_trigger(name)):
+            if has_session and _is_workflow_trigger(name):
                 continue
             if name == 'resume_workflow' and (not has_session or status != 'stopped'):
                 continue
@@ -141,13 +141,16 @@ class HostWorkflowToolkit:
         return self._client().get_workflow(workflow_id, revision_id).result
 
     def prepare_workflow(self, workflow_id: str, input_bindings: Optional[Dict[str, Any]] = None,
-                         command_id: str = '') -> Dict[str, Any]:
+                         command_id: str = '', request_context: str = '') -> Dict[str, Any]:
         """Prepare a Workflow; in LazyMind create its Session and return Ready steps."""
         self._require_allowed(workflow_id)
         client = self._client()
         prepared = client.prepare_workflow(
             workflow_id, input_bindings=input_bindings, command_id=command_id,
-            fields={'origin_ref': self._origin_ref} if self._origin_ref else None).result
+            fields={
+                **({'origin_ref': self._origin_ref} if self._origin_ref else {}),
+                **({'request_context': request_context} if request_context else {}),
+            } or None).result
         if not self._origin_ref or prepared.get('status') != 'ready':
             return prepared
         preparation_id = str(prepared.get('id') or prepared.get('preparation_id') or '')
@@ -206,6 +209,18 @@ class HostWorkflowToolkit:
             steps=commands,
             command_id=resolved_command_id,
         )).result
+        statuses = result.get('attempt_statuses') if isinstance(result, dict) else None
+        if isinstance(statuses, dict):
+            failed = {
+                str(task_id): str(status) for task_id, status in statuses.items()
+                if str(status) in {'failed', 'cancelled', 'interrupted'}
+            }
+            if failed:
+                raise WorkflowClientError(
+                    'WORKFLOW_STEP_FAILED',
+                    'One or more Workflow steps reached a non-success terminal state.',
+                    details={'attempt_statuses': statuses, 'failed_attempts': failed},
+                )
         return {**result, 'command_id': resolved_command_id}
 
     def stop_workflow(self, session_id: str, command_id: str = '') -> Dict[str, Any]:

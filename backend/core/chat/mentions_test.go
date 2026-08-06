@@ -53,12 +53,20 @@ func TestApplyChatMentionsRejectsRemovedPluginWireType(t *testing.T) {
 
 func TestApplyChatMentionsResolvesWorkflowWireType(t *testing.T) {
 	raw := map[string]any{"mentions": []any{
-		map[string]any{"mention_id": "m1", "type": "workflow", "resource_id": "builtin:test-workflow", "display_name": "Workflow Comprehensive Smoke Test"},
+		map[string]any{"mention_id": "m1", "type": "workflow", "resource_id": "builtin:test-workflow", "display_name": "Workflow Artifact Pipeline Test"},
 	}}
-	db := orm.MigrateTestDB(t)
+	db := orm.MigrateTestDB(t, &orm.WorkflowResource{})
+	now := time.Now().UTC()
+	if err := db.Create(&orm.WorkflowResource{
+		ID: "builtin-test-workflow", WorkflowRef: "builtin:test-workflow", WorkflowID: "test-workflow",
+		OwnerScope: "builtin", SourceType: "builtin", RelativeRoot: "workflows/builtin/test-workflow",
+		Name: "Workflow Artifact Pipeline Test", Status: "active", CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
 	_, resolved, err := applyChatMentions(
 		context.Background(), db.DB, raw, "user-1", "conversation-1", "session-1",
-		"帮我执行一下 Workflow Comprehensive Smoke Test", nil,
+		"帮我执行一下 Workflow Artifact Pipeline Test", nil,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -106,6 +114,25 @@ func TestConversationWorkflowBindingSurvivesFollowUpAndClearsAtSessionEnd(t *tes
 	}
 	if string(conversation.Ext) != `{"keep":"value"}` {
 		t.Fatalf("unrelated conversation ext was not preserved: %s", conversation.Ext)
+	}
+}
+
+func TestExplicitWorkflowMentionOverridesDisabledConversationToggle(t *testing.T) {
+	db := orm.MigrateTestDB(t, &orm.Conversation{}, &orm.WorkflowSession{})
+	now := time.Now().UTC()
+	if err := db.Create(&orm.Conversation{ID: "conversation-1",
+		BaseModel: orm.BaseModel{CreateUserID: "user-1", CreatedAt: now, UpdatedAt: now}}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	refs, err := resolveConversationWorkflowBinding(context.Background(), db.DB, "conversation-1",
+		[]string{"builtin:test-workflow"}, nil, false, true)
+	if err != nil || len(refs) != 1 || refs[0] != "builtin:test-workflow" {
+		t.Fatalf("explicit mention refs=%v err=%v", refs, err)
+	}
+	bound, err := readConversationWorkflowBinding(context.Background(), db.DB, "conversation-1")
+	if err != nil || bound != "builtin:test-workflow" {
+		t.Fatalf("persisted binding=%q err=%v", bound, err)
 	}
 }
 

@@ -174,6 +174,10 @@ func applyChatMentions(ctx context.Context, db *gorm.DB, raw map[string]any, use
 			}
 		case "workflow":
 			if strings.HasPrefix(mention.ResourceID, "builtin:") {
+				var count int64
+				if err := db.WithContext(ctx).Model(&orm.WorkflowResource{}).Where("plugin_ref = ? AND source_type = 'builtin' AND owner_user_id = '' AND status = 'active'", mention.ResourceID).Count(&count).Error; err != nil || count == 0 { // workflow-naming: persistence
+					return query, resolved, fmt.Errorf("workflow mention is not accessible: %s", mention.ResourceID)
+				}
 				if denied {
 					resolved.ExcludedWorkflowRefs = append(resolved.ExcludedWorkflowRefs, mention.ResourceID)
 					continue
@@ -285,12 +289,10 @@ func resolveConversationWorkflowBinding(
 	if conversationID == "" {
 		return currentRefs, nil
 	}
-	if !enabled {
-		if persist {
-			return nil, writeConversationWorkflowBinding(ctx, db, conversationID, "")
-		}
-		return nil, nil
-	}
+	// An explicit Workflow mention is an affirmative per-turn selection. It
+	// must take precedence over a persisted conversation toggle; otherwise the
+	// selection is discarded before applyWorkflowSelection can register its
+	// bound trigger tool.
 	if len(currentRefs) > 0 {
 		if persist {
 			return currentRefs, writeConversationWorkflowBinding(
@@ -299,7 +301,12 @@ func resolveConversationWorkflowBinding(
 		}
 		return currentRefs, nil
 	}
-
+	if !enabled {
+		if persist {
+			return nil, writeConversationWorkflowBinding(ctx, db, conversationID, "")
+		}
+		return nil, nil
+	}
 	boundRef, err := readConversationWorkflowBinding(ctx, db, conversationID)
 	if err != nil {
 		return nil, err
@@ -422,7 +429,8 @@ func buildMentionResourceContext(ctx context.Context, db *gorm.DB, userID string
 			return db.WithContext(ctx).Model(&orm.SkillV2Skill{}).Where("id = ? AND owner_user_id = ? AND deleted_at IS NULL", mention.ResourceID, userID).Count(&count).Error == nil && count > 0
 		case "workflow":
 			if strings.HasPrefix(mention.ResourceID, "builtin:") {
-				return true
+				var count int64
+				return db.WithContext(ctx).Model(&orm.WorkflowResource{}).Where("plugin_ref = ? AND source_type = 'builtin' AND owner_user_id = '' AND status = 'active'", mention.ResourceID).Count(&count).Error == nil && count > 0 // workflow-naming: persistence
 			}
 			var count int64
 			return db.WithContext(ctx).Model(&orm.WorkflowResource{}).Where("plugin_ref = ? AND status = 'active' AND (owner_user_id = ? OR owner_user_id = '')", mention.ResourceID, userID).Count(&count).Error == nil && count > 0 // workflow-naming: persistence

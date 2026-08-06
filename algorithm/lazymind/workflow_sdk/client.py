@@ -193,9 +193,27 @@ class WorkflowClient:
 
     def get_ready_steps(self, session_id: str) -> Dict[str, Any]:
         state = self.get_state(session_id)
-        ready = state.get('ready_steps', state.get('ready', []))
-        return {'session_id': session_id, 'state_version': state.get('state_version'),
-                'ready_steps': ready, 'projection': state}
+        projection = state.get('projection') if isinstance(state.get('projection'), dict) else state
+
+        def step_ids(value: Any) -> List[str]:
+            values = value if isinstance(value, list) else []
+            return [
+                step_id for item in values
+                if (step_id := str(
+                    item.get('step_id') if isinstance(item, dict) else item or '',
+                ).strip())
+            ]
+
+        ready = step_ids(projection.get('ready_steps', projection.get('ready', [])))
+        return {
+            'session_id': session_id, 'state_version': state.get('state_version'),
+            'ready_steps': ready,
+            'retryable_steps': step_ids(projection.get(
+                'retryable_steps', projection.get('retryable', []))),
+            'rewindable_steps': step_ids(projection.get(
+                'rewindable_steps', projection.get('rewindable', []))),
+            'projection': state,
+        }
 
     def iter_events(self, session_id: str, after_event_id: int = 0) -> Iterator[Dict[str, Any]]:
         """Yield the durable SSE stream, reconnecting with Last-Event-ID for replay."""

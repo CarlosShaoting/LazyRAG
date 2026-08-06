@@ -190,8 +190,12 @@ func Project(graph *CompiledStateGraph, snapshot RuntimeSnapshot) Projection {
 			switch attempt.Status {
 			case "succeeded":
 				projection.Past = append(projection.Past, id)
+				projection.Rewindable = append(projection.Rewindable, id)
 			case "pending", "running", "waiting", "failed", "interrupted":
 				projection.Current = append(projection.Current, id)
+				if attempt.Status == "failed" || attempt.Status == "interrupted" {
+					projection.Retryable = append(projection.Retryable, id)
+				}
 			}
 		}
 		if bypassed[id] {
@@ -246,7 +250,7 @@ func projectedEdgeKey(edge CompiledEdge) string {
 }
 
 func sortProjection(p *Projection) {
-	for _, values := range []*[]string{&p.Past, &p.Current, &p.Reachable, &p.Ready, &p.Blocked, &p.Stale, &p.Pruned, &p.Bypassed} {
+	for _, values := range []*[]string{&p.Past, &p.Current, &p.Reachable, &p.Ready, &p.Retryable, &p.Rewindable, &p.Blocked, &p.Stale, &p.Pruned, &p.Bypassed} {
 		sort.Strings(*values)
 	}
 }

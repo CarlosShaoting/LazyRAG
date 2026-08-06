@@ -378,12 +378,21 @@ func TestOnSubAgentDone_Failed_SetsSessionFailed(t *testing.T) {
 	}
 
 	var gotEvents []string
-	onSSE := func(et string, _ map[string]any) { gotEvents = append(gotEvents, et) }
+	statusAtEvent := ""
+	onSSE := func(et string, _ map[string]any) {
+		gotEvents = append(gotEvents, et)
+		if session, err := GetSession(ctx, db.DB, "ps-3"); err == nil {
+			statusAtEvent = session.Status
+		}
+	}
 
 	OnSubAgentDone(ctx, db.DB, nil, "task-3", subagent.StatusFailed, "step error", onSSE, pctx)
 
 	if len(gotEvents) != 1 || gotEvents[0] != "workflow_error" {
 		t.Fatalf("expected only workflow_error, got %v", gotEvents)
+	}
+	if statusAtEvent != SessionStatusFailed {
+		t.Fatalf("workflow_error published before failed state was durable: %s", statusAtEvent)
 	}
 	// Session failure is distinct from a successful approval checkpoint.
 	s, _ := GetSession(ctx, db.DB, "ps-3")

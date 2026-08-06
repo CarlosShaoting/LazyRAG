@@ -97,8 +97,8 @@ _REPRESENTATIVE_TOOL_ARGUMENTS: dict[str, str] = {
     'FeishuWikiFS_copy': 'path1',
     'GoogleDriveFS_search': 'keywords',
     'GoogleDriveFS_find': 'pattern',
-    'advance_step': 'steps',
-    'advance_step_and_hand_off': 'steps',
+    'advance_step': 'step_ids/steps.step_id',
+    'advance_step_and_hand_off': 'step_id/steps.step_id',
     'advance_steps': 'steps',
     'advance_steps_and_hand_off': 'steps',
 }
@@ -362,7 +362,7 @@ _TOOL_RESULT_PREVIEW_TEMPLATES: dict[str, str] = {
     'advance_steps_and_hand_off': 'Workflow step batch queued and launched.',
     'regex:get_(.+)_methods': 'The {match} Toolkit has been expanded.',
     'regex:trigger_(.+)_workflow': (
-        'Workflow preflight completed. Result: {result.outcome}. Reason: {result.reason}.'
+        'Workflow initialization completed. Result: {result.outcome}. Reason: {result.reason}.'
     ),
 }
 
@@ -432,7 +432,7 @@ _ZH_TOOL_RESULT_PREVIEW_TEMPLATES: dict[str, str] = {
     'advance_steps_and_hand_off': '工作流步骤已批量排队并启动',
     'regex:get_(.+)_methods': '已经展开{match}工具箱。',
     'regex:trigger_(.+)_workflow': (
-        '工作流启动检查已完成，结果是 {result.outcome}，原因是 {result.reason}。'
+        '工作流初始化已完成，结果是 {result.outcome}，原因是 {result.reason}。'
     ),
 }
 
@@ -501,7 +501,7 @@ _TOOL_RESULT_FAILURE_TEMPLATES: dict[str, str] = {
     'advance_steps_and_hand_off': 'Step batch {value} could not be queued.',
     'regex:get_(.+)_methods': 'The {match} Toolkit could not be expanded.',
     'regex:trigger_(.+)_workflow': (
-        'Workflow preflight completed. Result: {result.outcome}. Reason: {result.reason}.'
+        'Workflow initialization failed. Result: {result.outcome}. Reason: {result.reason}.'
     ),
 }
 
@@ -570,7 +570,7 @@ _ZH_TOOL_RESULT_FAILURE_TEMPLATES: dict[str, str] = {
     'advance_steps_and_hand_off': '步骤批次 {value} 排队失败',
     'regex:get_(.+)_methods': '未能展开{match}工具箱。',
     'regex:trigger_(.+)_workflow': (
-        '工作流启动检查已完成，结果是 {result.outcome}，原因是 {result.reason}。'
+        '工作流初始化失败，结果是 {result.outcome}，原因是 {result.reason}。'
     ),
 }
 

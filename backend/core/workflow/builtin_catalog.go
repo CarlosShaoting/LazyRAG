@@ -46,18 +46,23 @@ func SeedBuiltinWorkflows(ctx context.Context, db *gorm.DB) error {
 	if err != nil {
 		return err
 	}
+	activeRefs := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
-		if err := seedBuiltinWorkflow(ctx, db, filepath.Join(root, entry.Name())); err != nil {
+		ref, err := seedBuiltinWorkflow(ctx, db, filepath.Join(root, entry.Name()))
+		if err != nil {
 			return fmt.Errorf("seed builtin Workflow %s: %w", entry.Name(), err)
 		}
+		if ref != "" {
+			activeRefs = append(activeRefs, ref)
+		}
 	}
-	return nil
+	return reconcileBuiltinWorkflowCatalog(ctx, db, activeRefs)
 }
 
-func seedBuiltinWorkflow(ctx context.Context, db *gorm.DB, root string) error {
+func seedBuiltinWorkflow(ctx context.Context, db *gorm.DB, root string) (string, error) {
 	files := map[string][]byte{}
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -78,16 +83,16 @@ func seedBuiltinWorkflow(ctx context.Context, db *gorm.DB, root string) error {
 		return nil
 	})
 	if err != nil {
-		return err
+		return "", err
 	}
 	workflowYAML, stateYAML := files["workflow.yaml"], files["scenario/state.yml"]
 	if len(workflowYAML) == 0 || len(stateYAML) == 0 {
-		return nil
+		return "", nil
 	}
 	compiled := graphengine.Compile(string(workflowYAML), string(stateYAML),
 		string(files["scenario/scenario.md"]), graphengine.ProfilePublish)
 	if !compiled.Valid || compiled.Graph == nil {
-		return fmt.Errorf("invalid package: %v", compiled.Diagnostics)
+		return "", fmt.Errorf("invalid package: %v", compiled.Diagnostics)
 	}
 	var metadata struct {
 		ID          string `yaml:"id"`
@@ -96,7 +101,7 @@ func seedBuiltinWorkflow(ctx context.Context, db *gorm.DB, root string) error {
 		WhenToUse   string `yaml:"when_to_use"`
 	}
 	if err := yaml.Unmarshal(workflowYAML, &metadata); err != nil || metadata.ID == "" {
-		return fmt.Errorf("workflow id is required")
+		return "", fmt.Errorf("workflow id is required")
 	}
 	paths := make([]string, 0, len(files))
 	for path := range files {
@@ -111,7 +116,7 @@ func seedBuiltinWorkflow(ctx context.Context, db *gorm.DB, root string) error {
 	treeHash := hex.EncodeToString(tree.Sum(nil))
 	ref := "builtin:" + metadata.ID
 	now := time.Now().UTC()
-	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var resource orm.WorkflowResource
 		err := tx.Where("plugin_ref = ?", ref).First(&resource).Error
 		if err != nil && err != gorm.ErrRecordNotFound {
@@ -133,7 +138,11 @@ func seedBuiltinWorkflow(ctx context.Context, db *gorm.DB, root string) error {
 		var existing orm.WorkflowRevision
 		if tx.Where("plugin_resource_id = ? AND tree_hash = ?", resource.ID, treeHash).First(&existing).Error == nil {
 			return tx.Model(&resource).Updates(map[string]any{"head_revision_id": existing.ID,
-				"version": existing.RevisionNo, "status": "active", "updated_at": now}).Error
+				"version": existing.RevisionNo, "plugin_id": metadata.ID, "owner_user_id": "", // workflow-naming: persistence
+				"owner_scope": "builtin", "source_type": "builtin",
+				"relative_root": "workflows/builtin/" + metadata.ID, "name": metadata.Name,
+				"description": metadata.Description, "when_to_use": metadata.WhenToUse,
+				"contains_scripts": hasScriptPath(paths), "status": "active", "updated_at": now}).Error
 		}
 		revisionID := uuid.NewString()
 		revision := orm.WorkflowRevision{ID: revisionID, WorkflowResourceID: resource.ID,
@@ -169,6 +178,23 @@ func seedBuiltinWorkflow(ctx context.Context, db *gorm.DB, root string) error {
 			"when_to_use": metadata.WhenToUse, "contains_scripts": hasScriptPath(paths),
 			"status": "active", "updated_at": now}).Error
 	})
+	return ref, err
+}
+
+// reconcileBuiltinWorkflowCatalog makes the repository directory the
+// authoritative active catalog. Removed or renamed packages are archived
+// instead of deleted so pinned revisions and historical sessions remain
+// reproducible, but stale identities can no longer appear in discovery.
+func reconcileBuiltinWorkflowCatalog(ctx context.Context, db *gorm.DB, activeRefs []string) error {
+	query := db.WithContext(ctx).Model(&orm.WorkflowResource{}).
+		Where("source_type = 'builtin' AND owner_user_id = '' AND status = 'active'")
+	if len(activeRefs) > 0 {
+		query = query.Where("plugin_ref NOT IN ?", activeRefs)
+	}
+	return query.Updates(map[string]any{
+		"status":     "archived",
+		"updated_at": time.Now().UTC(),
+	}).Error
 }
 
 func hasScriptPath(paths []string) bool {

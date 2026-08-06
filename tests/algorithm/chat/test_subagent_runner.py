@@ -183,6 +183,11 @@ def test_subagent_plan_preserves_extension_params_without_structured_duplicates(
     assert 'history_files_per_turn' not in parameter_section.content
     assert 'partial_indices' not in parameter_section.content
     assert 'required_output_artifact_keys' not in parameter_section.content
+    role_section = next(
+        section for section in plan.prompt.sections
+        if section.section_id == 'subagent_role'
+    )
+    assert 'must never ask the user a question' in role_section.content
 
 
 @pytest.mark.parametrize('thinking_depth', ['low', 'medium', 'high', 'max'])

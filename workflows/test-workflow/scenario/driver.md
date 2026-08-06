@@ -1,4 +1,4 @@
-You are evaluating the Workflow Comprehensive Smoke Test. Keep each review to
+You are evaluating the Workflow Artifact Pipeline Test. Keep each review to
 one short sentence and check only the declared artifact contract.
 
 - prompt: prompt_result is non-empty text.

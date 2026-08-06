@@ -31,6 +31,10 @@ def test_mock_model_runs_prepare_start_projection_and_advance_end_to_end(monkeyp
     def runtime(request: httpx.Request) -> httpx.Response:
         requests.append((request.method, request.url.path, json.loads(request.content or b'{}')))
         path = request.url.path
+        if path.endswith('/workflows/test-workflow'):
+            return httpx.Response(200, json={'ok': True, 'result': {
+                'workflow_id': 'test-workflow', 'revision_id': 'revision-1',
+            }})
         if path.endswith('/workflow-preparations'):
             # This is the exact flat public shape guaranteed by the Go facade.
             return httpx.Response(200, json={'ok': True, 'result': {
@@ -77,18 +81,20 @@ def test_mock_model_runs_prepare_start_projection_and_advance_end_to_end(monkeyp
                 'workflow_id': 'test-workflow', 'revision_id': 'revision-1',
             }],
             allowed_workflow_refs=['builtin:test-workflow'],
+            workflow_activations=[{
+                'workflow_ref': 'builtin:test-workflow',
+                'workflow_id': 'test-workflow', 'revision_id': 'revision-1',
+                'tool_name': 'trigger_test_workflow',
+            }],
         )
         model = ScriptedMockModel([
-            ('prepare_workflow', {'workflow_id': 'test-workflow'}),
+            ('trigger_test_workflow', {}),
             *[
                 call
                 for index, step in enumerate(steps, start=1)
                 for call in (
-                    ('get_ready_steps', {'session_id': 'session-1'}),
-                    ('advance_step', {
-                        'session_id': 'session-1', 'expected_state_version': index,
-                        'steps': [{'step_id': step}], 'command_id': f'advance-{index}',
-                    }),
+                    ('get_ready_steps', {}),
+                    ('advance_step', {'step_ids': [step]}),
                 )
             ],
         ])
@@ -96,19 +102,24 @@ def test_mock_model_runs_prepare_start_projection_and_advance_end_to_end(monkeyp
         name, arguments = model.next_tool_call()
         prepared = _tool(contribution.tools, name)(**arguments)
         assert prepared['session_id'] == 'session-1'
-        assert prepared['ready_steps'] == [{'step_id': 'prompt'}]
+        assert prepared['ready_steps'] == ['prompt']
+
+        contribution = resolve_workflow_injection({
+            'session_id': 'session-1', 'workflow_id': 'test-workflow',
+            'revision_id': 'revision-1', 'status': 'active',
+        })
 
         for index, step in enumerate(steps, start=1):
             name, arguments = model.next_tool_call()
             ready = _tool(contribution.tools, name)(**arguments)
             assert ready['state_version'] == index
-            assert ready['ready_steps'] == [{'step_id': step}]
+            assert ready['ready_steps'] == [step]
 
             name, arguments = model.next_tool_call()
             advanced = _tool(contribution.tools, name)(**arguments)
             assert advanced['attempt_status'] == 'succeeded'
-            assert advanced['command_id'] == f'advance-{index}'
-            assert arguments['steps'][0]['step_id'] == step
+            assert advanced['command_id']
+            assert arguments['step_ids'] == [step]
         assert not model.calls
     finally:
         if previous is None:
@@ -116,7 +127,8 @@ def test_mock_model_runs_prepare_start_projection_and_advance_end_to_end(monkeyp
         else:
             lazyllm.globals['agentic_config'] = previous
 
-    assert [path for _, path, _ in requests[:3]] == [
+    assert [path for _, path, _ in requests[:4]] == [
+        '/api/core/workflows/test-workflow',
         '/api/core/workflow-preparations',
         '/api/core/workflow-preparations/prep-1:consume',
         '/api/core/workflow-sessions/session-1/projection',

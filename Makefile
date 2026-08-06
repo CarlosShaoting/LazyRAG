@@ -314,7 +314,7 @@ _COMPOSE_BIND_CRITICAL_READ_PATHS := \
 	backend/scan-control-plane/scripts \
 	backend/file-watcher/configs \
 	db-init \
-	kong/workflows \
+	kong/plugins \
 	workflows \
 	scripts/db-bootstrap.sh \
 	kong.yml \

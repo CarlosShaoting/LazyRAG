@@ -5,7 +5,7 @@ Apply the first matching rule. Runtime state wins over conversation recollection
 | Priority | Condition | Decision |
 |---|---|---|
 | 1 | Preparation has missing inputs | Bind durable resources or request input; do not start. |
-| 2 | Any non-dismissed Session already exists | Reuse it; never call `prepare_workflow`. |
+| 2 | Any non-dismissed Session already exists | Reuse it; never trigger a replacement run. |
 | 3 | Session is stopped and continuation is explicit | `resume_workflow`, refresh projection, then advance the interrupted step when allowed. |
 | 4 | No Ready step | Observe active Attempts/events; do not manufacture a transition. |
 | 5 | User changes a succeeded result | Target the earliest invalidated step; Runtime resolves rewind/staleness. |
