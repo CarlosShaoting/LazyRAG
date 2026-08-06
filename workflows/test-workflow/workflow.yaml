@@ -1,5 +1,5 @@
 id: test-workflow
-name: Workflow Artifact Pipeline Test
+name: Workflow Runtime End-to-End Self-Test
 description: >
   A fast multi-stage workflow that exercises prompts, local script tools,
   typed artifacts, single-slot revisions, list artifacts, and final validation.
@@ -98,7 +98,7 @@ ui:
 
 i18n:
   zh-CN:
-    name: Workflow 产物流水线测试
+    name: Workflow 运行时端到端自检
     steps:
       prompt: {label: 提示词}
       script: {label: 脚本工具}

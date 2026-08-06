@@ -340,6 +340,11 @@ func registerAllRoutes(r *mux.Router) {
 	handleAPI(r, "PATCH", "/conversations/{conversation_id}/workflow-settings", []string{"qa.write"}, chat.PatchConversationWorkflowSettings)
 
 	// ----- Workflow Sessions -----
+	// Public Runtime package endpoints are intentionally separate from the
+	// legacy /workflows management-UI response shape. Runtime callers require a
+	// pinned revision, hashes, compiled graph, and package files.
+	handleAPI(r, "GET", "/workflow-runtime/v1/workflows", []string{"qa.read"}, workflowFacade.ListWorkflows)
+	handleAPI(r, "GET", "/workflow-runtime/v1/workflows/{workflow_id}", []string{"qa.read"}, workflowFacade.GetWorkflow)
 	handleAPI(r, "GET", "/workflow-authoring/v1/skill-context", []string{"qa.read"}, workflow.GetSkillConversionContext)
 	handleAPI(r, "POST", "/workflow-authoring/v1/drafts", []string{"qa.write"}, workflow.CreateAuthoringWorkflowDraft)
 	handleAPI(r, "PUT", "/workflow-authoring/v1/drafts/{draft_id}/files", []string{"qa.write"}, workflow.UpdateAuthoringWorkflowDraftFile)

@@ -189,6 +189,10 @@ def test_subagent_plan_preserves_extension_params_without_structured_duplicates(
             'history_files_per_turn': {'1': ['/tmp/input.txt']},
             'partial_indices': {'items': [0]},
             'required_output_artifact_keys': ['result'],
+            'workflow_id': 'test-workflow',
+            'session_id': 'session-1',
+            'step_id': 'prompt',
+            'user_input': 'run the whole workflow',
         },
         workspace_path=str(tmp_path),
         input_slots=[],
@@ -213,6 +217,9 @@ def test_subagent_plan_preserves_extension_params_without_structured_duplicates(
     assert 'history_files_per_turn' not in parameter_section.content
     assert 'partial_indices' not in parameter_section.content
     assert 'required_output_artifact_keys' not in parameter_section.content
+    assert 'workflow_id' not in parameter_section.content
+    assert 'session_id' not in parameter_section.content
+    assert 'user_input' not in parameter_section.content
     role_section = next(
         section for section in plan.prompt.sections
         if section.section_id == 'subagent_role'

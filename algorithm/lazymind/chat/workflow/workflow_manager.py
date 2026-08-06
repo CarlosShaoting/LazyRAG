@@ -98,6 +98,10 @@ def _handoff_tool(session_id: str) -> Any:
                     expected_state_version=int(frontier.get('state_version') or 0),
                     steps=[StepCommand(step_id=step_id)],
                     handoff=True,
+                    retry_origin=(
+                        'user' if bool(_agentic_config().get('user_authorized_workflow_retry'))
+                        else 'automatic'
+                    ),
                 ))
                 result = dict(response.result)
                 if state_refreshed:
@@ -193,6 +197,10 @@ def _safe_session_tools(
                 result = toolkit.advance_step(
                     selected_session_id, int(frontier.get('state_version') or 0),
                     [StepCommandInput(step_id=value) for value in requested],
+                    retry_origin=(
+                        'user' if bool(_agentic_config().get('user_authorized_workflow_retry'))
+                        else 'automatic'
+                    ),
                 )
                 if state_refreshed:
                     return {**result, **_state_refresh_notice()}
@@ -613,7 +621,14 @@ def resolve_workflow_injection(
             '## Workflow Runtime [AUTHORITATIVE]\n'
             + 'The Host owns session/version concurrency fields. Never ask the user for '
             + 'state_version or expected_state_version. If a Workflow tool returns '
-            + 'user_notice, explicitly relay that notice to the user.\n'
+            + 'user_notice, explicitly relay that notice to the user. advance_step waits for '
+            + 'terminal execution. A failed result never means success and never permits a '
+            + 'downstream advance. You may decide to retry only an exact retryable_steps ID; '
+            + 'Runtime enforces the finite AI automatic-retry budget. User-requested retries '
+            + 'remain available and do not consume that budget. After step_succeeded, continue in the '
+            + 'same turn using only the returned ready_steps until the Workflow is terminal, '
+            + 'requires user input/approval, reaches an explicit user boundary, or a step fails. '
+            + 'Do not replace continued execution with a promise that later steps will run.\n'
             + json.dumps(projection, ensure_ascii=False, default=str)
         )
         return WorkflowAgentContribution(
@@ -636,9 +651,15 @@ def resolve_workflow_injection(
         selection_context = (
             '## Explicit Workflow Selection [AUTHORITATIVE]\n'
             + '\n'.join(activation_prompts) + '\n'
-            + 'Start the selected workflow in this turn. Treat current_query as the '
+            + 'A Workflow is an executable, versioned procedure, not a document to search, '
+            + 'summarize, or merely describe. The @workflow mention means the user explicitly '
+            + 'selected and authorized this exact procedure. Call its bound trigger now. '
+            + 'Treat current_query as the '
             + 'workflow request_context and as user_input for the first Ready step; do not '
-            + 'ask for a second trigger message when current_query is non-empty. For recovery, '
+            + 'ask for a second trigger message when current_query is non-empty. After each '
+            + 'successful advance_step, continue in this same turn from its returned ready_steps '
+            + 'until terminal, required input/approval, explicit user boundary, or failure. Do '
+            + 'not merely announce that later steps will run. For recovery, '
             + 'use only exact retryable_steps or rewindable_steps returned by Runtime.\n'
             + json.dumps({
                 'current_query': current_query,

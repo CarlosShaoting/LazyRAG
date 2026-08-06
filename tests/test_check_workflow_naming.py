@@ -71,6 +71,19 @@ class WorkflowNamingCheckTest(unittest.TestCase):
         self.assertIn('/api/plugins', tokens)
         self.assertIn('plugin-sessions', tokens)
 
+    def test_published_migration_releases_are_immutable(self):
+        self.assertEqual(
+            [],
+            self._scan(
+                'backend/core/migrations/dev_mode/v0_2/001_legacy.sql',
+                '-- Plugin session and /api/plugins are historical text\n',
+            ),
+        )
+        self.assertTrue(self._scan(
+            'backend/core/migrations/dev_mode/v0_3/001_current.sql',
+            '-- Plugin session is not allowed in the current release\n',
+        ))
+
     def test_does_not_allow_a_whole_persistence_file(self):
         violations = self._scan(
             "persistence_adapter.go",  # noqa: Q000

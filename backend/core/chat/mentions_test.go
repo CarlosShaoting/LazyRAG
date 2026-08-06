@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -53,20 +54,20 @@ func TestApplyChatMentionsRejectsRemovedPluginWireType(t *testing.T) {
 
 func TestApplyChatMentionsResolvesWorkflowWireType(t *testing.T) {
 	raw := map[string]any{"mentions": []any{
-		map[string]any{"mention_id": "m1", "type": "workflow", "resource_id": "builtin:test-workflow", "display_name": "Workflow Artifact Pipeline Test"},
+		map[string]any{"mention_id": "m1", "type": "workflow", "resource_id": "builtin:test-workflow", "display_name": "Workflow Runtime End-to-End Self-Test"},
 	}}
 	db := orm.MigrateTestDB(t, &orm.WorkflowResource{})
 	now := time.Now().UTC()
 	if err := db.Create(&orm.WorkflowResource{
 		ID: "builtin-test-workflow", WorkflowRef: "builtin:test-workflow", WorkflowID: "test-workflow",
 		OwnerScope: "builtin", SourceType: "builtin", RelativeRoot: "workflows/builtin/test-workflow",
-		Name: "Workflow Artifact Pipeline Test", Status: "active", CreatedAt: now, UpdatedAt: now,
+		Name: "Workflow Runtime End-to-End Self-Test", Status: "active", CreatedAt: now, UpdatedAt: now,
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
 	_, resolved, err := applyChatMentions(
 		context.Background(), db.DB, raw, "user-1", "conversation-1", "session-1",
-		"帮我执行一下 Workflow Artifact Pipeline Test", nil,
+		"帮我执行一下 Workflow Runtime End-to-End Self-Test", nil,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -268,11 +269,32 @@ func TestBackendBuildsAndPropagatesWorkflowActivation(t *testing.T) {
 	if activation["tool_name"] != "trigger_image_workflow" {
 		t.Fatalf("activation = %#v", activation)
 	}
+	if !strings.Contains(fmt.Sprint(activation["tool_description"]), "executable Workflow") ||
+		!strings.Contains(fmt.Sprint(activation["prompt"]), "@workflow") {
+		t.Fatalf("workflow execution semantics missing: %#v", activation)
+	}
 	req := buildLazyChatRequest(map[string]any{
 		"workflow_activations": []map[string]any{activation},
 	})
 	if len(req.Workflow.Activations) != 1 || req.Workflow.Activations[0]["revision_id"] != "revision-1" {
 		t.Fatalf("Activations = %#v", req.Workflow.Activations)
+	}
+}
+
+func TestMentionResourceContextMarksWorkflowAsExecutable(t *testing.T) {
+	db := orm.MigrateTestDB(t, &orm.WorkflowResource{})
+	now := time.Now().UTC()
+	if err := db.Create(&orm.WorkflowResource{ID: "workflow-1", WorkflowRef: "builtin:test-workflow",
+		WorkflowID: "test-workflow", OwnerScope: "builtin", SourceType: "builtin", Status: "active",
+		Name: "Workflow Runtime End-to-End Self-Test", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	contextText := buildMentionResourceContext(context.Background(), db.DB, "user-1", nil,
+		map[string]any{"mentions": []any{map[string]any{"type": "workflow",
+			"resource_id": "builtin:test-workflow", "display_name": "Workflow Runtime End-to-End Self-Test"}}})
+	if !strings.Contains(contextText, "semantics=executable_procedure_selected_for_this_turn") ||
+		!strings.Contains(contextText, "invoke its bound trigger") {
+		t.Fatalf("workflow mention remained ambiguous: %s", contextText)
 	}
 }
 

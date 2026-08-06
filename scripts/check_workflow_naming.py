@@ -3,9 +3,8 @@
 
 The workflow migration deliberately keeps physical ``plugin_*`` database names.
 Those names are allowed only where they are unambiguously used as SQL identifiers,
-GORM column/table mappings, or row-mapper aliases.  A whole file or directory is
-never exempt: public structs and JSON fields in a persistence adapter are scanned
-like every other source line.
+GORM column/table mappings, or row-mapper aliases. Published v0.1/v0.2 migration
+history is immutable and excluded; current migration releases are scanned normally.
 """  # noqa: Q000
 
 from __future__ import annotations
@@ -38,6 +37,8 @@ SCANNED_SUFFIXES = {
 IGNORED_PARTS = {
     ".git", "node_modules", "vendor", "__pycache__", "dist", "build",  # noqa: Q000
 }
+
+IMMUTABLE_MIGRATION_RELEASES = {'v0_1', 'v0_2'}
 
 # Database identifiers are lower snake case with at least one underscore.  A
 # bare "plugin" is never a physical identifier and therefore is never allowed.  # noqa: Q000
@@ -141,6 +142,9 @@ def _is_physical_name_allowed(path: Path, line: str, token: str, start: int) -> 
 
 
 def scan_file(path: Path) -> Iterator[Violation]:
+    parts = set(path.parts)
+    if 'migrations' in parts and parts.intersection(IMMUTABLE_MIGRATION_RELEASES):
+        return
     try:
         contents = path.read_text(encoding="utf-8")  # noqa: Q000
     except UnicodeDecodeError:

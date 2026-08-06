@@ -79,3 +79,14 @@ func TestDisabledBuiltinWorkflowIDsIgnoresArchivedCatalogEntries(t *testing.T) {
 		t.Fatalf("archived builtin leaked into disabled catalog: %v", ids)
 	}
 }
+
+func TestBuiltinPackageIgnoresPythonRuntimeCacheFiles(t *testing.T) {
+	for _, name := range []string{"tools.pyc", "tools.pyo", ".DS_Store"} {
+		if !ignoredBuiltinPackageFile(name) {
+			t.Fatalf("runtime cache file %q was not ignored", name)
+		}
+	}
+	if ignoredBuiltinPackageFile("tools.py") {
+		t.Fatal("source file tools.py must remain in the immutable package")
+	}
+}

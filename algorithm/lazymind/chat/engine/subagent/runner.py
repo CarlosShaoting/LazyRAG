@@ -251,6 +251,14 @@ _STRUCTURED_PARAM_KEYS = {
     SUBAGENT_ATTACHMENT_CONTEXT_KEY,
     'partial_indices',
     'required_output_artifact_keys',
+    # Framework-owned Workflow routing/concurrency metadata. The effective
+    # objective and dedicated artifact sections already contain everything the
+    # SubAgent should act on; showing these fields invites it to re-interpret or
+    # re-run the parent Workflow instead of completing its one assigned step.
+    'workflow_id', 'workflow_ref', 'revision_id', 'revision_no', 'tree_hash',
+    'remote_root', 'step_id', 'session_id', 'user_input', 'hand_off',
+    'chat_session_id', 'workflow_mode', 'user_id', 'preflight_id',
+    'legacy_tools', 'parent_agentic_config', 'filters',
 }
 
 

@@ -31,7 +31,7 @@ def test_mock_model_runs_prepare_start_projection_and_advance_end_to_end(monkeyp
     def runtime(request: httpx.Request) -> httpx.Response:
         requests.append((request.method, request.url.path, json.loads(request.content or b'{}')))
         path = request.url.path
-        if path.endswith('/workflows/test-workflow'):
+        if path.endswith('/workflow-runtime/v1/workflows/test-workflow'):
             return httpx.Response(200, json={'ok': True, 'result': {
                 'workflow_id': 'test-workflow', 'revision_id': 'revision-1',
             }})
@@ -128,7 +128,7 @@ def test_mock_model_runs_prepare_start_projection_and_advance_end_to_end(monkeyp
             lazyllm.globals['agentic_config'] = previous
 
     assert [path for _, path, _ in requests[:4]] == [
-        '/api/core/workflows/test-workflow',
+        '/api/core/workflow-runtime/v1/workflows/test-workflow',
         '/api/core/workflow-preparations',
         '/api/core/workflow-preparations/prep-1:consume',
         '/api/core/workflow-sessions/session-1/projection',

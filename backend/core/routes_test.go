@@ -391,6 +391,8 @@ func TestWorkflowFacadeV1RoutesRegistered(t *testing.T) {
 	r := mux.NewRouter()
 	registerAllRoutes(r)
 	cases := []struct{ method, path, template string }{
+		{http.MethodGet, "/workflow-runtime/v1/workflows", "/workflow-runtime/v1/workflows"},
+		{http.MethodGet, "/workflow-runtime/v1/workflows/test-workflow", "/workflow-runtime/v1/workflows/{workflow_id}"},
 		{http.MethodPost, "/workflow-preparations", "/workflow-preparations"},
 		{http.MethodPost, "/workflow-preparations/p1:consume", "/workflow-preparations/{preparation_id}:consume"},
 		{http.MethodPost, "/workflow-sessions/s1:advance-step", "/workflow-sessions/{session_id}:advance-step"},

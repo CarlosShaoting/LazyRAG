@@ -10,10 +10,13 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/glebarez/sqlite"
 	"github.com/gorilla/mux"
 	"gorm.io/gorm"
+	"lazymind/core/common"
+	"lazymind/core/common/orm"
 	workflowstore "lazymind/core/workflow/store"
 )
 
@@ -59,6 +62,47 @@ func TestInputResourceImportAndBindingPinsStableRevision(t *testing.T) {
 	}
 	if bytes.Contains(encoded, []byte("content_base64")) || bytes.Contains(encoded, []byte("/tmp/")) {
 		t.Fatalf("Host-private data leaked: %s", encoded)
+	}
+}
+
+func TestAdvanceStepWaitsForTerminalAttemptFromLegacyEnvelope(t *testing.T) {
+	h, db := testHandler(t)
+	if err := db.AutoMigrate(&orm.WorkflowSessionStep{}, &orm.WorkflowTransitionCommand{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`INSERT INTO plugin_sessions(id, create_user_id) VALUES ('s1','owner')`).Error; err != nil {
+		t.Fatal(err)
+	}
+	legacy := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		now := time.Now().UTC()
+		row := orm.WorkflowSessionStep{ID: "attempt-1", SessionID: "s1", StepID: "prompt",
+			Attempt: 1, TaskID: "task-1", Status: "running", Validity: "effective",
+			CreatedAt: now, UpdatedAt: now}
+		if err := db.Create(&row).Error; err != nil {
+			t.Fatal(err)
+		}
+		go func() {
+			time.Sleep(80 * time.Millisecond)
+			_ = db.Model(&orm.WorkflowSessionStep{}).Where("task_id = ?", "task-1").Updates(
+				map[string]any{"status": "succeeded", "updated_at": time.Now().UTC()}).Error
+		}()
+		common.ReplyOK(w, map[string]any{"accepted": true, "session_id": "s1",
+			"task_id": "task-1", "tasks": []map[string]any{{"step_id": "prompt", "task_id": "task-1"}}})
+	})
+	body := []byte(`{"contract_version":"workflow.v1","command_id":"wait-1","tool":"advance_step","session_id":"s1","expected_state_version":1,"steps":[{"step_id":"prompt"}]}`)
+	r := mux.SetURLVars(request(http.MethodPost, "/workflow-sessions/s1:advance-step", "owner", body),
+		map[string]string{"session_id": "s1"})
+	w := httptest.NewRecorder()
+	started := time.Now()
+	h.Command(legacy)(w, r)
+	if elapsed := time.Since(started); elapsed < 80*time.Millisecond {
+		t.Fatalf("advance_step returned before terminal attempt: %s", elapsed)
+	}
+	wrapped := decodeEnvelope(t, w)
+	encoded, _ := json.Marshal(wrapped.Data)
+	if !bytes.Contains(encoded, []byte(`"attempt_status":"succeeded"`)) ||
+		!bytes.Contains(encoded, []byte(`"step_id":"prompt"`)) {
+		t.Fatalf("terminal execution result missing: %s", encoded)
 	}
 }
 

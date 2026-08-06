@@ -535,6 +535,10 @@ async def _handle_chat_impl(
         agentic_config['enable_workflow'] = bool(workflow.enable_workflow)
     if agent.enable_subagent is not None:
         agentic_config['enable_subagent'] = bool(agent.enable_subagent)
+    # This flag is derived by the Host from the actual user turn. It is not a
+    # model parameter: explicit user recovery never consumes the AI retry budget.
+    if bool((workflow.workflow_context or {}).get('user_authorized_retry')):
+        agentic_config['user_authorized_workflow_retry'] = True
     # workflow_mode is consumed directly from workflow_context by resolve_workflow_injection
     # (where it is only meaningful when enable_workflow=true); no need to store it in
     # agentic_config separately.

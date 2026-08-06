@@ -19,11 +19,13 @@ import (
 	"lazymind/core/workflow/attempt"
 	"lazymind/core/workflow/executor"
 	"lazymind/core/workflow/graphengine"
+	workflowstore "lazymind/core/workflow/store"
 )
 
 type transitionCommandRequest struct {
 	CommandID            string              `json:"command_id"`
 	Operation            string              `json:"operation"`
+	RetryOrigin          string              `json:"retry_origin"`
 	TargetStepID         string              `json:"target_step_id"`
 	ExpectedStateVersion int64               `json:"expected_state_version"`
 	GraphHash            string              `json:"graph_hash"`
@@ -412,15 +414,15 @@ func rejectTransition(commandID string, session *orm.WorkflowSession, projection
 func persistTransitionCommand(db *gorm.DB, req transitionCommandRequest, response transitionCommandResponse, status string) error {
 	body, _ := json.Marshal(response)
 	now := time.Now().UTC()
-	row := orm.WorkflowTransitionCommand{CommandID: req.CommandID, SessionID: response.SessionID, Operation: req.Operation, TargetStepID: commandTargetID(req), Status: status, TaskID: response.TaskID, ExpectedStateVersion: req.ExpectedStateVersion, ResultingStateVersion: response.StateVersion, ResponseJSON: body, CreatedAt: now, UpdatedAt: now}
-	return db.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "command_id"}}, DoUpdates: clause.AssignmentColumns([]string{"session_id", "operation", "status", "task_id", "resulting_state_version", "response_json", "updated_at"})}).Create(&row).Error
+	row := orm.WorkflowTransitionCommand{CommandID: req.CommandID, SessionID: response.SessionID, Operation: req.Operation, RetryOrigin: req.RetryOrigin, TargetStepID: commandTargetID(req), Status: status, TaskID: response.TaskID, ExpectedStateVersion: req.ExpectedStateVersion, ResultingStateVersion: response.StateVersion, ResponseJSON: body, CreatedAt: now, UpdatedAt: now}
+	return db.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "command_id"}}, DoUpdates: clause.AssignmentColumns([]string{"session_id", "operation", "retry_origin", "status", "task_id", "resulting_state_version", "response_json", "updated_at"})}).Create(&row).Error
 }
 
 func reserveTransitionCommand(db *gorm.DB, req transitionCommandRequest) (bool, error) {
 	pending := transitionCommandResponse{Accepted: false, CommandID: req.CommandID, Error: &transitionError{Code: "TRANSITION_RESULT_UNKNOWN", Message: "transition command is still being processed", Retryable: true}}
 	body, _ := json.Marshal(pending)
 	now := time.Now().UTC()
-	row := orm.WorkflowTransitionCommand{CommandID: req.CommandID, Operation: req.Operation, TargetStepID: commandTargetID(req), Status: "processing", ExpectedStateVersion: req.ExpectedStateVersion, ResponseJSON: body, CreatedAt: now, UpdatedAt: now}
+	row := orm.WorkflowTransitionCommand{CommandID: req.CommandID, Operation: req.Operation, RetryOrigin: req.RetryOrigin, TargetStepID: commandTargetID(req), Status: "processing", ExpectedStateVersion: req.ExpectedStateVersion, ResponseJSON: body, CreatedAt: now, UpdatedAt: now}
 	result := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&row)
 	return result.RowsAffected == 1, result.Error
 }
@@ -474,6 +476,9 @@ func TransitionWorkflowSession(w http.ResponseWriter, r *http.Request) {
 	if req.Operation != "advance" && req.Operation != "execute" && req.Operation != "execute_batch" && req.Operation != "retry" && req.Operation != "rewind" {
 		common.ReplyErr(w, "operation must be advance, execute, execute_batch, retry, or rewind", http.StatusUnprocessableEntity)
 		return
+	}
+	if req.RetryOrigin != "user" {
+		req.RetryOrigin = "automatic"
 	}
 	if (req.Operation == "advance" || req.Operation == "retry" || req.Operation == "rewind") && len(targets) != 1 {
 		common.ReplyErr(w, "advance, retry, and rewind require exactly one target", http.StatusUnprocessableEntity)
@@ -540,6 +545,27 @@ func TransitionWorkflowSession(w http.ResponseWriter, r *http.Request) {
 				return resolveErr
 			}
 			req.Operation = resolved
+		}
+		if req.Operation == "retry" {
+			var latest orm.WorkflowSessionStep
+			if err := tx.Where("session_id = ? AND step_id = ? AND validity = ?", session.ID,
+				targets[0].TargetStepID, "effective").Order("attempt DESC").First(&latest).Error; err != nil {
+				return err
+			}
+			var automaticAttempts int64
+			if err := tx.Model(&orm.WorkflowTransitionCommand{}).
+				Where("session_id = ? AND target_step_id = ? AND operation IN ? AND retry_origin = ? AND status = ?",
+					session.ID, latest.StepID, []string{"execute", "retry"}, "automatic", "accepted").
+				Count(&automaticAttempts).Error; err != nil {
+				return err
+			}
+			if req.RetryOrigin != "user" && automaticAttempts >= workflowstore.MaxAutomaticWorkflowStepAttempts {
+				return rejectTransition(req.CommandID, &session, projection, http.StatusConflict,
+					"WORKFLOW_AUTOMATIC_RETRY_LIMIT_EXCEEDED", "AI automatic retry limit was reached; the user may still retry explicitly", false,
+					map[string]any{"step_id": latest.StepID, "automatic_attempts": automaticAttempts,
+						"max_automatic_attempts": workflowstore.MaxAutomaticWorkflowStepAttempts,
+						"user_retry_available":   true})
+			}
 		}
 		if session.Status == SessionStatusCompleted && req.Operation != "retry" && req.Operation != "rewind" {
 			return rejectTransition(req.CommandID, &session, projection, http.StatusConflict, "SESSION_TERMINAL", "plugin session is already completed", false, nil)

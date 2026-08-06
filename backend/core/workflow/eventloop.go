@@ -813,32 +813,10 @@ func advanceAutoMode(
 	onSSE func(string, map[string]any),
 	pctx *WorkflowChatContext,
 ) {
-	// Enforce global max retries (non-workflow.yaml configurable).
 	step, _ := GetLatestStep(ctx, db, pctx.SessionID, pctx.StepID)
 	attempt := 0
 	if step != nil {
 		attempt = step.Attempt
-	}
-	if terminalStatus == subagent.StatusSucceeded && attempt >= defaultDriverMaxRetries {
-		onSSE("max_retries_exceeded", map[string]any{
-			"session_id": pctx.SessionID,
-			"step_id":    pctx.StepID,
-			"attempt":    attempt,
-		})
-		// Treat as PASS — forward summary directly to ChatAgent without DriverAgent evaluation.
-		pctxCopy := *pctx
-		go func() {
-			triggerNextChatTurn(pctxCopy.ConvID, pctxCopy.SessionID, pctxCopy.WorkflowID, pctxCopy.StepID,
-				pctxCopy.WorkflowMode, pctxCopy.UserID, summary, func() {
-					onSSE("auto_chat_started", map[string]any{
-						"session_id":      pctxCopy.SessionID,
-						"conversation_id": pctxCopy.ConvID,
-						"driver_message":  summary,
-					})
-				}, "driver")
-			checkAndFallbackIfStuck(ctx, db, stateStore, onSSE, &pctxCopy)
-		}()
-		return
 	}
 
 	llmConfig, configErr := modelconfig.LoadLLMConfig(ctx, db, pctx.UserID)
@@ -1189,10 +1167,6 @@ func extractCaption(ctx context.Context, db *gorm.DB, taskID, slot string) strin
 func resolveSlotBinding(workflowID, slot string) (slotID, cardinality string) {
 	return "", ""
 }
-
-// defaultDriverMaxRetries is the global max retry count for DriverAgent RETRY verdicts.
-// Not configurable per workflow.yaml — global platform setting only.
-const defaultDriverMaxRetries = 3
 
 func callWorkflowDriverAgent(
 	workflowID, stepID, stepResult, acceptance, driverPrompt, sessionID string,

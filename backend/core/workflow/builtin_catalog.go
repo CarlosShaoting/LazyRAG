@@ -68,7 +68,13 @@ func seedBuiltinWorkflow(ctx context.Context, db *gorm.DB, root string) (string,
 		if err != nil {
 			return err
 		}
-		if entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+		if entry.IsDir() {
+			if entry.Name() == "__pycache__" || strings.HasPrefix(entry.Name(), ".") && path != root {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if ignoredBuiltinPackageFile(entry.Name()) {
 			return nil
 		}
 		relative, err := filepath.Rel(root, path)
@@ -179,6 +185,11 @@ func seedBuiltinWorkflow(ctx context.Context, db *gorm.DB, root string) (string,
 			"status": "active", "updated_at": now}).Error
 	})
 	return ref, err
+}
+
+func ignoredBuiltinPackageFile(name string) bool {
+	return strings.HasPrefix(name, ".") || strings.HasSuffix(name, ".pyc") ||
+		strings.HasSuffix(name, ".pyo")
 }
 
 // reconcileBuiltinWorkflowCatalog makes the repository directory the

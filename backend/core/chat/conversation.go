@@ -334,6 +334,9 @@ func ChatConversations(w http.ResponseWriter, r *http.Request) {
 		if existingWorkflowContext == nil {
 			existingWorkflowContext = map[string]any{}
 		}
+		// Never trust caller-provided recovery authorization; derive it below from
+		// the normalized user query for this turn.
+		delete(existingWorkflowContext, "user_authorized_retry")
 		existingWorkflowContext["workflow_mode"] = workflowMode
 		reqBody["workflow_context"] = existingWorkflowContext
 		if preflight := loadWorkflowPreflightContext(r.Context(), db, convID); len(preflight) > 0 {
@@ -373,8 +376,8 @@ func ChatConversations(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if activeSess, err := workflow.GetLatestSession(r.Context(), db, convID); err == nil &&
-			!workflowSessionTerminal(activeSess) {
+		if activeSess, err := workflow.GetLatestSession(r.Context(), db, convID); err == nil && activeSess != nil &&
+			(!workflowSessionTerminal(activeSess) || activeSess.Status == workflow.SessionStatusFailed) {
 			existing, hasPC := reqBody["workflow_context"].(map[string]any)
 			if !hasPC || existing == nil {
 				// Case 1: inject from DB.
@@ -412,6 +415,14 @@ func ChatConversations(w http.ResponseWriter, r *http.Request) {
 					fmt.Printf("[WORKFLOW_CONTEXT_CORRECTED] conversation_id=%s session_id=%s workflow_id=%s current_step=%s\n",
 						convID, activeSess.ID, activeSess.WorkflowID, activeSess.CurrentStepID)
 				}
+			}
+			// Recovery authorization is derived from the real user turn by the Host.
+			// It is deliberately not exposed as a model-fillable Workflow parameter.
+			retryContext, _ := reqBody["workflow_context"].(map[string]any)
+			syntheticSource, _ := retryContext["synthetic_source"].(string)
+			if retryContext != nil && syntheticSource == "" && userExplicitlyRequestedWorkflowRetry(displayQuery) {
+				retryContext["user_authorized_retry"] = true
+				reqBody["workflow_context"] = retryContext
 			}
 		} else if existing, hasPC := reqBody["workflow_context"].(map[string]any); hasPC {
 			// No active session in DB but frontend sent a workflow_context — clear it to avoid
@@ -473,6 +484,24 @@ func ChatConversations(w http.ResponseWriter, r *http.Request) {
 	}
 
 	handleStreamChat(w, r, db, stateStore, baseURL, reqBody, convID, displayQuery, target, dualReply, historyExt)
+}
+
+func userExplicitlyRequestedWorkflowRetry(query string) bool {
+	value := strings.ToLower(strings.TrimSpace(query))
+	if value == "" {
+		return false
+	}
+	for _, denied := range []string{"不要重试", "别重试", "无需重试", "不重试", "do not retry", "don't retry"} {
+		if strings.Contains(value, denied) {
+			return false
+		}
+	}
+	for _, prefix := range []string{"重试", "再试", "重新执行", "请重试", "帮我重试", "retry", "try again", "rerun"} {
+		if strings.HasPrefix(value, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // ResumeChat text POST /api/v1/conversations:resumeChat

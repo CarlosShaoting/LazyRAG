@@ -78,18 +78,55 @@ def test_prepare_workflow_persists_request_context_for_session_defaults():
     }
 
 
-def test_advance_step_raises_when_synchronous_attempt_failed():
+def test_advance_step_returns_failure_for_chat_agent_retry_decision():
     client = MagicMock()
     client.advance.return_value.result = {
         'accepted': True,
         'attempt_statuses': {'task-1': 'failed'},
+        'attempt_results': [{'task_id': 'task-1', 'step_id': 'prompt', 'attempt': 1}],
+        'step_id': 'prompt', 'attempt': 1, 'max_attempts': 3, 'retry_remaining': 2,
+        'projection': {'retryable': ['prompt']},
     }
     toolkit = HostWorkflowToolkit(lambda: client)
 
-    with pytest.raises(WorkflowClientError) as error:
-        toolkit.advance_step('session-1', 1, [{'step_id': 'prompt'}])
+    result = toolkit.advance_step('session-1', 1, [{'step_id': 'prompt'}])
 
-    assert error.value.code == 'WORKFLOW_STEP_FAILED'
+    assert result['outcome'] == 'step_failed'
+    assert result['retryable_steps'] == ['prompt']
+    assert result['retry_remaining'] == 2
+    assert result['next_action']['decision_owner'] == 'ChatAgent'
+
+
+def test_advance_step_success_directs_same_turn_continuation():
+    client = MagicMock()
+    client.advance.return_value.result = {
+        'accepted': True,
+        'attempt_statuses': {'task-1': 'succeeded'},
+        'projection': {'ready': ['script'], 'completed': False},
+    }
+    toolkit = HostWorkflowToolkit(lambda: client)
+
+    result = toolkit.advance_step('session-1', 1, [{'step_id': 'prompt'}])
+
+    assert result['outcome'] == 'step_succeeded'
+    assert result['ready_steps'] == ['script']
+    assert result['next_action']['tool'] == 'advance_step'
+    assert 'same ChatAgent turn' in result['next_action']['instruction']
+
+
+def test_advance_step_completion_stops_continuation():
+    client = MagicMock()
+    client.advance.return_value.result = {
+        'accepted': True,
+        'attempt_statuses': {'task-1': 'succeeded'},
+        'projection': {'ready': [], 'completed': True},
+    }
+    toolkit = HostWorkflowToolkit(lambda: client)
+
+    result = toolkit.advance_step('session-1', 1, [{'step_id': 'verify'}])
+
+    assert result['outcome'] == 'workflow_completed'
+    assert result['next_action']['tool'] is None
 
 
 def test_chat_prepare_starts_session_and_returns_authoritative_ready_frontier():

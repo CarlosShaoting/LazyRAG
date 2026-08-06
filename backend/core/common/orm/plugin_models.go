@@ -181,6 +181,7 @@ type WorkflowTransitionCommand struct {
 	CommandID             string          `gorm:"column:command_id;type:varchar(36);primaryKey"`
 	SessionID             string          `gorm:"column:session_id;type:varchar(36);not null;default:'';index"`
 	Operation             string          `gorm:"column:operation;type:varchar(16);not null"`
+	RetryOrigin           string          `gorm:"column:retry_origin;type:varchar(16);not null;default:'automatic'"`
 	TargetStepID          string          `gorm:"column:target_step_id;type:varchar(64);not null;default:''"`
 	Status                string          `gorm:"column:status;type:varchar(16);not null"`
 	TaskID                string          `gorm:"column:task_id;type:varchar(36);not null;default:''"`

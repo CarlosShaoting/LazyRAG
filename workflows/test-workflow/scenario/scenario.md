@@ -1,4 +1,4 @@
-# Workflow Artifact Pipeline Test
+# Workflow Runtime End-to-End Self-Test
 
 This workflow has six fast stages. Every stage performs only one small operation
 and uses no network or external product integration.

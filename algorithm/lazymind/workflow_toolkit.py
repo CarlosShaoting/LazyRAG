@@ -199,7 +199,8 @@ class HostWorkflowToolkit:
         return self._client().get_ready_steps(session_id)
 
     def advance_step(self, session_id: str, expected_state_version: int,
-                     steps: List[StepCommandInput], command_id: str = '') -> Dict[str, Any]:
+                     steps: List[StepCommandInput], command_id: str = '',
+                     retry_origin: str = 'automatic') -> Dict[str, Any]:
         """Submit Ready targets; command_id is top-level and never belongs inside steps."""
         commands = [StepCommand(**item.model_dump()) if isinstance(item, StepCommandInput)
                     else StepCommand(**item) for item in steps]
@@ -208,6 +209,7 @@ class HostWorkflowToolkit:
             session_id=session_id, expected_state_version=expected_state_version,
             steps=commands,
             command_id=resolved_command_id,
+            retry_origin=retry_origin,
         )).result
         statuses = result.get('attempt_statuses') if isinstance(result, dict) else None
         if isinstance(statuses, dict):
@@ -216,12 +218,46 @@ class HostWorkflowToolkit:
                 if str(status) in {'failed', 'cancelled', 'interrupted'}
             }
             if failed:
-                raise WorkflowClientError(
-                    'WORKFLOW_STEP_FAILED',
-                    'One or more Workflow steps reached a non-success terminal state.',
-                    details={'attempt_statuses': statuses, 'failed_attempts': failed},
-                )
-        return {**result, 'command_id': resolved_command_id}
+                projection = result.get('projection') if isinstance(result.get('projection'), dict) else {}
+                retryable = result.get('retryable_steps') or projection.get('retryable') or []
+                return {
+                    **result,
+                    'status': 'failed',
+                    'outcome': 'step_failed',
+                    'failed_attempts': failed,
+                    'retryable_steps': retryable,
+                    'next_action': {
+                        'decision_owner': 'ChatAgent',
+                        'instruction': (
+                            'Do not advance a downstream step. Decide whether to retry only an '
+                            'exact retryable_steps ID. If automatic_retry_remaining is zero, do '
+                            'not retry autonomously; explicitly tell the user that manual retry '
+                            'is still available. If the retryable list is empty, report the failure '
+                            'to the user.'
+                        ),
+                    },
+                    'command_id': resolved_command_id,
+                }
+        projection = result.get('projection') if isinstance(result.get('projection'), dict) else {}
+        ready = result.get('ready_steps') or projection.get('ready') or []
+        completed = bool(projection.get('completed'))
+        return {
+            **result,
+            'status': 'completed' if completed else 'active',
+            'outcome': 'workflow_completed' if completed else 'step_succeeded',
+            'ready_steps': ready,
+            'next_action': {
+                'tool': None if completed else 'advance_step',
+                'instruction': (
+                    'Workflow is complete; summarize the final result to the user.'
+                    if completed else
+                    'Continue in this same ChatAgent turn by selecting exact IDs from the '
+                    'returned ready_steps. Stop only for a terminal state, required user input, '
+                    'required approval, explicit user boundary, or a failed step decision.'
+                ),
+            },
+            'command_id': resolved_command_id,
+        }
 
     def stop_workflow(self, session_id: str, command_id: str = '') -> Dict[str, Any]:
         """Explicitly pause one Session; preserve state and never prepare a replacement."""

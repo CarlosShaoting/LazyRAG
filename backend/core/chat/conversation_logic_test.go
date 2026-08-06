@@ -1129,3 +1129,16 @@ func TestResolveWorkflowModeWithFallback(t *testing.T) {
 		t.Fatalf("expected agentic_config fallback, got %q", got)
 	}
 }
+
+func TestUserExplicitlyRequestedWorkflowRetry(t *testing.T) {
+	for _, query := range []string{"重试", "帮我重试这个失败步骤", "retry the failed step", "try again"} {
+		if !userExplicitlyRequestedWorkflowRetry(query) {
+			t.Errorf("expected explicit retry for %q", query)
+		}
+	}
+	for _, query := range []string{"继续", "不要重试", "do not retry", "分析为什么重试失败"} {
+		if userExplicitlyRequestedWorkflowRetry(query) {
+			t.Errorf("unexpected retry authorization for %q", query)
+		}
+	}
+}

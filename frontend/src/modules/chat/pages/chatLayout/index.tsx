@@ -428,7 +428,9 @@ const ChatLayout: FC<IChatLayoutProps> = (props) => {
     // instead of cold-start trigger tools on follow-up messages.
     const activeSession = useWorkflowStore.getState().sessionByConversation[sessionId];
     const workflowContext =
-      activeSession?.status === "active" || activeSession?.status === "waiting"
+      activeSession?.status === "active" ||
+      activeSession?.status === "waiting" ||
+      activeSession?.status === "failed"
         ? {
             session_id: activeSession.session_id,
             workflow_id: activeSession.workflow_id,

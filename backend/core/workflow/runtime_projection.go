@@ -212,10 +212,21 @@ func projectSession(ctx context.Context, db *gorm.DB, session *orm.WorkflowSessi
 			inputWitnesses[attempt.ID] = append(inputWitnesses[attempt.ID], graphengine.Witness{MaterialID: binding.MaterialID, RevisionID: binding.MaterialRevisionID, BindAs: binding.BindAs})
 		}
 	}
+	projection := graphengine.Project(graph, snapshot)
 	return projectionResponse{
 		SessionID: session.ID, StateVersion: session.StateVersion, GraphHash: graph.GraphHash, SchemaVersion: graph.SchemaVersion,
-		Projection: graphengine.Project(graph, snapshot), Graph: graph, AttemptHistory: attemptHistory, InputWitnesses: inputWitnesses,
+		Projection: projection, Graph: graph, AttemptHistory: attemptHistory, InputWitnesses: inputWitnesses,
 	}, nil
+}
+
+func removeStepID(values []string, target string) []string {
+	filtered := values[:0]
+	for _, value := range values {
+		if value != target {
+			filtered = append(filtered, value)
+		}
+	}
+	return filtered
 }
 
 func GetSessionProjection(w http.ResponseWriter, r *http.Request) {

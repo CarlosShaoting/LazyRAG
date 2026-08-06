@@ -467,11 +467,15 @@ func buildMentionResourceContext(ctx context.Context, db *gorm.DB, userID string
 	}
 
 	var lines []string
-	lines = append(lines, "<mentioned_resources>", "The following resources were explicitly referenced by the user. Names are for interpretation; use resource IDs for calls.")
+	lines = append(lines, "<mentioned_resources>", "The following resources were explicitly referenced by the user. Use resource IDs for calls.")
 	if len(current) > 0 {
 		lines = append(lines, "Current-turn references (authorized for this turn):")
 		for _, mention := range current {
-			lines = append(lines, fmt.Sprintf("- type=%s, name=%q, id=%q", mention.Type, mention.DisplayName, mention.ResourceID))
+			if mention.Type == "workflow" {
+				lines = append(lines, fmt.Sprintf("- type=workflow, name=%q, id=%q, semantics=executable_procedure_selected_for_this_turn; invoke its bound trigger, do not search for it as content", mention.DisplayName, mention.ResourceID))
+			} else {
+				lines = append(lines, fmt.Sprintf("- type=%s, name=%q, id=%q", mention.Type, mention.DisplayName, mention.ResourceID))
+			}
 		}
 	}
 	if len(recent) > 0 {
@@ -689,9 +693,9 @@ func buildWorkflowActivation(item map[string]any, workflowRef string) map[string
 		"revision_id":  strings.TrimSpace(fmt.Sprint(item["revision_id"])),
 		"tool_name":    "trigger_" + stem + "_workflow",
 		"tool_description": strings.TrimSpace(fmt.Sprintf(
-			"Load the exact %q Workflow selected by the user. %s %s",
+			"Start the exact executable Workflow %q explicitly selected by the user and return its Ready frontier. This is execution, not resource lookup. %s %s",
 			name, fmt.Sprint(item["description"]), fmt.Sprint(item["when_to_use"]),
 		)),
-		"prompt": "The user explicitly selected this Workflow. Call its bound trigger directly; do not call list_workflows or select another Workflow.",
+		"prompt": "The user explicitly selected an executable Workflow with @workflow. Call its bound trigger directly in this turn. Do not search for the Workflow as an artifact, do not merely explain it, and do not call list_workflows or select another Workflow.",
 	}
 }

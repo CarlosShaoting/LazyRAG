@@ -102,3 +102,10 @@ func TestLegacySessionRejectsChangedWorkflowDefinition(t *testing.T) {
 		t.Fatalf("user guidance missing from error: %v", changed)
 	}
 }
+
+func TestRemoveStepIDHidesExhaustedRetryTarget(t *testing.T) {
+	got := removeStepID([]string{"prompt", "review"}, "prompt")
+	if len(got) != 1 || got[0] != "review" {
+		t.Fatalf("retryable=%v, want [review]", got)
+	}
+}

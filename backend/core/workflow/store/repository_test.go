@@ -235,3 +235,24 @@ func TestEventReplayUsesPersistentCursorAndOwner(t *testing.T) {
 		t.Fatalf("owner leak: %#v %v", other, err)
 	}
 }
+
+func TestAutomaticAttemptCountExcludesUserAuthorizedCommands(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	rows := []orm.WorkflowTransitionCommand{
+		{CommandID: "initial", SessionID: "s1", TargetStepID: "draft", Operation: "execute", RetryOrigin: "automatic", Status: "accepted", ResponseJSON: json.RawMessage(`{}`), CreatedAt: now, UpdatedAt: now},
+		{CommandID: "auto-1", SessionID: "s1", TargetStepID: "draft", Operation: "retry", RetryOrigin: "automatic", Status: "accepted", ResponseJSON: json.RawMessage(`{}`), CreatedAt: now, UpdatedAt: now},
+		{CommandID: "user-1", SessionID: "s1", TargetStepID: "draft", Operation: "retry", RetryOrigin: "user", Status: "accepted", ResponseJSON: json.RawMessage(`{}`), CreatedAt: now, UpdatedAt: now},
+	}
+	if err := repo.db.AutoMigrate(&orm.WorkflowTransitionCommand{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.db.Create(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.AutomaticAttemptCount(ctx, "s1", "draft")
+	if err != nil || got != 2 {
+		t.Fatalf("automatic retries=%d err=%v, want 2", got, err)
+	}
+}

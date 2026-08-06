@@ -54,6 +54,7 @@ class AdvanceRequest:
     expected_state_version: int
     steps: List[StepCommand]
     handoff: bool = False
+    retry_origin: str = 'automatic'
     command_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
 
@@ -182,11 +183,13 @@ class WorkflowClient:
                 'discovery_response': workflows}
 
     def list_workflows(self) -> WorkflowResponse:
-        return self._read('/workflows')
+        return self._read('/workflow-runtime/v1/workflows')
 
     def get_workflow(self, workflow_id: str, revision_id: str = '') -> WorkflowResponse:
         query = ('?' + urlencode({'revision_id': revision_id})) if revision_id else ''
-        return self._read(f'/workflows/{quote(workflow_id, safe="")}{query}')
+        return self._read(
+            f'/workflow-runtime/v1/workflows/{quote(workflow_id, safe="")}{query}'
+        )
 
     def get_state(self, session_id: str) -> Dict[str, Any]:
         return self._read(f'/workflow-sessions/{session_id}/projection').result
@@ -351,6 +354,7 @@ class WorkflowClient:
         payload = {'contract_version': CONTRACT_VERSION, 'command_id': request.command_id,
                    'tool': tool, 'session_id': request.session_id,
                    'expected_state_version': request.expected_state_version,
+                   'retry_origin': request.retry_origin,
                    'steps': [asdict(step) for step in request.steps]}
         path = f'/workflow-sessions/{request.session_id}:' + (
             'advance-step-and-hand-off' if request.handoff else 'advance-step')

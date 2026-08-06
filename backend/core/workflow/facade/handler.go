@@ -137,6 +137,7 @@ type toolCommandRequest struct {
 	Tool                 string `json:"tool"`
 	SessionID            string `json:"session_id"`
 	ExpectedStateVersion *int64 `json:"expected_state_version"`
+	RetryOrigin          string `json:"retry_origin"`
 	Steps                []struct {
 		StepID string `json:"step_id"`
 	} `json:"steps"`
@@ -743,7 +744,7 @@ func (h Handler) Command(delegate http.Handler) http.HandlerFunc {
 			clone := r.Clone(r.Context())
 			clone.Body = io.NopCloser(bytes.NewReader(legacyBody))
 			delegate.ServeHTTP(recorder, clone)
-			return recorder.status, append(json.RawMessage(nil), recorder.body.Bytes()...), nil
+			return recorder.status, unwrapLegacyTransitionResponse(recorder.body.Bytes()), nil
 		})
 		if errors.Is(err, workflowstore.ErrIdempotencyConflict) {
 			fail(w, 409, "IDEMPOTENCY_CONFLICT", "command id was used with another payload", false)
@@ -783,10 +784,28 @@ func (h Handler) Command(delegate http.Handler) http.HandlerFunc {
 				return
 			}
 			value["execution_mode"] = "synchronous"
-			value["attempt_statuses"] = statuses
+			attemptStatuses := map[string]string{}
+			attemptResults := make([]workflowstore.TaskAttemptStatus, 0, len(statuses))
+			for _, status := range statuses {
+				attemptStatuses[status.TaskID] = status.Status
+				attemptResults = append(attemptResults, status)
+			}
+			value["attempt_statuses"] = attemptStatuses
+			value["attempt_results"] = attemptResults
 			if len(statuses) == 1 {
 				for _, status := range statuses {
-					value["attempt_status"] = status
+					automaticAttempts, countErr := h.Store.AutomaticAttemptCount(r.Context(), sessionID, status.StepID)
+					if countErr != nil {
+						fail(w, http.StatusInternalServerError, "RETRY_BUDGET_READ_FAILED", countErr.Error(), true)
+						return
+					}
+					value["attempt_status"] = status.Status
+					value["step_id"] = status.StepID
+					value["attempt"] = status.Attempt
+					value["automatic_attempts"] = automaticAttempts
+					value["max_automatic_attempts"] = workflowstore.MaxAutomaticWorkflowStepAttempts
+					value["automatic_retry_remaining"] = max(0, workflowstore.MaxAutomaticWorkflowStepAttempts-int(automaticAttempts))
+					value["user_retry_available"] = true
 				}
 			}
 			if h.Projection != nil {
@@ -796,7 +815,13 @@ func (h Handler) Command(delegate http.Handler) http.HandlerFunc {
 				var projectionResponse map[string]any
 				if json.Unmarshal(recorder.body.Bytes(), &projectionResponse) == nil {
 					if data, ok := projectionResponse["data"].(map[string]any); ok {
-						value["projection"] = data
+						value["workflow_state"] = data
+						if projection, ok := data["projection"].(map[string]any); ok {
+							value["projection"] = projection
+							value["ready_steps"] = projection["ready"]
+							value["retryable_steps"] = projection["retryable"]
+							value["rewindable_steps"] = projection["rewindable"]
+						}
 					}
 				}
 			}
@@ -805,6 +830,20 @@ func (h Handler) Command(delegate http.Handler) http.HandlerFunc {
 		}
 		writeJSON(w, result.HTTPStatus, envelope{Data: response})
 	}
+}
+
+// TransitionWorkflowSession still uses Core's historical {code,message,data}
+// envelope internally. The public Workflow facade must persist and inspect the
+// transition payload itself; otherwise task_id is hidden under data and the
+// synchronous advance path mistakenly treats the accepted task list as empty.
+func unwrapLegacyTransitionResponse(body []byte) json.RawMessage {
+	var wrapped struct {
+		Data json.RawMessage `json:"data"`
+	}
+	if json.Unmarshal(body, &wrapped) == nil && len(wrapped.Data) > 0 && string(wrapped.Data) != "null" {
+		return append(json.RawMessage(nil), wrapped.Data...)
+	}
+	return append(json.RawMessage(nil), body...)
 }
 
 type capture struct {

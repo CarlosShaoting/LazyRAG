@@ -23,6 +23,12 @@ var (
 	ErrSessionConflict     error = repositoryError("WORKFLOW_SESSION_CONFLICT")
 )
 
+// MaxAutomaticWorkflowStepAttempts limits executions controlled autonomously by AI,
+// including the initial execution and subsequent AI retries.
+// A retry explicitly requested by the user is a separate control path and is
+// deliberately not constrained by this budget.
+const MaxAutomaticWorkflowStepAttempts = 3
+
 type repositoryError string
 
 func (e repositoryError) Error() string { return string(e) }
@@ -494,8 +500,24 @@ func (r *Repository) UpdateSessionIntent(ctx context.Context, sessionID, intentC
 		}).Error
 }
 
-func (r *Repository) WaitTaskStatuses(ctx context.Context, sessionID string, taskIDs []string) (map[string]string, error) {
-	statuses := map[string]string{}
+type TaskAttemptStatus struct {
+	TaskID       string `json:"task_id"`
+	StepID       string `json:"step_id"`
+	Status       string `json:"status"`
+	Attempt      int    `json:"attempt"`
+	TerminalCode string `json:"terminal_code,omitempty"`
+}
+
+func (r *Repository) AutomaticAttemptCount(ctx context.Context, sessionID, stepID string) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&orm.WorkflowTransitionCommand{}).
+		Where("session_id = ? AND target_step_id = ? AND operation IN ? AND retry_origin = ? AND status = ?",
+			sessionID, stepID, []string{"execute", "retry"}, "automatic", "accepted").Count(&count).Error
+	return count, err
+}
+
+func (r *Repository) WaitTaskStatuses(ctx context.Context, sessionID string, taskIDs []string) (map[string]TaskAttemptStatus, error) {
+	statuses := map[string]TaskAttemptStatus{}
 	if len(taskIDs) == 0 {
 		return statuses, nil
 	}
@@ -508,7 +530,8 @@ func (r *Repository) WaitTaskStatuses(ctx context.Context, sessionID string, tas
 		}
 		terminal := len(rows) == len(taskIDs)
 		for _, row := range rows {
-			statuses[row.TaskID] = row.Status
+			statuses[row.TaskID] = TaskAttemptStatus{TaskID: row.TaskID, StepID: row.StepID,
+				Status: row.Status, Attempt: row.Attempt, TerminalCode: row.TerminalCode}
 			if row.Status != "succeeded" && row.Status != "failed" && row.Status != "cancelled" && row.Status != "interrupted" {
 				terminal = false
 			}
