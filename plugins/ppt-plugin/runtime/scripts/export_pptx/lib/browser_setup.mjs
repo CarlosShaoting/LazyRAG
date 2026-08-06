@@ -1,5 +1,5 @@
-import { existsSync } from 'node:fs';
-import { delimiter, resolve } from 'node:path';
+import { existsSync, lstatSync, readlinkSync, rmSync, symlinkSync, unlinkSync } from 'node:fs';
+import { delimiter, isAbsolute, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { execFileSync, execSync } from 'node:child_process';
 
@@ -64,6 +64,7 @@ export function ensureDependencies(baseDir) {
   installHiddenProcessHooks();
   const depsDir = resolveDepsDir(baseDir);
   installBundledLinuxLibraryPath(depsDir);
+  ensureExporterNodeModulesLink(baseDir);
   const nodeModules = resolve(depsDir, 'node_modules');
   const pptxgenMarker = resolve(nodeModules, 'pptxgenjs');
   const playwrightMarker = resolve(nodeModules, 'playwright');
@@ -106,6 +107,52 @@ function resolveDepsDir(baseDir) {
   const fromEnv = String(process.env.LAZYMIND_PPT_EXPORT_DEPS || '').trim();
   if (fromEnv && existsSync(fromEnv)) return resolve(fromEnv);
   return resolve(baseDir);
+}
+
+/**
+ * Point <exporter>/node_modules at LAZYMIND_PPT_EXPORT_DEPS/node_modules.
+ * Needed because ESM resolves packages from the importer's directory tree, and
+ * the deps ZIP is installed outside the repo. Never commit this link.
+ */
+export function ensureExporterNodeModulesLink(baseDir) {
+  const depsDir = resolveDepsDir(baseDir);
+  const target = resolve(depsDir, 'node_modules');
+  const link = resolve(baseDir, 'node_modules');
+  if (!existsSync(target)) {
+    return;
+  }
+  try {
+    let needsLink = true;
+    try {
+      const st = lstatSync(link);
+      if (st.isSymbolicLink()) {
+        let current = readlinkSync(link);
+        if (!isAbsolute(current)) {
+          current = resolve(baseDir, current);
+        }
+        if (resolve(current) === resolve(target)) {
+          needsLink = false;
+        } else {
+          unlinkSync(link);
+        }
+      } else if (st.isDirectory()) {
+        // Real local npm install — leave alone.
+        needsLink = false;
+      } else {
+        unlinkSync(link);
+      }
+    } catch (err) {
+      if (err && err.code !== 'ENOENT') {
+        try { rmSync(link, { recursive: true, force: true }); } catch { /* ignore */ }
+      }
+    }
+    if (needsLink) {
+      // 'junction' works on Windows without admin; ignored as type on Unix.
+      symlinkSync(target, link, 'junction');
+    }
+  } catch (err) {
+    console.error(`[setup] failed to link exporter node_modules → ${target}: ${err.message}`);
+  }
 }
 
 /** Use Chromium runtime libraries bundled for minimal Ubuntu/WSL installs. */

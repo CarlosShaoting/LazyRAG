@@ -177,7 +177,8 @@ func TestAlgorithmServiceEnvDoesNotForceEditablePPT(t *testing.T) {
 	env := algorithmServiceEnv(cfg, paths, chatProcessName)
 
 	assertEnvNotContains(t, env, "LAZYMIND_OUTPUT_EDITABLE_PPT=")
-	assertEnvContains(t, env, "LAZYMIND_PPT_EXPORT_CLI="+filepath.Join(paths.RuntimeRoot, "deps", "editable-ppt", "html_to_pptx.mjs"))
+	assertEnvContains(t, env, "LAZYMIND_PPT_EXPORT_CLI="+filepath.Join(paths.RepoRoot, "plugins", "ppt-plugin", "runtime", "scripts", "export_pptx", "html_to_pptx.mjs"))
+	assertEnvContains(t, env, "LAZYMIND_PPT_EXPORT_DEPS="+filepath.Join(paths.RuntimeRoot, "deps", "editable-ppt"))
 	assertEnvContains(t, env, "PLAYWRIGHT_BROWSERS_PATH="+filepath.Join(paths.RuntimeRoot, "deps", "editable-ppt", "browsers"))
 }
 

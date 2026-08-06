@@ -60,7 +60,12 @@ func DetectEditablePPT(runtimeRoot string) (EditablePPTStatus, error) {
 	if err != nil {
 		return EditablePPTStatus{}, err
 	}
-	return buildEditablePPTStatus(cfg.EditablePPT), nil
+	status := buildEditablePPTStatus(cfg.EditablePPT)
+	if status.Installed {
+		// Heal stale/broken absolute links after install without requiring restart.
+		_ = EnsureEditablePPTNodeModulesLink(status.InstallDir)
+	}
+	return status, nil
 }
 
 func buildEditablePPTStatus(cfg EditablePPTConfig) EditablePPTStatus {
@@ -191,7 +196,82 @@ func InstallEditablePPT(ctx context.Context, runtimeRoot string) (EditablePPTSta
 	if !status.Installed {
 		return status, errors.New("editable PPTX install completed but Chromium was not detected")
 	}
+	// Rebuild the exporter's node_modules link immediately so export works
+	// without requiring a full local-up restart.
+	if err := EnsureEditablePPTNodeModulesLink(installDir); err != nil {
+		status.Message = strings.TrimSpace(status.Message + "; node_modules link: " + err.Error())
+	}
 	return status, nil
+}
+
+// EnsureEditablePPTNodeModulesLink points the repo exporter's node_modules at
+// the installed deps ZIP. Safe to call when deps are missing (returns error).
+func EnsureEditablePPTNodeModulesLink(installDir string) error {
+	exportSrc := editablePPTExporterSourceDir()
+	if exportSrc == "" {
+		return errors.New("LAZYMIND_PPT_EXPORT_CLI / LAZYMIND_PLUGINS_DIR is not set")
+	}
+	target := filepath.Join(installDir, "node_modules")
+	if info, err := os.Stat(target); err != nil || !info.IsDir() {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("editable PPT deps node_modules missing: %s", target)
+	}
+	link := filepath.Join(exportSrc, "node_modules")
+	if current, ok := readDirectorySymlink(link); ok {
+		if filepath.Clean(current) == filepath.Clean(target) {
+			return nil
+		}
+		_ = os.Remove(link)
+	} else if info, err := os.Lstat(link); err == nil {
+		if info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
+			// Real directory from a local npm install — leave alone.
+			return nil
+		}
+		_ = os.Remove(link)
+	}
+	if err := createEditablePPTDirectoryLink(target, link); err != nil {
+		return fmt.Errorf("create exporter node_modules link: %w", err)
+	}
+	return nil
+}
+
+func createEditablePPTDirectoryLink(target, link string) error {
+	if runtime.GOOS == "windows" {
+		cmd := exec.Command("cmd.exe", "/d", "/c", "mklink", "/J", link, target)
+		configureNodeCommand(cmd)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("mklink /J failed: %w (%s)", err, strings.TrimSpace(string(output)))
+		}
+		return nil
+	}
+	return os.Symlink(target, link)
+}
+
+func editablePPTExporterSourceDir() string {
+	if cli := strings.TrimSpace(os.Getenv("LAZYMIND_PPT_EXPORT_CLI")); cli != "" {
+		return filepath.Dir(cli)
+	}
+	if plugins := strings.TrimSpace(os.Getenv("LAZYMIND_PLUGINS_DIR")); plugins != "" {
+		return filepath.Join(plugins, "ppt-plugin", "runtime", "scripts", "export_pptx")
+	}
+	return ""
+}
+
+func readDirectorySymlink(path string) (string, bool) {
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return "", false
+	}
+	target, err := os.Readlink(path)
+	if err != nil {
+		return "", false
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(path), target)
+	}
+	return filepath.Clean(target), true
 }
 
 func editablePPTBundleConfigured() bool {
