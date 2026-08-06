@@ -39,8 +39,15 @@ import re
 import subprocess
 import sys
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import as_completed
 from pathlib import Path
+
+# Prefer LazyLLM's pool so worker threads inherit session sid / dynamic LLM config.
+# Fall back to stdlib for standalone CLI runs without lazyllm installed.
+try:
+    from lazyllm import ThreadPoolExecutor
+except ImportError:  # pragma: no cover
+    from concurrent.futures import ThreadPoolExecutor
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
 LIB_DIR = SKILL_DIR / "lib"
@@ -1677,30 +1684,99 @@ def cmd_page_html(deck: Path, page_no: int) -> int:
         lang_hint = "Target language for all visible text: English (en)."
     rewritten_query = f"{lang_hint}\n\n{rewritten_query}"
 
-    # Persist the rewritten query for debugging / manual re-run.
-    query_path = deck / "pages" / f"page_{page_no:03d}.query.txt"
+    return _write_page_html_from_query(
+        deck,
+        page_no,
+        rewritten_query,
+        page_plan=page_plan,
+        inherited_image=inherited_image,
+        prompt_mode=prompt_mode,
+        language=_resolve_language(tp, ip),
+    )
+
+
+def cmd_page_html_from_brief(deck: Path, page_no: int, brief: str) -> int:
+    """Generate one HTML slide from a pre-authored page brief (slide_outline).
+
+    Used when the outline step published per-page briefs the user may have
+    edited in the UI. Still reads outline/asset_plan for inherited image paths.
+    """
+    brief_text = (brief or '').strip()
+    if not brief_text:
+        return _fail(f'page-html brief p{page_no}: empty brief', page_no=page_no)
+
+    outline = _load_json(deck / 'outline.json')
+    plan = _load_json(deck / 'asset_plan.json')
+    ip = _load_json(deck / 'info_pack.json')
+    tp = _load_json(deck / 'task_pack.json')
+
+    page_outline = next((p for p in outline['pages'] if int(p['page_no']) == page_no), None)
+    if page_outline is None:
+        return _fail(f'outline missing page {page_no}')
+    page_plan = next((p for p in plan['pages'] if int(p['page_no']) == page_no), None)
+    if page_plan is None:
+        return _fail(f'asset_plan missing page {page_no}')
+
+    inherited_image = _resolve_inherited_image(ip, page_outline, deck, page_no)
+    return _write_page_html_from_query(
+        deck,
+        page_no,
+        brief_text,
+        page_plan=page_plan,
+        inherited_image=inherited_image,
+        prompt_mode='slide-outline-brief',
+        language=_resolve_language(tp, ip),
+    )
+
+
+def _write_page_html_from_query(
+    deck: Path,
+    page_no: int,
+    rewritten_query: str,
+    *,
+    page_plan: dict,
+    inherited_image: dict | None,
+    prompt_mode: str,
+    language: str,
+) -> int:
+    """Shared HTML generation path used by deterministic / rewrite / brief modes."""
+    rewritten_query = (rewritten_query or '').strip()
+    if not rewritten_query:
+        return _fail(f'page-html p{page_no}: empty query', page_no=page_no)
+
+    if language == 'zh-Hant':
+        lang_hint = (
+            'Target language for all visible text: Traditional Chinese (zh-Hant). '
+            'Use traditional characters (繁體中文) throughout.'
+        )
+    elif language.startswith('zh'):
+        lang_hint = (
+            'Target language for all visible text: Simplified Chinese (zh-Hans). '
+            'Use simplified characters (简体中文) throughout.'
+        )
+    else:
+        lang_hint = 'Target language for all visible text: English (en).'
+    if 'Target language for all visible text:' not in rewritten_query:
+        rewritten_query = f'{lang_hint}\n\n{rewritten_query}'
+
+    query_path = deck / 'pages' / f'page_{page_no:03d}.query.txt'
     _write_text(query_path, rewritten_query)
 
-    # --- Step 2: generate HTML from the rewritten query ---
-    gen_system = _load_prompt("page_html.md")
-
+    gen_system = _load_prompt('page_html.md')
     try:
         html = llm(gen_system, rewritten_query)
     except ModelClientError as e:
-        return _fail(f"page-html p{page_no}: {e}", page_no=page_no)
+        return _fail(f'page-html p{page_no}: {e}', page_no=page_no)
 
     html = _sanitize_page_html(html)
 
-    # Defensive: rewrite any malformed <img src> paths back to the canonical
-    # relative form. The rewriter + generator usually get this right, but
-    # models still occasionally emit absolute paths / leading slashes.
     extra_paths: list[str] = []
-    if inherited_image and inherited_image.get("local_path"):
-        extra_paths.append(inherited_image["local_path"])
+    if inherited_image and inherited_image.get('local_path'):
+        extra_paths.append(inherited_image['local_path'])
     html, fixed = _normalize_img_srcs(html, page_plan, extra_paths=extra_paths)
     html, imgs_dropped = _strip_missing_local_imgs(html, deck)
 
-    out_path = deck / "pages" / f"page_{page_no:03d}.html"
+    out_path = deck / 'pages' / f'page_{page_no:03d}.html'
     _write_text(out_path, html)
     return _ok(
         page_no=page_no,

@@ -50,32 +50,35 @@ let _currentCanvasH = 720;
  * use as the slide底色; earlier layers are decorative overlays.
  */
 /**
- * 按"策略 E"决定 slide 的权威底色（authoritative background fill）。
+ * Decide the slide's authoritative solid fill (underlay beneath shapes/images).
  *
- * 数据来源优先级（基于 15 个 deck × 170 页样本统计，对截图角落像素的命中率）：
- *   1. wrapperBgColor（不透明时）            85.4% 命中
- *   2. wrapperBgImage 智能首/末 stop          74.4% 命中
- *      - radial-gradient → 最远 visible stop（CSS radial 默认 fill 模式，最远是边缘填充色）
- *      - linear-gradient → 首个 visible stop
- *   3. bodyBgColor（不透明时）                56.5% 命中
- *   4. bgBgColor                              87.5% 命中（但 91% 页面 N/A）
- *   5. bgBgImage 智能首/末 stop                65% 命中
- *   6. 白色兜底
+ * Priority (slide canvas first; body is page chrome only):
+ *   1. wrapperBgColor (opaque)
+ *   2. wrapperBgImage smart stop
+ *   3. fullscreen #bg backgroundColor / backgroundImage stop
+ *      (#bg is the real slide backdrop; body is often a near-black preview matte)
+ *   4. bodyBgColor (opaque) — fallback when #bg has no usable fill
+ *   5. white
  *
- * 整体策略 E 命中率约 82.4%，比当前 (wrapper>body>white) 的 74.1% 提升 8 个百分点。
+ * Partial #bg (coverage < 85%, e.g. a sidebar) is skipped at step 3 so its
+ * local color is not promoted to the full slide fill.
  *
- * @param {Object} ir - 完整 IR（用于读 wrapper/body/#bg 字段）
- * @returns {string} 6 位 hex 颜色（无 # 前缀）
+ * @param {Object} ir - full page IR (wrapper / body / #bg fields)
+ * @returns {string} 6-digit hex color (no #)
  */
-function resolveAuthoritativeBg(ir) {
+export function resolveAuthoritativeBg(ir) {
   if (!ir) return 'FFFFFF';
   function visibleStops(bgImage) {
     if (!bgImage || bgImage === 'none' || !bgImage.includes('gradient')) return [];
     const stops = [];
-    const re = /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)/g;
+    // Comma rgb/rgba and modern space-separated rgb/rgba
+    const re = /rgba?\(\s*(\d+)\s*[, ]\s*(\d+)\s*[, ]\s*(\d+)(?:\s*[,/]\s*([\d.]+%?))?\s*\)/g;
     let m;
     while ((m = re.exec(bgImage)) !== null) {
-      const a = m[4] === undefined ? 1 : parseFloat(m[4]);
+      let a = 1;
+      if (m[4] !== undefined) {
+        a = m[4].endsWith('%') ? parseFloat(m[4]) / 100 : parseFloat(m[4]);
+      }
       if (a >= 0.5) {
         const hex = [+m[1], +m[2], +m[3]]
           .map(n => Math.max(0, Math.min(255, n)).toString(16).padStart(2, '0'))
@@ -83,7 +86,7 @@ function resolveAuthoritativeBg(ir) {
         stops.push(hex);
       }
     }
-    // 也支持 hex 颜色 #RRGGBB / #RGB
+    // Also support #RRGGBB / #RGB
     if (stops.length === 0) {
       const hxRe = /#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})\b/g;
       let h;
@@ -98,26 +101,40 @@ function resolveAuthoritativeBg(ir) {
     if (!bgImage || bgImage === 'none') return null;
     const stops = visibleStops(bgImage);
     if (stops.length === 0) return null;
-    // radial-gradient → 取最远 stop（CSS radial fill 模式：最远 stop 是边缘填充色）
+    // radial-gradient → farthest stop (CSS radial fill mode: edge fill color)
     if (/radial-gradient/.test(bgImage)) return stops[stops.length - 1];
-    // linear-gradient → 取首个 stop
+    // linear-gradient → first stop
     return stops[0];
   }
-  // 1. wrapperBgColor 不透明 → 用
+  function isFullscreenBg() {
+    if (!ir.bg?.bounds) return Boolean(ir.bg);
+    const bgArea = (ir.bg.bounds.w || 0) * (ir.bg.bounds.h || 0);
+    const slideArea = (ir.canvasWidth || 1280) * (ir.canvasHeight || 720);
+    return slideArea > 0 && bgArea / slideArea >= 0.85;
+  }
+  // 1. wrapperBgColor opaque
   const wHex = cssColorToHex(ir.wrapperBgColor);
   if (wHex && !isTransparent(ir.wrapperBgColor)) return wHex;
-  // 2. wrapperBgImage 智能 stop
+  // 2. wrapperBgImage smart stop
   const wFromImg = pickFromImage(ir.wrapperBgImage);
   if (wFromImg) return wFromImg;
-  // 3. bodyBgColor 不透明 → 用
+  // 3. fullscreen #bg — real slide fill (before body chrome)
+  if (isFullscreenBg()) {
+    const bgcHex = cssColorToHex(ir.bg?.styles?.backgroundColor);
+    if (bgcHex && !isTransparent(ir.bg?.styles?.backgroundColor)) return bgcHex;
+    const bgIFromImg = pickFromImage(ir.bg?.styles?.backgroundImage);
+    if (bgIFromImg) return bgIFromImg;
+  }
+  // 4. bodyBgColor — page chrome fallback only
   const bHex = cssColorToHex(ir.bodyBgColor);
   if (bHex && !isTransparent(ir.bodyBgColor)) return bHex;
-  // 4. #bg.styles.backgroundColor
-  const bgcHex = cssColorToHex(ir.bg?.styles?.backgroundColor);
-  if (bgcHex && !isTransparent(ir.bg?.styles?.backgroundColor)) return bgcHex;
-  // 5. #bg.styles.backgroundImage 智能 stop
-  const bgIFromImg = pickFromImage(ir.bg?.styles?.backgroundImage);
-  if (bgIFromImg) return bgIFromImg;
+  // 5. partial #bg as last resort before white
+  if (!isFullscreenBg() && ir.bg) {
+    const bgcHex = cssColorToHex(ir.bg?.styles?.backgroundColor);
+    if (bgcHex && !isTransparent(ir.bg?.styles?.backgroundColor)) return bgcHex;
+    const bgIFromImg = pickFromImage(ir.bg?.styles?.backgroundImage);
+    if (bgIFromImg) return bgIFromImg;
+  }
   return 'FFFFFF';
 }
 
@@ -1063,12 +1080,56 @@ function hasVisualDecoration(node) {
 }
 
 /**
+ * True when backgroundImage is only type-B decorative radials
+ * (fade to transparent) with no linear / solid radial / url layer.
+ * Fullscreen paints of these become muddy yellow/gold wash overlays.
+ */
+function isDecorativeOnlyBgImage(bgImage) {
+  if (!bgImage || bgImage === 'none' || !bgImage.includes('gradient')) return false;
+  const layers = splitBackgroundLayers(bgImage);
+  let sawDecorativeRadial = false;
+  for (const layer of layers) {
+    if (!layer || layer === 'none') continue;
+    if (/url\s*\(/i.test(layer)) return false;
+    if (/^linear-gradient\s*\(/i.test(layer)) return false;
+    if (/^radial-gradient\s*\(/i.test(layer)) {
+      const r = parseRadialGradient(layer);
+      if (!r || !r.stops?.length) continue;
+      const last = r.stops[r.stops.length - 1];
+      const lastAlpha = last.isTransparent ? 0
+        : (last.rawColor ? extractCssAlpha(last.rawColor) : 1);
+      // Type A: opaque final stop → real fill, not decoration-only
+      if (!last.isTransparent && lastAlpha >= 0.95) return false;
+      sawDecorativeRadial = true;
+      continue;
+    }
+    // Unknown layer — treat as non-decorative to be safe
+    return false;
+  }
+  return sawDecorativeRadial;
+}
+
+/**
  * 从 IR 节点构建形状（有装饰的容器）
  */
 export function buildShapeElement(node) {
   const s = node.styles || {};
   const b = node.bounds;
   if (!hasVisualDecoration(node)) return null;
+
+  // Skip fullscreen decorative radial-only backgrounds (e.g. #bg::before with
+  // multi-layer translucent gold/red radials). Flattening them to a single
+  // solid rgba paints a muddy full-page wash over the real #bg gradient.
+  const hasGradientBgImageEarly =
+    s.backgroundImage && s.backgroundImage !== 'none' && s.backgroundImage.includes('gradient');
+  if (hasGradientBgImageEarly && isDecorativeOnlyBgImage(s.backgroundImage)) {
+    const shapeArea = (b?.w || 0) * (b?.h || 0);
+    const slideArea = (_currentCanvasW || 1280) * (_currentCanvasH || 720);
+    const noOpaqueFill = !s.backgroundColor || isTransparent(s.backgroundColor);
+    if (slideArea > 0 && shapeArea / slideArea >= 0.5 && noOpaqueFill) {
+      return null;
+    }
+  }
 
   // 跳过"装饰圆/椭圆 + 越界"组合：HTML 这种通常靠 wrapper overflow:hidden
   // 实现"角落弧形光晕"，PPT 没遮罩 → 整圆完整暴露成大同心圆扩散。
@@ -1103,17 +1164,27 @@ export function buildShapeElement(node) {
   const bgColor = cssColorToHex(s.backgroundColor);
   let gradientApplied = false;
   if (hasGradientBgImage && _currentGradientHandler) {
-    const grad = parseLinearGradient(s.backgroundImage);
-    const radial = grad ? null : parseRadialGradient(s.backgroundImage);
+    // Prefer the bottom-most linear layer (real fill); ignore decorative radials
+    // stacked on top when parsing a multi-layer background-image.
+    const layers = splitBackgroundLayers(s.backgroundImage);
+    const linearLayer = [...layers].reverse().find(l => /^linear-gradient\s*\(/i.test(l))
+      || layers.find(l => /^linear-gradient\s*\(/i.test(l));
+    const radialLayer = layers.find(l => /^radial-gradient\s*\(/i.test(l));
+    const grad = linearLayer ? parseLinearGradient(linearLayer) : null;
+    const radial = (!grad && radialLayer) ? parseRadialGradient(radialLayer) : null;
     if (grad && grad.stops.length >= 2) {
-      const stops = grad.stops.map((st, i) => ({
-        pos: st.position !== undefined ? st.position : Math.round(i * 100 / Math.max(grad.stops.length - 1, 1)),
-        color: st.color,
-        alpha: st.rawColor ? extractCssAlpha(st.rawColor) : 1,
-      }));
-      const tok = _currentGradientHandler.registerLinear({ angle: grad.angle, stops });
-      shape.fill = { color: tok };
-      gradientApplied = true;
+      const stops = grad.stops
+        .filter(st => !st.isTransparent)
+        .map((st, i, arr) => ({
+          pos: st.position !== undefined ? st.position : Math.round(i * 100 / Math.max(arr.length - 1, 1)),
+          color: st.color,
+          alpha: st.rawColor ? extractCssAlpha(st.rawColor) : 1,
+        }));
+      if (stops.length >= 2) {
+        const tok = _currentGradientHandler.registerLinear({ angle: grad.angle, stops });
+        shape.fill = { color: tok };
+        gradientApplied = true;
+      }
     } else if (radial && radial.stops && radial.stops.length >= 2) {
       // 元素自身用 radial-gradient 作 background-image：
       //  - 如果 shape 形状是圆/椭圆（border-radius 50% 且宽高近似相等）→
@@ -1129,14 +1200,18 @@ export function buildShapeElement(node) {
         return radiusPct >= 50 && Math.abs(b.w - b.h) < Math.max(b.w, b.h) * 0.1;
       })();
       if (isEllipseShape) {
-        const stops = radial.stops.map((st, i) => ({
-          pos: st.position !== undefined ? st.position : Math.round(i * 100 / Math.max(radial.stops.length - 1, 1)),
-          color: st.color,
-          alpha: st.rawColor ? extractCssAlpha(st.rawColor) : 1,
-        }));
-        const tok = _currentGradientHandler.registerRadial({ stops });
-        shape.fill = { color: tok };
-        gradientApplied = true;
+        const stops = radial.stops
+          .filter(st => !st.isTransparent)
+          .map((st, i, arr) => ({
+            pos: st.position !== undefined ? st.position : Math.round(i * 100 / Math.max(arr.length - 1, 1)),
+            color: st.color,
+            alpha: st.rawColor ? extractCssAlpha(st.rawColor) : 1,
+          }));
+        if (stops.length >= 2) {
+          const tok = _currentGradientHandler.registerRadial({ stops });
+          shape.fill = { color: tok };
+          gradientApplied = true;
+        }
       } else {
         // rect 形状：退化 solid。取首个非透明 stop 作中心色，alpha 保留。
         const firstVisible = radial.stops.find(st => !st.isTransparent);
@@ -1841,7 +1916,9 @@ export function buildSlideFromIR(pptx, ir, deckDir) {
   //      尺寸由半径（最远 stop 位置）决定，fill 用 stops 第一个非透明色 + 低 alpha。
   //      这模拟 HTML 那种"四角光晕"效果，避免 OOXML radial 的中心同心圆问题。
   if (_currentGradientHandler) {
-    const candidates = [ir.wrapperBgImage, ir.bodyBgImage, ir.bg?.styles?.backgroundImage]
+    // Prefer #bg (real slide fill) over wrapper/body — body often carries a
+    // near-black preview matte that is not the slide content.
+    const candidates = [ir.bg?.styles?.backgroundImage, ir.wrapperBgImage, ir.bodyBgImage]
       .filter(s => s && s !== 'none' && s.includes('gradient') && !s.includes('url('));
 
     let bgRendered = false;
@@ -1856,12 +1933,16 @@ export function buildSlideFromIR(pptx, ir, deckDir) {
       if (linearLayer) {
         const linear = parseLinearGradient(linearLayer);
         if (linear && linear.stops.length >= 2) {
-          const stops = linear.stops.map((st, i) => ({
-            pos: st.position !== undefined ? st.position : Math.round(i * 100 / Math.max(linear.stops.length - 1, 1)),
-            color: st.color,
-            alpha: st.rawColor ? extractCssAlpha(st.rawColor) : 1,
-          }));
-          if (Math.max(...stops.map(s => s.alpha)) >= 0.3) {
+          // Skip unparseable stops (isTransparent) so failed cssColorToHex
+          // never becomes opaque black in the registered gradient.
+          const stops = linear.stops
+            .filter(st => !st.isTransparent)
+            .map((st, i, arr) => ({
+              pos: st.position !== undefined ? st.position : Math.round(i * 100 / Math.max(arr.length - 1, 1)),
+              color: st.color,
+              alpha: st.rawColor ? extractCssAlpha(st.rawColor) : 1,
+            }));
+          if (stops.length >= 2 && Math.max(...stops.map(s => s.alpha)) >= 0.3) {
             const tok = _currentGradientHandler.registerLinear({ angle: linear.angle, stops });
             slide.addShape(pptx.ShapeType.rect, {
               x: 0, y: 0, w: 10, h: 5.625,
@@ -1959,10 +2040,9 @@ export function buildSlideFromIR(pptx, ir, deckDir) {
   const cw = ir.canvasWidth || 1280;
   const ch = ir.canvasHeight || 720;
 
-  // 一次性确定 slide 的"权威底色"（按策略 E，统计上 82.4% 命中截图角落）。
-  // 这是底色 baseline，后续所有路径只允许"装饰叠加"或"图片背景"，不再
-  // 改写它（避免之前 colorMatch fallback 误抓装饰透明色覆盖底色的 bug）。
-  // D-ii 的"全屏 linear gradient shape"、buildBackground 的"图片背景"
+  // 一次性确定 slide 的"权威底色"。
+  // 这是底色 baseline，后续所有路径只允许"装饰叠加"或"图片/明确 #bg fill"覆盖。
+  // D-ii 的"全屏 linear gradient shape"、buildBackground 的图片/纯色
   // 这两类是合理覆盖，仍然保留。
   const authBgHex = resolveAuthoritativeBg(ir);
   if (!slide.background || !slide.background.fill) {
@@ -1974,10 +2054,18 @@ export function buildSlideFromIR(pptx, ir, deckDir) {
   if (ir.bg) {
     const bgResult = buildBackground(ir.bg, ir.bodyBgColor, deckDir);
     if (bgResult) {
-      // 仅当 buildBackground 返回**图片**作为 slideBackground 时才覆盖（背景图比 solid 更明确）
-      if (bgResult.slideBackground && bgResult.slideBackground.path) {
-        slide.background = bgResult.slideBackground;
-        bgApplied = true;
+      // Image path always wins. Solid fill from #bg also overrides the auth
+      // underlay so body chrome (#1a1a1a) cannot stick when #bg resolved a
+      // better color — D-ii gradient shapes still paint on top when present.
+      if (bgResult.slideBackground) {
+        if (bgResult.slideBackground.path) {
+          slide.background = bgResult.slideBackground;
+          bgApplied = true;
+        } else if (bgResult.slideBackground.fill
+            && bgResult.slideBackground.fill !== authBgHex) {
+          slide.background = bgResult.slideBackground;
+          bgApplied = true;
+        }
       }
       for (const el of bgResult.bgElements) {
         if (el.type === 'shape') {

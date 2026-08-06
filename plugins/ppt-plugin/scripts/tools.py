@@ -1,17 +1,22 @@
 """PPT plugin tools — HTML slide pipeline for SubAgent.
 
-Pipeline:
+Preferred high-level pipeline (one tool call each):
   collect (optional): kb / web_search / ppt_search_web_images
     → ppt_register_material_images  (workspace Pool-B images)
-  ppt_init_deck  (auto-attaches registered material images)
-  → ppt_run_stage(preflight|style|outline|asset-plan|batch-page-html|…)
-  → ppt_publish_pages  (disk HTML → preview_html artifacts; UI updates)
-  → optionally refine preview_notes via save_artifacts (richer spoken intro)
+  ppt_build_outline(...)   # init → preflight → style → outline → publish_outline
+  ppt_generate_pages(...)  # asset-plan → [batch-gen-image] → batch-page-html
+
+Low-level stages (ppt_init_deck / ppt_run_stage / ppt_publish_*) remain for
+debug and recovery; prefer the wrappers above for full runs.
 
 Single-page content edit (no full deck rebuild):
   ppt_find_deck → ppt_read_page_outline → ppt_patch_page_outline
     → ppt_edit_page_html                  (exact removal / retext, no LLM redraw)
     or ppt_run_stage(page-html, page=N)   (LLM redraw of that page)
+
+Delete an entire slide (not a bullet):
+  ppt_find_deck → ppt_delete_page(deck_dir, page=N)
+    renumbers later pages on disk + outline; removes UI list items.
 
 PPTX export is NOT a skill tool — the user clicks Export in PluginPanel.
 Runtime lives under plugins/ppt-plugin/runtime/ (vendored SenseNova subset).
@@ -27,7 +32,7 @@ import subprocess
 import sys
 import uuid
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import as_completed
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from pathlib import Path
@@ -35,9 +40,10 @@ from typing import Any, List, Optional, Union
 from urllib.parse import urlparse
 
 import requests
+from lazyllm import ThreadPoolExecutor
 
 from lazymind.chat.engine.subagent.context import require_context
-from lazymind.chat.engine.subagent.tools import _save_artifact
+from lazymind.chat.engine.subagent.tools import _resolve_artifact_text, _save_artifact
 from lazymind.chat.engine.tools.infra import tool_error, tool_success
 from lazymind.chat.service.utils.static_file_url import (
     local_path_from_static_file_url,
@@ -303,6 +309,18 @@ def _page_html_path(deck: Path, page_no: int) -> Path:
     return deck / 'pages' / f'page_{page_no:03d}.html'
 
 
+def _paths_for_page(deck: Path, page_no: int) -> list[Path]:
+    """All known on-disk artifacts for one 1-based page number."""
+    tag = f'page_{page_no:03d}'
+    return [
+        deck / 'pages' / f'{tag}.html',
+        deck / 'pages' / f'{tag}.query.txt',
+        deck / 'pages' / f'{tag}.review.md',
+        deck / 'pages' / f'{tag}.refined.html',
+        deck / 'screenshots' / f'{tag}.png',
+    ]
+
+
 def _iter_page_numbers(deck: Path) -> list[int]:
     pages: list[int] = []
     pages_dir = deck / 'pages'
@@ -315,6 +333,185 @@ def _iter_page_numbers(deck: Path) -> list[int]:
         if m:
             pages.append(int(m.group(1)))
     return pages
+
+
+def _max_page_no_on_disk(deck: Path) -> int:
+    """Highest page number referenced by pages/ or screenshots/ files."""
+    nos: set[int] = set(_iter_page_numbers(deck))
+    pages_dir = deck / 'pages'
+    if pages_dir.is_dir():
+        for path in pages_dir.glob('page_*'):
+            m = re.match(r'page_(\d+)\.', path.name)
+            if m:
+                nos.add(int(m.group(1)))
+    shots = deck / 'screenshots'
+    if shots.is_dir():
+        for path in shots.glob('page_*.png'):
+            m = re.match(r'page_(\d+)\.png$', path.name)
+            if m:
+                nos.add(int(m.group(1)))
+    return max(nos) if nos else 0
+
+
+def _plugin_session_id() -> str:
+    try:
+        import lazyllm
+        cfg = lazyllm.globals.get('agentic_config') or {}
+    except Exception:
+        cfg = {}
+    return str(cfg.get('plugin_session_id') or '').strip()
+
+
+def _delete_ui_slot_item(slot: str, sort_order: int) -> dict[str, Any]:
+    """Remove one list-slot item by 1-based sort_order via Go core DELETE."""
+    session_id = _plugin_session_id()
+    if not session_id:
+        return {'slot': slot, 'ok': False, 'skipped': True, 'reason': 'no plugin_session_id'}
+    try:
+        ctx = require_context()
+        order_list = ctx.db.load_slot_order_list(session_id, slot)
+    except Exception as exc:
+        return {'slot': slot, 'ok': False, 'skipped': True, 'reason': str(exc)}
+    if not order_list:
+        return {'slot': slot, 'ok': False, 'skipped': True, 'reason': 'empty or non-list slot'}
+    if sort_order < 1 or sort_order > len(order_list):
+        return {
+            'slot': slot,
+            'ok': False,
+            'skipped': True,
+            'reason': f'sort_order {sort_order} out of range (n={len(order_list)})',
+        }
+    list_index = int(order_list[sort_order - 1])
+    try:
+        from lazymind.config import config as _cfg
+        import httpx
+        core_url = str(_cfg['core_api_url']).rstrip('/')
+        resp = httpx.delete(
+            f'{core_url}/plugin-sessions/{session_id}/slots/{slot}/items/idx/{list_index}',
+            timeout=10.0,
+        )
+    except Exception as exc:
+        return {'slot': slot, 'ok': False, 'error': f'request failed: {exc}'}
+    if resp.status_code != 200:
+        return {
+            'slot': slot,
+            'ok': False,
+            'error': f'Go core returned {resp.status_code}: {resp.text[:200]}',
+        }
+    return {'slot': slot, 'ok': True, 'list_index': list_index, 'sort_order': sort_order}
+
+
+def _remove_outline_page(deck: Path, page_no: int) -> dict[str, Any]:
+    """Drop page_no from outline.json and shift later page_no values down by 1."""
+    outline = _load_outline(deck)
+    removed_title = ''
+    new_pages: list[dict] = []
+    found = False
+    for page in outline.get('pages') or []:
+        try:
+            pno = int(page.get('page_no', 0))
+        except (TypeError, ValueError):
+            continue
+        if pno == page_no:
+            found = True
+            removed_title = _coerce_str(page.get('title'))
+            continue
+        entry = dict(page)
+        if pno > page_no:
+            entry['page_no'] = pno - 1
+        new_pages.append(entry)
+    if not found:
+        raise KeyError(f'outline has no page {page_no}')
+    outline['pages'] = new_pages
+    if 'page_count' in outline:
+        outline['page_count'] = len(new_pages)
+    _write_outline(deck, outline)
+    return {'removed_title': removed_title, 'remaining': len(new_pages)}
+
+
+def _remove_asset_plan_page(deck: Path, page_no: int) -> Optional[dict[str, Any]]:
+    """Drop page_no from asset_plan.json when present; renumber later pages."""
+    path = deck / 'asset_plan.json'
+    if not path.exists():
+        return None
+    try:
+        plan = json.loads(path.read_text(encoding='utf-8'))
+    except Exception:
+        return {'ok': False, 'error': 'asset_plan.json unreadable'}
+    pages = plan.get('pages')
+    if not isinstance(pages, list):
+        return None
+    new_pages: list[dict] = []
+    found = False
+    for page in pages:
+        if not isinstance(page, dict):
+            continue
+        try:
+            pno = int(page.get('page_no', 0))
+        except (TypeError, ValueError):
+            continue
+        if pno == page_no:
+            found = True
+            continue
+        entry = dict(page)
+        if pno > page_no:
+            entry['page_no'] = pno - 1
+        new_pages.append(entry)
+    plan['pages'] = new_pages
+    tmp = path.with_name(path.name + '.tmp')
+    tmp.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding='utf-8')
+    os.replace(tmp, path)
+    return {'ok': True, 'found': found, 'remaining': len(new_pages)}
+
+
+def _sync_task_pack_page_count(deck: Path, page_count: int) -> None:
+    path = deck / 'task_pack.json'
+    if not path.exists():
+        return
+    try:
+        pack = json.loads(path.read_text(encoding='utf-8'))
+    except Exception:
+        return
+    if not isinstance(pack, dict):
+        return
+    params = pack.get('params')
+    if not isinstance(params, dict):
+        params = {}
+        pack['params'] = params
+    params['page_count'] = int(page_count)
+    tmp = path.with_name(path.name + '.tmp')
+    tmp.write_text(json.dumps(pack, ensure_ascii=False, indent=2), encoding='utf-8')
+    os.replace(tmp, path)
+
+
+def _delete_page_files_and_renumber(deck: Path, page_no: int) -> dict[str, Any]:
+    """Delete on-disk files for page_no; shift higher pages down by 1."""
+    removed = []
+    for path in _paths_for_page(deck, page_no):
+        if path.exists():
+            path.unlink()
+            removed.append(str(path.resolve()))
+
+    max_no = _max_page_no_on_disk(deck)
+    renamed: list[dict[str, str]] = []
+    # Ascending rename after delete: page_(k) -> page_(k-1) for k > page_no.
+    for old_no in range(page_no + 1, max_no + 1):
+        new_no = old_no - 1
+        for src in _paths_for_page(deck, old_no):
+            if not src.exists():
+                continue
+            dst = src.parent / src.name.replace(
+                f'page_{old_no:03d}', f'page_{new_no:03d}', 1,
+            )
+            if dst.exists():
+                dst.unlink()
+            src.rename(dst)
+            renamed.append({'from': str(src.resolve()), 'to': str(dst.resolve())})
+    return {
+        'removed_files': removed,
+        'renamed_files': renamed,
+        'html_pages_remaining': _iter_page_numbers(deck),
+    }
 
 
 def _parse_page_list(pages: Any) -> Optional[list[int]]:
@@ -700,6 +897,134 @@ def _outline_page_view(page: dict) -> dict:
         'use_image': page.get('use_image'),
         'asset_slot_count': len(page.get('asset_slots') or []),
     }
+
+
+def _format_slide_outline_brief(page: dict) -> str:
+    """Human-editable per-page brief shown in the Outline tab and fed to page-html."""
+    view = _outline_page_view(page)
+    lines: list[str] = [
+        f'第{view["page"]}页',
+        f'页面类型：{view["page_kind"] or "content"}',
+        f'标题：{view["title"] or "(未命名)"}',
+    ]
+    if view['subtitle']:
+        lines.append(f'副标题：{view["subtitle"]}')
+    if view['narrative']:
+        lines.append(f'叙事：{view["narrative"]}')
+    if view['visual_hints']:
+        lines.append(f'版面提示：{view["visual_hints"]}')
+
+    if view['bullets']:
+        lines.append('')
+        lines.append('要点：')
+        for b in view['bullets']:
+            detail = f' — {b["detail"]}' if b['detail'] else ''
+            lines.append(f'{b["index"]}. {b["head"]}{detail}')
+
+    if view['data_points']:
+        lines.append('')
+        lines.append('数据点：')
+        for p in view['data_points']:
+            bits = [p['label'], p['value'], p['context']]
+            lines.append(f'{p["index"]}. ' + ' · '.join(x for x in bits if x))
+
+    use_image = view.get('use_image')
+    if isinstance(use_image, dict) and use_image:
+        lines.append('')
+        lines.append(f'配图：{json.dumps(use_image, ensure_ascii=False)}')
+    use_table = view.get('use_table')
+    if use_table:
+        lines.append('')
+        lines.append(f'表格：{json.dumps(use_table, ensure_ascii=False)}')
+
+    lines.extend([
+        '',
+        '请根据以上内容生成完整可渲染的单页 PPT HTML。',
+        '保留全部事实、标题、要点数量与数据，不要编造或增减条目。',
+        '按版面提示排版；配图/表格字段如存在必须落到页面上。',
+    ])
+    return '\n'.join(lines).strip()
+
+
+def _publish_one_slide_outline(deck: Path, page_no: int) -> dict[str, Any]:
+    """Save one page brief into the slide_outline list slot."""
+    outline = _load_outline(deck)
+    page = _find_outline_page(outline, page_no)
+    brief = _format_slide_outline_brief(page)
+    title = _coerce_str(page.get('title')) or f'第 {page_no} 页'
+    save_res = _save_artifact(
+        key='slide_outline',
+        value=brief,
+        content_type='text',
+        source_tool='ppt_publish_outline',
+        sort_order=page_no,
+        caption=title,
+    )
+    return {
+        'page': page_no,
+        'ok': True,
+        'title_hint': title,
+        'chars': len(brief),
+        'save': save_res,
+    }
+
+
+def _publish_slide_outlines_from_disk(
+    deck: Path,
+    pages: Optional[list[int]] = None,
+) -> dict[str, Any]:
+    outline = _load_outline(deck)
+    if pages is None:
+        targets = []
+        for page in outline.get('pages') or []:
+            try:
+                targets.append(int(page.get('page_no')))
+            except (TypeError, ValueError):
+                continue
+        targets = sorted(set(n for n in targets if n >= 1))
+    else:
+        targets = pages
+
+    published: list[dict[str, Any]] = []
+    failed: list[dict[str, Any]] = []
+    for page_no in targets:
+        try:
+            require_context()
+            item = _publish_one_slide_outline(deck, page_no)
+        except Exception as exc:
+            item = {'page': page_no, 'ok': False, 'error': str(exc)}
+        if item.get('ok'):
+            published.append({
+                'page': item['page'],
+                'title_hint': item.get('title_hint'),
+                'chars': item.get('chars'),
+            })
+        else:
+            failed.append({'page': page_no, 'error': item.get('error') or 'publish failed'})
+    return {
+        'deck_dir': str(deck.resolve()),
+        'published_count': len(published),
+        'failed_count': len(failed),
+        'published': published,
+        'failed': failed or None,
+    }
+
+
+def _load_slide_outline_briefs(page_nos: list[int]) -> dict[int, str]:
+    """Read UI-authoritative slide_outline briefs (includes human edits)."""
+    briefs: dict[int, str] = {}
+    try:
+        ctx = require_context()
+    except Exception:
+        return briefs
+    for page_no in page_nos:
+        try:
+            text, _ctype = _resolve_artifact_text(ctx, 'slide_outline', sort_order=page_no)
+        except Exception:
+            text = None
+        if text and str(text).strip():
+            briefs[page_no] = str(text).strip()
+    return briefs
 
 
 _VOID_TAGS = frozenset({
@@ -1245,18 +1570,30 @@ def _batch_page_html_publish_progressive(
     start_page: int = 0,
     end_page: int = 0,
 ) -> dict:
-    """Generate pages concurrently; publish to UI in page order as soon as ready."""
+    """Generate pages concurrently; publish to UI in page order as soon as ready.
+
+    Prefer each page's slide_outline artifact (including human UI edits) as the
+    HTML-generator brief. Fall back to the deterministic outline.json path when
+    a brief is missing.
+    """
     mc, rs = _load_sn_ppt_modules()
     page_nos = _outline_page_numbers(deck, start_page, end_page)
     if not page_nos:
         return {'status': 'failed', 'error': 'no pages in outline matching range', 'stage': 'page-html'}
 
+    briefs = _load_slide_outline_briefs(page_nos)
     mc.set_llm_impl(_agent_llm_call)
     workers = max(1, min(int(concurrency or 4), 8))
     results: dict[int, dict[str, Any]] = {}
     published: list[dict[str, Any]] = []
     ready_ok: dict[int, bool] = {}
     next_publish_i = 0
+
+    def _run_one(pno: int) -> tuple[int, dict]:
+        brief = briefs.get(pno)
+        if brief:
+            return rs._capture_cmd(rs.cmd_page_html_from_brief, deck, pno, brief)
+        return rs._capture_cmd(rs.cmd_page_html, deck, pno)
 
     def _flush_ready() -> None:
         nonlocal next_publish_i
@@ -1283,10 +1620,7 @@ def _batch_page_html_publish_progressive(
 
     try:
         with ThreadPoolExecutor(max_workers=workers) as ex:
-            future_map = {
-                ex.submit(rs._capture_cmd, rs.cmd_page_html, deck, pno): pno
-                for pno in page_nos
-            }
+            future_map = {ex.submit(_run_one, pno): pno for pno in page_nos}
             for fut in as_completed(future_map):
                 pno = future_map[fut]
                 try:
@@ -1296,7 +1630,12 @@ def _batch_page_html_publish_progressive(
                 if not isinstance(payload, dict):
                     payload = {'status': 'failed', 'error': 'empty page payload'}
                 ok = code == 0 and payload.get('status', 'ok' if code == 0 else 'failed') == 'ok'
-                results[pno] = {'page': pno, 'ok': ok, 'payload': payload}
+                results[pno] = {
+                    'page': pno,
+                    'ok': ok,
+                    'payload': payload,
+                    'brief_source': 'slide_outline' if pno in briefs else 'outline.json',
+                }
                 ready_ok[pno] = ok
                 _flush_ready()
     finally:
@@ -1318,6 +1657,8 @@ def _batch_page_html_publish_progressive(
         'published_count': len(published),
         'published': published,
         'auto_published': True,
+        'briefs_used': len(briefs),
+        'briefs_missing': [p for p in page_nos if p not in briefs] or None,
     }
 
 
@@ -1412,7 +1753,12 @@ def _run_stage_inprocess(
         elif stage_name == 'asset-plan':
             code, payload = rs._capture_cmd(rs.cmd_asset_plan, deck)
         elif stage_name == 'page-html':
-            code, payload = rs._capture_cmd(rs.cmd_page_html, deck, page)
+            briefs = _load_slide_outline_briefs([page])
+            brief = briefs.get(page)
+            if brief:
+                code, payload = rs._capture_cmd(rs.cmd_page_html_from_brief, deck, page, brief)
+            else:
+                code, payload = rs._capture_cmd(rs.cmd_page_html, deck, page)
             if isinstance(payload, dict) and payload.get('status', 'ok' if code == 0 else 'failed') == 'ok':
                 try:
                     pub = _publish_one_page(deck, page, with_notes=True)
@@ -1425,6 +1771,8 @@ def _run_stage_inprocess(
                     payload['auto_published'] = True
                 except Exception as exc:
                     payload['publish_error'] = str(exc)
+                if isinstance(payload, dict):
+                    payload['brief_source'] = 'slide_outline' if brief else 'outline.json'
         elif stage_name == 'batch-page-html':
             # Generate concurrently and publish each finished page to the UI immediately.
             return _batch_page_html_publish_progressive(
@@ -1943,6 +2291,9 @@ def ppt_init_deck(
 ) -> dict:
     """Create a NEW deck workspace with task_pack.json + info_pack.json.
 
+    Prefer ppt_build_outline for a full outline run (it calls this then
+    preflight/style/outline/publish). Use this alone only when debugging.
+
     Only for building a deck from scratch. Never call this to edit an existing
     deck: it starts an empty deck, so every page the user already accepted has to
     be redrawn. To change a page, call ppt_find_deck then ppt_patch_page_outline
@@ -2102,6 +2453,365 @@ def ppt_find_deck() -> dict:
     })
 
 
+def _tool_failed(resp: Any) -> bool:
+    return not isinstance(resp, dict) or not resp.get('success')
+
+
+def _tool_payload(resp: Any) -> dict:
+    if not isinstance(resp, dict):
+        return {}
+    result = resp.get('result')
+    return result if isinstance(result, dict) else {}
+
+
+def _tool_fail_reason(resp: Any) -> str:
+    if not isinstance(resp, dict):
+        return 'empty tool response'
+    err = resp.get('error')
+    if isinstance(err, dict):
+        return str(err.get('reason') or err.get('detail') or 'failed')
+    if err:
+        return str(err)
+    return 'failed'
+
+
+def _deck_image_source(deck: Path) -> str:
+    try:
+        pack = json.loads((deck / 'task_pack.json').read_text(encoding='utf-8'))
+        src = _coerce_str((pack.get('params') or {}).get('image_source'), 'none').lower()
+        return src if src in ('none', 'ai-gen', 'web-search') else 'none'
+    except Exception:
+        return 'none'
+
+
+def _asset_plan_pending_slots(deck: Path) -> int:
+    path = deck / 'asset_plan.json'
+    if not path.exists():
+        return 0
+    try:
+        plan = json.loads(path.read_text(encoding='utf-8'))
+    except Exception:
+        return 0
+    pending = 0
+    for page in plan.get('pages') or []:
+        if not isinstance(page, dict):
+            continue
+        for slot in page.get('slots') or []:
+            if not isinstance(slot, dict):
+                continue
+            if slot.get('status') == 'ok':
+                continue
+            if _coerce_str(slot.get('id') or slot.get('slot_id')):
+                pending += 1
+    return pending
+
+
+def _coerce_optional_bool(value: Any) -> Optional[bool]:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in _NULLISH or text == '':
+        return None
+    if text in ('1', 'true', 'yes', 'y', 'on'):
+        return True
+    if text in ('0', 'false', 'no', 'n', 'off'):
+        return False
+    return None
+
+
+def ppt_build_outline(
+    user_query: str,
+    page_count: Union[int, str, None] = 4,
+    topic: Optional[str] = None,
+    role: Optional[str] = None,
+    audience: Optional[str] = None,
+    scene: Optional[str] = None,
+    style_hint: Optional[str] = None,
+    image_source: Optional[str] = None,
+    infographic_source: Optional[str] = None,
+    ppt_mode: Optional[str] = None,
+    key_points_json: Union[str, list, None] = None,
+) -> dict:
+    """Build a full deck outline in one call (preferred for build_outline step).
+
+    Runs the fixed serial pipeline internally:
+      ppt_init_deck → preflight → style → outline → ppt_publish_outline
+
+    Prefer this over calling those stages one by one. Do NOT generate HTML here —
+    that is ppt_generate_pages / generate_ppt.
+
+    Args:
+        user_query (str): Full presentation request (required).
+        page_count (int): Target slide count (1-12). Default 4.
+        topic (str): Short topic; inferred from user_query when empty.
+        role (str): Speaker role.
+        audience (str): Target audience.
+        scene (str): Presentation scene.
+        style_hint (str): Optional visual style guidance.
+        image_source (str): 'none' | 'ai-gen' | 'web-search'. Default 'none'.
+            Keep 'none' when using registered material images from collect.
+        infographic_source (str): 'echarts' | 'ai-gen'. Default 'echarts'.
+        ppt_mode (str): 'fast' or 'standard'. Default 'fast'.
+        key_points_json (str): JSON array string like '["a","b"]', or omit.
+
+    Returns:
+        deck_dir, stages summary, and publish counts. slide_outline is already
+        saved for the Outline tab — stop after success.
+    """
+    init_res = ppt_init_deck(
+        user_query=user_query,
+        page_count=page_count,
+        topic=topic,
+        role=role,
+        audience=audience,
+        scene=scene,
+        style_hint=style_hint,
+        image_source=image_source,
+        infographic_source=infographic_source,
+        ppt_mode=ppt_mode,
+        key_points_json=key_points_json,
+    )
+    if _tool_failed(init_res):
+        return tool_error(
+            'ppt_build_outline',
+            f'init failed: {_tool_fail_reason(init_res)}',
+            detail=json.dumps(init_res, ensure_ascii=False)[:2000],
+        )
+    init_payload = _tool_payload(init_res)
+    deck_dir = str(init_payload.get('deck_dir') or '')
+    if not deck_dir:
+        return tool_error('ppt_build_outline', 'ppt_init_deck returned no deck_dir')
+
+    stages: list[dict[str, Any]] = [
+        {'step': 'init', 'ok': True, 'deck_id': init_payload.get('deck_id')},
+    ]
+
+    # Late register recovery: init attaches automatically, but retry once if empty.
+    if int(init_payload.get('material_images_attached') or 0) <= 0:
+        attach_res = ppt_attach_material_images(deck_dir)
+        if not _tool_failed(attach_res):
+            stages.append({
+                'step': 'attach_material_images',
+                'ok': True,
+                **{k: v for k, v in _tool_payload(attach_res).items()
+                   if k in ('attached', 'reference_image_count')},
+            })
+
+    for stage_name in ('preflight', 'style', 'outline'):
+        stage_res = ppt_run_stage(deck_dir, stage=stage_name)
+        if _tool_failed(stage_res):
+            return tool_error(
+                'ppt_build_outline',
+                f'{stage_name} failed: {_tool_fail_reason(stage_res)}',
+                detail=json.dumps({
+                    'deck_dir': deck_dir,
+                    'stages': stages,
+                    'failed_stage': stage_res,
+                }, ensure_ascii=False)[:2500],
+                meta={'deck_dir': deck_dir, 'failed_stage': stage_name},
+            )
+        payload = _tool_payload(stage_res)
+        stages.append({
+            'step': stage_name,
+            'ok': True,
+            'status': payload.get('status', 'ok'),
+            'pages': payload.get('pages'),
+        })
+
+    pub_res = ppt_publish_outline(deck_dir)
+    if _tool_failed(pub_res):
+        return tool_error(
+            'ppt_build_outline',
+            f'publish_outline failed: {_tool_fail_reason(pub_res)}',
+            detail=json.dumps({
+                'deck_dir': deck_dir,
+                'stages': stages,
+                'publish': pub_res,
+            }, ensure_ascii=False)[:2500],
+            meta={'deck_dir': deck_dir},
+        )
+    pub_payload = _tool_payload(pub_res)
+    stages.append({
+        'step': 'publish_outline',
+        'ok': True,
+        'published_count': pub_payload.get('published_count'),
+    })
+
+    return tool_success('ppt_build_outline', {
+        'deck_dir': deck_dir,
+        'deck_id': init_payload.get('deck_id'),
+        'page_count': init_payload.get('page_count'),
+        'ppt_mode': init_payload.get('ppt_mode'),
+        'image_source': init_payload.get('image_source'),
+        'material_images_attached': init_payload.get('material_images_attached'),
+        'published_count': pub_payload.get('published_count'),
+        'published': pub_payload.get('published'),
+        'stages': stages,
+        'note': (
+            'slide_outline list is published for the Outline tab. '
+            'Stop here — call ppt_generate_pages in generate_ppt for HTML.'
+        ),
+    })
+
+
+def ppt_generate_pages(
+    deck_dir: Optional[str] = None,
+    concurrency: Union[int, str, None] = 4,
+    gen_images: Union[bool, str, None] = None,
+) -> dict:
+    """Generate all slide HTML pages from published slide_outline in one call.
+
+    Preferred for the full-deck generate_ppt path. Runs:
+      asset-plan → [batch-gen-image if needed] → batch-page-html
+    batch-page-html auto-publishes preview_html (+ notes) page-by-page.
+
+    Do NOT call this for single-page edits — use ppt_patch_page_outline /
+    ppt_edit_page_html / ppt_run_stage(page-html) instead.
+    Do NOT re-run style/outline/init here.
+
+    Args:
+        deck_dir (str): Absolute deck directory. Omit to use ppt_find_deck().
+        concurrency (int): Parallel page-html workers (default 4, clamped 1-8).
+        gen_images (bool): Force/skip batch-gen-image. Omit = auto:
+            run only when task_pack.image_source != 'none' and asset_plan has
+            pending slots.
+
+    Returns:
+        deck_dir, stages summary, page-html ok/failed counts, publish counts.
+    """
+    resolved = _coerce_str(deck_dir)
+    if not resolved:
+        found = ppt_find_deck()
+        if _tool_failed(found):
+            return tool_error(
+                'ppt_generate_pages',
+                f'no deck_dir and ppt_find_deck failed: {_tool_fail_reason(found)}',
+            )
+        resolved = str(_tool_payload(found).get('deck_dir') or '')
+    try:
+        deck = _resolve_deck_dir(resolved)
+    except FileNotFoundError as exc:
+        return tool_error('ppt_generate_pages', str(exc))
+    deck_dir_s = str(deck.resolve())
+
+    conc = _coerce_int(concurrency, 4, lo=1, hi=8)
+    stages: list[dict[str, Any]] = []
+
+    plan_res = ppt_run_stage(deck_dir_s, stage='asset-plan')
+    if _tool_failed(plan_res):
+        return tool_error(
+            'ppt_generate_pages',
+            f'asset-plan failed: {_tool_fail_reason(plan_res)}',
+            detail=json.dumps(plan_res, ensure_ascii=False)[:2000],
+            meta={'deck_dir': deck_dir_s},
+        )
+    plan_payload = _tool_payload(plan_res)
+    stages.append({
+        'step': 'asset-plan',
+        'ok': True,
+        'pages': plan_payload.get('pages'),
+        'slots': plan_payload.get('slots'),
+    })
+
+    pending = _asset_plan_pending_slots(deck)
+    img_src = _deck_image_source(deck)
+    want_gen = _coerce_optional_bool(gen_images)
+    if want_gen is None:
+        want_gen = img_src != 'none' and pending > 0
+
+    if want_gen:
+        gen_res = ppt_run_stage(deck_dir_s, stage='batch-gen-image', concurrency=min(2, conc))
+        if _tool_failed(gen_res):
+            return tool_error(
+                'ppt_generate_pages',
+                f'batch-gen-image failed: {_tool_fail_reason(gen_res)}',
+                detail=json.dumps({
+                    'deck_dir': deck_dir_s,
+                    'stages': stages,
+                    'failed': gen_res,
+                }, ensure_ascii=False)[:2500],
+                meta={'deck_dir': deck_dir_s},
+            )
+        gen_payload = _tool_payload(gen_res)
+        stages.append({
+            'step': 'batch-gen-image',
+            'ok': True,
+            'status': gen_payload.get('status', 'ok'),
+            'submitted': gen_payload.get('submitted'),
+            'note': gen_payload.get('note'),
+        })
+    else:
+        stages.append({
+            'step': 'batch-gen-image',
+            'ok': True,
+            'status': 'skipped',
+            'reason': (
+                f'image_source={img_src!r}, pending_slots={pending}'
+                if want_gen is not False else 'gen_images=false'
+            ),
+        })
+
+    html_res = ppt_run_stage(
+        deck_dir_s, stage='batch-page-html', concurrency=conc,
+    )
+    if _tool_failed(html_res):
+        return tool_error(
+            'ppt_generate_pages',
+            f'batch-page-html failed: {_tool_fail_reason(html_res)}',
+            detail=json.dumps({
+                'deck_dir': deck_dir_s,
+                'stages': stages,
+                'failed': html_res,
+            }, ensure_ascii=False)[:2500],
+            meta={'deck_dir': deck_dir_s},
+        )
+    html_payload = _tool_payload(html_res)
+    stages.append({
+        'step': 'batch-page-html',
+        'ok': True,
+        'status': html_payload.get('status', 'ok'),
+        'submitted': html_payload.get('submitted'),
+        'ok_count': html_payload.get('ok'),
+        'failed': html_payload.get('failed'),
+        'published_count': html_payload.get('published_count'),
+    })
+
+    published_count = int(html_payload.get('published_count') or 0)
+    if published_count <= 0 and int(html_payload.get('ok') or 0) > 0:
+        pub_res = ppt_publish_pages(deck_dir_s)
+        if not _tool_failed(pub_res):
+            pub_payload = _tool_payload(pub_res)
+            published_count = int(pub_payload.get('published_count') or 0)
+            stages.append({
+                'step': 'publish_pages',
+                'ok': True,
+                'published_count': published_count,
+            })
+
+    status = html_payload.get('status', 'ok')
+    return tool_success('ppt_generate_pages', {
+        'deck_dir': deck_dir_s,
+        'status': status,
+        'concurrency': conc,
+        'image_source': img_src,
+        'pending_image_slots': pending,
+        'submitted': html_payload.get('submitted'),
+        'ok': html_payload.get('ok'),
+        'failed': html_payload.get('failed'),
+        'failed_detail': html_payload.get('failed_detail'),
+        'published_count': published_count or html_payload.get('published_count'),
+        'published': html_payload.get('published'),
+        'stages': stages,
+        'note': (
+            'preview_html pages published. Stop — do not export PPTX from tools.'
+            if status == 'ok' else
+            'Some pages failed; inspect failed_detail or redraw with page-html.'
+        ),
+    })
+
+
 def ppt_run_stage(
     deck_dir: str,
     stage: str,
@@ -2113,7 +2823,12 @@ def ppt_run_stage(
 ) -> dict:
     """Run one PPT HTML-pipeline stage (plugins/ppt-plugin/runtime).
 
-    LLM stages use AutoModel(model='llm') in-process. Prefer batch-page-html.
+    For full outline / full HTML runs prefer ppt_build_outline and
+    ppt_generate_pages (they chain the fixed stages). Use this for single
+    stages, recovery, or single-page page-html / refine-page.
+
+    LLM stages use AutoModel(model='llm') in-process. Prefer batch-page-html
+    over many page-html calls when generating the whole deck.
 
     Args:
         deck_dir (str): Absolute deck directory from ppt_init_deck.
@@ -2224,6 +2939,154 @@ def ppt_list_pages(deck_dir: str) -> dict:
         'count': len(items),
         'pages': items,
     })
+
+
+def ppt_delete_page(deck_dir: str, page: int) -> dict:
+    """Delete an entire slide page and renumber later pages.
+
+    Use for whole-page removal such as "删掉第3页" / "去掉封面". This is NOT
+    for deleting a bullet or one element — those use ppt_patch_page_outline or
+    ppt_edit_page_html on the same page.
+
+    Effects:
+      - Removes the page from outline.json / asset_plan.json and shifts later
+        page_no values down by 1.
+      - Deletes pages/page_NNN.* (+ screenshot) and renames later files.
+      - Removes the matching UI list items (slide_outline / preview_html /
+        preview_notes) at that sort_order so the Outline and Slides tabs shrink.
+
+    Args:
+        deck_dir (str): Absolute deck directory from ppt_init_deck / ppt_find_deck.
+        page (int): 1-based page number to delete.
+
+    Returns:
+        deleted page summary, remaining page count, UI delete results.
+    """
+    try:
+        deck = _resolve_deck_dir(deck_dir)
+    except FileNotFoundError as exc:
+        return tool_error('ppt_delete_page', str(exc))
+
+    page_no = _coerce_int(page, 0, lo=0)
+    if page_no < 1:
+        return tool_error('ppt_delete_page', 'page must be >= 1')
+
+    try:
+        outline = _load_outline(deck)
+    except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
+        return tool_error('ppt_delete_page', str(exc))
+
+    outline_nos: list[int] = []
+    for entry in outline.get('pages') or []:
+        try:
+            outline_nos.append(int(entry.get('page_no', 0)))
+        except (TypeError, ValueError):
+            continue
+    outline_nos = [n for n in outline_nos if n >= 1]
+    disk_nos = _iter_page_numbers(deck)
+
+    if page_no not in outline_nos and page_no not in disk_nos:
+        available = sorted(set(outline_nos) | set(disk_nos))
+        return tool_error(
+            'ppt_delete_page',
+            f'page {page_no} not found. Available: {available or "none"}',
+        )
+
+    remaining_before = len(outline_nos) if outline_nos else len(disk_nos)
+    if remaining_before <= 1:
+        return tool_error(
+            'ppt_delete_page',
+            'Cannot delete the last remaining page. Keep at least one slide.',
+        )
+
+    removed_title = ''
+    outline_meta: dict[str, Any] = {}
+    if page_no in outline_nos:
+        try:
+            outline_meta = _remove_outline_page(deck, page_no)
+            removed_title = outline_meta.get('removed_title') or ''
+        except KeyError as exc:
+            return tool_error('ppt_delete_page', str(exc))
+    else:
+        outline_meta = {'remaining': len(outline_nos), 'note': 'page absent from outline.json'}
+
+    asset_meta = _remove_asset_plan_page(deck, page_no)
+    disk_meta = _delete_page_files_and_renumber(deck, page_no)
+
+    remaining = int(outline_meta.get('remaining') or len(_iter_page_numbers(deck)))
+    _sync_task_pack_page_count(deck, remaining)
+
+    ui_deleted: list[dict[str, Any]] = []
+    try:
+        require_context()
+        for slot in ('slide_outline', 'preview_html', 'preview_notes'):
+            ui_deleted.append(_delete_ui_slot_item(slot, page_no))
+    except Exception as exc:
+        ui_deleted.append({'ok': False, 'skipped': True, 'reason': f'UI sync skipped: {exc}'})
+
+    return tool_success('ppt_delete_page', {
+        'deck_dir': str(deck.resolve()),
+        'deleted_page': page_no,
+        'removed_title': removed_title or None,
+        'remaining_pages': remaining,
+        'outline': outline_meta,
+        'asset_plan': asset_meta,
+        'disk': {
+            'removed_count': len(disk_meta.get('removed_files') or []),
+            'renamed_count': len(disk_meta.get('renamed_files') or []),
+            'html_pages': disk_meta.get('html_pages_remaining'),
+        },
+        'ui': ui_deleted,
+        'note': (
+            'Later pages were renumbered (old N+1 is now N). '
+            'Do not re-run outline/style unless the user asks for a full rebuild.'
+        ),
+    })
+
+
+def ppt_publish_outline(
+    deck_dir: str,
+    pages: Optional[Union[str, list, int]] = None,
+) -> dict:
+    """Publish outline.json pages into slide_outline list artifacts for the UI.
+
+    Call once after stage=outline. Each page becomes one editable list item
+    (sort_order = page number). generate_ppt reads these briefs — including any
+    human edits in the Outline tab — when building HTML.
+
+    Args:
+        deck_dir (str): Absolute deck directory from ppt_init_deck / ppt_find_deck.
+        pages: Optional 1-based page filter. Omit = all outline pages.
+
+    Returns:
+        published_count and per-page titles (no full brief bodies).
+    """
+    try:
+        deck = _resolve_deck_dir(deck_dir)
+    except FileNotFoundError as exc:
+        return tool_error('ppt_publish_outline', str(exc))
+    try:
+        require_context()
+    except Exception as exc:
+        return tool_error('ppt_publish_outline', f'SubAgent context required: {exc}')
+
+    try:
+        page_list = _parse_page_list(pages)
+    except ValueError as exc:
+        return tool_error('ppt_publish_outline', str(exc))
+
+    try:
+        result = _publish_slide_outlines_from_disk(deck, page_list)
+    except (FileNotFoundError, ValueError, KeyError, json.JSONDecodeError) as exc:
+        return tool_error('ppt_publish_outline', str(exc))
+
+    if result.get('published_count', 0) <= 0:
+        return tool_error(
+            'ppt_publish_outline',
+            'No outline pages published. Run ppt_run_stage(stage="outline") first.',
+            detail=json.dumps(result, ensure_ascii=False)[:1500],
+        )
+    return tool_success('ppt_publish_outline', result)
 
 
 def ppt_publish_pages(
@@ -2441,6 +3304,13 @@ def ppt_patch_page_outline(
     except OSError as exc:
         return tool_error('ppt_patch_page_outline', f'writing outline.json failed: {exc}')
 
+    outline_pub = None
+    try:
+        require_context()
+        outline_pub = _publish_one_slide_outline(deck, page_no)
+    except Exception as exc:
+        outline_pub = {'ok': False, 'error': str(exc)}
+
     warnings = _stale_count_hints(page_outline, ops)
     if bullets_after < 3:
         warnings.append(
@@ -2458,6 +3328,7 @@ def ppt_patch_page_outline(
         'bullets_before': bullets_before,
         'bullets_after': bullets_after,
         'patched_page': _outline_page_view(page_outline),
+        'slide_outline_published': bool(outline_pub and outline_pub.get('ok')),
         'next_step': (
             f"ppt_run_stage(deck_dir, stage='page-html', page={page_no}) to redraw "
             'only this page (auto-publishes preview_html).'

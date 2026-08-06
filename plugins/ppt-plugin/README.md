@@ -46,11 +46,21 @@ specific file into `runtime/` and note it here.
 Optional `collect_materials` can pull facts (`kb`, `web_search`) and real images:
 
 1. `ppt_search_web_images` / KB image hits → `ppt_register_material_images`
-2. `ppt_init_deck` auto-attaches them into `info_pack.user_assets.reference_images`
-3. `outline` assigns `use_image.reference_image_index`
-4. `page-html` copies to `images/page_XXX_inherited.*` and embeds a foreground `<img>`
+2. `ppt_build_outline` auto-inits the deck and attaches them into
+   `info_pack.user_assets.reference_images`, then style/outline/publish
+3. Outline assigns `use_image.reference_image_index`; UI gets per-page `slide_outline`
+4. `ppt_generate_pages` runs asset-plan + batch-page-html (incl. UI edits) and
+   embeds foreground `<img>`
 
 Keep `image_source='none'` for this path (AI T2I is separate).
+
+## Outline → HTML split
+
+- `build_outline`: **one call** `ppt_build_outline` → list slot `slide_outline`
+- `generate_ppt`: **one call** `ppt_generate_pages` — **no** re-outline
+- Low-level `ppt_init_deck` / `ppt_run_stage` / `ppt_publish_*` remain for
+  debug, recovery, and single-page edits
+- User can edit each page brief in the Outline tab; generate reads human revisions via `_resolve_artifact_text`
 
 ## Deck storage (conversation-scoped)
 
@@ -83,6 +93,17 @@ rebuilding the deck:
      `delete_node` / `replace_text` on the existing HTML, no LLM redraw, and it
      republishes the page itself, or
    - `ppt_run_stage(deck_dir, stage='page-html', page=N)` — LLM redraw of that page
+
+## Delete an entire page
+
+Whole-slide removal ("删掉第3页", "去掉封面") is different from deleting a bullet:
+
+1. `ppt_find_deck`
+2. `ppt_delete_page(deck_dir, page=N)` — updates outline/asset_plan, renumbers
+   later pages on disk, and removes the matching UI list items
+   (`slide_outline` / `preview_html` / `preview_notes`)
+
+Do not re-run outline/style or regenerate untouched pages after a delete.
 
 ### Stable element ids
 

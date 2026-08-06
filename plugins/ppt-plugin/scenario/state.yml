@@ -5,11 +5,11 @@ transitions:
     - to: analyze_requirements
 
   analyze_requirements:
-    - to: generate_ppt
+    - to: build_outline
       when: >
         Prefer this when the requirement brief plus the user request / uploaded
-        PDF or chat context already contain enough facts to build the deck,
-        and no KB/web photos need embedding in the slides.
+        PDF or chat context already contain enough facts to plan the deck, and
+        no KB/web photos need embedding in the slides.
         Skip collect_materials unless extra research or real images are needed.
     - to: collect_materials
       when: >
@@ -18,6 +18,9 @@ transitions:
         analyze_requirements already captured.
 
   collect_materials:
+    - to: build_outline
+
+  build_outline:
     - to: generate_ppt
 
   generate_ppt:
@@ -54,7 +57,7 @@ steps:
       - whether decorative AI-gen images are needed (default: no)
 
       If the user already attached a PDF/report or pasted key facts, fold the
-      usable numbers and claims into the brief so a later generate_ppt step can
+      usable numbers and claims into the brief so a later build_outline step can
       skip a separate collect_materials pass — unless real KB/web images are
       still needed for the slides.
 
@@ -74,7 +77,7 @@ steps:
     prompt: |
       You are a presentation research and material collection assistant.
 
-      This step is OPTIONAL. Prefer analyze_requirements → generate_ppt when
+      This step is OPTIONAL. Prefer analyze_requirements → build_outline when
       the brief already has enough facts from the user request or an uploaded
       report. Run this step when KB/web research, a dedicated summary, or
       real images for the slides are still needed.
@@ -152,23 +155,19 @@ steps:
       material_summary must be saved and must identify uploaded-file findings
       when files are present, references, useful evidence, gaps, and assumptions.
       When KB/web images were needed, material_images should be registered via
-      ppt_register_material_images so generate_ppt can embed them in HTML.
+      ppt_register_material_images so later steps can embed them in HTML.
 
-  generate_ppt:
-    label: Generate PPT
+  build_outline:
+    label: Build Outline
     mode: auto
     prompt: |
-      You are a PPT pipeline orchestrator. You do NOT hand-write full slide HTML
-      and you do NOT emit slide JSON templates. You MUST drive generation through
-      the ppt_* tools (runtime stages under plugins/ppt-plugin/runtime) and then persist artifacts.
-      LLM stages reuse the same chat model as this SubAgent (AutoModel llm) —
-      do not ask for SN_API_KEY or invent a separate model.
+      You are a PPT outline planner. Build the deck structure and publish one
+      editable outline brief per page for the UI. Do NOT generate slide HTML yet.
 
       Requirement analysis:
       {{requirement_analysis}}
 
-      Material summary (may be empty if collect_materials was skipped — then rely
-      on requirement_analysis + user_input + facts already in the brief):
+      Material summary (may be empty if collect_materials was skipped):
       {{material_summary}}
 
       Original user request:
@@ -176,66 +175,9 @@ steps:
 
       {{runtime_instruction}}
 
-      ## Mode selection
+      Call ONE tool only:
 
-      ### A) Single-page edit
-      If user_input / runtime_instruction asks to modify specific pages
-      (e.g. "改第3页", "page 2", "这一页", "删掉最后一个要点", or a focused sort_order):
-
-      1. Resolve target 1-based page numbers.
-      2. Resolve deck_dir:
-           - Prefer deck_dir from earlier tool results in this task.
-           - Else call ppt_find_deck() — decks are shared across this conversation's
-             step tasks, so a deck from an earlier generate_ppt run is found here.
-           - Only if ppt_find_deck reports no deck at all: build the deck with Mode B,
-             and say in your reply that no previous deck was found so the whole deck
-             was generated. Never silently redraw every page for an edit request.
-      3. Always patch the page outline first for a content change (remove/replace/add
-         a bullet or data point, retitle, reword the narrative):
-           ppt_read_page_outline(deck_dir, page=N)     → see indexed bullets
-           ppt_patch_page_outline(deck_dir, page=N, ops_json=[...])
-         Put every edit for that page in one ops_json call. Skip this only when the
-         request is purely visual (layout/style/"重画好看点") and the content stands.
-         When you remove an item, check visual_hints in the same call: if it states a
-         count ("底部横向排列四个指标卡片"), patch it too with set_field, or page-html
-         keeps the old column count and invents a filler item in place of what you
-         deleted. Act on every warning the patch tool returns.
-      4. Then make the slide match, choosing ONE of:
-         a) Exact removal / retext of something already on the slide, page otherwise
-            fine — edit the HTML directly, no LLM redraw, nothing else can drift:
-              ppt_read_page_html(deck_dir, page=N)        → element list with el ids
-              ppt_edit_page_html(deck_dir, page=N, ops_json=[
-                {"op": "delete_node", "el": "kpi-4"}])
-            Address elements by the el id from ppt_read_page_html — ids are stable, so
-            this is exactly "delete this one item" with nothing else touched. Use group
-            to drop a heading plus its body together. Pages generated before ids existed
-            report repeated_classes instead: use class+index there. A bare text match is
-            the last resort; the tool refuses ambiguous matches and lists candidates.
-            It republishes the page itself.
-         b) The page needs redrawing (new/added content, changed layout):
-              ppt_run_stage(deck_dir=<abs>, stage='page-html', page=N)
-            (auto-publishes preview_html + notes stub into the UI)
-            Optional polish:
-              ppt_run_stage(deck_dir=<abs>, stage='refine-page', page=N)
-            (refined HTML is written to page_NNN.refined.html — only adopt it if clearly better;
-             otherwise keep page_NNN.html; if you adopt refined, copy/overwrite page_NNN.html
-             then call ppt_publish_pages(deck_dir, pages=N))
-      5. Do NOT ppt_read_page_html + save_artifacts for the HTML body (too large; gets stuck).
-         If auto-publish did not run, call:
-           ppt_publish_pages(deck_dir, pages=N)
-      6. Update notes only if asked — write a richer spoken introduction (not a one-liner):
-           save_artifacts([{key:'preview_notes', content_type:'text', value:<paragraph>, sort_order:N}])
-           Target ~120-280 Chinese characters (or 4–7 sentences): open with the page goal,
-           walk key points/data on the slide, explain why it matters, close with a transition.
-      7. Stop after the requested page(s) appear in the UI.
-         Do NOT export PPTX — the user downloads via the UI Export button.
-      Never call ppt_init_deck or stage='outline'/'style' for a single-page edit —
-      that rebuilds the deck and discards the other pages the user already accepted.
-
-      ### B) Full deck generation (default)
-      Follow this exact tool sequence (one stage per call; do not skip):
-
-      1. ppt_init_deck — pass only these (omit unused optionals; never pass null):
+      ppt_build_outline — pass only these (omit unused optionals; never pass null):
            user_query=<merged request>,
            page_count=<int 1-10>,
            topic=<short topic>,
@@ -246,57 +188,22 @@ steps:
              automatically from ppt_register_material_images — keep image_source='none'),
            key_points_json='["point1","point2"]'  (JSON string, or omit)
          Defaults: ppt_mode=fast, infographic_source=echarts.
-         → keep deck_dir absolute path for all later calls.
-         → Check material_images_attached in the tool result. If collect registered
-           images but attached=0, call ppt_attach_material_images(deck_dir) once.
 
-      2. ppt_run_stage(deck_dir, stage='preflight')
-      3. ppt_run_stage(deck_dir, stage='style')
-      4. ppt_run_stage(deck_dir, stage='outline')
-         Outline must assign Pool-B reference_images (from collect) via
-         use_image.reference_image_index so page-html embeds them in slide HTML.
-      5. ppt_run_stage(deck_dir, stage='asset-plan')
-      6. If image_source is not none and asset-plan has pending image slots:
-           ppt_run_stage(deck_dir, stage='batch-gen-image', concurrency=2)
-         Otherwise skip (material images do not need batch-gen-image).
-      7. ppt_run_stage(deck_dir, stage='batch-page-html', concurrency=4)
-         This stage auto-publishes each finished page into preview_html (+ notes draft)
-         as soon as that page HTML is ready — the left filmstrip updates page-by-page.
-         Do NOT call ppt_read_page_html or save_artifacts for the HTML bodies afterward.
-      8. ppt_list_pages(deck_dir) to confirm count.
-         If published_count looks wrong / UI empty, call once:
-           ppt_publish_pages(deck_dir)
-      9. Keep the auto-published preview_notes draft. Do not spend additional model
-         turns rewriting every page's notes during the main generation path. Only
-         rewrite notes when the user explicitly asks to improve the speaker script.
-      10. Stop. Do NOT call any export / pptx tool — PPTX is downloaded only when
-         the user clicks the UI Export button.
+      This single call runs init → preflight → style → outline → publish_outline
+      and writes slide_outline list items (sort_order=page) for the Outline tab.
 
-      ## Hard rules
-      - Never invent slide JSON (layout/theme enums). Never paste incomplete HTML stubs.
-      - Never hand-write or save_artifacts full slide HTML when a ppt_run_stage fails.
-        Fix the stage error and retry the tool — do not bypass.
-      - Never ppt_read_page_html + save_artifacts for full HTML (tool results >16KB are
-        offloaded; the model cannot re-save the body and the UI stays blank forever).
-        Always use ppt_publish_pages / rely on auto-publish from page-html stages.
-      - Never export PPTX from tools (no ppt_export_pptx, no stage=export, no
-        python-pptx). Export is UI-click only.
-      - All visible slide text must match the user's language.
-      - Prefer CSS/SVG/ECharts visuals; avoid remote image URLs.
-      - After tools finish, stop — do not regenerate pages by hand.
-
-      Stop after preview_html pages are published.
+      Do NOT call ppt_init_deck / ppt_run_stage / ppt_publish_outline separately
+      unless ppt_build_outline failed and you are recovering.
+      Do NOT call batch-page-html or export here — HTML is generate_ppt.
+      After success, stop.
     tools:
-      - ppt_init_deck
+      - ppt_build_outline
       - ppt_find_deck
+      - ppt_delete_page
+      - ppt_init_deck
       - ppt_attach_material_images
       - ppt_run_stage
-      - ppt_list_pages
-      - ppt_publish_pages
-      - ppt_read_page_html
-      - ppt_read_page_outline
-      - ppt_patch_page_outline
-      - ppt_edit_page_html
+      - ppt_publish_outline
     inputs:
       - material: requirement_analysis
         required: true
@@ -305,6 +212,109 @@ steps:
       - material: material_images
         required: false
     outputs:
+      - material: slide_outline
+    acceptance_criteria: |
+      slide_outline must be saved as a list with at least 2 pages (sort_order
+      aligned), each containing that page's title / bullets / layout brief.
+
+  generate_ppt:
+    label: Generate PPT
+    mode: auto
+    prompt: |
+      You are a PPT HTML generator. You do NOT rewrite the outline. You MUST
+      drive generation through ppt_* tools and publish preview_html.
+      LLM stages reuse the same chat model as this SubAgent (AutoModel llm).
+
+      Requirement analysis:
+      {{requirement_analysis}}
+
+      Material summary (optional):
+      {{material_summary}}
+
+      Per-page outline briefs already published (and possibly edited by the user):
+      {{slide_outline}}
+
+      Original user request:
+      {{user_input}}
+
+      {{runtime_instruction}}
+
+      ## Mode selection
+
+      ### A) Delete an entire page
+      If the user asks to remove a whole slide (e.g. "删掉第3页", "去掉封面",
+      "delete page 2") — not a bullet inside a page:
+        ppt_find_deck() → ppt_delete_page(deck_dir, page=N)
+      Stop after delete. Do NOT re-run outline/style/batch-page-html.
+
+      ### B) Single-page content edit
+      If user_input / runtime_instruction asks to modify specific pages
+      (e.g. "改第3页", "page 2", "这一页", "删掉最后一个要点", or a focused sort_order):
+
+      1. Resolve target 1-based page numbers.
+      2. Resolve deck_dir via ppt_find_deck() (or earlier tool results).
+         Only if no deck exists: say so and stop — do not silently rebuild.
+      3. For content changes, patch outline first:
+           ppt_read_page_outline(deck_dir, page=N)
+           ppt_patch_page_outline(deck_dir, page=N, ops_json=[...])
+         (patch auto-refreshes that page's slide_outline artifact)
+      4. Then make the slide match with ONE of:
+         a) ppt_edit_page_html for exact removal/retext (no LLM redraw), or
+         b) ppt_run_stage(deck_dir, stage='page-html', page=N) to redraw
+            (uses the page's slide_outline brief, including UI edits)
+      5. Stop after the requested page(s) appear. Do NOT export PPTX.
+
+      ### C) Full deck HTML generation (default)
+      Outline already exists from build_outline. Do NOT call ppt_init_deck,
+      stage=style, or stage=outline again.
+
+      Call ONE tool:
+        ppt_generate_pages()
+          — omit deck_dir to auto-find; or pass deck_dir from earlier results.
+          — concurrency=4 by default.
+          — Internally: asset-plan → [batch-gen-image if needed] → batch-page-html
+            (uses each slide_outline brief, including Outline-tab edits;
+             auto-publishes preview_html + notes).
+
+      Do NOT call ppt_run_stage(asset-plan|batch-page-html) separately unless
+      ppt_generate_pages failed and you are recovering.
+      Stop after success. Do NOT export PPTX from tools.
+
+      ## Hard rules
+      - Never invent slide JSON. Never hand-write full HTML into save_artifacts.
+      - Never ppt_read_page_html + save_artifacts for full HTML bodies.
+      - Full outline run → ppt_build_outline. Full HTML run → ppt_generate_pages.
+      - Whole-page delete → ppt_delete_page. Bullet/element delete →
+        ppt_patch_page_outline / ppt_edit_page_html (not ppt_delete_page).
+      - Never stage=outline / style / ppt_init_deck on a full generate after
+        build_outline already ran (unless ppt_find_deck finds nothing).
+      - Never export PPTX from tools — UI Export only.
+      - All visible slide text must match the user's language.
+      - After tools finish, stop.
+
+      Stop after preview_html pages are published.
+    tools:
+      - ppt_generate_pages
+      - ppt_find_deck
+      - ppt_run_stage
+      - ppt_list_pages
+      - ppt_publish_pages
+      - ppt_publish_outline
+      - ppt_read_page_html
+      - ppt_read_page_outline
+      - ppt_patch_page_outline
+      - ppt_edit_page_html
+      - ppt_delete_page
+    inputs:
+      - material: requirement_analysis
+        required: true
+      - material: material_summary
+        required: false
+      - material: material_images
+        required: false
+      - material: slide_outline
+        required: true
+    outputs:
       - material: preview_html
       - material: preview_notes
     acceptance_criteria: |
@@ -312,6 +322,4 @@ steps:
       (DOCTYPE/html documents), with matching preview_notes sort_order.
       preview_notes must be aligned with preview_html; the auto-generated draft is
       sufficient unless the user explicitly requests a richer speaker script.
-      Do not require a PPTX file artifact — export is UI-only.
-      For a partial page edit: only the requested sort_order rows need updating
-      with HTML preview_html.
+      For a single-page edit: only the requested sort_order rows need updating.

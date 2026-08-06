@@ -54,9 +54,18 @@ export function isTransparent(cssColor) {
   if (!cssColor) return false;
   const v = cssColor.trim().toLowerCase();
   if (v === 'transparent') return true;
-  // rgba(r, g, b, 0) 形式
-  const m = v.match(/^rgba\s*\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*,\s*([\d.]+)\s*\)$/);
-  if (m && parseFloat(m[1]) === 0) return true;
+  // rgba(r, g, b, 0) comma form
+  const m = v.match(/^rgba?\s*\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*,\s*([\d.]+%?)\s*\)$/);
+  if (m) {
+    const a = m[1].endsWith('%') ? parseFloat(m[1]) / 100 : parseFloat(m[1]);
+    if (a === 0) return true;
+  }
+  // Modern rgb(r g b / 0) or rgba(r g b / 0%)
+  const space = v.match(/^rgba?\s*\(\s*[\d.]+\s+[\d.]+\s+[\d.]+\s*\/\s*([\d.]+%?)\s*\)$/);
+  if (space) {
+    const a = space[1].endsWith('%') ? parseFloat(space[1]) / 100 : parseFloat(space[1]);
+    if (a === 0) return true;
+  }
   return false;
 }
 
@@ -91,14 +100,25 @@ export function cssColorToHex(cssColor) {
     return (r + g + b).toUpperCase();
   }
 
-  // --- rgb(r, g, b) 或 rgba(r, g, b, a) ---
+  // --- rgb(r, g, b) / rgba(r, g, b, a) — comma-separated ---
   const rgbMatch = v.match(
-    /^rgba?\s*\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*[\d.]+)?\s*\)$/i
+    /^rgba?\s*\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*[\d.]+%?)?\s*\)$/i
   );
   if (rgbMatch) {
     const r = Math.round(parseFloat(rgbMatch[1]));
     const g = Math.round(parseFloat(rgbMatch[2]));
     const b = Math.round(parseFloat(rgbMatch[3]));
+    return [r, g, b].map(n => n.toString(16).padStart(2, '0')).join('').toUpperCase();
+  }
+
+  // --- Modern CSS Color 4: rgb(r g b) / rgb(r g b / a) / rgba(r g b / a) ---
+  const rgbSpace = v.match(
+    /^rgba?\s*\(\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*([\d.]+%?))?\s*\)$/i
+  );
+  if (rgbSpace) {
+    const r = Math.round(parseFloat(rgbSpace[1]));
+    const g = Math.round(parseFloat(rgbSpace[2]));
+    const b = Math.round(parseFloat(rgbSpace[3]));
     return [r, g, b].map(n => n.toString(16).padStart(2, '0')).join('').toUpperCase();
   }
 
@@ -149,8 +169,8 @@ export function parseLinearGradient(cssValue) {
   // 提取括号内容
   const inner = trimmed.replace(/^linear-gradient\s*\(\s*/i, '').replace(/\s*\)$/, '');
 
-  // 将 rgb()/rgba() 内部逗号临时替换，避免干扰顶层分割
-  let safeInner = inner.replace(/rgba?\s*\([^)]*\)/gi, m => m.replace(/,/g, '§'));
+  // Protect commas inside color functions so top-level stop splits stay intact
+  let safeInner = inner.replace(/(?:rgba?|hsla?|oklch|lab|color)\s*\([^)]*\)/gi, m => m.replace(/,/g, '§'));
 
   // 按顶层逗号分割
   const parts = safeInner.split(',').map(p => p.replace(/§/g, ',').trim());
@@ -241,7 +261,7 @@ export function parseRadialGradient(cssValue) {
   const inner = trimmed.replace(/^.*?radial-gradient\s*\(\s*/i, '').replace(/\s*\)$/, '');
 
   // 将 rgb()/rgba() 内部逗号临时替换
-  let safeInner = inner.replace(/rgba?\s*\([^)]*\)/gi, m => m.replace(/,/g, '§'));
+  let safeInner = inner.replace(/(?:rgba?|hsla?|oklch|lab|color)\s*\([^)]*\)/gi, m => m.replace(/,/g, '§'));
 
   const parts = safeInner.split(',').map(p => p.replace(/§/g, ',').trim());
 
@@ -495,9 +515,13 @@ export function parseFontFamily(cssValue) {
  */
 export function extractCssAlpha(cssColor) {
   if (!cssColor) return 1;
-  const m = cssColor.match(/rgba\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*,\s*([\d.]+)\s*\)/);
-  if (m) return parseFloat(m[1]);
   if (cssColor.trim().toLowerCase() === 'transparent') return 0;
+  // Comma rgba(r, g, b, a)
+  const m = cssColor.match(/rgba?\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*,\s*([\d.]+%?)\s*\)/i);
+  if (m) return m[1].endsWith('%') ? parseFloat(m[1]) / 100 : parseFloat(m[1]);
+  // Modern rgb(r g b / a)
+  const space = cssColor.match(/rgba?\(\s*[\d.]+\s+[\d.]+\s+[\d.]+\s*\/\s*([\d.]+%?)\s*\)/i);
+  if (space) return space[1].endsWith('%') ? parseFloat(space[1]) / 100 : parseFloat(space[1]);
   return 1;
 }
 
