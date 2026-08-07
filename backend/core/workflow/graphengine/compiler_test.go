@@ -412,6 +412,36 @@ func TestBundledWorkflowsCompileForRuntime(t *testing.T) {
 	}
 }
 
+func TestBuiltinSelfTestDefaultExecutionModes(t *testing.T) {
+	root := filepath.Join("..", "..", "..", "..", "workflows", "test-workflow")
+	workflowYAML, err := os.ReadFile(filepath.Join(root, "workflow.yaml"))
+	if err != nil {
+		t.Fatalf("read test workflow: %v", err)
+	}
+	stateYAML, err := os.ReadFile(filepath.Join(root, "scenario", "state.yml"))
+	if err != nil {
+		t.Fatalf("read test workflow state: %v", err)
+	}
+	scenario, _ := os.ReadFile(filepath.Join(root, "scenario", "scenario.md"))
+	result := Compile(string(workflowYAML), string(stateYAML), string(scenario), ProfileRuntimeLoad)
+	if !result.Valid {
+		t.Fatalf("test workflow must compile: %#v", result.Diagnostics)
+	}
+	want := map[string]string{
+		"prompt":          "auto",
+		"script":          "human",
+		"typed_artifacts": "auto",
+		"rewrite":         "human",
+		"list_artifacts":  "auto",
+		"verify":          "human",
+	}
+	for stepID, mode := range want {
+		if got := result.Graph.Nodes[stepID].Mode; got != mode {
+			t.Fatalf("step %s mode=%q, want %q", stepID, got, mode)
+		}
+	}
+}
+
 func TestCompileAcceptsNaturalLanguageChoiceWithoutFallback(t *testing.T) {
 	plugin := `
 id: choice-test

@@ -21,7 +21,7 @@ steps:
 
   script:
     label: Script Tool
-    mode: auto
+    mode: human
     prompt: |
       Read prompt_result. Call build_test_metadata(summary=<prompt_result>).
       Save the returned object directly as metadata_json with
@@ -50,7 +50,7 @@ steps:
 
   rewrite:
     label: Rewrite Artifact
-    mode: auto
+    mode: human
     prompt: |
       Read prompt_result. Call create_rewrite_fixture(summary=<prompt_result>)
       and save its path as rewritten_attachment with content_type="file".
@@ -76,7 +76,7 @@ steps:
 
   verify:
     label: Verify
-    mode: auto
+    mode: human
     prompt: |
       Read prompt_result, metadata_json, text_attachment, image_attachment,
       rewritten_attachment, and every list_attachments item. Call

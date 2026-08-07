@@ -163,6 +163,7 @@ def test_dynamic_trigger_activates_advance_step_in_the_same_agent_turn():
         )
 
         assert 'advance_step' in _tool_names(contribution)
+        assert 'advance_step_and_hand_off' in _tool_names(contribution)
         assert contribution.stop_tools == []
         _tool(contribution, 'trigger_image_workflow')()
         result = _tool(contribution, 'advance_step')(['prompt'])
@@ -170,6 +171,52 @@ def test_dynamic_trigger_activates_advance_step_in_the_same_agent_turn():
     assert result == {'status': 'succeeded'}
     assert toolkit.advance_step.call_args.args[0] == 'session-1'
     assert toolkit.advance_step.call_args.args[1] == 1
+
+
+def test_dynamic_trigger_exposes_handoff_after_session_is_created_in_same_turn():
+    toolkit = MagicMock()
+    toolkit.prepare_workflow.return_value = {
+        'session_id': 'session-1', 'state_version': 1, 'ready_steps': ['prompt'],
+    }
+    with patch('lazymind.chat.workflow.workflow_manager._client') as client_factory, patch(
+        'lazymind.chat.workflow.workflow_manager.HostWorkflowToolkit', return_value=toolkit,
+    ):
+        client = client_factory.return_value
+        client.get_workflow.return_value.result = {
+            'workflow_id': 'image-workflow', 'revision_id': 'revision-1',
+        }
+        client.get_state.return_value = {
+            'session_id': 'session-1', 'state_version': 1,
+            'projection': {'reachable': ['prompt'], 'ready': ['prompt']},
+        }
+        client.get_ready_steps.return_value = {
+            'session_id': 'session-1', 'state_version': 1,
+            'ready_steps': ['review'], 'retryable_steps': [], 'rewindable_steps': [],
+        }
+        client.advance.return_value.result = {'status': 'queued'}
+        contribution = resolve_workflow_injection(
+            {'workflow_mode': 'dynamic'},
+            current_query='run it', conversation_id='conversation-1',
+            workflow_catalog=[{
+                'workflow_ref': 'builtin:image-workflow',
+                'workflow_id': 'image-workflow', 'revision_id': 'revision-1',
+            }],
+            allowed_workflow_refs=['builtin:image-workflow'],
+            workflow_activations=[{
+                'workflow_ref': 'builtin:image-workflow',
+                'workflow_id': 'image-workflow', 'revision_id': 'revision-1',
+                'tool_name': 'trigger_image_workflow',
+            }],
+        )
+
+        _tool(contribution, 'trigger_image_workflow')()
+        result = _tool(contribution, 'advance_step_and_hand_off')('review')
+
+    assert result == '{"status": "queued"}'
+    request = client.advance.call_args.args[0]
+    assert request.session_id == 'session-1'
+    assert request.handoff is True
+    assert request.steps[0].step_id == 'review'
 
 
 def test_dynamic_trigger_defaults_request_context_to_current_query():

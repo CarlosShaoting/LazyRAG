@@ -253,7 +253,9 @@ class HostWorkflowToolkit:
                     if completed else
                     'Continue in this same ChatAgent turn by selecting exact IDs from the '
                     'returned ready_steps. Stop only for a terminal state, required user input, '
-                    'required approval, explicit user boundary, or a failed step decision.'
+                    'explicit user boundary, or a failed step decision. If the next Ready '
+                    'Workflow step requires human approval, call advance_step_and_hand_off '
+                    'for that exact step instead of ask_user.'
                 ),
             },
             'command_id': resolved_command_id,

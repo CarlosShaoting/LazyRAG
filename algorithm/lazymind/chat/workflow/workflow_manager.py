@@ -74,13 +74,20 @@ def _state(session_id: str) -> Dict[str, Any]:
         return {'error': {'code': exc.code, 'message': exc.message}}
 
 
-def _handoff_tool(session_id: str) -> Any:
+def _handoff_tool(session: Union[str, Callable[[], str]]) -> Any:
     def advance_step_and_hand_off(step_id: str) -> str:
         """Advance one Ready Workflow step; Host injects concurrency metadata."""
+        selected_session_id = session() if callable(session) else session
+        selected_session_id = str(selected_session_id or '').strip()
+        if not selected_session_id:
+            raise WorkflowClientError(
+                'WORKFLOW_SESSION_NOT_INITIALIZED',
+                'Call the selected trigger Workflow tool before using Session tools.',
+            )
         client = _client()
         state_refreshed = False
         for attempt in range(2):
-            frontier = client.get_ready_steps(session_id)
+            frontier = client.get_ready_steps(selected_session_id)
             allowed = set(frontier.get('ready_steps') or [])
             allowed.update(frontier.get('retryable_steps') or [])
             allowed.update(frontier.get('rewindable_steps') or [])
@@ -94,7 +101,7 @@ def _handoff_tool(session_id: str) -> Any:
                 )
             try:
                 response = client.advance(AdvanceRequest(
-                    session_id=session_id,
+                    session_id=selected_session_id,
                     expected_state_version=int(frontier.get('state_version') or 0),
                     steps=[StepCommand(step_id=step_id)],
                     handoff=True,
@@ -593,6 +600,7 @@ def resolve_workflow_injection(
         # A ChatAgent tool set is fixed for the duration of one model turn. Expose
         # Host-bound Session tools up front and resolve their Session id only after
         # trigger_<workflow> creates it, so trigger -> advance works in the same turn.
+        handoff = _handoff_tool(lambda: session_holder.get('session_id', ''))
         tools = [
             *[tool for tool in tools if _is_bound_workflow_trigger(tool.__name__)],
             *[
@@ -601,6 +609,7 @@ def resolve_workflow_injection(
                 )
                 if tool.__name__ != 'resume_workflow'
             ],
+            handoff,
         ]
     elif not session_id:
         tools = _safe_authoring_tools(toolkit)
@@ -627,8 +636,11 @@ def resolve_workflow_injection(
             + 'Runtime enforces the finite AI automatic-retry budget. User-requested retries '
             + 'remain available and do not consume that budget. After step_succeeded, continue in the '
             + 'same turn using only the returned ready_steps until the Workflow is terminal, '
-            + 'requires user input/approval, reaches an explicit user boundary, or a step fails. '
-            + 'Do not replace continued execution with a promise that later steps will run.\n'
+            + 'requires user input, reaches an explicit user boundary, or a step fails. '
+            + 'If the next Ready Workflow step requires human approval, call '
+            + 'advance_step_and_hand_off for that exact step instead of calling ask_user or '
+            + 'asking in assistant prose. Do not replace continued execution with a promise '
+            + 'that later steps will run.\n'
             + json.dumps(projection, ensure_ascii=False, default=str)
         )
         return WorkflowAgentContribution(
@@ -658,8 +670,9 @@ def resolve_workflow_injection(
             + 'workflow request_context and as user_input for the first Ready step; do not '
             + 'ask for a second trigger message when current_query is non-empty. After each '
             + 'successful advance_step, continue in this same turn from its returned ready_steps '
-            + 'until terminal, required input/approval, explicit user boundary, or failure. Do '
-            + 'not merely announce that later steps will run. For recovery, '
+            + 'until terminal, required input, explicit user boundary, or failure. If a Ready '
+            + 'Workflow step requires human approval, call advance_step_and_hand_off for that '
+            + 'exact step instead of ask_user. Do not merely announce that later steps will run. For recovery, '
             + 'use only exact retryable_steps or rewindable_steps returned by Runtime.\n'
             + json.dumps({
                 'current_query': current_query,

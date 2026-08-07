@@ -927,7 +927,7 @@ const AssistantMessage = (props: any) => {
     // Render ask_pending card if present
     if (item.ask_pending) {
       const askPending = item.ask_pending;
-      const isReadOnly = !!item.is_history || !!item.ask_answered;
+      const isReadOnly = !!item.ask_answered;
       return (
         <AskCard
           key={askPending.ask_id}
