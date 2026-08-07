@@ -293,8 +293,6 @@ def image_search_tool(query: str) -> str:
     Returns:
         A newline-separated list of image URLs.
     """
-    tavily_configured = bool(TavilySearch().__key_source__())
-    bocha_configured = bool(BochaSearch().__key_source__())
     urls = _tavily_image_urls(query, count=5)
     if not urls:
         urls = _bocha_image_urls(query, count=5)
@@ -313,13 +311,5 @@ def image_search_tool(query: str) -> str:
             except Exception:
                 pass
     if not urls:
-        if not tavily_configured and not bocha_configured:
-            return (
-                f'No image URLs found for "{query}" because no image-search '
-                'provider is configured. Configure Tavily or Bocha.'
-            )
-        return (
-            f'Configured image-search providers returned no image URLs for "{query}". '
-            'Try a more specific query.'
-        )
+        return f'No image URLs found for "{query}". Try a more specific query.'
     return '\n'.join(urls[:5])
