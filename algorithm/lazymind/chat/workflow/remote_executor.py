@@ -217,7 +217,9 @@ class RemoteWorkflowExecutor:
             embedded = []
             for raw in values:
                 raw_text = str(raw)
-                if raw_text.startswith(('http://', 'https://', 'data:')):
+                if raw_text.startswith((
+                    'http://', 'https://', 'data:', '/static-files/', '/api/core/static-files/',
+                )):
                     embedded.append(raw_text)
                     continue
                 path = pathlib.Path(raw_text)

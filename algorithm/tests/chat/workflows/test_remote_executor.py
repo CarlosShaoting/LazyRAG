@@ -27,6 +27,13 @@ def test_remote_executor_embeds_host_local_file(tmp_path):
     assert str(tmp_path) not in value['path']
 
 
+def test_remote_executor_preserves_core_static_file_url():
+    signed_url = '/static-files/ai_generated/result.png?expires=123&sig=test'
+    value = RemoteWorkflowExecutor._embed_files(
+        {'path': signed_url}, 'image', '/tmp/workspace')
+    assert value['path'] == signed_url
+
+
 @pytest.mark.asyncio
 async def test_remote_executor_materializes_fenced_inputs_in_host_workspace(tmp_path):
     worker = RemoteWorkflowExecutor()
