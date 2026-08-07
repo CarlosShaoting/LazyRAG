@@ -669,8 +669,11 @@ func applyWorkflowSelection(
 }
 
 func buildWorkflowActivation(item map[string]any, workflowRef string) map[string]any {
-	workflowID := strings.TrimSpace(fmt.Sprint(item["workflow_id"]))
-	if item == nil || workflowID == "" {
+	if item == nil {
+		return nil
+	}
+	workflowID := optionalActivationString(item["workflow_id"])
+	if workflowID == "" {
 		return nil
 	}
 	stem := strings.Trim(strings.Map(func(r rune) rune {
@@ -683,14 +686,14 @@ func buildWorkflowActivation(item map[string]any, workflowRef string) map[string
 		stem = "workflow"
 	}
 	stem = strings.TrimSuffix(stem, "_workflow")
-	name := strings.TrimSpace(fmt.Sprint(item["name"]))
+	name := optionalActivationString(item["name"])
 	if name == "" {
 		name = workflowID
 	}
 	return map[string]any{
 		"workflow_ref": workflowRef,
 		"workflow_id":  workflowID,
-		"revision_id":  strings.TrimSpace(fmt.Sprint(item["revision_id"])),
+		"revision_id":  optionalActivationString(item["revision_id"]),
 		"tool_name":    "trigger_" + stem + "_workflow",
 		"tool_description": strings.TrimSpace(fmt.Sprintf(
 			"Start the exact executable Workflow %q explicitly selected by the user and return its Ready frontier. This is execution, not resource lookup. %s %s",
@@ -698,4 +701,15 @@ func buildWorkflowActivation(item map[string]any, workflowRef string) map[string
 		)),
 		"prompt": "The user explicitly selected an executable Workflow with @workflow. Call its bound trigger directly in this turn. Do not search for the Workflow as an artifact, do not merely explain it, and do not call list_workflows or select another Workflow.",
 	}
+}
+
+func optionalActivationString(value any) string {
+	if value == nil {
+		return ""
+	}
+	text := strings.TrimSpace(fmt.Sprint(value))
+	if text == "<nil>" {
+		return ""
+	}
+	return text
 }

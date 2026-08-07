@@ -1117,8 +1117,24 @@ def _ensure_trailing_newline(text: str) -> str:
 
 
 class _SafeFormatContext(dict):
-    def __missing__(self, key: str) -> str:
-        return '{' + key + '}'
+    def __missing__(self, key: str) -> '_MissingTemplateValue':
+        return _MissingTemplateValue(key)
+
+
+class _MissingTemplateValue:
+    """Preserve unresolved dotted placeholders without raising AttributeError."""
+
+    def __init__(self, path: str) -> None:
+        self._path = path
+
+    def __getattr__(self, key: str) -> '_MissingTemplateValue':
+        return _MissingTemplateValue(f'{self._path}.{key}')
+
+    def __format__(self, _spec: str) -> str:
+        return f'{{{self._path}}}'
+
+    def __str__(self) -> str:
+        return f'{{{self._path}}}'
 
 
 class _TemplateResult:
@@ -1161,6 +1177,11 @@ def _render_preview_template(
         for key, item in render_context.items()
     }
     result_mapping = _tool_result_mapping(result)
+    if result_mapping is None and result is not None:
+        result_mapping = {
+            'outcome': _tool_result_status(result),
+            'reason': _tool_result_failure_detail(result),
+        }
     if result_mapping is not None:
         context['result'] = _TemplateResult(result_mapping)
     context['value'] = f'**{preview_value}**'

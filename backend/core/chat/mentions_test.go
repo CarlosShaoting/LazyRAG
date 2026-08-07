@@ -281,6 +281,18 @@ func TestBackendBuildsAndPropagatesWorkflowActivation(t *testing.T) {
 	}
 }
 
+func TestBuildWorkflowActivationDoesNotSerializeNilRevision(t *testing.T) {
+	activation := buildWorkflowActivation(map[string]any{
+		"workflow_id": "test-workflow", "revision_id": nil,
+	}, "builtin:test-workflow")
+	if got := activation["revision_id"]; got != "" {
+		t.Fatalf("revision_id = %#v, want empty string", got)
+	}
+	if buildWorkflowActivation(nil, "builtin:test-workflow") != nil {
+		t.Fatal("nil catalog item must not create an activation")
+	}
+}
+
 func TestMentionResourceContextMarksWorkflowAsExecutable(t *testing.T) {
 	db := orm.MigrateTestDB(t, &orm.WorkflowResource{})
 	now := time.Now().UTC()

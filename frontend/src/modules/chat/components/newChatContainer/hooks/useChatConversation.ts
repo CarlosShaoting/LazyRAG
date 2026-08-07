@@ -779,6 +779,14 @@ export function useChatConversation({
         if (detail.conversationId !== currentConversationIdRef.current) {
           return;
         }
+        // Conversation-level events (notably ask_pending) are emitted alongside
+        // the active chat stream. Reopening that same stream here disconnects it
+        // and replays the in-flight assistant turn, which renders the response
+        // twice. A resume is only needed when no chat stream is currently open
+        // (for example, a background auto-chat reaching a user boundary).
+        if (streamManager.hasActiveStream(detail.conversationId)) {
+          return;
+        }
         void syncGeneratingHistory(detail.conversationId).finally(() => {
           void openResumeSSE(detail.conversationId);
         });

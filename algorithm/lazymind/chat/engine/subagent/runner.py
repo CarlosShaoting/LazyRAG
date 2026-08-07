@@ -131,6 +131,13 @@ def _workflow_package_tools(params: Dict[str, Any], names: List[str]) -> Dict[st
             for name in tuple(remaining):
                 candidate = module.__dict__.get(name)
                 if callable(candidate):
+                    # Published Workflow scripts can predate the tool runtime's
+                    # docstring requirement. Their callable name, signature and
+                    # annotations are already pinned by the immutable revision;
+                    # provide a stable description so legacy revisions remain
+                    # executable instead of failing before the first tool call.
+                    if not str(getattr(candidate, '__doc__', '') or '').strip():
+                        candidate.__doc__ = f'Execute the published Workflow tool {name}.'
                     resolved[name] = candidate
                     remaining.remove(name)
         if remaining:
@@ -518,6 +525,43 @@ def _truncate_tool_result(ctx: SubAgentContext, result: Any, tool_name: str) -> 
         return truncated + f'\n... [truncated — original {len(encoded) // 1024} KB]'
 
 
+def _commit_prompt_only_text_output(
+    ctx: SubAgentContext,
+    required_output_keys: List[str],
+    saved_keys: set[str],
+    final_result: Any,
+) -> bool:
+    """Commit the final text for a prompt-only Workflow step.
+
+    A model may satisfy a one-output prompt step by returning the requested text
+    directly instead of calling ``save_artifacts``.  When the Workflow declares no
+    script tools and exactly one required output, that final text is the step's
+    unambiguous material value, so persist it deterministically at the execution
+    boundary.  Tool-backed and multi-output steps still require explicit artifact
+    calls and keep the strict completeness check below.
+    """
+    if str(ctx.agent_type or '') != 'workflow_step':
+        return False
+    if _coerce_str_list((ctx.params or {}).get('legacy_tools')):
+        return False
+    missing = [key for key in required_output_keys if key not in saved_keys]
+    if len(missing) != 1:
+        return False
+    content = str(final_result or '').strip()
+    if not content:
+        return False
+    key = missing[0]
+    seq = ctx.next_artifact_seq(key)
+    value = {'text': content}
+    ctx.record_local_artifact(key, 'text', value, seq)
+    ctx.emit({
+        'type': 'artifact', 'slot': key, 'content_type': 'text',
+        'seq': seq, 'value': value,
+    })
+    LOG.info('[SubAgent] committed prompt-only output key=%r for task=%s', key, ctx.task_id)
+    return True
+
+
 def _persist_step(ctx: SubAgentContext, seq: int, event: Dict[str, Any]) -> None:
     tag = event.get('tag')
     if tag == 'tool_calls':
@@ -788,6 +832,14 @@ async def run_subagent_stream(
 
         # Completeness check: every required output key must have at least one artifact.
         saved = set(ctx.saved_keys())
+        if _commit_prompt_only_text_output(
+            ctx, required_output_keys, saved, final_result,
+        ):
+            while emitted:
+                ev = emitted.pop(0)
+                ev['task_id'] = task_id
+                yield _sse(ev)
+            saved = set(ctx.saved_keys())
         missing = [k for k in required_output_keys if k not in saved]
         if missing:
             if effective_agent_type == 'workflow_step':

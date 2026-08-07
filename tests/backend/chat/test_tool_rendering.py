@@ -222,3 +222,18 @@ def test_plugin_preflight_result_supports_ready_status_payload():
 
     assert 'Workflow initialization completed. Result: **ready**.' in result_text
     assert 'Reason: **The user explicitly requested this plugin.**' in result_text
+
+
+def test_workflow_failure_template_handles_plain_tool_error_without_crashing():
+    error = '[Tool Error] ModuleExecutionError: workflow or revision was not found'
+    result_text = _tool_result_frame_text(
+        {
+            'id': 'call-workflow',
+            'name': 'trigger_test_workflow',
+            'result': error,
+        },
+        'zh',
+    )
+
+    assert '工作流初始化失败，结果是 **failed**' in result_text
+    assert 'workflow or revision was not found' in result_text

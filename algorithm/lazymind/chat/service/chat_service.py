@@ -636,7 +636,10 @@ async def _handle_chat_impl(
     workflow_contribution = resolve_workflow_injection(
         effective_workflow_context,
         conversation_id=conversation_id,
-        current_query=query,
+        # The raw query may contain the internal <mentioned_resources> envelope.
+        # Workflow request_context/user_input must receive only the user's actual
+        # instruction, otherwise {{user_input}} is populated with host metadata.
+        current_query=language_query,
         workflow_catalog=effective_workflow_catalog,
         disabled_builtin_workflows=list(dict.fromkeys(effective_disabled_builtin_workflows)),
         allowed_workflow_refs=effective_allowed_workflow_refs,

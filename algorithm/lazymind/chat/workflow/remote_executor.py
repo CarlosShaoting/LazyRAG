@@ -215,7 +215,11 @@ class RemoteWorkflowExecutor:
             values = [paths] if scalar else paths if isinstance(paths, list) else []
             embedded = []
             for raw in values:
-                path = pathlib.Path(str(raw))
+                raw_text = str(raw)
+                if raw_text.startswith(('http://', 'https://', 'data:')):
+                    embedded.append(raw_text)
+                    continue
+                path = pathlib.Path(raw_text)
                 if not path.is_absolute():
                     path = pathlib.Path(workspace) / path
                 try:
