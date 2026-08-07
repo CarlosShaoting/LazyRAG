@@ -1,6 +1,6 @@
 # Derived from OpenSenseNova/SenseNova-Skills (sn-image-base).
 # Copyright (c) 2026 SenseNova. SPDX-License-Identifier: MIT.
-# See plugins/ppt-plugin/image_gen/LICENSE.sensenova.
+# See workflows/ppt-workflow/image_gen/LICENSE.sensenova.
 
 """OpenClaw unified runner for sn-image-base skills.
 

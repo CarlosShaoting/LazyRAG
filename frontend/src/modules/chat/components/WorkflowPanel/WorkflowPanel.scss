@@ -27,11 +27,11 @@
       overflow: auto;
     }
 
-    .plugin-panel__footer {
+    .workflow-panel__footer {
       flex-shrink: 0;
     }
 
-    .plugin-panel__tabs {
+    .workflow-panel__tabs {
       flex-shrink: 0;
     }
   }
@@ -579,8 +579,8 @@
       }
     }
 
-    // TODO(ppt-plugin-test): temporary compact placeholder for the PPT plugin pilot.
-    // Remove together with the empty composite preview in PluginPanel/index.tsx.
+    // TODO(ppt-workflow-test): temporary compact placeholder for the PPT workflow pilot.
+    // Remove together with the empty composite preview in WorkflowPanel/index.tsx.
     &--compact {
       height: 96px;
       align-items: flex-start;

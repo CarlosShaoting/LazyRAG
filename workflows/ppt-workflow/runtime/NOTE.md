@@ -8,7 +8,7 @@ Kept:
 - `lib/model_client.py` — LLM/VLM hooks (LazyMind injects AutoModel via tools.py)
 - `prompts/` + `references/` — only prompts actually loaded by run_stage
 - `scripts/export_pptx/` — Playwright helpers for **UI/API** editable export
-  (not invoked by SubAgent tools; user clicks Export in PluginPanel)
+  (not invoked by SubAgent tools; user clicks Export in WorkflowPanel)
 
 Removed vs upstream skill:
 - OpenClaw `SKILL.md` orchestration, workbench, progress WebUI wrappers

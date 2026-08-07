@@ -1,9 +1,9 @@
-# AI PPT Planner Plugin
+# AI PPT Planner Workflow
 
 ## Scenario
 
-This plugin helps users create a multi-slide presentation using the
-**plugin HTML runtime** under `plugins/ppt-plugin/runtime/` (wrapped as SubAgent tools).
+This workflow helps users create a multi-slide presentation using the
+**workflow HTML runtime** under `workflows/ppt-workflow/runtime/` (wrapped as SubAgent tools).
 
 - Outline: **`ppt_build_outline`** (init → preflight → style → outline →
   `ppt_publish_outline`; one editable `slide_outline` list item per page)
@@ -28,14 +28,14 @@ Queue `collect_materials` when KB/web facts or slide photos/diagrams are still
 needed.
 
 After the first deck is generated, the user may continue chatting to revise
-individual pages. Do not require them to restart the plugin.
+individual pages. Do not require them to restart the workflow.
 
 ## Intent Recognition
 
 ### Cold Start
 
-Invoke `trigger_ppt_plugin(user_input=<user's exact original request>)` when the
-user explicitly asks for a PPT/presentation/deck plugin or asks to create,
+Invoke `trigger_ppt_workflow(user_input=<user's exact original request>)` when the
+user explicitly asks for a PPT/presentation/deck workflow or asks to create,
 draft, plan, or structure a multi-slide presentation.
 
 ### Active / completed session (follow-up chat)
@@ -52,39 +52,23 @@ draft, plan, or structure a multi-slide presentation.
 After analysis, call:
 
 ```text
-advance_step_and_hand_off(steps=[{
-  "step_id": "build_outline",
-  "user_input": "<user's original PPT request>",
-  "runtime_instruction": "Build outline only via ppt_build_outline. Publish slide_outline list. Do not generate HTML."
-}])
+advance_step_and_hand_off(step_id="build_outline")
 ```
 
 After outline is ready (and user optionally edits briefs), call:
 
 ```text
-advance_step_and_hand_off(steps=[{
-  "step_id": "generate_ppt",
-  "user_input": "<user's original PPT request>",
-  "runtime_instruction": "Full HTML generation from existing slide_outline via ppt_generate_pages. Do not re-run outline/style/init."
-}])
+advance_step_and_hand_off(step_id="generate_ppt")
 ```
 
 #### Modify a specific page
 
 ```text
-advance_step_and_hand_off(steps=[{
-  "step_id": "generate_ppt",
-  "user_input": "<user's exact revision request>",
-  "runtime_instruction": "Single-page edit only for sort_order=<N>. Use the existing deck_dir (ppt_find_deck if unknown). For content changes, first ppt_read_page_outline then ppt_patch_page_outline for that page (all edits in one ops_json call). To remove or retext something already on the slide, prefer ppt_edit_page_html; use ppt_run_stage page-html only when redrawing. Never ppt_init_deck and never stage=outline/style. Do NOT export PPTX — user clicks UI Export."
-}])
+advance_step_and_hand_off(step_id="generate_ppt")
 ```
 
 #### Delete an entire page
 
 ```text
-advance_step_and_hand_off(steps=[{
-  "step_id": "generate_ppt",
-  "user_input": "<user's exact delete request>",
-  "runtime_instruction": "Delete whole page sort_order=<N> only. ppt_find_deck then ppt_delete_page(deck_dir, page=N). Do not patch bullets, do not re-run outline/style/batch-page-html, do not export PPTX."
-}])
+advance_step_and_hand_off(step_id="generate_ppt")
 ```

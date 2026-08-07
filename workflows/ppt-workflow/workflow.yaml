@@ -1,14 +1,14 @@
-id: ppt-plugin
+id: ppt-workflow
 name: AI PPT Planner
 preflight_disabled: true
 description: >
   Plan a presentation from a user request, collect useful source material,
-  then generate free-form HTML slides via the plugin runtime (SenseNova-derived
+  then generate free-form HTML slides via the workflow runtime (SenseNova-derived
   subset under runtime/). Preview shows HTML pages in a flippable composite
   workspace with speaker notes below. PPTX export is UI-only (Export button).
 
 when_to_use: >
-  Trigger this plugin when the user explicitly asks to use the PPT plugin, or
+  Trigger this workflow when the user explicitly asks to use the PPT workflow, or
   when the user wants to create, plan, draft, or revise a multi-slide
   presentation/deck/PPT. Use it for requests such as "make a PPT", "generate a
   presentation", "帮我做一个路演 PPT", or "做一份汇报幻灯片".

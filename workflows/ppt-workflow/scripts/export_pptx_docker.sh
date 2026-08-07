@@ -2,11 +2,11 @@
 # One-shot editable HTML→PPTX export via the official Playwright image.
 #
 # Usage:
-#   ./plugins/ppt-plugin/scripts/export_pptx_docker.sh /abs/path/to/deck_dir
+#   ./workflows/ppt-workflow/scripts/export_pptx_docker.sh /abs/path/to/deck_dir
 #
 # Env overrides:
 #   PPT_PLAYWRIGHT_IMAGE   default mcr.microsoft.com/playwright:v1.58.2-noble
-#   PPT_EXPORT_SRC         default <repo>/plugins/ppt-plugin/runtime/scripts/export_pptx
+#   PPT_EXPORT_SRC         default <repo>/workflows/ppt-workflow/runtime/scripts/export_pptx
 #
 # After compose is up you can instead:
 #   curl -sS -X POST http://localhost:8099/export -H 'Content-Type: application/json' \
@@ -22,7 +22,7 @@ DECK_DIR="$(cd "${DECK_DIR}" && pwd)"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-EXPORT_SRC="${PPT_EXPORT_SRC:-${REPO_ROOT}/plugins/ppt-plugin/runtime/scripts/export_pptx}"
+EXPORT_SRC="${PPT_EXPORT_SRC:-${REPO_ROOT}/workflows/ppt-workflow/runtime/scripts/export_pptx}"
 IMAGE="${PPT_PLAYWRIGHT_IMAGE:-mcr.microsoft.com/playwright:v1.58.2-noble}"
 
 if [[ ! -d "${EXPORT_SRC}" ]]; then

@@ -1,13 +1,13 @@
-# ppt-plugin
+# ppt-workflow
 
-LazyMind AI PPT plugin: generate HTML slides in chat, preview in PluginPanel,
+LazyMind AI PPT workflow: generate HTML slides in chat, preview in WorkflowPanel,
 export PPTX (raster in browser by default; optional editable via Playwright).
 
 ## Layout
 
 ```
-plugins/ppt-plugin/
-  plugin.yaml / scenario/     # LazyMind plugin contract (entry / steps / UI)
+workflows/ppt-workflow/
+  workflow.yaml / scenario/   # LazyMind workflow contract (entry / steps / UI)
   scripts/tools.py            # SubAgent tools (ppt_init_deck, ppt_run_stage, …)
   runtime/                    # HTML pipeline used at runtime (ONLY what we need)
     lib/model_client.py
@@ -20,19 +20,19 @@ plugins/ppt-plugin/
 
 ## Note on SenseNova skills (important)
 
-This plugin does **not** vendor the full SenseNova / OpenClaw skills tree
+This workflow does **not** vendor the full SenseNova / OpenClaw skills tree
 (`sn-ppt-entry`, `sn-ppt-creative`, `sn-ppt-doctor`, `sn-search-image`, SKILL.md
 orchestration, workbench, etc.).
 
 What we keep under `runtime/` (+ optional `image_gen/`) is a **minimal runtime
 subset** adapted for LazyMind:
 
-| SenseNova skill piece | In this plugin? | Why |
+| SenseNova skill piece | In this workflow? | Why |
 |---|---|---|
 | `sn-ppt-standard` run_stage + prompts | Yes → `runtime/` | HTML generation |
 | `export_pptx` (Playwright) | Yes → `runtime/scripts/export_pptx/` | Used by **UI/API** editable export only — **not** a skill tool |
 | `sn-image-base` T2I runner | Yes → `image_gen/` | Only if `image_source=ai-gen` |
-| `sn-ppt-entry` | No | Replaced by `ppt_init_deck` + plugin scenario |
+| `sn-ppt-entry` | No | Replaced by `ppt_init_deck` + workflow scenario |
 | `sn-ppt-creative` | No | Not used (standard HTML mode only) |
 | `sn-ppt-doctor` | No | Env checks live in deploy / docs |
 | `sn-search-image` | No | Replaced by `ppt_search_web_images` + `ppt_register_material_images` (Pool B → HTML `<img>`) |
@@ -143,7 +143,7 @@ forbid padding a grid.
 - Page generation: one HTML-model call per page by default; set
   `PPT_PAGE_PROMPT_MODE=llm-rewrite` to restore the legacy per-page rewrite call
 - Page concurrency: 4 by default (the tool accepts 1–8; lower it for rate-limited providers)
-- Export: **click Export in PluginPanel** (not part of SubAgent tools). Default =
+- Export: **click Export in WorkflowPanel** (not part of SubAgent tools). Default =
   browser raster PPTX. Local/Desktop enables editable export automatically after
   its dependency bundle is detected; container deployments use
   `LAZYMIND_OUTPUT_EDITABLE_PPT=true`.

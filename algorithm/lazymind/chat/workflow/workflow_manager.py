@@ -107,13 +107,26 @@ def _handoff_tool(session: Union[str, Callable[[], str]]) -> Any:
                     details={'step_id': step_id, 'allowed': sorted(allowed)},
                 )
             try:
+                cfg = _agentic_config()
+                focus_hints = []
+                focused_tab = str(cfg.get('focused_tab') or '').strip()
+                focused_sort_order = cfg.get('focused_sort_order')
+                if focused_tab:
+                    focus_hints.append(f'User is currently viewing Workflow tab {focused_tab!r}.')
+                if focused_sort_order not in (None, ''):
+                    focus_hints.append(
+                        f'User is currently focused on artifact sort order {focused_sort_order}.'
+                    )
                 response = client.advance(AdvanceRequest(
                     session_id=selected_session_id,
                     expected_state_version=int(frontier.get('state_version') or 0),
-                    steps=[StepCommand(step_id=step_id)],
+                    steps=[StepCommand(
+                        step_id=step_id,
+                        runtime_instruction=' '.join(focus_hints),
+                    )],
                     handoff=True,
                     retry_origin=(
-                        'user' if bool(_agentic_config().get('user_authorized_workflow_retry'))
+                        'user' if bool(cfg.get('user_authorized_workflow_retry'))
                         else 'automatic'
                     ),
                 ))
@@ -208,11 +221,27 @@ def _safe_session_tools(
                     'Retryable and rewindable targets must be submitted one at a time.',
                 )
             try:
+                cfg = _agentic_config()
+                focus_hints = []
+                focused_tab = str(cfg.get('focused_tab') or '').strip()
+                focused_sort_order = cfg.get('focused_sort_order')
+                if focused_tab:
+                    focus_hints.append(f'User is currently viewing Workflow tab {focused_tab!r}.')
+                if focused_sort_order not in (None, ''):
+                    focus_hints.append(
+                        f'User is currently focused on artifact sort order {focused_sort_order}.'
+                    )
                 result = toolkit.advance_step(
                     selected_session_id, int(frontier.get('state_version') or 0),
-                    [StepCommandInput(step_id=value) for value in requested],
+                    [
+                        StepCommandInput(
+                            step_id=value,
+                            runtime_instruction=' '.join(focus_hints),
+                        )
+                        for value in requested
+                    ],
                     retry_origin=(
-                        'user' if bool(_agentic_config().get('user_authorized_workflow_retry'))
+                        'user' if bool(cfg.get('user_authorized_workflow_retry'))
                         else 'automatic'
                     ),
                 )
@@ -760,6 +789,8 @@ def resolve_workflow_injection(
             'workflow_step': context.get('current_step') or '',
             'workflow_ref': context.get('workflow_ref') or '',
             'revision_id': revision_id,
+            'focused_tab': context.get('focused_tab') or '',
+            'focused_sort_order': context.get('focused_sort_order'),
         })
         tools.append(_handoff_tool(session_id))
         runtime_context = (

@@ -85,7 +85,7 @@ steps:
       Requirement analysis:
       {{requirement_analysis}}
 
-      Uploaded material files, if the user added any through the plugin panel:
+      Uploaded material files, if the user added any through the workflow panel:
       {{uploaded_materials}}
 
       Original user request:

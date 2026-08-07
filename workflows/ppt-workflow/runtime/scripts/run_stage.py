@@ -767,7 +767,7 @@ def cmd_preflight(deck: Path) -> int:
     # otherwise Playwright gets echarts=undefined and the chart tile is empty.
     import os
     import shutil
-    # SKILL_DIR = .../plugins/ppt-plugin/runtime → parents[2] = repo root.
+    # SKILL_DIR = .../workflows/ppt-workflow/runtime → parents[2] = repo root.
     workspace = Path(os.environ.get("LAZYMIND_SUBAGENT_WORKSPACE") or "/data/subagent")
     candidates = [
         SKILL_DIR / "scripts" / "export_pptx" / "node_modules" / "echarts" / "dist" / "echarts.min.js",

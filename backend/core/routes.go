@@ -286,6 +286,9 @@ func registerAllRoutes(r *mux.Router) {
 	// Workflow management UI. The versioned facade remains in use for runtime
 	// preparation, commands, inputs, and artifacts below.
 	handleAPI(r, "GET", "/workflows", []string{"qa.read"}, workflow.ListWorkflows)
+	// Keep literal PPT routes before /workflows/{workflow_id}.
+	handleAPI(r, "GET", "/workflows/ppt:capabilities", []string{"qa.read"}, workflow.PptExportCapabilities)
+	handleAPI(r, "POST", "/workflows/ppt:export", []string{"qa.write"}, workflow.ExportPptx)
 	handleAPI(r, "GET", "/workflows/{workflow_id}", []string{"qa.read"}, func(w http.ResponseWriter, req *http.Request) {
 		workflow.GetWorkflowInfo(w, req)
 	})

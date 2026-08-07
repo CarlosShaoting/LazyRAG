@@ -40,15 +40,15 @@ _DEFAULT_CHAT_MODEL = "sensenova-6.7-flash-lite"
 
 def _find_and_load_env() -> list[Path]:
     here = Path(__file__).resolve()
-    # plugins/ppt-plugin/runtime/lib/model_client.py
-    # parents[1]=runtime, [2]=ppt-plugin, [4]=LazyMind
+    # workflows/ppt-workflow/runtime/lib/model_client.py
+    # parents[1]=runtime, [2]=ppt-workflow, [4]=LazyMind
     runtime_dir = here.parents[1]
-    plugin_root = here.parents[2]
-    lazymind_root = here.parents[4] if len(here.parents) > 4 else plugin_root
+    workflow_root = here.parents[2]
+    lazymind_root = here.parents[4] if len(here.parents) > 4 else workflow_root
     loaded: list[Path] = []
     for candidate in (
         lazymind_root / '.env',
-        plugin_root / '.env',
+        workflow_root / '.env',
         runtime_dir / '.env',
         Path.cwd() / '.env',
     ):

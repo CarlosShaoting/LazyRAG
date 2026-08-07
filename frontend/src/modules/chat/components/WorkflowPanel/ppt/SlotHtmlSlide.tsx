@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { SlotRevision } from '@/modules/chat/store/pluginPanel';
+import type { SlotRevision } from '@/modules/chat/store/workflowPanel';
 import { resolveCoreAssetUrl, resolveMarkdownImageUrlAsync, isExpiredSignedUrl } from '@/modules/knowledge/utils/imageUrl';
 import { extractHtmlFromArtifact, htmlForStaticPreview } from './exportHtmlToPptx';
 import { htmlWithInlinedEcharts } from './echartsInline';

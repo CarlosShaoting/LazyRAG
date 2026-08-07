@@ -1,4 +1,4 @@
-"""PPT plugin tools — HTML slide pipeline for SubAgent.
+"""PPT workflow tools — HTML slide pipeline for SubAgent.
 
 Preferred high-level pipeline (one tool call each):
   collect (optional): kb / web_search / ppt_search_web_images
@@ -18,8 +18,8 @@ Delete an entire slide (not a bullet):
   ppt_find_deck → ppt_delete_page(deck_dir, page=N)
     renumbers later pages on disk + outline; removes UI list items.
 
-PPTX export is NOT a skill tool — the user clicks Export in PluginPanel.
-Runtime lives under plugins/ppt-plugin/runtime/ (vendored SenseNova subset).
+PPTX export is NOT a skill tool — the user clicks Export in WorkflowPanel.
+Runtime lives under workflows/ppt-workflow/runtime/ (vendored SenseNova subset).
 Do NOT ppt_read_page_html + save_artifacts for full HTML — tool results >16KB
 are offloaded and the model never sees the body, so saves get stuck forever.
 """
@@ -50,7 +50,7 @@ from lazymind.chat.service.utils.static_file_url import (
 )
 
 _PLUGIN_ROOT = Path(__file__).resolve().parents[1]
-# Vendored SenseNova runtime (not the full skills tree). See plugins/ppt-plugin/README.md.
+# Vendored SenseNova runtime (not the full skills tree). See workflows/ppt-workflow/README.md.
 _RUNTIME = _PLUGIN_ROOT / 'runtime'
 _IMAGE_GEN = _PLUGIN_ROOT / 'image_gen'
 _RUN_STAGE = _RUNTIME / 'scripts' / 'run_stage.py'
@@ -353,20 +353,20 @@ def _max_page_no_on_disk(deck: Path) -> int:
     return max(nos) if nos else 0
 
 
-def _plugin_session_id() -> str:
+def _workflow_session_id() -> str:
     try:
         import lazyllm
         cfg = lazyllm.globals.get('agentic_config') or {}
     except Exception:
         cfg = {}
-    return str(cfg.get('plugin_session_id') or '').strip()
+    return str(cfg.get('workflow_session_id') or '').strip()
 
 
 def _delete_ui_slot_item(slot: str, sort_order: int) -> dict[str, Any]:
     """Remove one list-slot item by 1-based sort_order via Go core DELETE."""
-    session_id = _plugin_session_id()
+    session_id = _workflow_session_id()
     if not session_id:
-        return {'slot': slot, 'ok': False, 'skipped': True, 'reason': 'no plugin_session_id'}
+        return {'slot': slot, 'ok': False, 'skipped': True, 'reason': 'no workflow_session_id'}
     try:
         ctx = require_context()
         order_list = ctx.db.load_slot_order_list(session_id, slot)
@@ -387,7 +387,7 @@ def _delete_ui_slot_item(slot: str, sort_order: int) -> dict[str, Any]:
         import httpx
         core_url = str(_cfg['core_api_url']).rstrip('/')
         resp = httpx.delete(
-            f'{core_url}/plugin-sessions/{session_id}/slots/{slot}/items/idx/{list_index}',
+            f'{core_url}/workflow-sessions/{session_id}/slots/{slot}/items/idx/{list_index}',
             timeout=10.0,
         )
     except Exception as exc:
@@ -2329,7 +2329,7 @@ def ppt_init_deck(
     if not _RUN_STAGE.exists():
         return tool_error(
             'ppt_init_deck',
-            f'PPT runtime missing at {_RUNTIME}. Expected plugins/ppt-plugin/runtime '
+            f'PPT runtime missing at {_RUNTIME}. Expected workflows/ppt-workflow/runtime '
             '(vendored SenseNova subset; see README.md).',
         )
     query = _coerce_str(user_query)
@@ -2821,7 +2821,7 @@ def ppt_run_stage(
     start_page: int = 0,
     end_page: int = 0,
 ) -> dict:
-    """Run one PPT HTML-pipeline stage (plugins/ppt-plugin/runtime).
+    """Run one PPT HTML-pipeline stage (workflows/ppt-workflow/runtime).
 
     For full outline / full HTML runs prefer ppt_build_outline and
     ppt_generate_pages (they chain the fixed stages). Use this for single

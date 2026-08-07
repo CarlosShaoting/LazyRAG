@@ -1,4 +1,4 @@
-package plugin
+package workflow
 
 import (
 	"encoding/json"
@@ -11,7 +11,7 @@ import (
 
 func TestPptExportCapabilitiesComesFromChat(t *testing.T) {
 	chat := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/plugin/ppt/capabilities" {
+		if r.URL.Path != "/api/workflow/ppt/capabilities" {
 			http.Error(w, "unexpected upstream path", http.StatusNotFound)
 			return
 		}
@@ -26,7 +26,7 @@ func TestPptExportCapabilitiesComesFromChat(t *testing.T) {
 	t.Setenv("LAZYMIND_OUTPUT_EDITABLE_PPT", "false")
 
 	recorder := httptest.NewRecorder()
-	PptExportCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/plugins/ppt:capabilities", nil))
+	PptExportCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/workflows/ppt:capabilities", nil))
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
@@ -52,7 +52,7 @@ func TestPptExportCapabilitiesReportsMissingLocalDependency(t *testing.T) {
 	t.Setenv("LAZYMIND_RUNTIME_ROOT", t.TempDir())
 
 	recorder := httptest.NewRecorder()
-	PptExportCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/plugins/ppt:capabilities", nil))
+	PptExportCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/workflows/ppt:capabilities", nil))
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())

@@ -1,14 +1,16 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import { Popconfirm, Tooltip } from 'antd';
+import { Modal, Popconfirm, Tooltip } from 'antd';
 import { FullscreenOutlined, FullscreenExitOutlined } from '@ant-design/icons';
 import { useWorkflowSession } from '@/modules/chat/hooks/useWorkflow';
 import { useWorkflowStore } from '@/modules/chat/store/workflowPanel';
 import { uploadFileInChunks } from '@/modules/chat/utils/chunkUpload';
 import { WorkflowSessionApi } from '@/modules/chat/utils/request';
 import StateGraphModal from '@/components/StateGraphModal';
+import { axiosInstance, BASE_URL } from '@/components/request';
 import {
+  CHAT_EDITABLE_PPT_DEPENDENCY_MISSING_EVENT,
   WORKFLOW_PANEL_EXPANDED_EVENT,
   WORKFLOW_PANEL_EXPANDED_STORAGE_PREFIX,
 } from '@/modules/chat/constants/chat';
@@ -28,6 +30,13 @@ import {
   SlotDownloadContext,
   SlotEditingContext,
 } from './SlotComponents';
+import { SlideThumb } from './ppt/SlideThumb';
+import {
+  extractHtmlFromArtifact,
+  exportHtmlSlidesAsRasterPdf,
+  exportHtmlSlidesAsRasterPptx,
+} from './ppt/exportHtmlToPptx';
+import { resolveCoreAssetUrl, resolveMarkdownImageUrlAsync, isExpiredSignedUrl } from '@/modules/knowledge/utils/imageUrl';
 import './WorkflowPanel.scss';
 
 /** Parse a JSON intent context string and return the text field, or '' if empty/invalid. */
@@ -449,11 +458,20 @@ function getCompositeRows(
   const orders = new Set<number>();
   const scopeStepId = tab.step_id
     ?? (session.steps?.some((s) => s.step_id === tab.id) ? tab.id : undefined);
+  const htmlSlotDeclared = participating.has('preview_html');
   for (const slot of session.slots ?? []) {
     const matchesTabStep = scopeStepId ? slot.step_id === scopeStepId : slot.selected;
     if (matchesTabStep && participating.has(slot.slot)) {
+      if (htmlSlotDeclared && slot.slot !== 'preview_html') continue;
       if (slot.sort_order !== undefined) {
-        orders.add(slot.sort_order);
+        if (!htmlSlotDeclared || extractHtmlFromArtifact(slot.artifact_value)) {
+          orders.add(slot.sort_order);
+        } else if (slot.artifact_value && typeof slot.artifact_value === 'object') {
+          const value = slot.artifact_value as Record<string, unknown>;
+          if (value.path && (value.type === 'text' || value.type === 'json' || typeof value.text === 'string')) {
+            orders.add(slot.sort_order);
+          }
+        }
       }
     }
   }
@@ -554,6 +572,67 @@ function InnerTabsCell({
 // CompositeSlotGrid
 // ---------------------------------------------------------------------------
 
+type PageBarPosition = 'top' | 'bottom' | 'left' | 'right';
+
+async function loadPptArtifactText(raw: unknown): Promise<string> {
+  const inline = extractHtmlFromArtifact(raw);
+  if (inline) return inline;
+  if (!raw || typeof raw !== 'object') return '';
+  const value = raw as Record<string, unknown>;
+  if (typeof value.text === 'string') return value.text;
+  const path = String(value.path ?? value.url ?? '').trim();
+  if (!path) return '';
+  const direct = value.url ? resolveCoreAssetUrl(String(value.url)) : '';
+  const url = direct && !isExpiredSignedUrl(direct)
+    ? direct
+    : await resolveMarkdownImageUrlAsync(path);
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Failed to load slide (${response.status})`);
+  return response.text();
+}
+
+async function collectPptPages(
+  tab: TabDef,
+  session: WorkflowSession,
+  rows: number[],
+): Promise<Array<{ html: string; notes: string }>> {
+  const pages = await Promise.all(rows.map(async (sortOrder) => {
+    const htmlRevision = findSlotRevision(session, tab, 'preview_html', sortOrder);
+    const notesRevision = findSlotRevision(session, tab, 'preview_notes', sortOrder);
+    return {
+      html: await loadPptArtifactText(htmlRevision?.artifact_value),
+      notes: notesRevision ? String(notesRevision.artifact_value ?? '') : '',
+    };
+  }));
+  return pages.filter((page) => page.html.trim());
+}
+
+function downloadPptBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function resolvePptExportError(error: unknown, fallback: string): Promise<string> {
+  const responseData = (error as { response?: { data?: unknown } })?.response?.data;
+  if (responseData instanceof Blob) {
+    try {
+      const text = await responseData.text();
+      const parsed = JSON.parse(text) as { message?: string; detail?: string };
+      return parsed.message || parsed.detail || text || fallback;
+    } catch {
+      return fallback;
+    }
+  }
+  if (error instanceof Error && error.message) return error.message;
+  return fallback;
+}
+
 function CompositeSlotGrid({
   tab,
   session,
@@ -579,6 +658,64 @@ function CompositeSlotGrid({
 
   // Compute total weight for flex proportions.
   const totalWeight = columns.reduce((s, c) => s + c.weight, 0) || 1;
+  const pageBarPosition = tab.composite_tab_position as PageBarPosition | undefined;
+  const paged = Boolean(pageBarPosition);
+  const [currentPage, setCurrentPage] = useState<number | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [exportChoiceOpen, setExportChoiceOpen] = useState(false);
+
+  useEffect(() => {
+    if (!paged) return;
+    if (!rows.length) {
+      setCurrentPage(null);
+      return;
+    }
+    setCurrentPage((page) => page != null && rows.includes(page) ? page : rows[0]);
+  }, [paged, rows.join(',')]);
+
+  useEffect(() => {
+    if (paged) onFocusSortOrder?.(currentPage ?? undefined);
+  }, [paged, currentPage, onFocusSortOrder]);
+
+  const canExportHtml = session.workflow_id === 'ppt-workflow'
+    || tab.slots.some((slot) => slot.id === 'preview_html');
+
+  const runExport = useCallback(async (mode: 'editable' | 'raster' | 'pdf') => {
+    if (exporting) return;
+    setExporting(true);
+    setExportError(null);
+    try {
+      const pages = await collectPptPages(tab, session, rows);
+      if (!pages.length) throw new Error(t('chat.workflowExportNoHtml'));
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const filename = `ppt_deck_${stamp}.${mode === 'pdf' ? 'pdf' : 'pptx'}`;
+      const slideInputs = pages.map((page, index) => ({ ...page, pageNo: index + 1 }));
+      if (mode === 'pdf') {
+        await exportHtmlSlidesAsRasterPdf(slideInputs, filename, { sessionId: session.session_id });
+      } else if (mode === 'raster') {
+        await exportHtmlSlidesAsRasterPptx(slideInputs, filename, { sessionId: session.session_id });
+      } else {
+        const capabilities = await axiosInstance.get(`${BASE_URL}/api/core/workflows/ppt:capabilities`);
+        const payload = (capabilities.data as { data?: { editable_pptx?: boolean } })?.data
+          ?? capabilities.data as { editable_pptx?: boolean };
+        if (!payload.editable_pptx) {
+          window.dispatchEvent(new Event(CHAT_EDITABLE_PPT_DEPENDENCY_MISSING_EVENT));
+          throw new Error(t('chat.editablePptRequiredDesc'));
+        }
+        const response = await axiosInstance.post(
+          `${BASE_URL}/api/core/workflows/ppt:export`,
+          { pages, filename },
+          { responseType: 'blob', timeout: 20 * 60 * 1000 },
+        );
+        downloadPptBlob(response.data as Blob, filename);
+      }
+    } catch (error) {
+      setExportError(await resolvePptExportError(error, t('chat.workflowExportFailed')));
+    } finally {
+      setExporting(false);
+    }
+  }, [exporting, rows, session, tab, t]);
 
   if (rows.length === 0) {
     return (
@@ -588,9 +725,7 @@ function CompositeSlotGrid({
     );
   }
 
-  return (
-    <div className='composite-grid'>
-      {rows.map((sortOrder) => (
+  const renderRow = (sortOrder: number) => (
         <div
           key={sortOrder}
           className='composite-grid__row'
@@ -654,7 +789,83 @@ function CompositeSlotGrid({
             );
           })}
         </div>
-      ))}
+  );
+
+  if (!paged) {
+    return <div className='composite-grid'>{rows.map(renderRow)}</div>;
+  }
+
+  const activePage = currentPage ?? rows[0];
+  const railIsColumn = pageBarPosition === 'left' || pageBarPosition === 'right';
+  const rail = (
+    <div className={`composite-thumb-rail composite-thumb-rail--${railIsColumn ? 'col' : 'row'}`}>
+      <div className={`composite-thumb-rail__list composite-thumb-rail__list--${railIsColumn ? 'col' : 'row'}`}>
+        {rows.map((sortOrder, index) => {
+          const revision = findSlotRevision(session, tab, 'preview_html', sortOrder);
+          return (
+            <button
+              type='button'
+              key={sortOrder}
+              className={`composite-thumb-rail__item${sortOrder === activePage ? ' composite-thumb-rail__item--active' : ''}`}
+              onClick={() => setCurrentPage(sortOrder)}
+              aria-current={sortOrder === activePage ? 'true' : undefined}
+            >
+              <span className='composite-thumb-rail__badge'>{index + 1}</span>
+              <span className='composite-thumb-rail__preview' aria-hidden='true'>
+                {revision ? <SlideThumb slot={revision} sessionId={session.session_id} /> : '—'}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className='composite-shell composite-shell--paged'>
+      {canExportHtml && (
+        <div className='composite-toolbar'>
+          <button
+            type='button'
+            className='composite-toolbar__export'
+            disabled={exporting}
+            onClick={() => setExportChoiceOpen(true)}
+          >
+            {exporting ? t('chat.workflowExportingPptx') : t('chat.workflowExportPptx')}
+          </button>
+          {exportError && <span className='composite-toolbar__error'>{exportError}</span>}
+        </div>
+      )}
+      <div className={`composite-shell__body composite-shell__body--${railIsColumn ? 'row' : 'col'}`}>
+        {(pageBarPosition === 'top' || pageBarPosition === 'left') && rail}
+        <div className='composite-grid'>{renderRow(activePage)}</div>
+        {(pageBarPosition === 'bottom' || pageBarPosition === 'right') && rail}
+      </div>
+      <Modal
+        open={exportChoiceOpen}
+        onCancel={() => setExportChoiceOpen(false)}
+        footer={null}
+        title={t('chat.workflowExportSelectModeTitle')}
+      >
+        <div className='composite-toolbar__export-mode'>
+          <p>{t('chat.workflowExportSelectModeDesc')}</p>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
+            {(['raster', 'pdf', 'editable'] as const).map((mode) => (
+              <button
+                key={mode}
+                type='button'
+                className={`workflow-panel__action-btn workflow-panel__action-btn--${mode === 'editable' ? 'primary' : 'secondary'}`}
+                onClick={() => {
+                  setExportChoiceOpen(false);
+                  void runExport(mode);
+                }}
+              >
+                {t(`chat.workflowExportMode${mode[0].toUpperCase()}${mode.slice(1)}`)}
+              </button>
+            ))}
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

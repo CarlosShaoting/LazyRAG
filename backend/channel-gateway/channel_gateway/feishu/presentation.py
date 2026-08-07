@@ -2180,7 +2180,7 @@ def _workflow_title(task_title: str) -> str:
     return {
         'writer-workflow': 'AI Writer 写作工作流',
         'image-workflow': 'AI 绘图工作流',
-        'ppt-plugin': 'AI PPT 工作流',
+        'ppt-workflow': 'AI PPT 工作流',
     }.get(
         plugin,
         (

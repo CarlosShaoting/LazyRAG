@@ -25,6 +25,10 @@ import MarkdownViewer from '@/modules/chat/components/MarkdownViewer';
 import i18n from '@/i18n';
 import { useTranslation } from 'react-i18next';
 import { localizeErrorCode } from '@/components/request';
+import { SlotHtmlSlide } from './ppt/SlotHtmlSlide';
+import { SlotJsonSlide } from './ppt/SlotJsonSlide';
+import { isHtmlSlideArtifact } from './ppt/exportHtmlToPptx';
+import { isSlideSpecArtifact } from './ppt/slideSchema';
 
 export { SlotEditingContext } from './slotEditingContext';
 export type { SlotEditingContextValue } from './slotEditingContext';
@@ -2891,6 +2895,16 @@ export function SlotRenderer({
   }
 
   const normalized = normalizeContentType(slot.content_type ?? 'text');
+  const artifactSlotKey = slotId || slot.slot;
+  if (artifactSlotKey === 'preview_html') {
+    if (isSlideSpecArtifact(slot.artifact_value) && !isHtmlSlideArtifact(slot.artifact_value)) {
+      return <SlotJsonSlide slot={slot} compact={cardMode} />;
+    }
+    return <SlotHtmlSlide slot={slot} compact={cardMode} />;
+  }
+  if (isHtmlSlideArtifact(slot.artifact_value)) {
+    return <SlotHtmlSlide slot={slot} compact={cardMode} />;
+  }
   if (normalized === 'image') {
     return (
       <SlotImage

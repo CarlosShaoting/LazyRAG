@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"lazymind/core/common/orm"
 	"lazymind/core/store"
 	"lazymind/core/subagent"
+	"lazymind/core/systemdeps"
 )
 
 // resolveValuePaths normalises a human-uploaded value by ensuring it carries a stable
@@ -646,6 +648,103 @@ type stepAttemptDTO struct {
 	DurationSec   float64 `json:"duration_sec"`   // -1 if not finished
 	ArtifactCount int     `json:"artifact_count"` // slot-revision count for this attempt
 	StartedAt     string  `json:"started_at"`
+}
+
+// PptExportCapabilities handles GET /workflows/ppt:capabilities.
+func PptExportCapabilities(w http.ResponseWriter, r *http.Request) {
+	if systemdeps.IsLocalRuntime() {
+		enabled := false
+		if runtimeRoot, err := systemdeps.RuntimeRootFromEnv(); err == nil {
+			if status, detectErr := systemdeps.DetectEditablePPT(runtimeRoot); detectErr == nil {
+				enabled = status.Installed
+			}
+		}
+		mode := "raster"
+		if enabled {
+			mode = "editable"
+		}
+		common.ReplyOK(w, map[string]any{
+			"editable_pptx": enabled, "mode": mode, "dependency_missing": !enabled,
+		})
+		return
+	}
+
+	upstream := common.ChatServiceEndpoint() + "/api/workflow/ppt/capabilities"
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, upstream, nil)
+	if err != nil {
+		common.ReplyErr(w, "build PPT capabilities request failed", http.StatusInternalServerError)
+		return
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		common.ReplyErr(w, "PPT capabilities upstream unreachable", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		common.ReplyErr(w, "PPT capabilities upstream error", http.StatusBadGateway)
+		return
+	}
+	var capabilities struct {
+		EditablePptx bool `json:"editable_pptx"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64*1024)).Decode(&capabilities); err != nil {
+		common.ReplyErr(w, "invalid PPT capabilities response", http.StatusBadGateway)
+		return
+	}
+	mode := "raster"
+	if capabilities.EditablePptx {
+		mode = "editable"
+	}
+	common.ReplyOK(w, map[string]any{
+		"editable_pptx":      capabilities.EditablePptx,
+		"mode":               mode,
+		"dependency_missing": !capabilities.EditablePptx,
+	})
+}
+
+// ExportPptx handles POST /workflows/ppt:export.
+func ExportPptx(w http.ResponseWriter, r *http.Request) {
+	upstream := common.ChatServiceEndpoint() + "/api/workflow/ppt/export"
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Minute)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, upstream, r.Body)
+	if err != nil {
+		common.ReplyErr(w, "build upstream request failed", http.StatusInternalServerError)
+		return
+	}
+	contentType := r.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	req.Header.Set("Content-Type", contentType)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		common.ReplyErr(w, "ppt export upstream unreachable", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		message := string(body)
+		if message == "" {
+			message = fmt.Sprintf("ppt export failed with status %d", resp.StatusCode)
+		}
+		common.ReplyErr(w, message, resp.StatusCode)
+		return
+	}
+	for _, key := range []string{"Content-Type", "Content-Disposition"} {
+		if value := resp.Header.Get(key); value != "" {
+			w.Header().Set(key, value)
+		}
+	}
+	if w.Header().Get("Content-Type") == "" {
+		w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.presentationml.presentation")
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.Copy(w, resp.Body)
 }
 
 // SyncSessionSearchConfig handles POST /workflow-sessions/{session_id}:sync-search-config.

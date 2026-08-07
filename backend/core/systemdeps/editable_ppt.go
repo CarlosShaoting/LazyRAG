@@ -209,7 +209,7 @@ func InstallEditablePPT(ctx context.Context, runtimeRoot string) (EditablePPTSta
 func EnsureEditablePPTNodeModulesLink(installDir string) error {
 	exportSrc := editablePPTExporterSourceDir()
 	if exportSrc == "" {
-		return errors.New("LAZYMIND_PPT_EXPORT_CLI / LAZYMIND_PLUGINS_DIR is not set")
+		return errors.New("LAZYMIND_PPT_EXPORT_CLI / LAZYMIND_WORKFLOWS_DIR is not set")
 	}
 	target := filepath.Join(installDir, "node_modules")
 	if info, err := os.Stat(target); err != nil || !info.IsDir() {
@@ -253,8 +253,8 @@ func editablePPTExporterSourceDir() string {
 	if cli := strings.TrimSpace(os.Getenv("LAZYMIND_PPT_EXPORT_CLI")); cli != "" {
 		return filepath.Dir(cli)
 	}
-	if plugins := strings.TrimSpace(os.Getenv("LAZYMIND_PLUGINS_DIR")); plugins != "" {
-		return filepath.Join(plugins, "ppt-plugin", "runtime", "scripts", "export_pptx")
+	if workflows := strings.TrimSpace(os.Getenv("LAZYMIND_WORKFLOWS_DIR")); workflows != "" {
+		return filepath.Join(workflows, "ppt-workflow", "runtime", "scripts", "export_pptx")
 	}
 	return ""
 }
