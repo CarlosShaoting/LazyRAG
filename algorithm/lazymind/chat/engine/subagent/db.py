@@ -15,7 +15,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.sql import bindparam
 
-from lazymind.common.postgres import normalize_postgres_connection_url
+from lazymind.common.database.postgres import normalize_postgres_connection_url
 from lazymind.config import config
 
 

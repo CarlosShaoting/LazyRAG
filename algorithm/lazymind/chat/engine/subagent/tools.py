@@ -186,6 +186,16 @@ def _build_artifact_value(value: Any, content_type: str):
     return {'text': str(value)}, 'text'
 
 
+def _validate_declared_artifact_type(
+    ctx: Any,
+    key: str,
+    content_type: str,
+) -> Optional[str]:
+    """Workflow slot type validation is enforced by the workflow runtime."""
+    _ = (ctx, key, content_type)
+    return None
+
+
 def _save_artifact(key: str, value: Any, content_type: str = 'text',
                    source_tool: Optional[str] = None,
                    sort_order: Optional[int] = None,
@@ -246,6 +256,9 @@ def _save_artifact(key: str, value: Any, content_type: str = 'text',
             f'Allowed keys: {", ".join(ctx.output_slots)}',
         )
     ct = content_type if content_type in _CONTENT_TYPES else 'text'
+    contract_error = _validate_declared_artifact_type(ctx, key, ct)
+    if contract_error:
+        return tool_error('save_artifacts', contract_error)
     built, actual_ct = _build_artifact_value(value, ct)
     if source_tool:
         built['_source_tool'] = str(source_tool)
@@ -298,14 +311,17 @@ def save_artifacts(artifacts: List[Dict[str, Any]]) -> Dict[str, Any]:
             return tool_error(
                 'save_artifacts', f'artifacts[{index}] requires key and value.',
             )
-        results.append(_save_artifact(
+        saved = _save_artifact(
             key=str(item['key']),
             value=item['value'],
             content_type=str(item.get('content_type') or 'text'),
             source_tool=item.get('source_tool'),
             sort_order=item.get('sort_order'),
             caption=item.get('caption'),
-        ))
+        )
+        if not saved.get('success'):
+            return saved
+        results.append(saved)
     return tool_success('save_artifacts', {
         'status': 'ok',
         'saved_count': len(results),

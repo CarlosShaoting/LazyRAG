@@ -729,6 +729,9 @@ const ChatLayout: FC<IChatLayoutProps> = (props) => {
     (chatRef.current as any)?.uploadFiles?.(files);
   };
 
+  const isTaskPanelRestoreVisible =
+    !workflowPanelExpanded && tasks.length > 0 && isTaskPanelCollapsed;
+
   return (
     <div
       className={`detail-container${workflowPanelExpanded ? " detail-container--workflow-expanded" : ""}`}
@@ -753,7 +756,7 @@ const ChatLayout: FC<IChatLayoutProps> = (props) => {
           <button type="button" role="tab" aria-selected={expandedRailTab === "tasks"} className={expandedRailTab === "tasks" ? "active" : ""} onClick={() => setExpandedRailTab("tasks")}>{t("taskCenter.panelTitle")} {tasks.length > 0 && <span>{tasks.length}</span>}</button>
         </div>
       )}
-      <div className={`chat-conversation-pane${workflowPanelExpanded && expandedRailTab !== "chat" ? " chat-conversation-pane--hidden" : ""}`}>
+      <div className={`chat-conversation-pane${workflowPanelExpanded && expandedRailTab !== "chat" ? " chat-conversation-pane--hidden" : ""}${isTaskPanelRestoreVisible ? " chat-conversation-pane--task-restore-visible" : ""}`}>
       <ChatContainerComponent
         ref={chatRef}
         canChat={chatEnabled}
@@ -796,7 +799,7 @@ const ChatLayout: FC<IChatLayoutProps> = (props) => {
         }
       />
       </div>
-      {!workflowPanelExpanded && tasks.length > 0 && isTaskPanelCollapsed && (
+      {isTaskPanelRestoreVisible && (
         <button
           type="button"
           className="task-panel-restore-btn"
