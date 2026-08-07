@@ -6,8 +6,8 @@ import (
 	"errors"
 )
 
-// FakeExecutor is deterministic contract-test infrastructure. It exercises
-// the same claim/heartbeat/progress/terminal API as a real Host executor.
+// FakeExecutor is deterministic test infrastructure. It exercises the same
+// claim/heartbeat/progress/terminal API as a real Host executor.
 type FakeExecutor struct {
 	Service    *Service
 	ExecutorID string

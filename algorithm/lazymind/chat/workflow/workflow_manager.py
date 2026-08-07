@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import asdict, dataclass
 from typing import Any, Callable, Dict, List, Optional, Union
 
@@ -29,6 +30,12 @@ class WorkflowAgentContribution:
     stop_tools: List[str]
     agentic_config_patch: Dict[str, Any]
     runtime_context: str
+
+
+@dataclass(frozen=True)
+class WorkflowDiscoveryContext:
+    activations: List[Dict[str, Any]]
+    prompt: str
 
 
 def _agentic_config() -> Dict[str, Any]:
@@ -402,6 +409,99 @@ def _conversation_has_attachments() -> bool:
     )
 
 
+def _clean_workflow_text(value: Any) -> str:
+    return re.sub(r'\s+', ' ', str(value or '')).strip()
+
+
+def _workflow_trigger_tool_name(workflow_id: str) -> str:
+    stem = re.sub(r'[^0-9A-Za-z_]+', '_', workflow_id.lower()).strip('_')
+    stem = stem.removesuffix('_workflow') or 'workflow'
+    return f'trigger_{stem}_workflow'
+
+
+def workflow_activation_from_catalog_item(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the model-facing trigger metadata for one catalog item.
+
+    Kept host-neutral so Codex and ChatAgent can share the same catalog contract:
+    ``workflow_ref``, ``workflow_id``, ``name``, ``description``, ``when_to_use``,
+    and revision fields when available.
+    """
+    workflow_id = _clean_workflow_text(item.get('workflow_id'))
+    workflow_ref = _clean_workflow_text(item.get('workflow_ref'))
+    if not workflow_id or not workflow_ref:
+        return {}
+    name = _clean_workflow_text(item.get('name')) or workflow_id
+    description = _clean_workflow_text(item.get('description'))
+    when_to_use = _clean_workflow_text(item.get('when_to_use'))
+    return {
+        'workflow_ref': workflow_ref,
+        'workflow_id': workflow_id,
+        'revision_id': _clean_workflow_text(item.get('revision_id')),
+        'tool_name': _workflow_trigger_tool_name(workflow_id),
+        'tool_description': _clean_workflow_text(
+            f'Start the executable Workflow "{name}" when it matches the user request. '
+            f'Description: {description} When to use: {when_to_use}'
+        ),
+        'prompt': _clean_workflow_text(
+            f'Workflow "{name}" ({workflow_ref}) is available. '
+            f'Description: {description} When to use: {when_to_use}'
+        ),
+    }
+
+
+def build_workflow_discovery_context(
+    catalog: List[Dict[str, Any]],
+    *,
+    current_query: str = '',
+) -> WorkflowDiscoveryContext:
+    """Render available Workflow routing context and trigger metadata.
+
+    This mirrors Skill discovery: the model gets names, descriptions, and
+    when-to-use guidance before deciding whether any Workflow should run.
+    """
+    activations: List[Dict[str, Any]] = []
+    items: List[Dict[str, Any]] = []
+    used_names: set[str] = set()
+    for item in catalog or []:
+        if not isinstance(item, dict):
+            continue
+        activation = workflow_activation_from_catalog_item(item)
+        if not activation:
+            continue
+        name = str(activation.get('tool_name') or '')
+        if name in used_names:
+            continue
+        used_names.add(name)
+        activations.append(activation)
+        items.append({
+            'workflow_ref': activation['workflow_ref'],
+            'workflow_id': activation['workflow_id'],
+            'name': _clean_workflow_text(item.get('name')) or activation['workflow_id'],
+            'description': _clean_workflow_text(item.get('description')),
+            'when_to_use': _clean_workflow_text(item.get('when_to_use')),
+            'trigger_tool': name,
+        })
+    if not items:
+        return WorkflowDiscoveryContext([], '')
+    prompt = (
+        '## Available Workflow Catalog [AUTHORITATIVE]\n'
+        'These are executable Workflows available in this conversation. Use this catalog the '
+        'same way Skill descriptions are used: compare the current user request with each '
+        'description and when_to_use before deciding. Call a trigger tool only when the '
+        'Workflow is clearly appropriate, or when the user explicitly asks to run/open/start '
+        'that Workflow. Do not trigger a Workflow merely because it exists, and do not ask the '
+        'user to list Workflows before making this routing decision. A triggered Workflow '
+        'receives current_query as request_context/user_input; after a successful trigger, '
+        'continue from returned ready_steps with advance_step until terminal, required input, '
+        'explicit user boundary, or failure.\n'
+        + json.dumps({
+            'current_query': current_query,
+            'workflows': items,
+        }, ensure_ascii=False, default=str)
+    )
+    return WorkflowDiscoveryContext(activations, prompt)
+
+
 def _workflow_trigger_tools(
     activations: List[Dict[str, Any]], allowed_refs: set[str], current_query: str = '',
     conversation_id: str = '', session_holder: Optional[Dict[str, str]] = None,
@@ -592,12 +692,32 @@ def resolve_workflow_injection(
         str(item.get('workflow_id') or '').strip() for item in allowed_items
         if str(item.get('workflow_id') or '').strip()
     ]
+    if not allowed_refs and not session_id:
+        allowed_ids.extend(
+            str(item.get('workflow_id') or '').strip() for item in catalog
+            if isinstance(item, dict) and str(item.get('workflow_id') or '').strip()
+        )
     for ref in allowed_refs:
         if ref.startswith('builtin:'):
             allowed_ids.append(ref.removeprefix('builtin:'))
     allowed_ids = list(dict.fromkeys(allowed_ids))
 
     activations = workflow_activations or []
+    discovery_context = WorkflowDiscoveryContext([], '')
+    if not allowed_refs and not session_id:
+        discovery_context = build_workflow_discovery_context(
+            catalog, current_query=current_query,
+        )
+        activation_names = {
+            str(item.get('tool_name') or '') for item in activations if isinstance(item, dict)
+        }
+        activations = [
+            *activations,
+            *[
+                item for item in discovery_context.activations
+                if str(item.get('tool_name') or '') not in activation_names
+            ],
+        ]
     session_holder: Dict[str, str] = {'session_id': session_id}
     trigger_tools = _workflow_trigger_tools(
         activations, allowed_refs, current_query, conversation_id, session_holder,
@@ -642,7 +762,22 @@ def resolve_workflow_injection(
             handoff,
         ]
     elif not session_id:
-        tools = _safe_authoring_tools(toolkit)
+        trigger_entry_tools = [tool for tool in tools if _is_bound_workflow_trigger(tool.__name__)]
+        if trigger_entry_tools:
+            handoff = _handoff_tool(lambda: session_holder.get('session_id', ''))
+            tools = [
+                *trigger_entry_tools,
+                *[
+                    tool for tool in _safe_session_tools(
+                        toolkit, lambda: session_holder.get('session_id', ''),
+                    )
+                    if tool.__name__ != 'resume_workflow'
+                ],
+                handoff,
+                *_safe_authoring_tools(toolkit),
+            ]
+        else:
+            tools = _safe_authoring_tools(toolkit)
     if session_id:
         tools = _safe_session_tools(toolkit, session_id)
         status = str(projection.get('status') or context.get('status') or '').lower()
@@ -721,6 +856,8 @@ def resolve_workflow_injection(
                 'allowed_workflow_ids': allowed_ids,
             }, ensure_ascii=False, default=str)
         )
+    elif discovery_context.prompt:
+        selection_context = discovery_context.prompt
     return WorkflowAgentContribution(
         tools, [], patch, selection_context,
     )

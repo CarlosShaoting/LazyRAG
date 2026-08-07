@@ -1,4 +1,7 @@
 -- +migrate Dialect postgres
+ALTER TABLE plugin_transition_commands DROP COLUMN IF EXISTS retry_origin;
+DROP TABLE IF EXISTS public.episode_memories;
+DROP TABLE IF EXISTS public.memory_current_entries;
 ALTER TABLE plugin_drafts DROP COLUMN IF EXISTS driver_content;
 ALTER TABLE plugin_attempt_input_bindings
     DROP COLUMN IF EXISTS content_hash,
@@ -29,6 +32,9 @@ ALTER TABLE plugin_sessions
 ALTER TABLE user_plugin_settings DROP COLUMN IF EXISTS call_mode;
 
 -- +migrate Dialect sqlite
+ALTER TABLE plugin_transition_commands DROP COLUMN retry_origin;
+DROP TABLE IF EXISTS episode_memories;
+DROP TABLE IF EXISTS memory_current_entries;
 ALTER TABLE plugin_drafts DROP COLUMN driver_content;
 ALTER TABLE plugin_attempt_input_bindings DROP COLUMN content_hash;
 ALTER TABLE plugin_attempt_input_bindings DROP COLUMN source_revision;

@@ -195,7 +195,7 @@ Mobile App 远程访问是后期能力，不改变上述非目标：Cloud Relay 
 - 以现有 Chat、Agent 和 Search 调用链作为不应重写的行为基线；
 - 以 `backend/auth-service` 的账号、JWT 和 refresh token 实现作为可提取复用的认证基础；
 - 以 `frontend/src/modules/dataSource/oauth` 和现有 Provider OAuth 实现作为 Relay 接入基线；
-- 以 `backend/core/skillv2`、现有 `backend/core/workflow` 实现及前端 Skill 包能力作为 Skill/Workflow 广场安装基线；
+- 以 `backend/core/skillv2`、现有 `backend/core/plugin` 实现及前端 Skill 包能力作为 Skill/Workflow 广场安装基线；
 - 以 `desktop/electron`、构建脚本和 Runtime Manifest 作为更新链基线。
 
 #### 实施步骤
@@ -468,7 +468,7 @@ OAuth Relay：
 #### 现有代码复用
 
 - Skill 复用 `backend/core/skillv2` 的包、版本和本地安装能力；
-- Workflow 复用当前 `backend/core/workflow` 模块的校验、版本与本地 Runtime；该代码目录可后续单独迁移命名，不阻塞产品术语更名；
+- Workflow 复用当前 `backend/core/plugin` 模块的校验、版本与本地 Runtime；该代码目录可后续单独迁移命名，不阻塞产品术语更名；
 - 前端复用现有 Skill 管理、包预览、差异查看和安装交互；
 - 公共知识包下载后进入现有本地导入、解析和索引流程；
 - Cloud 目录与本地目录通过稳定内容 ID 和来源字段合并，不改写本地资源模型。

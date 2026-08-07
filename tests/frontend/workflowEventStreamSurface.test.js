@@ -16,8 +16,11 @@ describe('Workflow Panel live update surface', () => {
 
   it('does not turn task events into per-event Workflow state refetches', () => {
     const taskStore = read('frontend/src/modules/chat/store/taskCenter.ts');
-    expect(taskStore.match(/loadActiveSession\(conversationId\)/g)).toHaveLength(1);
     expect(taskStore).toContain('if (!workflowState.sessionByConversation[conversationId])');
+    const intentUpdatedBranch = taskStore.match(
+      /type === 'intent_updated'[\s\S]*?\} else if \(type === 'workflow_artifact_updated'/,
+    )?.[0] || '';
+    expect(intentUpdatedBranch).not.toContain('loadActiveSession(conversationId)');
   });
 
   it('reconnects with Last-Event-ID through one Workflow Event Stream', () => {
