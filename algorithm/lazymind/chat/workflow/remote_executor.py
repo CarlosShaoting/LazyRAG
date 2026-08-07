@@ -130,6 +130,7 @@ class RemoteWorkflowExecutor:
                 task_id=task_id,
                 resume=bool(initial_steps),
                 model_config=spec.get('llm_config'),
+                tool_config=spec.get('tool_config'),
                 agent_type='workflow_step',
                 task_spec=task,
                 initial_steps=initial_steps,

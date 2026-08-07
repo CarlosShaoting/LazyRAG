@@ -135,7 +135,7 @@ async def test_reclaimed_attempt_resumes_durable_steps_in_isolated_workspace(mon
         async def execution_spec(self, *_):
             return {'task': {'input_slots': [], 'output_slots': []}, 'params': {},
                     'steps': [{'seq': 0, 'role': 'text', 'content': {'content': 'checkpoint'}}],
-                    'llm_config': {}}
+                    'llm_config': {}, 'tool_config': {'tavily': 'test-token'}}
 
         async def heartbeat(self, *_):
             return None
@@ -157,6 +157,7 @@ async def test_reclaimed_attempt_resumes_durable_steps_in_isolated_workspace(mon
     await worker._run_claim(object(), {'attempt_id': 'attempt-1', 'lease_token': 'lease-1'})
     assert runtime.completed is True
     assert captured['resume'] is True
+    assert captured['tool_config'] == {'tavily': 'test-token'}
     assert captured['initial_steps'][0]['content']['content'] == 'checkpoint'
     workspace = captured['task_spec']['workspace_path']
     assert 'lazymind-workflow-attempt-1-' in workspace
