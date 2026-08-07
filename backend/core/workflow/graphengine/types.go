@@ -137,13 +137,15 @@ type RuntimeSnapshot struct {
 }
 
 type NodeProjection struct {
-	ID           string     `json:"id"`
-	Execution    string     `json:"execution"`
-	Validity     string     `json:"validity"`
-	Reachability string     `json:"reachability"`
-	Readiness    string     `json:"readiness"`
-	Branch       string     `json:"branch"`
-	Evaluation   Evaluation `json:"evaluation"`
+	ID               string     `json:"id"`
+	Mode             string     `json:"mode,omitempty"`
+	RequiresApproval bool       `json:"requires_approval"`
+	Execution        string     `json:"execution"`
+	Validity         string     `json:"validity"`
+	Reachability     string     `json:"reachability"`
+	Readiness        string     `json:"readiness"`
+	Branch           string     `json:"branch"`
+	Evaluation       Evaluation `json:"evaluation"`
 }
 
 type Projection struct {

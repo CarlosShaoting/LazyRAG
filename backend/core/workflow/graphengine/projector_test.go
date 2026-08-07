@@ -98,6 +98,24 @@ func TestRuntimeAttemptStatusesRemainCurrentAndNotReady(t *testing.T) {
 	}
 }
 
+func TestProjectionIncludesStepApprovalDefaults(t *testing.T) {
+	graph := &CompiledStateGraph{
+		Nodes: map[string]CompiledNode{
+			"auto":  {ID: "auto", Route: "all", Mode: "auto"},
+			"human": {ID: "human", Route: "all", Mode: "human"},
+		},
+		StaticOrder: []string{"auto", "human"},
+	}
+
+	projection := Project(graph, RuntimeSnapshot{})
+	if projection.Nodes["auto"].Mode != "auto" || projection.Nodes["auto"].RequiresApproval {
+		t.Fatalf("auto node approval defaults not projected: %#v", projection.Nodes["auto"])
+	}
+	if projection.Nodes["human"].Mode != "human" || !projection.Nodes["human"].RequiresApproval {
+		t.Fatalf("human node approval defaults not projected: %#v", projection.Nodes["human"])
+	}
+}
+
 // TestDecideRoute_StartNode returns start-route activated nodes.
 func TestDecideRoute_StartNode(t *testing.T) {
 	graph := &CompiledStateGraph{

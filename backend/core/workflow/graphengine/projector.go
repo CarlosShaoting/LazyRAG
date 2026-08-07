@@ -178,7 +178,8 @@ func Project(graph *CompiledStateGraph, snapshot RuntimeSnapshot) Projection {
 
 	for id := range graph.Nodes {
 		attempt, hasAttempt := latest[id]
-		node := NodeProjection{ID: id, Execution: "none", Validity: "effective", Reachability: "unreachable", Readiness: "not_applicable", Branch: "active", Evaluation: Evaluation{Satisfied: true}}
+		nodeMode := graph.Nodes[id].Mode
+		node := NodeProjection{ID: id, Mode: nodeMode, RequiresApproval: nodeMode == "human", Execution: "none", Validity: "effective", Reachability: "unreachable", Readiness: "not_applicable", Branch: "active", Evaluation: Evaluation{Satisfied: true}}
 		if stale[id] {
 			projection.Stale = append(projection.Stale, id)
 			if !hasAttempt {

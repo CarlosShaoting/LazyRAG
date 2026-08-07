@@ -76,7 +76,7 @@ def _state(session_id: str) -> Dict[str, Any]:
 
 def _handoff_tool(session: Union[str, Callable[[], str]]) -> Any:
     def advance_step_and_hand_off(step_id: str) -> str:
-        """Advance one Ready Workflow step; Host injects concurrency metadata."""
+        """Execute one Ready Workflow step, then hand off for result approval."""
         selected_session_id = session() if callable(session) else session
         selected_session_id = str(selected_session_id or '').strip()
         if not selected_session_id:
@@ -121,8 +121,8 @@ def _handoff_tool(session: Union[str, Callable[[], str]]) -> Any:
         raise AssertionError('unreachable')
 
     advance_step_and_hand_off.__doc__ = (
-        'Submit a Ready target and end this LazyMind turn only after durable '
-        'Supervisor ownership is acknowledged.'
+        'Execute a Ready Workflow step and end this LazyMind turn only after the '
+        'Host acknowledges durable ownership of the post-execution approval checkpoint.'
     )
     return advance_step_and_hand_off
 
@@ -637,10 +637,16 @@ def resolve_workflow_injection(
             + 'remain available and do not consume that budget. After step_succeeded, continue in the '
             + 'same turn using only the returned ready_steps until the Workflow is terminal, '
             + 'requires user input, reaches an explicit user boundary, or a step fails. '
-            + 'If the next Ready Workflow step requires human approval, call '
-            + 'advance_step_and_hand_off for that exact step instead of calling ask_user or '
-            + 'asking in assistant prose. Do not replace continued execution with a promise '
-            + 'that later steps will run.\n'
+            + 'In Human Approval chat mode, approval is for a step result after that step runs; '
+            + 'it is not permission to start the step. Decide approval checkpoints by priority: '
+            + 'first obey explicit user instructions in the current request; when absent, use '
+            + 'the Ready step default from ready_step_details, projection.nodes[step_id].mode, '
+            + 'or projection.nodes[step_id].requires_approval. mode=human/default_approval=required '
+            + 'means execute that Ready step with advance_step_and_hand_off so the Host stops '
+            + 'after execution for human review of its outputs. mode=auto/default_approval=not_required '
+            + 'means execute with advance_step and continue. Never ask whether to execute a Ready '
+            + 'step merely because it requires approval; the approval checkpoint belongs to its result. '
+            + 'Do not replace continued execution with a promise that later steps will run.\n'
             + json.dumps(projection, ensure_ascii=False, default=str)
         )
         return WorkflowAgentContribution(
@@ -670,9 +676,13 @@ def resolve_workflow_injection(
             + 'workflow request_context and as user_input for the first Ready step; do not '
             + 'ask for a second trigger message when current_query is non-empty. After each '
             + 'successful advance_step, continue in this same turn from its returned ready_steps '
-            + 'until terminal, required input, explicit user boundary, or failure. If a Ready '
-            + 'Workflow step requires human approval, call advance_step_and_hand_off for that '
-            + 'exact step instead of ask_user. Do not merely announce that later steps will run. For recovery, '
+            + 'until terminal, required input, explicit user boundary, or failure. In Human Approval '
+            + 'chat mode, approval is for the step result after execution, not for starting the step. '
+            + 'Explicit user approval instructions override step defaults; otherwise use '
+            + 'ready_step_details/projection.nodes mode and requires_approval to decide. If a Ready '
+            + 'Workflow step requires human approval, execute it with advance_step_and_hand_off so '
+            + 'the Host stops after execution for output review. Do not ask whether to execute it, '
+            + 'and do not merely announce that later steps will run. For recovery, '
             + 'use only exact retryable_steps or rewindable_steps returned by Runtime.\n'
             + json.dumps({
                 'current_query': current_query,

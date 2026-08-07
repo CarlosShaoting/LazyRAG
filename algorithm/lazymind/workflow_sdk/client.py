@@ -197,6 +197,7 @@ class WorkflowClient:
     def get_ready_steps(self, session_id: str) -> Dict[str, Any]:
         state = self.get_state(session_id)
         projection = state.get('projection') if isinstance(state.get('projection'), dict) else state
+        nodes = projection.get('nodes') if isinstance(projection.get('nodes'), dict) else {}
 
         def step_ids(value: Any) -> List[str]:
             values = value if isinstance(value, list) else []
@@ -207,10 +208,38 @@ class WorkflowClient:
                 ).strip())
             ]
 
+        def step_details(step_ids: List[str]) -> List[Dict[str, Any]]:
+            details: List[Dict[str, Any]] = []
+            for step_id in step_ids:
+                node = nodes.get(step_id) if isinstance(nodes.get(step_id), dict) else {}
+                mode = str(node.get('mode') or '').strip()
+                requires_approval = (
+                    bool(node.get('requires_approval')) if 'requires_approval' in node
+                    else mode == 'human'
+                )
+                details.append({
+                    'step_id': step_id,
+                    'mode': mode,
+                    'requires_approval': requires_approval,
+                    'default_approval': 'required' if requires_approval else 'not_required',
+                    'approval_timing': (
+                        'after_step_execution' if requires_approval else 'none'
+                    ),
+                    'execution_tool': (
+                        'advance_step_and_hand_off' if requires_approval else 'advance_step'
+                    ),
+                })
+            return details
+
         ready = step_ids(projection.get('ready_steps', projection.get('ready', [])))
+        ready_details = step_details(ready)
         return {
             'session_id': session_id, 'state_version': state.get('state_version'),
             'ready_steps': ready,
+            'ready_step_details': ready_details,
+            'approval_by_step': {
+                item['step_id']: item['default_approval'] for item in ready_details
+            },
             'retryable_steps': step_ids(projection.get(
                 'retryable_steps', projection.get('retryable', []))),
             'rewindable_steps': step_ids(projection.get(

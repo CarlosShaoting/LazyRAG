@@ -174,6 +174,8 @@ class HostWorkflowToolkit:
             'session_id': session_id,
             'state_version': ready.get('state_version', started.get('state_version')),
             'ready_steps': ready.get('ready_steps') or [],
+            'ready_step_details': ready.get('ready_step_details') or [],
+            'approval_by_step': ready.get('approval_by_step') or {},
             'next_action': {
                 'tool': 'advance_step',
                 'instruction': (
@@ -240,12 +242,37 @@ class HostWorkflowToolkit:
                 }
         projection = result.get('projection') if isinstance(result.get('projection'), dict) else {}
         ready = result.get('ready_steps') or projection.get('ready') or []
+        nodes = projection.get('nodes') if isinstance(projection.get('nodes'), dict) else {}
+        ready_details = []
+        for step_id in ready:
+            node = nodes.get(step_id) if isinstance(nodes.get(step_id), dict) else {}
+            mode = str(node.get('mode') or '').strip()
+            requires_approval = (
+                bool(node.get('requires_approval')) if 'requires_approval' in node
+                else mode == 'human'
+            )
+            ready_details.append({
+                'step_id': step_id,
+                'mode': mode,
+                'requires_approval': requires_approval,
+                'default_approval': 'required' if requires_approval else 'not_required',
+                'approval_timing': (
+                    'after_step_execution' if requires_approval else 'none'
+                ),
+                'execution_tool': (
+                    'advance_step_and_hand_off' if requires_approval else 'advance_step'
+                ),
+            })
         completed = bool(projection.get('completed'))
         return {
             **result,
             'status': 'completed' if completed else 'active',
             'outcome': 'workflow_completed' if completed else 'step_succeeded',
             'ready_steps': ready,
+            'ready_step_details': ready_details,
+            'approval_by_step': {
+                item['step_id']: item['default_approval'] for item in ready_details
+            },
             'next_action': {
                 'tool': None if completed else 'advance_step',
                 'instruction': (
@@ -254,8 +281,9 @@ class HostWorkflowToolkit:
                     'Continue in this same ChatAgent turn by selecting exact IDs from the '
                     'returned ready_steps. Stop only for a terminal state, required user input, '
                     'explicit user boundary, or a failed step decision. If the next Ready '
-                    'Workflow step requires human approval, call advance_step_and_hand_off '
-                    'for that exact step instead of ask_user.'
+                    'Workflow step requires human approval, execute it with advance_step_and_hand_off; '
+                    'approval happens after that step runs, for its result, so do not ask whether '
+                    'to execute the step.'
                 ),
             },
             'command_id': resolved_command_id,
