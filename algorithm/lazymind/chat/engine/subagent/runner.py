@@ -6,6 +6,8 @@ import re
 import time
 import base64
 import types
+import tempfile
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import lazyllm
@@ -89,6 +91,47 @@ def _resolve_workflow_step_tools(params: Dict[str, Any]) -> Optional[List[str]]:
     return list(dict.fromkeys([*SUBAGENT_CORE_TOOL_NAMES, *map(str, declared)]))
 
 
+def _materialize_workflow_package(
+    workflow_id: str,
+    revision_id: str,
+    tree_hash: str,
+    files: Dict[str, Any],
+) -> Path:
+    """Materialize one immutable Workflow revision for path-based tool assets.
+
+    Workflow tools may load sibling runtime files relative to ``__file__``.  Executing
+    only scripts/*.py from an in-memory pseudo path breaks those tools even though Core
+    returned the complete pinned package.  The tree hash makes this cache immutable.
+    """
+    safe_workflow = re.sub(r'[^0-9A-Za-z_.-]+', '_', workflow_id).strip('._') or 'workflow'
+    safe_revision = re.sub(r'[^0-9A-Za-z_.-]+', '_', revision_id).strip('._') or 'revision'
+    safe_tree = re.sub(r'[^0-9A-Za-z]+', '', tree_hash)[:64] or 'unhashed'
+    root = Path(tempfile.gettempdir()) / 'lazymind-workflow-packages' / (
+        f'{safe_workflow}@{safe_revision}-{safe_tree}'
+    )
+    root.mkdir(parents=True, exist_ok=True)
+    resolved_root = root.resolve()
+    for relative, encoded in files.items():
+        relative_path = Path(str(relative))
+        if relative_path.is_absolute() or '..' in relative_path.parts:
+            raise RuntimeError(f'unsafe Workflow package path: {relative!r}')
+        target = (root / relative_path).resolve()
+        if target != resolved_root and resolved_root not in target.parents:
+            raise RuntimeError(f'unsafe Workflow package path: {relative!r}')
+        if encoded is None:
+            # Core serializes empty blobs as null in the public package map.
+            raw = b''
+        else:
+            raw = base64.b64decode(encoded) if isinstance(encoded, str) else bytes(encoded)
+        if target.exists() and target.read_bytes() == raw:
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(f'.{target.name}.{os.getpid()}.tmp')
+        temporary.write_bytes(raw)
+        os.replace(temporary, target)
+    return root
+
+
 def _workflow_package_tools(params: Dict[str, Any], names: List[str]) -> Dict[str, Any]:
     """Load declared callables from the exact published Workflow revision.
 
@@ -115,18 +158,24 @@ def _workflow_package_tools(params: Dict[str, Any], names: List[str]) -> Dict[st
         if expected_hash and str(package.get('tree_hash') or '') != expected_hash:
             raise RuntimeError('Core returned a Workflow package with a different tree hash')
         files = package.get('files') if isinstance(package.get('files'), dict) else {}
+        package_root = _materialize_workflow_package(
+            workflow_id,
+            revision_id,
+            str(package.get('tree_hash') or expected_hash),
+            files,
+        )
         remaining = set(names)
         resolved: Dict[str, Any] = {}
         for path in sorted(files):
             if not path.startswith('scripts/') or not path.endswith('.py'):
                 continue
-            encoded = files[path]
-            raw_source = base64.b64decode(encoded) if isinstance(encoded, str) else bytes(encoded)
+            script_path = package_root / path
+            raw_source = script_path.read_bytes()
             source = raw_source.decode('utf-8')
             module = types.ModuleType(
                 f'_lazymind_workflow_{revision_id.replace("-", "_")}_{len(resolved)}'
             )
-            module.__file__ = f'{workflow_id}@{revision_id}/{path}'
+            module.__file__ = str(script_path)
             exec(compile(source, module.__file__, 'exec'), module.__dict__)
             for name in tuple(remaining):
                 candidate = module.__dict__.get(name)
@@ -453,10 +502,22 @@ def _build_subagent_plan(
             'Optional output artifact keys: ' + ', '.join(optional_keys)
         )
     output_lines.append(
+        '## Exact save_artifacts call shape\n'
+        'Use this exact JSON structure:\n'
+        '{"artifacts":[{"key":"<declared output key>","value":"<actual content>",'
+        '"content_type":"text","caption":"<optional label>"}]}\n'
+        'The payload field MUST be named value. Never use content, data, body, or text '
+        'as a replacement for value. key and value are required inside EVERY artifacts item.\n'
+        'For multiple outputs, put all entries in the same artifacts array. Do not make a '
+        'small test/placeholder save before saving the real output.'
+    )
+    output_lines.append(
         '## Overwrite vs. Append for list slots\n'
         'Each save_artifacts entry has an optional sort_order parameter (1-based):\n'
         '- Omit sort_order → append a new item at the end of the list.\n'
         '- Pass sort_order=N → overwrite the item currently at display position N.\n'
+        'sort_order is NOT a page number or a desired append position. During a normal full '
+        'run that creates page 1, page 2, page 3, OMIT sort_order on all three entries.\n'
         'If the objective says the user wants to replace a specific item '
         '(e.g. "重新收集第二张图", "replace item 3", "redo position N"), '
         'you MUST pass sort_order=N. Omitting it will append a new item instead of replacing.'

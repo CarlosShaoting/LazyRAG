@@ -40,8 +40,9 @@ type MaterialRef struct {
 }
 
 type ProducerRef struct {
-	Kind   string `json:"kind"` // external | step
-	StepID string `json:"step_id,omitempty"`
+	Kind     string `json:"kind"` // external | step
+	StepID   string `json:"step_id,omitempty"`
+	Optional bool   `json:"optional,omitempty"`
 }
 
 type CompiledNode struct {

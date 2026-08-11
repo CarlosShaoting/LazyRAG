@@ -72,6 +72,7 @@ func Compile(workflowYAML, stateYAML, scenario string, profile Profile) CompileR
 	}
 	knownMaterials := map[string]bool{}
 	external := map[string]bool{}
+	optionalExternal := map[string]bool{}
 	exposed := map[string]bool{}
 	for i, slot := range plugin.Slots {
 		id := scalar(slot["id"])
@@ -84,6 +85,9 @@ func Compile(workflowYAML, stateYAML, scenario string, profile Profile) CompileR
 		}
 		knownMaterials[id] = true
 		external[id] = boolValue(slot["external"]) || scalar(slot["producer"]) == "external"
+		if required, declared := slot["required"]; declared {
+			optionalExternal[id] = !boolValue(required)
+		}
 		exposed[id] = boolValue(slot["exposed"])
 	}
 
@@ -173,7 +177,9 @@ func Compile(workflowYAML, stateYAML, scenario string, profile Profile) CompileR
 	// diagnosed instead of silently treated as user input.
 	for id := range external {
 		if external[id] {
-			graph.MaterialProducers[id] = ProducerRef{Kind: "external"}
+			graph.MaterialProducers[id] = ProducerRef{
+				Kind: "external", Optional: optionalExternal[id],
+			}
 		}
 	}
 	for id, node := range graph.Nodes {

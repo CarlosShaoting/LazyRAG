@@ -361,7 +361,9 @@ class AccountPersonalizationSetting(_StrictModel):
 
 
 class AccountWorkflowSetting(_StrictModel):
-    setting: Literal['workflow']
+    # Keep this distinct from ConversationWorkflowSetting. Pydantic requires
+    # every value in a discriminated union to map to exactly one model.
+    setting: Literal['workflow_item']
     workflow_ref: str = Field(min_length=1, max_length=512)
     enabled: bool
 

@@ -633,6 +633,144 @@ async function resolvePptExportError(error: unknown, fallback: string): Promise<
   return fallback;
 }
 
+function CompositeThumbnailRail({
+  position,
+  pages,
+  currentPage,
+  onChange,
+  onReorder,
+  reordering = false,
+  tab,
+  session,
+}: {
+  position: PageBarPosition;
+  pages: number[];
+  currentPage: number;
+  onChange: (page: number) => void;
+  onReorder?: (nextPages: number[]) => void | Promise<void>;
+  reordering?: boolean;
+  tab: TabDef;
+  session: WorkflowSession;
+}) {
+  const { t } = useTranslation();
+  const isCol = position === 'left' || position === 'right';
+  const idx = Math.max(0, pages.indexOf(currentPage));
+  const dragSrcIdx = useRef<number | null>(null);
+  const [insertIdx, setInsertIdx] = useState<number | null>(null);
+  const [draggingIdx, setDraggingIdx] = useState<number | null>(null);
+
+  const computeInsertIdx = useCallback((event: React.DragEvent, itemIdx: number) => {
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    if (isCol) return event.clientY < rect.top + rect.height / 2 ? itemIdx : itemIdx + 1;
+    return event.clientX < rect.left + rect.width / 2 ? itemIdx : itemIdx + 1;
+  }, [isCol]);
+
+  const handleDragStart = (pageIdx: number, event: React.DragEvent) => {
+    if (!onReorder || reordering) return;
+    dragSrcIdx.current = pageIdx;
+    setDraggingIdx(pageIdx);
+    event.dataTransfer.setData('application/x-ppt-page-sort', String(pageIdx));
+    event.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (pageIdx: number, event: React.DragEvent) => {
+    if (!onReorder || dragSrcIdx.current === null) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    setInsertIdx(computeInsertIdx(event, pageIdx));
+  };
+
+  const resetDrag = () => {
+    dragSrcIdx.current = null;
+    setInsertIdx(null);
+    setDraggingIdx(null);
+  };
+
+  const handleDrop = async (pageIdx: number, event: React.DragEvent) => {
+    event.preventDefault();
+    const srcIdx = dragSrcIdx.current;
+    const gapIdx = computeInsertIdx(event, pageIdx);
+    resetDrag();
+    if (srcIdx === null || !onReorder || gapIdx === srcIdx || gapIdx === srcIdx + 1) return;
+    const next = [...pages];
+    const [moved] = next.splice(srcIdx, 1);
+    next.splice(gapIdx > srcIdx ? gapIdx - 1 : gapIdx, 0, moved);
+    await onReorder(next);
+  };
+
+  const canDrag = Boolean(onReorder) && !reordering;
+
+  return (
+    <div
+      className={`composite-thumb-rail composite-thumb-rail--${isCol ? 'col' : 'row'}`}
+      onDragLeave={canDrag ? (event) => {
+        if (!(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) {
+          setInsertIdx(null);
+        }
+      } : undefined}
+    >
+      <div className='composite-thumb-rail__nav'>
+        <button
+          type='button'
+          className='composite-thumb-rail__arrow'
+          disabled={idx <= 0 || reordering}
+          onClick={() => idx > 0 && onChange(pages[idx - 1])}
+          aria-label={t('chat.workflowPreviousPage')}
+        >
+          {isCol ? '↑' : '←'}
+        </button>
+        <div
+          className={`composite-thumb-rail__list composite-thumb-rail__list--${isCol ? 'col' : 'row'}`}
+          role='list'
+        >
+          {canDrag && <div className={`composite-thumb-rail__insert${insertIdx === 0 ? ' composite-thumb-rail__insert--active' : ''}`} aria-hidden='true' />}
+          {pages.map((sortOrder, pageIdx) => {
+            const revision = findSlotRevision(session, tab, 'preview_html', sortOrder);
+            return (
+              <React.Fragment key={`${sortOrder}-${pageIdx}`}>
+                <button
+                  type='button'
+                  role='listitem'
+                  draggable={canDrag}
+                  className={[
+                    'composite-thumb-rail__item',
+                    sortOrder === currentPage ? 'composite-thumb-rail__item--active' : '',
+                    canDrag ? 'composite-thumb-rail__item--draggable' : '',
+                    draggingIdx === pageIdx ? 'composite-thumb-rail__item--dragging' : '',
+                  ].filter(Boolean).join(' ')}
+                  onClick={() => onChange(sortOrder)}
+                  onDragStart={(event) => handleDragStart(pageIdx, event)}
+                  onDragOver={(event) => handleDragOver(pageIdx, event)}
+                  onDrop={(event) => { void handleDrop(pageIdx, event); }}
+                  onDragEnd={resetDrag}
+                  title={canDrag ? t('chat.workflowPageDragHint') : undefined}
+                  aria-label={t('chat.workflowRowAria', { index: pageIdx + 1 })}
+                  aria-current={sortOrder === currentPage ? 'true' : undefined}
+                >
+                  <span className='composite-thumb-rail__badge'>{pageIdx + 1}</span>
+                  <span className='composite-thumb-rail__preview' aria-hidden='true'>
+                    {revision ? <SlideThumb slot={revision} sessionId={session.session_id} /> : '—'}
+                  </span>
+                </button>
+                {canDrag && <div className={`composite-thumb-rail__insert${insertIdx === pageIdx + 1 ? ' composite-thumb-rail__insert--active' : ''}`} aria-hidden='true' />}
+              </React.Fragment>
+            );
+          })}
+        </div>
+        <button
+          type='button'
+          className='composite-thumb-rail__arrow'
+          disabled={idx >= pages.length - 1 || reordering}
+          onClick={() => idx < pages.length - 1 && onChange(pages[idx + 1])}
+          aria-label={t('chat.workflowNextPage')}
+        >
+          {isCol ? '↓' : '→'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function CompositeSlotGrid({
   tab,
   session,
@@ -649,6 +787,7 @@ function CompositeSlotGrid({
   readOnly?: boolean;
 }) {
   const { t } = useTranslation();
+  const reorderSlotItems = useWorkflowStore((state) => state.reorderSlotItems);
   const rows = getCompositeRows(tab, session);
   const columns = filterColumnsByVisibleSlots(
     buildColumns(tab),
@@ -660,9 +799,15 @@ function CompositeSlotGrid({
   const totalWeight = columns.reduce((s, c) => s + c.weight, 0) || 1;
   const pageBarPosition = tab.composite_tab_position as PageBarPosition | undefined;
   const paged = Boolean(pageBarPosition);
+  const stackCompositeCells = Boolean(
+    tab.composite_layout
+      && !Array.isArray(tab.composite_layout)
+      && tab.composite_layout.direction === 'column',
+  );
   const [currentPage, setCurrentPage] = useState<number | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [reordering, setReordering] = useState(false);
   const [exportChoiceOpen, setExportChoiceOpen] = useState(false);
 
   useEffect(() => {
@@ -680,6 +825,47 @@ function CompositeSlotGrid({
 
   const canExportHtml = session.workflow_id === 'ppt-workflow'
     || tab.slots.some((slot) => slot.id === 'preview_html');
+  const activePage = currentPage ?? rows[0];
+  const canReorderPages = paged && canExportHtml && rows.length > 1 && !readOnly;
+
+  const handlePageReorder = useCallback(async (nextPages: number[]) => {
+    if (!canReorderPages || reordering || nextPages.length !== rows.length) return;
+    if (nextPages.every((page, index) => page === rows[index])) return;
+
+    const focusedVisualIdx = Math.max(0, nextPages.indexOf(activePage));
+    // A PPT page is represented by three aligned list slots. Reorder all of them
+    // together so outline, slide HTML and speaker notes keep the same page identity.
+    const alignedSlotIds = ['slide_outline', 'preview_html', 'preview_notes'];
+    setReordering(true);
+    setExportError(null);
+    try {
+      for (const slotId of alignedSlotIds) {
+        const revisions = (session.slots ?? [])
+          .filter((revision) => revision.slot === slotId && revision.selected && revision.sort_order !== undefined)
+          .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+        if (revisions.length < 2) continue;
+        const bySortOrder = new Map(revisions.map((revision) => [revision.sort_order as number, revision]));
+        const nextListOrder = nextPages.map((sortOrder) => bySortOrder.get(sortOrder)?.list_index);
+        if (nextListOrder.some((listIndex) => listIndex === undefined)) {
+          throw new Error(t('chat.workflowPageReorderFailed'));
+        }
+        await reorderSlotItems(
+          session.session_id,
+          slotId,
+          nextListOrder as number[],
+          revisions[0]?.order_version ?? 0,
+        );
+      }
+      await onRefresh?.();
+      const nextFocusedPage = focusedVisualIdx + 1;
+      setCurrentPage(nextFocusedPage);
+      onFocusSortOrder?.(nextFocusedPage);
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : t('chat.workflowPageReorderFailed'));
+    } finally {
+      setReordering(false);
+    }
+  }, [activePage, canReorderPages, onFocusSortOrder, onRefresh, reorderSlotItems, reordering, rows, session, t]);
 
   const runExport = useCallback(async (mode: 'editable' | 'raster' | 'pdf') => {
     if (exporting) return;
@@ -728,7 +914,7 @@ function CompositeSlotGrid({
   const renderRow = (sortOrder: number) => (
         <div
           key={sortOrder}
-          className='composite-grid__row'
+          className={`composite-grid__row${stackCompositeCells ? ' composite-grid__row--stack' : ''}`}
           onClick={() => onFocusSortOrder?.(sortOrder)}
           role='button'
           tabIndex={0}
@@ -795,50 +981,39 @@ function CompositeSlotGrid({
     return <div className='composite-grid'>{rows.map(renderRow)}</div>;
   }
 
-  const activePage = currentPage ?? rows[0];
-  const railIsColumn = pageBarPosition === 'left' || pageBarPosition === 'right';
   const rail = (
-    <div className={`composite-thumb-rail composite-thumb-rail--${railIsColumn ? 'col' : 'row'}`}>
-      <div className={`composite-thumb-rail__list composite-thumb-rail__list--${railIsColumn ? 'col' : 'row'}`}>
-        {rows.map((sortOrder, index) => {
-          const revision = findSlotRevision(session, tab, 'preview_html', sortOrder);
-          return (
-            <button
-              type='button'
-              key={sortOrder}
-              className={`composite-thumb-rail__item${sortOrder === activePage ? ' composite-thumb-rail__item--active' : ''}`}
-              onClick={() => setCurrentPage(sortOrder)}
-              aria-current={sortOrder === activePage ? 'true' : undefined}
-            >
-              <span className='composite-thumb-rail__badge'>{index + 1}</span>
-              <span className='composite-thumb-rail__preview' aria-hidden='true'>
-                {revision ? <SlideThumb slot={revision} sessionId={session.session_id} /> : '—'}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-    </div>
+    <CompositeThumbnailRail
+      position={pageBarPosition!}
+      pages={rows}
+      currentPage={activePage}
+      onChange={setCurrentPage}
+      onReorder={canReorderPages ? handlePageReorder : undefined}
+      reordering={reordering}
+      tab={tab}
+      session={session}
+    />
   );
 
   return (
     <div className='composite-shell composite-shell--paged'>
-      {canExportHtml && (
-        <div className='composite-toolbar'>
-          <button
-            type='button'
-            className='composite-toolbar__export'
-            disabled={exporting}
-            onClick={() => setExportChoiceOpen(true)}
-          >
-            {exporting ? t('chat.workflowExportingPptx') : t('chat.workflowExportPptx')}
-          </button>
-          {exportError && <span className='composite-toolbar__error'>{exportError}</span>}
-        </div>
-      )}
-      <div className={`composite-shell__body composite-shell__body--${railIsColumn ? 'row' : 'col'}`}>
+      <div className={`composite-with-pagebar composite-with-pagebar--${pageBarPosition}`}>
         {(pageBarPosition === 'top' || pageBarPosition === 'left') && rail}
-        <div className='composite-grid'>{renderRow(activePage)}</div>
+        <div className='composite-main'>
+          {canExportHtml && (
+            <div className='composite-toolbar'>
+              <button
+                type='button'
+                className='composite-toolbar__export'
+                disabled={exporting}
+                onClick={() => setExportChoiceOpen(true)}
+              >
+                {exporting ? t('chat.workflowExportingPptx') : t('chat.workflowExportPptx')}
+              </button>
+              {exportError && <span className='composite-toolbar__error'>{exportError}</span>}
+            </div>
+          )}
+          <div className='composite-grid composite-grid--paged'>{renderRow(activePage)}</div>
+        </div>
         {(pageBarPosition === 'bottom' || pageBarPosition === 'right') && rail}
       </div>
       <Modal

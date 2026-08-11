@@ -376,8 +376,8 @@ func ChatConversations(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if activeSess, err := workflow.GetLatestSession(r.Context(), db, convID); err == nil && activeSess != nil &&
-			(!workflowSessionTerminal(activeSess) || activeSess.Status == workflow.SessionStatusFailed) {
+		if activeSess, err := workflow.GetLatestSession(r.Context(), db, convID); err == nil &&
+			workflowSessionAvailableForRequest(activeSess, raw) {
 			existing, hasPC := reqBody["workflow_context"].(map[string]any)
 			if !hasPC || existing == nil {
 				// Case 1: inject from DB.
@@ -425,15 +425,16 @@ func ChatConversations(w http.ResponseWriter, r *http.Request) {
 				reqBody["workflow_context"] = retryContext
 			}
 		} else if existing, hasPC := reqBody["workflow_context"].(map[string]any); hasPC {
-			// No active session in DB but frontend sent a workflow_context — clear it to avoid
-			// Python entering advance-step mode with a stale/non-existent session.
+			// No request-addressable session in DB but the frontend sent a
+			// workflow_context — clear it to avoid Python entering advance-step mode
+			// with a stale, dismissed, or unrelated session.
 			for _, key := range []string{"session_id", "workflow_id", "current_step", "workflow_ref", "revision_id", "revision_no", "tree_hash", "remote_root"} {
 				delete(existing, key)
 			}
 			existing["workflow_mode"] = workflowMode
 			reqBody["workflow_context"] = existing
 			if _, hasPreflight := existing["workflow_preflight"]; !hasPreflight {
-				fmt.Printf("[WORKFLOW_CONTEXT_CLEARED] conversation_id=%s no active session in DB\n", convID)
+				fmt.Printf("[WORKFLOW_CONTEXT_CLEARED] conversation_id=%s no request-addressable session in DB\n", convID)
 			}
 		}
 	}
@@ -484,6 +485,27 @@ func ChatConversations(w http.ResponseWriter, r *http.Request) {
 	}
 
 	handleStreamChat(w, r, db, stateStore, baseURL, reqBody, convID, displayQuery, target, dualReply, historyExt)
+}
+
+// workflowSessionAvailableForRequest decides whether a workflow session should
+// remain attached to this chat turn. Active/waiting sessions and failed sessions
+// retain the existing recovery behaviour. A completed session is attached only
+// when the frontend explicitly sent that exact session id. This lets follow-up
+// edits update a completed workflow artifact (for example, one PPT page) without
+// making an old completed workflow sticky for unrelated future chat turns.
+func workflowSessionAvailableForRequest(session *orm.WorkflowSession, raw map[string]any) bool {
+	if session == nil || session.Dismissed {
+		return false
+	}
+	if !workflowSessionTerminal(session) || session.Status == workflow.SessionStatusFailed {
+		return true
+	}
+	if session.Status != workflow.SessionStatusCompleted {
+		return false
+	}
+	context, _ := raw["workflow_context"].(map[string]any)
+	requestSessionID, _ := context["session_id"].(string)
+	return strings.TrimSpace(requestSessionID) != "" && requestSessionID == session.ID
 }
 
 func userExplicitlyRequestedWorkflowRetry(query string) bool {

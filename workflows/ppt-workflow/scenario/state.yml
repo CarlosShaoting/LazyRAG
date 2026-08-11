@@ -8,7 +8,7 @@ transitions:
     - to: build_outline
       when: >
         Prefer this when the requirement brief plus the user request / uploaded
-        PDF or chat context already contain enough facts to plan the deck, and
+        PDF/PPTX or chat context already contain enough facts to plan the deck, and
         no KB/web photos need embedding in the slides.
         Skip collect_materials unless extra research or real images are needed.
     - to: collect_materials
@@ -42,6 +42,32 @@ steps:
       Analyze the presentation requirements. Produce a concise but useful
       requirement brief in the user's language.
 
+      Step boundary (mandatory):
+      - This step only analyzes requirements and chooses the next route.
+      - Do NOT search or call a knowledge base in this step. When the user asks
+        to use a knowledge base, record that requirement and route to
+        collect_materials; that is the only step that performs KB retrieval.
+
+      Input availability rule:
+      - A user upload is NOT required. For a text-only request, immediately
+        analyze {{user_input}} and continue the workflow.
+      - Only read uploaded material when an attachment actually exists and the
+        user asks to use it. Never ask the user to upload a file merely because
+        this workflow supports optional uploaded materials.
+
+      Uploaded source reading:
+      - You CAN read user-uploaded PPT/PPTX files with the attachment reader.
+        When the request asks you to base the new deck on an uploaded PPT/PPTX,
+        call read_user_attachment(filename=<uploaded filename>) before writing
+        the requirement brief, then use the extracted slide text as source material.
+      - Use the same reader for uploaded PDF/DOC/DOCX source documents.
+      - Do not use read_file, Python, shell commands, URL fetching, or workspace
+        file tools to open conversation uploads. Do not claim that PPTX is
+        unreadable before trying read_user_attachment.
+      - If the reader returns a parsing error, record the filename and exact
+        error under missing information / assumptions; do not invent the deck's
+        contents.
+
       Include:
       - presentation goal
       - target audience
@@ -56,7 +82,7 @@ steps:
         industry / case-study visual; otherwise CSS/SVG/ECharts only)
       - whether decorative AI-gen images are needed (default: no)
 
-      If the user already attached a PDF/report or pasted key facts, fold the
+      If the user already attached a PDF/PPTX/report or pasted key facts, fold the
       usable numbers and claims into the brief so a later build_outline step can
       skip a separate collect_materials pass — unless real KB/web images are
       still needed for the slides.
@@ -98,9 +124,12 @@ steps:
       retrieval, and web research.
 
       Uploaded file parsing:
-      - If the user uploaded a PDF/DOC/DOCX/PPTX or says "这个文件/这个 PDF",
-        call read_user_attachment(filename=<uploaded filename>) to extract text.
+      - You CAN read PPT/PPTX with the attachment reader. If the user uploaded a
+        PDF/DOC/DOCX/PPT/PPTX or refers to an uploaded source file, call
+        read_user_attachment(filename=<uploaded filename>) to extract text.
       - If multiple files are available, read the ones that are relevant.
+      - Do not use read_file, Python, shell commands, URL fetching, or workspace
+        file tools to open conversation uploads.
       - If a file cannot be parsed, mention the filename and the parsing error
         in gaps/assumptions.
 
@@ -109,6 +138,31 @@ steps:
          or the topic looks internal, call kb (semantic search). Prefer hits
          with numbers, definitions, and product facts. When kb returns image
          hits, keep their local_path or image_url + a short caption.
+         Use this exact discovery-and-search sequence; do not omit kb_ids:
+         a) First call:
+            KBToolkit_list_knowledge_bases(keyword='', page_size=20)
+         b) Read result.datasets and copy the exact dataset_id values (for
+            example ds_abc123). The name field may be prefixed with `datasets/`;
+            pass dataset_id, not the prefixed name. Select the KB whose
+            display_name matches the user's request; if exactly one readable KB
+            exists, use that one.
+         c) Then call semantic search with kb_ids as a JSON LIST, never a string:
+            KBToolkit_kb_search(
+              query='one focused retrieval intent',
+              kb_ids=['ds_abc123'],
+              retriever_topk=10,
+              k_max=15,
+              image_topk=3
+            )
+            For multiple selected KBs use kb_ids=['ds_abc123', 'ds_def456'].
+            Each call must contain exactly one search intent; make separate
+            calls for unrelated topics.
+         d) If search returns `kb_ids is required`, do not repeat the same
+            invalid call. Run list_knowledge_bases, extract dataset_id, and retry
+            once with the explicit list. If no readable/matching KB exists,
+            record that as a gap and do not claim KB retrieval succeeded.
+         e) Treat retrieval as successful only when the tool returns evidence;
+            base claims on that evidence and retain its document/citation markers.
       2. Facts from the web: if the topic needs current public facts, call
          web_search (one intent per query). Use wikipedia only as a thin fallback.
       3. Images for slides (required when visuals would help, or the user /
@@ -192,18 +246,14 @@ steps:
       This single call runs init → preflight → style → outline → publish_outline
       and writes slide_outline list items (sort_order=page) for the Outline tab.
 
-      Do NOT call ppt_init_deck / ppt_run_stage / ppt_publish_outline separately
-      unless ppt_build_outline failed and you are recovering.
+      This is an atomic step. If ppt_build_outline fails, report that exact tool
+      error and stop so the Workflow step fails and can be retried. Do NOT recover
+      by calling save_artifacts, and never write a multi-page JSON array into one
+      slide_outline item.
       Do NOT call batch-page-html or export here — HTML is generate_ppt.
       After success, stop.
     tools:
       - ppt_build_outline
-      - ppt_find_deck
-      - ppt_delete_page
-      - ppt_init_deck
-      - ppt_attach_material_images
-      - ppt_run_stage
-      - ppt_publish_outline
     inputs:
       - material: requirement_analysis
         required: true
@@ -254,15 +304,25 @@ steps:
       1. Resolve target 1-based page numbers.
       2. Resolve deck_dir via ppt_find_deck() (or earlier tool results).
          Only if no deck exists: say so and stop — do not silently rebuild.
-      3. For content changes, patch outline first:
+      3. Text-only edits inside existing elements MUST use stable element ids;
+         examples: add detail to the middle description, expand/reword a card,
+         change a label/title/number, or remove one existing item. Use:
+           ppt_read_page_html(deck_dir, page=N)
+           ppt_edit_page_html(deck_dir, page=N, ops_json=[
+             {"op":"replace_text","el":"<data-el id>","value":"<new text>"}
+           ])
+         Put all element edits for that page in one ops_json call. This preserves
+         the original layout byte-for-byte and auto-publishes a new revision at
+         the SAME page/list_index. Never redraw for a text-only request.
+      4. Also keep the page brief consistent when its content changed:
            ppt_read_page_outline(deck_dir, page=N)
            ppt_patch_page_outline(deck_dir, page=N, ops_json=[...])
-         (patch auto-refreshes that page's slide_outline artifact)
-      4. Then make the slide match with ONE of:
-         a) ppt_edit_page_html for exact removal/retext (no LLM redraw), or
-         b) ppt_run_stage(deck_dir, stage='page-html', page=N) to redraw
-            (uses the page's slide_outline brief, including UI edits)
-      5. Stop after the requested page(s) appear. Do NOT export PPTX.
+         Do not run page-html after this when step 3 already updated the HTML.
+      5. Use ppt_run_stage(deck_dir, stage='page-html', page=N) ONLY when the user
+         explicitly requests a structural/layout redesign, a new visual block, or
+         the existing HTML has no addressable element for the requested content.
+      6. ppt_edit_page_html and page-html auto-publish. Stop immediately afterward:
+         do NOT call ppt_publish_pages and do NOT call save_artifacts.
 
       ### C) Full deck HTML generation (default)
       Outline already exists from build_outline. Do NOT call ppt_init_deck,
@@ -281,7 +341,8 @@ steps:
       Stop after success. Do NOT export PPTX from tools.
 
       ## Hard rules
-      - Never invent slide JSON. Never hand-write full HTML into save_artifacts.
+      - Never call save_artifacts in generate_ppt; PPT tools publish the declared
+        artifacts themselves. Never invent slide JSON or hand-write full HTML.
       - Never ppt_read_page_html + save_artifacts for full HTML bodies.
       - Full outline run → ppt_build_outline. Full HTML run → ppt_generate_pages.
       - Whole-page delete → ppt_delete_page. Bullet/element delete →
@@ -298,7 +359,6 @@ steps:
       - ppt_find_deck
       - ppt_run_stage
       - ppt_list_pages
-      - ppt_publish_pages
       - ppt_publish_outline
       - ppt_read_page_html
       - ppt_read_page_outline

@@ -913,7 +913,7 @@ class FeishuPresentationRenderer:
             _add_account_setting_buttons(
                 builder,
                 items=workflows,
-                setting='workflow',
+                setting='workflow_item',
                 id_field='workflow_ref',
                 empty_text='当前账号没有可配置 Workflow。',
                 provider_context=provider_context,

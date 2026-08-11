@@ -25,6 +25,7 @@ are offloaded and the model never sees the body, so saves get stuck forever.
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -565,6 +566,59 @@ def _notes_stub(title_hint: str, page_no: int) -> str:
     )
 
 
+_PREVIEW_IMAGE_MIME = {
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.bmp': 'image/bmp',
+}
+
+
+def _inline_preview_images(html: str, deck: Path, html_path: Path) -> tuple[str, int]:
+    """Make local slide images self-contained for the UI's iframe srcDoc.
+
+    The on-disk page intentionally keeps ``../images/...`` references for PPTX
+    export.  A ``srcDoc`` iframe has no deck-directory base URL, however, so the
+    artifact copy must carry local images as data URLs.
+    """
+    deck_root = deck.resolve()
+    page_root = html_path.parent.resolve()
+    inlined = 0
+    pattern = re.compile(
+        r'(<img\b[^>]*?\bsrc\s*=\s*)(["\'])(.*?)(\2)',
+        re.IGNORECASE,
+    )
+
+    def _replace(match: re.Match) -> str:
+        nonlocal inlined
+        src = (match.group(3) or '').strip()
+        if not src or src.startswith(('data:', 'http://', 'https://', '//')):
+            return match.group(0)
+        clean_path = src.split('#', 1)[0].split('?', 1)[0]
+        candidate = Path(clean_path)
+        if not candidate.is_absolute():
+            candidate = page_root / candidate
+        try:
+            candidate = candidate.resolve()
+            candidate.relative_to(deck_root)
+        except (OSError, ValueError):
+            return match.group(0)
+        mime = _PREVIEW_IMAGE_MIME.get(candidate.suffix.lower())
+        if not mime or not candidate.is_file():
+            return match.group(0)
+        try:
+            payload = base64.b64encode(candidate.read_bytes()).decode('ascii')
+        except OSError:
+            return match.group(0)
+        inlined += 1
+        quote = match.group(2)
+        return f'{match.group(1)}{quote}data:{mime};base64,{payload}{quote}'
+
+    return pattern.sub(_replace, html), inlined
+
+
 def _publish_one_page(
     deck: Path,
     page_no: int,
@@ -578,6 +632,7 @@ def _publish_one_page(
     html = _sanitize_page_html(path.read_text(encoding='utf-8'))
     if not html or '<html' not in html.lower():
         return {'page': page_no, 'ok': False, 'error': 'not a valid HTML document'}
+    html, inlined_images = _inline_preview_images(html, deck, path)
     title = _title_from_html(html)
     html_res = _save_artifact(
         key='preview_html',
@@ -586,6 +641,7 @@ def _publish_one_page(
         source_tool='ppt_publish_pages',
         sort_order=page_no,
         caption=title or None,
+        internal_publish=True,
     )
     notes_res = None
     if with_notes:
@@ -595,12 +651,14 @@ def _publish_one_page(
             content_type='text',
             source_tool='ppt_publish_pages',
             sort_order=page_no,
+            internal_publish=True,
         )
     return {
         'page': page_no,
         'ok': True,
         'title_hint': title,
         'bytes': len(html.encode('utf-8')),
+        'inlined_images': inlined_images,
         'html_path': str(path.resolve()),
         'html_save': html_res,
         'notes_save': notes_res,
@@ -959,6 +1017,7 @@ def _publish_one_slide_outline(deck: Path, page_no: int) -> dict[str, Any]:
         source_tool='ppt_publish_outline',
         sort_order=page_no,
         caption=title,
+        internal_publish=True,
     )
     return {
         'page': page_no,
@@ -3330,8 +3389,10 @@ def ppt_patch_page_outline(
         'patched_page': _outline_page_view(page_outline),
         'slide_outline_published': bool(outline_pub and outline_pub.get('ok')),
         'next_step': (
-            f"ppt_run_stage(deck_dir, stage='page-html', page={page_no}) to redraw "
-            'only this page (auto-publishes preview_html).'
+            f"For a text-only change, use ppt_read_page_html then "
+            f"ppt_edit_page_html(page={page_no}) with stable data-el ids; do not redraw. "
+            f"Only for a structural/layout change use ppt_run_stage(deck_dir, "
+            f"stage='page-html', page={page_no}). Both paths auto-publish; stop afterward."
         ),
     })
 

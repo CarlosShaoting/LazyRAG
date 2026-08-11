@@ -2302,6 +2302,14 @@
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   overflow: hidden;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+
+  &:hover,
+  &--hovered {
+    border-color: #4f46e5;
+    box-shadow: 0 0 0 1px #4f46e5;
+  }
 
   &--compact {
     min-height: 180px;
@@ -2337,8 +2345,58 @@
   &__frame {
     border: 0;
     background: #fff;
-    pointer-events: none;
+    cursor: pointer;
     transition: none;
+  }
+
+  &__zoom-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 2100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 52px 32px 32px;
+    background: rgba(2, 6, 23, 0.82);
+    backdrop-filter: blur(3px);
+    cursor: zoom-out;
+  }
+
+  &__zoom-stage {
+    position: relative;
+    flex: 0 0 auto;
+    max-width: calc(100vw - 64px);
+    max-height: calc(100vh - 104px);
+    overflow: hidden;
+    border-radius: 8px;
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+    cursor: default;
+  }
+
+  &__frame--zoomed {
+    position: absolute;
+    inset: 0 auto auto 0;
+    cursor: default;
+  }
+
+  &__zoom-close {
+    position: fixed;
+    top: 16px;
+    right: 20px;
+    z-index: 1;
+    width: 36px;
+    height: 36px;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    border-radius: 50%;
+    color: #fff;
+    background: rgba(15, 23, 42, 0.8);
+    font-size: 26px;
+    line-height: 1;
+    cursor: pointer;
+
+    &:hover {
+      background: rgba(51, 65, 85, 0.95);
+    }
   }
 }
 

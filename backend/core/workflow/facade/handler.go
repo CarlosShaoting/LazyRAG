@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -129,6 +130,30 @@ type prepareRequest struct {
 	OriginRef      string         `json:"origin_ref"`
 	ControllerHost string         `json:"controller_host"`
 	RequestContext string         `json:"request_context"`
+}
+
+type preparationGraph struct {
+	Nodes map[string]struct {
+		Capabilities []string `json:"capabilities"`
+		LegacyTools  []string `json:"legacy_tools"`
+	} `json:"nodes"`
+	MaterialProducers map[string]struct {
+		Kind     string `json:"kind"`
+		Optional bool   `json:"optional"`
+	} `json:"material_producers"`
+}
+
+func missingExternalInputs(graph preparationGraph, inputBindings map[string]any) []string {
+	missing := []string{}
+	for materialID, producer := range graph.MaterialProducers {
+		if producer.Kind == "external" && !producer.Optional {
+			if _, exists := inputBindings[materialID]; !exists {
+				missing = append(missing, materialID)
+			}
+		}
+	}
+	sort.Strings(missing)
+	return missing
 }
 
 type toolCommandRequest struct {
@@ -545,15 +570,7 @@ func (h Handler) Prepare(w http.ResponseWriter, r *http.Request) {
 			controllerHost = "lazymind"
 		}
 		if h.Hosts != nil {
-			var graph struct {
-				Nodes map[string]struct {
-					Capabilities []string `json:"capabilities"`
-					LegacyTools  []string `json:"legacy_tools"`
-				} `json:"nodes"`
-				MaterialProducers map[string]struct {
-					Kind string `json:"kind"`
-				} `json:"material_producers"`
-			}
+			var graph preparationGraph
 			_ = json.Unmarshal(workflow.CompiledGraph, &graph)
 			capabilities, legacyTools := []string{}, []string{}
 			for _, node := range graph.Nodes {
@@ -569,14 +586,7 @@ func (h Handler) Prepare(w http.ResponseWriter, r *http.Request) {
 					strings.Join(missing, ", "), false)
 				return
 			}
-			missingInputs := []string{}
-			for materialID, producer := range graph.MaterialProducers {
-				if producer.Kind == "external" {
-					if _, exists := req.InputBindings[materialID]; !exists {
-						missingInputs = append(missingInputs, materialID)
-					}
-				}
-			}
+			missingInputs := missingExternalInputs(graph, req.InputBindings)
 			if len(missingInputs) > 0 {
 				plan, _ = json.Marshal(map[string]any{"status": "needs_input", "workflow_ref": workflow.WorkflowRef,
 					"workflow_id": workflow.WorkflowID, "workflow_revision": workflow.RevisionID,

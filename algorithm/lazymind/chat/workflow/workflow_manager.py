@@ -117,11 +117,15 @@ def _handoff_tool(session: Union[str, Callable[[], str]]) -> Any:
                     focus_hints.append(
                         f'User is currently focused on artifact sort order {focused_sort_order}.'
                     )
+                current_user_input = str(
+                    cfg.get('workflow_current_query') or cfg.get('query') or ''
+                ).strip()
                 response = client.advance(AdvanceRequest(
                     session_id=selected_session_id,
                     expected_state_version=int(frontier.get('state_version') or 0),
                     steps=[StepCommand(
                         step_id=step_id,
+                        user_input=current_user_input,
                         runtime_instruction=' '.join(focus_hints),
                     )],
                     handoff=True,
@@ -174,15 +178,26 @@ def _artifact_by_handle(toolkit: HostWorkflowToolkit, session_id: str,
 def _safe_session_tools(
     toolkit: HostWorkflowToolkit,
     session: Union[str, Callable[[], str]],
+    initialize_session: Optional[Callable[[], Any]] = None,
 ) -> List[Any]:
     """Model tools whose protocol and concurrency parameters are Host-injected."""
     def session_id() -> str:
         value = session() if callable(session) else session
         selected = str(value or '').strip()
+        if not selected and initialize_session is not None:
+            # Explicit Workflow mentions already authorize initialization.  Be
+            # tolerant when the model reaches for a Session tool before the
+            # bound trigger: initialize the sole selected Workflow from the
+            # current text request, then continue the requested operation.
+            initialize_session()
+            value = session() if callable(session) else session
+            selected = str(value or '').strip()
         if not selected:
             raise WorkflowClientError(
                 'WORKFLOW_SESSION_NOT_INITIALIZED',
-                'Call the selected trigger Workflow tool before using Session tools.',
+                'Call the selected trigger Workflow tool before using Session tools. '
+                'Do not infer that an attachment is required; the trigger determines '
+                'whether any external input is actually required.',
             )
         return selected
 
@@ -231,11 +246,15 @@ def _safe_session_tools(
                     focus_hints.append(
                         f'User is currently focused on artifact sort order {focused_sort_order}.'
                     )
+                current_user_input = str(
+                    cfg.get('workflow_current_query') or cfg.get('query') or ''
+                ).strip()
                 result = toolkit.advance_step(
                     selected_session_id, int(frontier.get('state_version') or 0),
                     [
                         StepCommandInput(
                             step_id=value,
+                            user_input=current_user_input,
                             runtime_instruction=' '.join(focus_hints),
                         )
                         for value in requested
@@ -526,6 +545,27 @@ def _workflow_trigger_tools(
             bound_id: str, bound_ref: str, bound_revision: str, bound_query: str,
         ) -> Any:
             def run_trigger(input_bindings: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+                existing_session_id = str(
+                    (session_holder or {}).get('session_id') or '',
+                ).strip()
+                if existing_session_id:
+                    # Session tools may have initialized the sole explicitly
+                    # selected Workflow as a recovery path. Keep a later model
+                    # call to the advertised trigger idempotent within this turn.
+                    return {
+                        'status': 'prepared',
+                        'outcome': 'already_initialized',
+                        'reason': 'The selected Workflow is already initialized.',
+                        'workflow_ref': bound_ref,
+                        'workflow_id': bound_id,
+                        'revision_id': bound_revision,
+                        'request_context': bound_query,
+                        'session_id': existing_session_id,
+                        'next_action': {
+                            'tool': 'get_ready_steps',
+                            'instruction': 'Read the current Ready frontier and continue execution.',
+                        },
+                    }
                 effective_context = bound_query
                 resolved_bindings: Dict[str, Any] = {}
                 for material_id, attachment_ref in (input_bindings or {}).items():
@@ -682,7 +722,15 @@ def resolve_workflow_injection(
     workflow_id = str(context.get('workflow_id') or context.get('workflow_ref') or '')
     revision_id = str(context.get('revision_id') or '')
     mode = str(context.get('workflow_mode') or 'dynamic')
-    patch: Dict[str, Any] = {'workflow_mode': mode}
+    # Keep the model-facing advance tools narrow (step_id only), while restoring
+    # the pre-refactor behaviour where every Workflow step receives the user's
+    # exact current instruction. This is essential for completed-session edits
+    # such as "change this slide"; request_context only contains the cold-start
+    # request and must not be reused for a later local edit.
+    patch: Dict[str, Any] = {
+        'workflow_mode': mode,
+        'workflow_current_query': current_query,
+    }
 
     catalog = workflow_catalog or []
     allowed_refs = {
@@ -754,10 +802,17 @@ def resolve_workflow_injection(
         # A ChatAgent tool set is fixed for the duration of one model turn. Expose
         # Host-bound Session tools up front and resolve their Session id only after
         # trigger_<workflow> creates it, so trigger -> advance works in the same turn.
+        initialize_selected_session = (
+            (lambda: trigger_tools[0]()) if len(trigger_tools) == 1 else None
+        )
         handoff = _handoff_tool(lambda: session_holder.get('session_id', ''))
         tools = [
             *[tool for tool in tools if _is_bound_workflow_trigger(tool.__name__)],
-            *_safe_session_tools(toolkit, lambda: session_holder.get('session_id', '')),
+            *_safe_session_tools(
+                toolkit,
+                lambda: session_holder.get('session_id', ''),
+                initialize_session=initialize_selected_session,
+            ),
             handoff,
         ]
     elif not session_id:
@@ -793,6 +848,29 @@ def resolve_workflow_injection(
             'focused_sort_order': context.get('focused_sort_order'),
         })
         tools.append(_handoff_tool(session_id))
+        session_projection = (
+            projection.get('projection')
+            if isinstance(projection.get('projection'), dict) else {}
+        )
+        completed_followup = ''
+        if session_projection.get('completed'):
+            completed_followup = (
+                'A completed Session is not immutable. When the current user query asks to '
+                'revise, delete, fix, or regenerate an existing Workflow output, do not '
+                'write replacement content in chat and do not use generic file/artifact '
+                'tools. Call get_ready_steps, select the matching exact rewindable_steps '
+                'target, and call advance_step so Runtime starts a new step attempt and '
+                'publishes a new Workflow artifact revision. '
+            )
+            if workflow_id.removeprefix('builtin:') == 'ppt-workflow':
+                completed_followup += (
+                    'For AI PPT Planner, any request to modify, repair, delete, or '
+                    'regenerate one or more existing slides maps to the generate_ppt '
+                    'step. If generate_ppt is present in rewindable_steps, you MUST call '
+                    'advance_step(step_ids=["generate_ppt"]) now. That step launches the '
+                    'PPT SubAgent, edits the existing deck, and publishes preview_html; '
+                    'never paste HTML into the chat as a substitute. '
+                )
         runtime_context = (
             '## Workflow Runtime [AUTHORITATIVE]\n'
             + 'The Host owns session/version concurrency fields. Never ask the user for '
@@ -813,7 +891,8 @@ def resolve_workflow_injection(
             + 'after execution for human review of its outputs. mode=auto/default_approval=not_required '
             + 'means execute with advance_step and continue. Never ask whether to execute a Ready '
             + 'step merely because it requires approval; the approval checkpoint belongs to its result. '
-            + 'Do not replace continued execution with a promise that later steps will run.\n'
+            + 'Do not replace continued execution with a promise that later steps will run. '
+            + completed_followup + '\n'
             + json.dumps(projection, ensure_ascii=False, default=str)
         )
         return WorkflowAgentContribution(
@@ -839,6 +918,10 @@ def resolve_workflow_injection(
             + 'A Workflow is an executable, versioned procedure, not a document to search, '
             + 'summarize, or merely describe. The @workflow mention means the user explicitly '
             + 'selected and authorized this exact procedure. Call its bound trigger now. '
+            + 'Conversation attachments are optional unless the selected Workflow Runtime '
+            + 'explicitly returns a required-input result. Never infer that an upload is '
+            + 'required merely because the Workflow supports uploaded materials. A non-empty '
+            + 'text-only current_query is sufficient to trigger generation Workflows. '
             + 'Treat current_query as the '
             + 'workflow request_context and as user_input for the first Ready step; do not '
             + 'ask for a second trigger message when current_query is non-empty. After each '

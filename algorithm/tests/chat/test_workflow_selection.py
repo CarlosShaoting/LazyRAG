@@ -174,6 +174,61 @@ def test_dynamic_trigger_activates_advance_step_in_the_same_agent_turn():
     assert toolkit.advance_step.call_args.args[1] == 1
 
 
+def test_selected_workflow_session_tool_auto_initializes_without_attachments():
+    toolkit = MagicMock()
+    toolkit.prepare_workflow.return_value = {
+        'session_id': 'session-1', 'state_version': 1,
+        'ready_steps': ['analyze_requirements'],
+    }
+    toolkit.get_ready_steps.return_value = {
+        'session_id': 'session-1', 'state_version': 1,
+        'ready_steps': ['analyze_requirements'],
+        'retryable_steps': [], 'rewindable_steps': [],
+    }
+    with patch('lazymind.chat.workflow.workflow_manager._client') as client_factory, patch(
+        'lazymind.chat.workflow.workflow_manager.HostWorkflowToolkit', return_value=toolkit,
+    ):
+        client_factory.return_value.get_workflow.return_value.result = {
+            'workflow_id': 'ppt-workflow', 'revision_id': 'revision-1',
+        }
+        client_factory.return_value.get_state.return_value = {
+            'session_id': 'session-1', 'state_version': 1,
+            'projection': {
+                'reachable': ['analyze_requirements'],
+                'ready': ['analyze_requirements'],
+            },
+        }
+        contribution = resolve_workflow_injection(
+            None,
+            current_query='生成三页关于加减法数学题的PPT',
+            conversation_id='conversation-1',
+            workflow_catalog=[{
+                'workflow_ref': 'builtin:ppt-workflow',
+                'workflow_id': 'ppt-workflow',
+                'revision_id': 'revision-1',
+            }],
+            allowed_workflow_refs=['builtin:ppt-workflow'],
+            workflow_activations=[{
+                'workflow_ref': 'builtin:ppt-workflow',
+                'workflow_id': 'ppt-workflow',
+                'revision_id': 'revision-1',
+                'tool_name': 'trigger_ppt_workflow',
+            }],
+        )
+
+        result = _tool(contribution, 'get_ready_steps')()
+        repeated_trigger = _tool(contribution, 'trigger_ppt_workflow')()
+
+    assert result['ready_steps'] == ['analyze_requirements']
+    assert repeated_trigger['outcome'] == 'already_initialized'
+    assert repeated_trigger['session_id'] == 'session-1'
+    toolkit.prepare_workflow.assert_called_once_with(
+        'ppt-workflow', input_bindings={},
+        request_context='生成三页关于加减法数学题的PPT',
+    )
+    assert 'upload is required' in contribution.runtime_context
+
+
 def test_dynamic_trigger_exposes_handoff_after_session_is_created_in_same_turn():
     toolkit = MagicMock()
     toolkit.prepare_workflow.return_value = {
@@ -218,6 +273,48 @@ def test_dynamic_trigger_exposes_handoff_after_session_is_created_in_same_turn()
     assert request.session_id == 'session-1'
     assert request.handoff is True
     assert request.steps[0].step_id == 'review'
+    assert request.steps[0].user_input == 'run it'
+
+
+def test_active_workflow_forwards_current_edit_request_and_focus_to_step():
+    toolkit = MagicMock()
+    toolkit.get_ready_steps.return_value = {
+        'session_id': 'session-1', 'state_version': 7,
+        'ready_steps': [], 'retryable_steps': [], 'rewindable_steps': ['generate_ppt'],
+    }
+    toolkit.advance_step.return_value = {'status': 'succeeded'}
+    with patch('lazymind.chat.workflow.workflow_manager.HostWorkflowToolkit',
+               return_value=toolkit), patch(
+        'lazymind.chat.workflow.workflow_manager._client',
+    ) as client_factory:
+        client_factory.return_value.get_state.return_value = {
+            'status': 'completed', 'state_version': 7,
+            'projection': {
+                'completed': True,
+                'rewindable': ['generate_ppt'],
+            },
+        }
+        contribution = resolve_workflow_injection(
+            {
+                'session_id': 'session-1',
+                'workflow_id': 'ppt-workflow',
+                'focused_tab': 'composite_preview',
+                'focused_sort_order': 2,
+            },
+            conversation_id='conversation-1',
+            current_query='把这一页标题改成期末练习',
+        )
+        # resolve_workflow_injection's patch is applied to agentic_config by ChatService.
+        lazyllm.globals['agentic_config'].update(contribution.agentic_config_patch)
+        result = _tool(contribution, 'advance_step')(['generate_ppt'])
+
+    assert result == {'status': 'succeeded'}
+    assert 'A completed Session is not immutable' in contribution.runtime_context
+    assert 'advance_step(step_ids=["generate_ppt"])' in contribution.runtime_context
+    assert 'never paste HTML into the chat' in contribution.runtime_context
+    command = toolkit.advance_step.call_args.args[2][0]
+    assert command.user_input == '把这一页标题改成期末练习'
+    assert 'sort order 2' in command.runtime_instruction
 
 
 def test_dynamic_trigger_defaults_request_context_to_current_query():

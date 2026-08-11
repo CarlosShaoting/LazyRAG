@@ -12,6 +12,9 @@ when_to_use: >
   when the user wants to create, plan, draft, or revise a multi-slide
   presentation/deck/PPT. Use it for requests such as "make a PPT", "generate a
   presentation", "帮我做一个路演 PPT", or "做一份汇报幻灯片".
+  Uploaded materials are optional: text-only requests must start immediately
+  from the user's prompt and must never ask for an upload unless the user
+  explicitly asks to base the deck on a source file that is not available.
   Do not trigger for simple one-off explanations, ordinary image generation,
   ordinary long-form writing, or requests that only ask to preview an uploaded
   PowerPoint file.
@@ -59,6 +62,7 @@ slots:
     cardinality: list
     ordered: true
     external: true
+    required: false
     allow_manual_add: true
 
   - id: material_summary

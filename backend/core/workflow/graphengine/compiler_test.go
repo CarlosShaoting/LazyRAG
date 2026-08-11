@@ -188,6 +188,33 @@ steps:
 	}
 }
 
+func TestCompilePreservesOptionalExternalSlot(t *testing.T) {
+	workflowYAML := `
+id: optional-external
+slots:
+  - {id: source, external: true, required: false}
+steps:
+  - {id: start, label: Start}
+`
+	stateYAML := `
+transitions:
+  __start__: [{to: start}]
+  start: [{to: __end__}]
+steps:
+  start:
+    inputs: [{material: source, required: false}]
+    outputs: []
+`
+	result := Compile(workflowYAML, stateYAML, "", ProfilePublish)
+	if !result.Valid {
+		t.Fatalf("expected valid graph, diagnostics=%#v", result.Diagnostics)
+	}
+	producer := result.Graph.MaterialProducers["source"]
+	if producer.Kind != "external" || !producer.Optional {
+		t.Fatalf("optional external producer was not preserved: %#v", producer)
+	}
+}
+
 func TestCompileRejectsAlternativesOnOptionalInput(t *testing.T) {
 	state := `
 transitions:

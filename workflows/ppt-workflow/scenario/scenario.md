@@ -23,7 +23,7 @@ Workflow:
 4. `generate_ppt` — one call: `ppt_generate_pages`; no outline rewrite.
 
 After `analyze_requirements` succeeds, **prefer** advancing to `build_outline`
-when the brief + user request / uploaded PDF already have enough content.
+when the brief + user request / uploaded PDF/PPTX already have enough content.
 Queue `collect_materials` when KB/web facts or slide photos/diagrams are still
 needed.
 

@@ -110,6 +110,29 @@ _mcp_tool_cache: dict[str, tuple[float, list[Any]]] = {}
 _mcp_tool_cache_lock = threading.Lock()
 
 
+def _workflow_collects_knowledge_internally(
+    workflow_context: Optional[Dict[str, Any]],
+    workflow_refs: List[str] | None,
+) -> bool:
+    """Return whether the selected Workflow owns knowledge retrieval itself.
+
+    PPT planning deliberately performs KB retrieval in ``collect_materials``.
+    Keeping the ChatAgent's global KB tools enabled would let the model search
+    before the Workflow starts, bypassing that ordered step boundary.
+    """
+    refs = {
+        str(value).strip().removeprefix('builtin:')
+        for value in (workflow_refs or [])
+        if str(value).strip()
+    }
+    context = workflow_context if isinstance(workflow_context, dict) else {}
+    for key in ('workflow_ref', 'workflow_id'):
+        value = str(context.get(key) or '').strip().removeprefix('builtin:')
+        if value:
+            refs.add(value)
+    return 'ppt-workflow' in refs
+
+
 def _select_episode_reference_items(
     episode_candidates: list[Any],
     *,
@@ -329,10 +352,24 @@ def _build_subagent_chat_tools() -> list:
     ]
 
 
-def _should_register_subagent_tools(enable_subagent: Any, workflow_refs: Any) -> bool:
-    """Keep explicit Workflow execution on its bound trigger path."""
+def _workflow_turn_is_bound(workflow_context: Any, workflow_refs: Any) -> bool:
+    """Return whether this turn must mutate outputs through Workflow tools."""
     refs = workflow_refs if isinstance(workflow_refs, list) else []
-    return bool(enable_subagent) and not any(str(ref).strip() for ref in refs)
+    context = workflow_context if isinstance(workflow_context, dict) else {}
+    return bool(str(context.get('session_id') or '').strip()) or any(
+        str(ref).strip() for ref in refs
+    )
+
+
+def _should_register_subagent_tools(
+    enable_subagent: Any,
+    workflow_refs: Any,
+    workflow_context: Any = None,
+) -> bool:
+    """Keep bound Workflow execution on its session/trigger path."""
+    return bool(enable_subagent) and not _workflow_turn_is_bound(
+        workflow_context, workflow_refs,
+    )
 
 
 def _build_chat_artifact_tools() -> list:
@@ -759,6 +796,10 @@ async def _handle_chat_impl(
     )
     workflow_tools = workflow_contribution.tools
     agentic_config.update(workflow_contribution.agentic_config_patch)
+    workflow_turn_is_bound = _workflow_turn_is_bound(
+        effective_workflow_context,
+        explicit_resource_payload.get('workflow_refs'),
+    )
 
     intentwriter = build_intentwrite_tool(
         conversation_id=conversation_id,
@@ -790,10 +831,19 @@ async def _handle_chat_impl(
     )
 
     disabled = set(agent.disabled_tools or [])
-    active_configs = filter_tools(
+    active_configs = [] if workflow_turn_is_bound else filter_tools(
         [cfg for cfg in DEFAULT_TOOLS if cfg.name not in disabled],
         user_query=language_query,
     )
+    if _workflow_collects_knowledge_internally(
+        effective_workflow_context,
+        explicit_resource_payload.get('workflow_refs'),
+    ):
+        # The PPT Workflow exposes KB retrieval only to collect_materials.  Do
+        # not let the parent ChatAgent run a competing search before analysis.
+        active_configs = [
+            cfg for cfg in active_configs if cfg.name not in {'kb', 'temp_kb'}
+        ]
     if not personalization.use_memory:
         active_configs = [cfg for cfg in active_configs if cfg.name != 'memory']
     agent_tools = [cfg.tool for cfg in active_configs]
@@ -804,13 +854,20 @@ async def _handle_chat_impl(
     subagent_tools = (
         _build_subagent_chat_tools()
         if _should_register_subagent_tools(
-            enable_subagent, explicit_resource_payload.get('workflow_refs'),
+            enable_subagent,
+            explicit_resource_payload.get('workflow_refs'),
+            effective_workflow_context,
         )
         else []
     )
-    mcp_tools = await _build_mcp_tools(runtime.mcp_config) if runtime.mcp_config else []
+    mcp_tools = (
+        await _build_mcp_tools(runtime.mcp_config)
+        if runtime.mcp_config and not workflow_turn_is_bound else []
+    )
     # User attachment tools are only meaningful when the user has uploaded files.
-    attachment_tools = _build_user_attachment_tools(bool(files_map))
+    attachment_tools = (
+        [] if workflow_turn_is_bound else _build_user_attachment_tools(bool(files_map))
+    )
     attachment_configs = (
         [*USER_ATTACHMENT_TOOL_CONFIGS, ATTACHMENT_EDIT_TOOL_CONFIG]
         if attachment_tools else []
@@ -819,17 +876,34 @@ async def _handle_chat_impl(
     # (whose tool resolution falls back to DEFAULT_TOOLS) never see it.
     # Auto workflow mode is non-interactive by contract: ask_user must be absent,
     # not merely discouraged by prompt text.
-    allow_ask_user = _should_register_ask_user(agentic_config, disabled)
+    allow_ask_user = (
+        not workflow_turn_is_bound
+        and _should_register_ask_user(agentic_config, disabled)
+    )
     ask_user_tools = _build_ask_user_tool() if allow_ask_user else []
     ask_user_configs = [ASK_USER_TOOL_CONFIG] if ask_user_tools else []
-    artifact_tools = _build_chat_artifact_tools()
+    # Generic chat files are not Workflow artifacts. Keeping save_chat_artifact
+    # available on a bound Workflow turn lets the model claim success after
+    # writing an isolated file while the selected Workflow preview is unchanged.
+    artifact_tools = [] if workflow_turn_is_bound else _build_chat_artifact_tools()
     workspace = chat_agent_workspace(user_id or '0', conversation_id)
-    skill_listing_tools = [build_list_skills_tool(agent.available_skills)]
-    all_tools = ([intentwriter] + agent_tools + artifact_tools + subagent_tools + attachment_tools
+    skill_listing_tools = (
+        [] if workflow_turn_is_bound
+        else [build_list_skills_tool(agent.available_skills)]
+    )
+    intent_tools = [] if workflow_turn_is_bound else [intentwriter]
+    all_tools = (intent_tools + agent_tools + artifact_tools + subagent_tools + attachment_tools
                  + skill_listing_tools + ask_user_tools + workflow_tools + mcp_tools)
     skill_config = agent.available_skills
     selected_skills = agent.available_skills
-    if task_profile is not None:
+    if workflow_turn_is_bound:
+        # The authoritative Workflow runtime context already defines the only
+        # legal action surface for this turn. Skill tools such as run_script can
+        # otherwise become another way to write files without publishing a
+        # Workflow artifact revision.
+        selected_skills = []
+        skill_config = False
+    elif task_profile is not None:
         selected_skills = select_skill_candidates(agent.available_skills, language_query, task_profile)
         selected_skills = list(dict.fromkeys([
             *_active_skills_from_history(agent_history, agent.available_skills),
@@ -837,7 +911,7 @@ async def _handle_chat_impl(
         ]))
         skill_config = selected_skills or False
     workflow_skill_dir = ''
-    if agentic_config.get('enable_workflow', True):
+    if agentic_config.get('enable_workflow', True) and not workflow_turn_is_bound:
         from lazymind.workflow_toolkit import WORKFLOW_SKILL_NAME, workflow_skills_dir
         selected_skills = list(dict.fromkeys([*(selected_skills or []), WORKFLOW_SKILL_NAME]))
         skill_config = selected_skills
@@ -950,7 +1024,14 @@ async def _handle_chat_impl(
         task_profile=task_profile,
         dynamic_prompt_modules=_cfg['dynamic_prompt_modules'],
     )
-    if _cfg['trusted_local_mode']:
+    if workflow_turn_is_bound:
+        workspace_policy = (
+            'This turn is bound to the selected Workflow session. Modify and publish '
+            'its outputs only through the injected Workflow session tools. Do not '
+            'create a generic chat artifact or claim that a workspace file updates '
+            'the Workflow preview.'
+        )
+    elif _cfg['trusted_local_mode']:
         workspace_policy = (
             f'Use `{workspace}` as the default working directory for generated and intermediate files. '
             'Trusted local mode is active: when the user requests it, you may read and write absolute local '

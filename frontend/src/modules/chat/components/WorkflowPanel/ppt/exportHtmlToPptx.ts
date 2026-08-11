@@ -50,6 +50,7 @@ const PREVIEW_STATIC_STYLE =
   'transition:none!important;' +
   'scroll-behavior:auto!important;' +
   '}' +
+  'html,body,body *{cursor:pointer!important;}' +
   '</style>';
 
 /** Appended at end of body so CSS wins over late page <style> blocks. */
@@ -60,6 +61,7 @@ const PREVIEW_STATIC_TAIL =
   'animation-duration:0s!important;' +
   'transition:none!important;' +
   '}' +
+  'html,body,body *{cursor:pointer!important;}' +
   '</style>';
 
 export function htmlForStaticPreview(html: string): string {

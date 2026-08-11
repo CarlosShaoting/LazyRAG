@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { SlotRevision } from '@/modules/chat/store/workflowPanel';
 import { resolveCoreAssetUrl, resolveMarkdownImageUrlAsync, isExpiredSignedUrl } from '@/modules/knowledge/utils/imageUrl';
 import { extractHtmlFromArtifact, htmlForStaticPreview } from './exportHtmlToPptx';
@@ -39,6 +40,18 @@ function scaleFromWidth(containerW: number): number {
   return Math.max(0.15, Math.min(containerW / 1600, 1));
 }
 
+function scaleFromViewport(): number {
+  if (typeof window === 'undefined') return 0.8;
+  return Math.max(
+    0.25,
+    Math.min(
+      (window.innerWidth - 64) / 1600,
+      (window.innerHeight - 104) / 900,
+      1,
+    ),
+  );
+}
+
 export function SlotHtmlSlide({
   slot,
   compact = false,
@@ -51,6 +64,52 @@ export function SlotHtmlSlide({
   const [error, setError] = useState<string | null>(null);
   // null until first measure — avoids mounting at 0.4 then jumping to 0.5+.
   const [scale, setScale] = useState<number | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const [expandedScale, setExpandedScale] = useState(scaleFromViewport);
+  const frameDocCleanupRef = useRef<(() => void) | null>(null);
+
+  const closeExpanded = useCallback(() => setExpanded(false), []);
+
+  useEffect(() => {
+    if (!expanded) return undefined;
+    const update = () => setExpandedScale(scaleFromViewport());
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeExpanded();
+    };
+    update();
+    window.addEventListener('resize', update);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('resize', update);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [closeExpanded, expanded]);
+
+  useEffect(() => () => {
+    frameDocCleanupRef.current?.();
+    frameDocCleanupRef.current = null;
+  }, []);
+
+  const attachFrameZoomClick = (frame: HTMLIFrameElement | null) => {
+    frameDocCleanupRef.current?.();
+    frameDocCleanupRef.current = null;
+    const doc = frame?.contentDocument;
+    if (!doc) return;
+    const onClick = () => setExpanded(true);
+    const onMouseEnter = () => setHovered(true);
+    const onMouseLeave = () => setHovered(false);
+    doc.documentElement.style.setProperty('cursor', 'pointer', 'important');
+    doc.body?.style.setProperty('cursor', 'pointer', 'important');
+    doc.addEventListener('click', onClick);
+    doc.addEventListener('mouseenter', onMouseEnter);
+    doc.addEventListener('mouseleave', onMouseLeave);
+    frameDocCleanupRef.current = () => {
+      doc.removeEventListener('click', onClick);
+      doc.removeEventListener('mouseenter', onMouseEnter);
+      doc.removeEventListener('mouseleave', onMouseLeave);
+    };
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -108,13 +167,25 @@ export function SlotHtmlSlide({
   }
 
   return (
-    <div ref={hostRef} className={`slot-html-slide${compact ? ' slot-html-slide--compact' : ''}`}>
-      <div className='slot-html-slide__viewport'>
+    <div
+      ref={hostRef}
+      className={[
+        'slot-html-slide',
+        compact ? 'slot-html-slide--compact' : '',
+        hovered ? 'slot-html-slide--hovered' : '',
+      ].filter(Boolean).join(' ')}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <div className='slot-html-slide__viewport slot-html-slide__viewport--interactive'>
         <iframe
           className='slot-html-slide__frame'
           title={`slide-${slot.sort_order ?? slot.list_index ?? 0}`}
+          data-zoom-hint='点击放大'
           sandbox='allow-scripts allow-same-origin'
           srcDoc={srcDoc}
+          onLoad={(event) => attachFrameZoomClick(event.currentTarget)}
+          aria-label='点击放大幻灯片'
           style={{
             width: 1600,
             height: 900,
@@ -123,6 +194,47 @@ export function SlotHtmlSlide({
           }}
         />
       </div>
+      {expanded && typeof document !== 'undefined' && createPortal(
+        <div
+          className='slot-html-slide__zoom-overlay'
+          role='dialog'
+          aria-modal='true'
+          aria-label='放大幻灯片预览'
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closeExpanded();
+          }}
+        >
+          <button
+            type='button'
+            className='slot-html-slide__zoom-close'
+            aria-label='关闭放大预览'
+            onClick={closeExpanded}
+          >
+            ×
+          </button>
+          <div
+            className='slot-html-slide__zoom-stage'
+            style={{
+              width: 1600 * expandedScale,
+              height: 900 * expandedScale,
+            }}
+          >
+            <iframe
+              className='slot-html-slide__frame slot-html-slide__frame--zoomed'
+              title={`放大预览-${slot.sort_order ?? slot.list_index ?? 0}`}
+              sandbox='allow-scripts allow-same-origin'
+              srcDoc={srcDoc}
+              style={{
+                width: 1600,
+                height: 900,
+                transform: `scale(${expandedScale})`,
+                transformOrigin: 'top left',
+              }}
+            />
+          </div>
+        </div>,
+        document.body,
+      )}
     </div>
   );
 }

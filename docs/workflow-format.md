@@ -59,6 +59,7 @@ slots:                               # artifact 数据槽完整定义（list 格
     type: text                       # artifact 类型：text | image | file | json
     cardinality: single              # single（单值，重写覆盖）| list（追加或按 index 更新）
     external: true                   # 由用户/session 提供；否则必须有且仅有一个 step producer
+    required: false                  # external 输入是否在创建 Session 前必填；默认 true
 
   - id: my_image_list
     label: Image Collection

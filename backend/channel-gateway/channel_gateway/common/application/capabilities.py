@@ -232,15 +232,15 @@ class CapabilityActions:
             )
             section: SettingsSection = 'knowledge_base'
         elif change.setting in ('workflow', 'workflow_mode', 'subagent'):
-            if change.setting == 'plugin':
+            if change.setting == 'workflow':
                 settings = {'enable_workflow': change.enabled}
-                section = 'plugin'
+                section = 'workflow_mode'
             elif change.setting == 'workflow_mode':
                 settings = {
                     'enable_workflow': True,
                     'workflow_mode': change.mode,
                 }
-                section = 'plugin'
+                section = 'workflow_mode'
             else:
                 settings = {'enable_subagent': change.enabled}
                 section = 'subagent'
@@ -306,7 +306,7 @@ class CapabilityActions:
                 change.enabled,
             )
             section = 'personalization'
-        else:
+        elif change.setting == 'workflow_item':
             self._require_setting_item(
                 catalog,
                 'workflow',

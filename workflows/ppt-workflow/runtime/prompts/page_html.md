@@ -16,6 +16,37 @@ HTML 中**所有面向读者可见的文字内容**（`<title>`、标题、副�
 - `<body>` 内最外层是 `<div class="wrapper">`，内部先放 `<div id="bg">` 作装饰背景层，再放 `<div id="ct">` 作内容层。
 - `.wrapper` 尺寸锁定 1600×900，`overflow: hidden`。所有内容必须在这个画布内，溢出会被裁切。
 
+## 画布安全区与防溢出（硬性）
+
+- 这不是可滚动网页，而是固定 1600×900 的单页幻灯片。四周必须保留安全边距：
+  左右至少 60px、顶部至少 48px、底部至少 60px；任何正文、卡片、KPI、图表、
+  图片、caption、页脚的最下沿都不得超过 y=840px。
+- `#ct` 推荐且优先使用下面的纵向 Flex 骨架，让浏览器自动分配剩余高度：
+
+      #ct {
+        position: absolute; inset: 0; z-index: 1;
+        padding: 48px 60px 60px;
+        box-sizing: border-box;
+        display: flex; flex-direction: column; gap: 24px;
+        overflow: hidden;
+      }
+      .header-area { flex: 0 0 auto; margin: 0; }
+      .main-layout { flex: 1 1 auto; min-height: 0; height: auto; }
+
+- **禁止**在正常文档流的 header/title/narrative 后，再给主内容区设置
+  `height: calc(100% - Npx)`、`height: 100%` 或接近画布高度的固定值；header 高度会
+  与它相加，必然造成底部裁切。需要“上标题、下主体”时必须用上述 Flex 剩余空间。
+- 主内容区内部若还有“主体 + 底部 KPI/页脚”，使用
+  `grid-template-rows: minmax(0, 1fr) auto` 或纵向 Flex；主体必须
+  `min-height: 0`，图片/图表容器必须受父区高度约束。不得用负 margin、绝对定位或
+  translate 把内容压到安全区之外。
+- 页面信息过多时，按顺序处理：精简叙事到最多 2 行 → 缩小区块 gap/padding →
+  减少装饰 → 调整栅格；不得通过把字号降到不可读（正文 < 14px）来硬塞，也不得
+  保留被裁掉的内容。
+- 输出前必须做一次纵向预算自检：`#ct` 可用高度约 792px；header + 所有 gap +
+  main + footer 的总高度必须 ≤ 792px。若使用固定像素高度，明确相加验证；无法确认
+  时改用 Flex，而不是 `calc(100% - Npx)`。
+
 ## 图片引用
 
 - 所有 `<img src>` 必须使用相对路径 `../images/<basename>`，其中 `<basename>` 来自 user message 给出的路径（例如 `../images/page_003_inherited.png`、`../images/page_005_hero.png`）。
@@ -102,7 +133,7 @@ CSS 声明顺序：
 3. 基础样式：`body` / `.wrapper` / `#bg` / `#ct` / `h1-h3` / `p` / `li` / `a`
 4. 页面专属样式
 
-其中 `.wrapper { width: 1600px; height: 900px; position: relative; overflow: hidden; margin: 0 auto; }`、`#bg { position: absolute; inset: 0; z-index: 0; }`、`#ct { position: absolute; inset: 0; z-index: 1; padding: 60px; box-sizing: border-box; }` 这三条是必写项。
+其中 `.wrapper { width: 1600px; height: 900px; position: relative; overflow: hidden; margin: 0 auto; }`、`#bg { position: absolute; inset: 0; z-index: 0; }`、`#ct { position: absolute; inset: 0; z-index: 1; padding: 48px 60px 60px; box-sizing: border-box; display: flex; flex-direction: column; overflow: hidden; }` 这三条是必写项。
 
 ## 输出要求
 
