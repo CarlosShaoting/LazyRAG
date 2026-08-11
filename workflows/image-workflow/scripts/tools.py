@@ -1,7 +1,3 @@
-# Portions adapted from OpenSenseNova/SenseNova-Skills (sn-image-base).
-# Copyright (c) 2026 SenseNova. SPDX-License-Identifier: MIT.
-# See workflows/image-workflow/LICENSE.sensenova and THIRD_PARTY_NOTICES.md.
-
 """Workflow-local tools for image-workflow.
 
 Framework tools reused from Chat (declare in state.yml step tools):

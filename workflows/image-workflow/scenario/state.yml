@@ -1,7 +1,3 @@
-# Portions adapted from OpenSenseNova/SenseNova-Skills (sn-image-base).
-# Copyright (c) 2026 SenseNova. SPDX-License-Identifier: MIT.
-# See plugins/image-plugin/LICENSE.sensenova and THIRD_PARTY_NOTICES.md.
-
 initial: __start__
 
 # {{placeholder}} substitution rules (performed by Go before launching the SubAgent):
