@@ -40,7 +40,11 @@ def _resolve_executable(command: str) -> Optional[str]:
 
 
 def _local_platform_target() -> tuple[str, str]:
-    target_platform = 'windows' if sys.platform == 'win32' else ('darwin' if sys.platform == 'darwin' else 'linux')
+    target_platform = (
+        'windows'
+        if sys.platform == 'win32'
+        else ('darwin' if sys.platform == 'darwin' else 'linux')
+    )
     machine = platform.machine().strip().lower()
     target_arch = 'x64' if machine in {'amd64', 'x86_64'} else ('arm64' if machine in {'arm64', 'aarch64'} else machine)
     return target_platform, target_arch
@@ -60,7 +64,11 @@ def _local_editable_pptx_installed() -> bool:
     if not (node_modules / 'pptxgenjs').is_dir() and (install_dir / 'node_modules' / 'pptxgenjs').is_dir():
         node_modules = install_dir / 'node_modules'
     manifest_path = install_dir / 'bundle-manifest.json'
-    if not manifest_path.is_file() or not (node_modules / 'pptxgenjs').is_dir() or not (node_modules / 'playwright').is_dir():
+    if (
+        not manifest_path.is_file()
+        or not (node_modules / 'pptxgenjs').is_dir()
+        or not (node_modules / 'playwright').is_dir()
+    ):
         return False
     try:
         manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
@@ -363,7 +371,11 @@ async def export_ppt_from_html(req: PptExportRequest):
         candidates = list(deck_dir.glob('*.pptx'))
         pptx_path = candidates[0] if candidates else pptx_path
     if not ok or not pptx_path.exists():
-        detail = str(payload.get('error') or payload.get('detail') or payload.get('reason') or '') if isinstance(payload, dict) else ''
+        detail = (
+            str(payload.get('error') or payload.get('detail') or payload.get('reason') or '')
+            if isinstance(payload, dict)
+            else ''
+        )
         shutil.rmtree(deck_dir, ignore_errors=True)
         raise HTTPException(status_code=502, detail=detail or 'PPTX not produced')
 

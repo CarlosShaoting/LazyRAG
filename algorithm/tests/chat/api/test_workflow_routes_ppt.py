@@ -9,7 +9,13 @@ def _write_local_bundle(root: Path, monkeypatch) -> None:
     (root / 'node_modules' / 'playwright').mkdir(parents=True)
     (root / 'browsers' / 'chromium_headless_shell-1208' / 'chrome-headless-shell-linux64').mkdir(parents=True)
     (root / 'html_to_pptx.mjs').write_text('', encoding='utf-8')
-    (root / 'browsers' / 'chromium_headless_shell-1208' / 'chrome-headless-shell-linux64' / 'chrome-headless-shell').write_text('', encoding='utf-8')
+    (
+        root
+        / 'browsers'
+        / 'chromium_headless_shell-1208'
+        / 'chrome-headless-shell-linux64'
+        / 'chrome-headless-shell'
+    ).write_text('', encoding='utf-8')
     platform_name, arch = workflow_routes._local_platform_target()
     (root / 'bundle-manifest.json').write_text(
         json.dumps({'platform': platform_name, 'arch': arch}),

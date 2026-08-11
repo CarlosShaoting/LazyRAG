@@ -286,7 +286,7 @@ def _save_artifact(key: str, value: Any, content_type: str = 'text',
             and not internal_publish):
         return tool_error(
             'save_artifacts',
-            f"PPT slot {key!r} is publisher-owned. Use the declared ppt_* edit/generation "
+            f'PPT slot {key!r} is publisher-owned. Use the declared ppt_* edit/generation '
             'tool; it writes the correct existing list_index and revision automatically. '
             'Do not save slide HTML or outlines directly.',
         )
