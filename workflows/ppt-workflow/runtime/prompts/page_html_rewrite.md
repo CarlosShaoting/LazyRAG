@@ -27,10 +27,6 @@
 - `inherited_image_size` —— 若非空，给出该图片的原生像素尺寸 `{w, h, aspect}`。aspect = 宽/高。query 里要把这个尺寸 / 长宽比讲给生成器，让它给图片容器选合适的 width / height（保持长宽比，不压扁不拉长）。
 - `inherited_image_alt` —— 若非空，是该图片的简短 alt 文本（来自原文档的 alt 属性或文件名派生，例 `"fig3 dram market share"`）—— 兜底用，质量参差。
 - `inherited_image_caption_hint` —— **优先使用这条**作为图的内容描述基准。来源解析顺序（最优 → 兜底）：(1) ppt-entry 的 `caption_images.py` 用 VLM 真看图后写的中文 caption（最准）；(2) digest LLM 基于文档文字猜的 caption_hint（次之）；(3) 都没有就靠 `inherited_image_alt` 兜底。**必须在 query 里明文把这条写出来**，并据此引导生成器写贴合图片内容的 caption / 副标题 / 配文，而不是只放一张图不解释。
-- `available_slot_images` —— 本页可用的 T2I 生成图的列表，每项是 `{path, slot_id, intent, image_prompt, w?, h?, aspect?}`：
-  - `intent` 是大纲里给这个 slot 写的"用途说明"（例 `"hero photo of a server room"`）
-  - `image_prompt` 是真正送给 T2I 模型生成这张图的完整 prompt
-  - 这两个字段是模型了解每张 slot 图内容的唯一线索；query 里**必须**用 intent（首选）或 image_prompt（次选）的语义来描述每张图画的是什么，让生成器据此写贴合的 caption / 标签 / 配文。**禁止只说"这页有一张配图 path=..."而不交代图的内容**。
 - `language` —— zh / en。
 
 ## 重写要求
@@ -53,14 +49,7 @@
    - **图的尺寸**：若 `inherited_image_size` 非空，把宽高 + aspect 也明文写出（例："原生 1280×720，aspect 约 1.78"），并给生成器一个具体的 width / height 建议（例："建议在版面里占 800px 宽，按原生比例算高约 450px"），保持图片不失真、不留黑边。
    - 摆放：作为前景 `<img>` 放在版面中显著位置（建议占页面 30-50% 视觉面积）。**不能当成背景（background-image）、不能放在蒙版下、不能用遮罩/渐变压暗覆盖文字**。
    - 如果页面还有要点和数据，应该与这张图形成"图 + 文"的并列布局；宁可删减部分文字也要保住这张图的可见性。
-9. **处理 available_slot_images（硬性）**：如果 `available_slot_images` 非空，query 里要**逐张点名**，每张都讲清楚：
-   - **path**（必写）。
-   - **图的内容描述**（必写）：取 `intent`（首选）或 `image_prompt`（次选）的语义，用一句中文写明这张图画的是什么。例："`images/page_005_hero.png` 是一张服务器机房氛围照，远景蓝光 + 机柜剪影"。
-   - **尺寸**（如有 `w`/`h`/`aspect`）：把宽高 + aspect 明文写出，并给出建议显示尺寸（保持原生 aspect ratio，绝不强制拉伸）。例："原生 1280×768、aspect 约 1.67，建议放在右侧约占 600×360 的区域里"。
-   - **位置和用途**：建议这张图在版面中的位置（左 / 右 / 上 / 下 / 满版），并基于其内容描述给出贴合的 caption / 标签 / 配文方向。
-   - **Infographic images**: if an available image's intent describes a chart, diagram, or data visualization, instruct the generator to use this image INSTEAD of rendering an ECharts block. The infographic image already contains the structured diagram — do not duplicate it with ECharts.
-   - 如果某项没有 w/h（读取失败），就跳过尺寸只写 path + 内容描述 + 位置。
-   - 如果 `available_slot_images` 为空，query 要明说"这页没有可用的配图，请用纯文字 + CSS 装饰把版面填满，不要留大片空白"。
+9. **无配图时**：如果没有 `inherited_image_local_path`，query 要明说"这页没有可用的配图，请用纯文字 + CSS / SVG / ECharts 装饰把版面填满，不要留大片空白"。不要编造图片路径。
 10. **图表防遮挡（硬性）**：如果本页要用 ECharts（bar/line/pie 等），query 必须明确要求"图表区域内不要有任何覆盖元素"：禁止把说明卡、渐变遮罩、半透明蒙层、装饰线、悬浮标签、绝对定位文字压在图表上；图表说明文字放在图表外部并留出间距，确保图表完整可见，避免导出后只显示一半。
 
 ## 输出

@@ -912,7 +912,6 @@ def _outline_page_view(page: dict) -> dict:
         'data_points': data_points,
         'use_table': page.get('use_table'),
         'use_image': page.get('use_image'),
-        'asset_slot_count': len(page.get('asset_slots') or []),
     }
 
 
@@ -2407,8 +2406,6 @@ def ppt_init_deck(
     audience: Optional[str] = None,
     scene: Optional[str] = None,
     style_hint: Optional[str] = None,
-    image_source: Optional[str] = None,
-    infographic_source: Optional[str] = None,
     ppt_mode: Optional[str] = None,
     key_points_json: Union[str, list, None] = None,
 ) -> dict:
@@ -2436,9 +2433,6 @@ def ppt_init_deck(
         audience (str): Target audience.
         scene (str): Presentation scene.
         style_hint (str): Optional visual style guidance.
-        image_source (str): Always 'none'. Decorative T2I slots were removed;
-            slide photos come from material_images (KB/web/AI collect). Omit or pass 'none'.
-        infographic_source (str): Always 'echarts'. Omit or pass 'echarts'.
         ppt_mode (str): 'fast' or 'standard'. Default 'fast'.
         key_points_json (str): JSON array string like '["a","b"]', or omit.
 
@@ -2460,11 +2454,6 @@ def ppt_init_deck(
     mode = _coerce_str(ppt_mode, 'fast').lower()
     if mode not in ('fast', 'standard'):
         mode = 'fast'
-    # Decorative T2I path removed; legacy image_source/infographic_source
-    # arguments are accepted for schema compatibility but ignored.
-    img_src = 'none'
-    info_src = 'echarts'
-
     if isinstance(key_points_json, list):
         key_points = [str(x) for x in key_points_json][:12]
     else:
@@ -2495,8 +2484,6 @@ def ppt_init_deck(
             'scene': _coerce_str(scene, '主题分享'),
             'page_count': pages,
             'language': _infer_language(query),
-            'image_source': img_src,
-            'infographic_source': info_src,
         },
         'created_at': now,
         'skill_version': '0.1.0',
@@ -2520,7 +2507,6 @@ def ppt_init_deck(
         'deck_id': deck_id,
         'page_count': pages,
         'ppt_mode': mode,
-        'image_source': img_src,
         'material_images_attached': attached['attached'],
         'next_stage': 'preflight',
         'stage_order': _STAGE_ORDER_HINT,
@@ -2601,8 +2587,6 @@ def ppt_build_outline(
     audience: Optional[str] = None,
     scene: Optional[str] = None,
     style_hint: Optional[str] = None,
-    image_source: Optional[str] = None,
-    infographic_source: Optional[str] = None,
     ppt_mode: Optional[str] = None,
     key_points_json: Union[str, list, None] = None,
 ) -> dict:
@@ -2622,9 +2606,6 @@ def ppt_build_outline(
         audience (str): Target audience.
         scene (str): Presentation scene.
         style_hint (str): Optional visual style guidance.
-        image_source (str): Always 'none' (legacy values coerced). Material images
-            come from collect_materials registration.
-        infographic_source (str): Always 'echarts'.
         ppt_mode (str): 'fast' or 'standard'. Default 'fast'.
         key_points_json (str): JSON array string like '["a","b"]', or omit.
 
@@ -2640,8 +2621,6 @@ def ppt_build_outline(
         audience=audience,
         scene=scene,
         style_hint=style_hint,
-        image_source=image_source,
-        infographic_source=infographic_source,
         ppt_mode=ppt_mode,
         key_points_json=key_points_json,
     )
@@ -2716,7 +2695,6 @@ def ppt_build_outline(
         'deck_id': init_payload.get('deck_id'),
         'page_count': init_payload.get('page_count'),
         'ppt_mode': init_payload.get('ppt_mode'),
-        'image_source': init_payload.get('image_source'),
         'material_images_attached': init_payload.get('material_images_attached'),
         'published_count': pub_payload.get('published_count'),
         'published': pub_payload.get('published'),
@@ -2845,7 +2823,6 @@ def ppt_run_stage(
     deck_dir: str,
     stage: str,
     page: int = 0,
-    slot: str = '',
     concurrency: int = 4,
     start_page: int = 0,
     end_page: int = 0,
@@ -2865,7 +2842,6 @@ def ppt_run_stage(
             batch-page-html|refine-page|batch-refine-page.
             Export is UI-only — do not pass stage=export.
         page (int): Required for page-html / refine-page (1-based).
-        slot (str): Unused (kept for schema compatibility).
         concurrency (int): For batch stages (default 4, clamped to 1-8).
         start_page (int): Optional batch-page-html start.
         end_page (int): Optional batch-page-html end.
@@ -2897,8 +2873,6 @@ def ppt_run_stage(
     conc = _coerce_int(concurrency, 4, lo=1, hi=8)
     sp = _coerce_int(start_page, 0, lo=0)
     ep = _coerce_int(end_page, 0, lo=0)
-    slot_id = _coerce_str(slot)
-
     if stage_name in _INPROCESS_STAGES:
         if stage_name in ('page-html', 'refine-page') and page_no < 1:
             return tool_error('ppt_run_stage', f'{stage_name} requires page>=1')
@@ -3203,7 +3177,7 @@ def ppt_read_page_outline(deck_dir: str, page: int) -> dict:
 
     Returns:
         page, page_kind, title, subtitle, narrative, visual_hints, 1-based indexed
-        bullets and data_points, use_table / use_image, asset_slot_count.
+        bullets and data_points, use_table / use_image.
 
     Next step: call ppt_patch_page_outline to change this page's content, then
     ppt_run_stage(stage='page-html', page=<same page>) to redraw only that page.

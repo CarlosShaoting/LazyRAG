@@ -49,17 +49,17 @@ HTML 中**所有面向读者可见的文字内容**（`<title>`、标题、副�
 
 ## 图片引用
 
-- 所有 `<img src>` 必须使用相对路径 `../images/<basename>`，其中 `<basename>` 来自 user message 给出的路径（例如 `../images/page_003_inherited.png`、`../images/page_005_hero.png`）。
-- **若 user message 没有给出任何可用图片路径 / `available_slot_images` 为空，禁止输出任何 `<img>` 标签**（包括用生图 prompt 当 alt、编造文件名）。改用 CSS / SVG / ECharts 做视觉。
+- 所有 `<img src>` 必须使用相对路径 `../images/<basename>`，其中 `<basename>` 来自 user message 给出的路径（例如 `../images/page_003_inherited.png`）。
+- **若 user message 没有给出任何可用图片路径，禁止输出任何 `<img>` 标签**（包括用生图 prompt 当 alt、编造文件名）。改用 CSS / SVG / ECharts 做视觉。
 - 禁止 `file://` / 绝对路径 / 未提供的 CDN 或远程 URL / 自己编造的文件名 / 基于自己想象的 `/mnt/data/...` 路径。
 - `background-image: url(...)` 使用的本地图片同样遵守该路径格式。
-- **来自用户文档的继承图（路径形如 `../images/page_XXX_inherited.{png,jpg,jpeg,webp,...}`）禁止当作背景使用**：不得作为 `background-image` / `background` 的 `url(...)` 值、不得放在 `#bg` 层、不得放在任何遮罩 / 渐变 / 半透明色块**之下**被压暗或半隐藏。这类图是用户上传文档里的原始图表 / 截图 / 配图，是页面内容的一部分，必须以前景 `<img>` 元素呈现，放在版面中清晰可见的位置（建议占页面 30-50% 视觉面积），并结合 user message 给出的"图的内容描述"配上贴合的 caption / 标签 / 配文。T2I 生成的 slot 图（路径形如 `../images/page_XXX_<slot_id>.png`，非 `_inherited`）作为装饰背景是允许的，但继承图不行。
+- **来自素材 / 文档的继承图（路径形如 `../images/page_XXX_inherited.{png,jpg,jpeg,webp,...}`）禁止当作背景使用**：不得作为 `background-image` / `background` 的 `url(...)` 值、不得放在 `#bg` 层、不得放在任何遮罩 / 渐变 / 半透明色块**之下**被压暗或半隐藏。这类图是页面内容的一部分，必须以前景 `<img>` 元素呈现，放在版面中清晰可见的位置（建议占页面 30-50% 视觉面积），并结合 user message 给出的"图的内容描述"配上贴合的 caption / 标签 / 配文。
 
 ## Infographic images vs ECharts
 
-If the user message describes an infographic/diagram image (from `available_slot_images` with a chart-like intent), use that `<img>` as the primary visual for the data section. An infographic image already contains the structured diagram — **do NOT render a duplicate ECharts block alongside it**.
+If the user message provides an inherited/material image that is already a chart or diagram, use that `<img>` as the primary visual for the data section. **Do NOT render a duplicate ECharts block alongside it**.
 
-Use ECharts only when no infographic image is available for the data on this page.
+Use ECharts only when no such diagram image is available for the data on this page.
 
 ## ECharts 图表（如本页有图表才必须，且没有 infographic 图可用时）
 

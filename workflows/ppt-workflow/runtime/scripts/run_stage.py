@@ -19,7 +19,7 @@ agent stays in control of progress echo and error handling.
 
 Each subcommand:
 - reads the artifacts it needs from deck_dir
-- builds the full LLM/VLM/T2I payload (including document_digest and
+- builds the full LLM/VLM payload (including document_digest and
   raw_documents excerpts when appropriate)
 - calls model_client and writes the output artifact
 - prints a single-line JSON status to stdout (`{"status": "ok", ...}` or
@@ -268,14 +268,6 @@ def _build_deterministic_page_query(payload: dict) -> str:
             "",
             "INHERITED FOREGROUND IMAGE — use this exact relative path and preserve its aspect ratio (JSON):",
             json.dumps(image_contract, ensure_ascii=False, indent=2),
-        ])
-
-    slot_images = payload.get("available_slot_images")
-    if slot_images:
-        lines.extend([
-            "",
-            "AVAILABLE GENERATED IMAGES — use only when relevant, with these exact paths (JSON):",
-            json.dumps(slot_images, ensure_ascii=False, indent=2),
         ])
 
     lines.extend([
@@ -1060,7 +1052,7 @@ def _strip_missing_local_imgs(html: str, deck: Path) -> tuple[str, int]:
     """Remove <img> tags whose local ../images/... file is missing on disk.
 
     Keeps data:/http(s): URLs. Prevents broken-image icons + prompt-as-alt text
-    when image_source=none skipped T2I but the HTML generator still invented imgs.
+    when the HTML generator invents local image paths that were never produced.
     """
     pattern = re.compile(r"<img\b[^>]*>", re.IGNORECASE)
     removed = 0
@@ -1358,40 +1350,9 @@ def cmd_page_html(deck: Path, page_no: int) -> int:
                         inherited_image_caption_hint = entry.get("caption_hint")
                         break
 
-    # Only expose slots the rewriter should actually mention in the query —
-    # failed slots are hidden so the rewriter describes a text-first layout.
-    # Each slot carries its real pixel dimensions PLUS the upstream textual
-    # context (intent from outline + image_prompt that produced it) so the
-    # rewriter / generator can write captions that match the image content.
-    intent_by_slot: dict[str, str] = {
-        s.get("slot_id"): s.get("intent") or ""
-        for s in (page_outline.get("asset_slots") or [])
-        if s.get("slot_id")
-    }
-    available_slot_images: list[dict] = []
-    for slot in page_plan.get("slots") or []:
-        if slot.get("status") != "ok" or not slot.get("local_path"):
-            continue
-        local_path = slot["local_path"]
-        image_file = deck / local_path
-        if not image_file.is_file():
-            continue
-        size = _read_image_size(image_file)
-        entry: dict = {
-            "path": local_path,
-            "slot_id": slot.get("slot_id"),
-            "intent": intent_by_slot.get(slot.get("slot_id")) or "",
-            "image_prompt": slot.get("image_prompt") or "",
-        }
-        if size:
-            entry.update(size)  # adds w / h / aspect
-        available_slot_images.append(entry)
-
-    # Hide unrealized T2I slots from the rewriter — otherwise it asks the HTML
-    # generator to embed images that were never produced (image_source=none).
+    # Decorative T2I slots were removed; keep outline without asset_slots noise.
     outline_for_rewrite = dict(page_outline)
-    if not available_slot_images:
-        outline_for_rewrite['asset_slots'] = []
+    outline_for_rewrite.pop('asset_slots', None)
 
     # --- Step 1: assemble the page-generator query ---
     # Default fast path is deterministic and removes one LLM call per page.
@@ -1405,7 +1366,6 @@ def cmd_page_html(deck: Path, page_no: int) -> int:
         "inherited_image_size": inherited_image_size,
         "inherited_image_alt": (inherited_image or {}).get("alt") or None,
         "inherited_image_caption_hint": inherited_image_caption_hint,
-        "available_slot_images": available_slot_images or None,
         "language": _resolve_language(tp, ip),
     }
     prompt_mode = _page_prompt_mode()
@@ -1898,7 +1858,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--page", type=int, required=True)
 
     # Batch / concurrent variants (default concurrency=4). Each fans out its
-    # per-item work across a thread pool so LLM / VLM / T2I wait times overlap.
+    # per-item work across a thread pool so LLM / VLM wait times overlap.
     for name in ("batch-refine-page",):
         sp = sub.add_parser(name)
         sp.add_argument("--deck-dir", type=Path, required=True)

@@ -179,7 +179,7 @@ steps:
             to generate/create material images for the deck (e.g. "生成素材图",
             "用 AI 画几张参考图", "AI generate reference images"). Then call:
             ppt_generate_material_images(prompts_json=[
-              {"prompt":"<detailed English or user-language T2I prompt>",
+              {"prompt":"<detailed image-generation prompt>",
                "caption":"<short caption>"}, ...
             ])
             Cap at ~4 generated images. Do NOT call this for decorative polish,
@@ -251,11 +251,10 @@ steps:
            topic=<short topic>,
            role / audience / scene=<from analysis>,
            style_hint=<visual style text>,
-           image_source='none'  (string! not null; always 'none' — slide photos
-             come from registered material_images, including AI materials
-             generated in collect_materials when the user explicitly asked),
            key_points_json='["point1","point2"]'  (JSON string, or omit)
-         Defaults: ppt_mode=fast, infographic_source=echarts.
+         Defaults: ppt_mode=fast.
+         Slide photos come from registered material_images (KB/web, or
+         ppt_generate_material_images when the user explicitly asked).
 
       This single call runs init → preflight → style → outline → publish_outline
       and writes slide_outline list items (sort_order=page) for the Outline tab.

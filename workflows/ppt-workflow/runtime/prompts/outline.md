@@ -1,6 +1,6 @@
 You plan a PPT outline for the standard (HTML) mode.
 
-Input: style_spec.json, info_pack.query_normalized, info_pack.document_digest (may be null), info_pack.user_assets.reference_images (list of standalone user-uploaded figure paths; may be empty), task_pack.params (incl. page_count).
+Input: style_spec.json, info_pack.query_normalized, info_pack.document_digest (may be null), info_pack.user_assets.reference_images (list of standalone user-uploaded / collect_materials figure paths; may be empty), task_pack.params (incl. page_count).
 
 **Goal**: produce an outline rich enough that each generated slide is **visually dense and informative**, not a sparse title + 3-bullet card. Under-filled pages look unprofessional. The downstream page-HTML generator will use every field you emit, so give it plenty to work with.
 
@@ -27,10 +27,7 @@ Output (JSON only):
       "use_table": {"doc_index": 0, "table_index": 2} | null,
       "use_image": {"doc_index": 0, "image_index": 0}
                  | {"reference_image_index": 0}
-                 | null,
-      "asset_slots": [
-        {"slot_id": "hero", "intent": "<short phrase>", "aspect_ratio": "16:9"}
-      ]
+                 | null
     }
   ]
 }
@@ -38,7 +35,7 @@ Output (JSON only):
 
 ## Language lock (hard)
 
-All reader-visible text fields (`title`, `subtitle`, every `bullets[].head`/`detail`, `narrative`, `data_points[].label`/`context`, `visual_hints`, `asset_slots[].intent`) MUST be written in the language specified by `task_pack.params.language` (`zh` → Chinese; `en` → English). This language flows downstream verbatim: rewriter writes the user query in this language, generator writes the HTML in this language. If the digest contains mixed-language source material, pick whatever fits `params.language` and don't carry the foreign-language originals through.
+All reader-visible text fields (`title`, `subtitle`, every `bullets[].head`/`detail`, `narrative`, `data_points[].label`/`context`, `visual_hints`) MUST be written in the language specified by `task_pack.params.language` (`zh` → Chinese; `en` → English). This language flows downstream verbatim: rewriter writes the user query in this language, generator writes the HTML in this language. If the digest contains mixed-language source material, pick whatever fits `params.language` and don't carry the foreign-language originals through.
 
 ## Rules
 
@@ -50,15 +47,15 @@ All reader-visible text fields (`title`, `subtitle`, every `bullets[].head`/`det
 - `narrative`: always fill. Treat as "what the slide tries to say in a paragraph". Lets the HTML generator produce a prose block when bullets would feel too sparse.
 - `data_points`: include when `info_pack.document_digest.data_highlights` is non-empty or when `page_kind` is `data`. Distribute numbers / facts across relevant pages — do NOT bunch them all on one page.
 - `visual_hints`: one sentence guiding composition (e.g. "split-screen with large hero left, 3-column KPI grid right").
-- `asset_slots`: 0-2 per page. If `use_table` or `use_image` is non-null, **set asset_slots to `[]`** (this page already has its visual content from inherited material — no need for T2I decoration). Only pages without inherited material should have asset_slots.
 - `use_table` / `use_image` **inherit from the input's source material**. Two separate pools can feed `use_image`:
   * **Pool A — document-embedded images**: walk `document_digest.inherited_images` (or, if digest is null, `raw_documents_excerpt` entries with non-empty `inherited_images`). Each item is `{doc_index, image_index}`.
-  * **Pool B — standalone reference_images** (user uploads OR images registered in collect_materials from KB / web search): walk `available_reference_images`. Each item is referenced by its 0-based `reference_image_index`. Prefer the provided `caption` for topic matching; fall back to `basename` (e.g. `material_01.png`, `fig3_dram_market_share.png`). **Assign every Pool-B image to a relevant content/data page** so the final HTML embeds it as a foreground `<img>`.
+  * **Pool B — standalone reference_images** (user uploads OR images registered in collect_materials from KB / web / explicit AI material generation): walk `available_reference_images`. Each item is referenced by its 0-based `reference_image_index`. Prefer the provided `caption` for topic matching; fall back to `basename` (e.g. `material_01.png`, `fig3_dram_market_share.png`). **Assign every Pool-B image to a relevant content/data page** so the final HTML embeds it as a foreground `<img>`.
   * Walk through `document_digest.inherited_tables` and assign each to the most relevant page (ideally a `data` page) via `use_table`.
   * **Aim to use EVERY image across the deck** — if Pool A + Pool B together have 9 items and page_count=12, at least 9 pages should have `use_image` set (most likely via `reference_image_index`). Each image MUST be used at most once across the deck. Do not discard uploaded material just because digest was null.
   * If there are MORE images than pages, pick the most impactful (those matching key_points; high-level diagrams / market share charts over low-information screenshots).
   * `use_image` payload is EITHER `{"doc_index": D, "image_index": I}` (Pool A) OR `{"reference_image_index": N}` (Pool B). Never mix fields, never invent indices outside the pool bounds.
 - Inherit domain facts from `document_digest` faithfully — do NOT invent metrics. If no digest is available, lean on `query_normalized.key_points` + general knowledge around the topic.
+- Do **not** invent decorative AI image slots. Slide visuals are CSS / SVG / ECharts and/or Pool A/B `use_image` only.
 - JSON only, no markdown fences, no commentary.
 
 ## Density target
@@ -68,6 +65,5 @@ A typical 10-page deck should produce approximately:
 - ~40 bullet items (each a head+detail object)
 - ~10 narrative paragraphs
 - ~15-25 data_points across data-heavy pages
-- ~14-18 asset_slots total
 
 If your output is substantially below this (e.g. only 20 bullets for 10 pages), pages will render sparse. Add more detail per page.

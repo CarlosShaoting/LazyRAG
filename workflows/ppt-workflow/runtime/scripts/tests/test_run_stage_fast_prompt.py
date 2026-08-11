@@ -39,7 +39,6 @@ class PagePromptModeTest(unittest.TestCase):
                     "visual_hints": "左右布局",
                     "use_table": None,
                     "use_image": None,
-                    "asset_slots": [],
                 }],
             },
             "asset_plan.json": {"pages": [{"page_no": 1, "slots": []}]},
