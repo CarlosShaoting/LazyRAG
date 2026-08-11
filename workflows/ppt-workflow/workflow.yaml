@@ -24,6 +24,7 @@ tool_scripts:
     functions:
       - ppt_search_web_images
       - ppt_register_material_images
+      - ppt_generate_material_images
       - ppt_attach_material_images
       - ppt_build_outline
       - ppt_generate_pages

@@ -14,7 +14,8 @@ transitions:
     - to: collect_materials
       when: >
         Use when the deck still needs KB retrieval, web research, real photos /
-        diagrams for HTML slides, or a dedicated material_summary beyond what
+        diagrams for HTML slides, AI-generated material images the user
+        explicitly requested, or a dedicated material_summary beyond what
         analyze_requirements already captured.
 
   collect_materials:
@@ -80,7 +81,8 @@ steps:
       - whether real photos/diagrams from KB or web should be collected for
         embedding in slide HTML (default: yes when the topic is product /
         industry / case-study visual; otherwise CSS/SVG/ECharts only)
-      - whether decorative AI-gen images are needed (default: no)
+      - whether the user explicitly asked for AI-generated material images
+        (default: no — do not invent this need)
 
       If the user already attached a PDF/PPTX/report or pasted key facts, fold the
       usable numbers and claims into the brief so a later build_outline step can
@@ -173,8 +175,18 @@ steps:
          b) For public visual concepts, call ppt_search_web_images(query=...),
             then ppt_register_material_images with
             [{"url":..., "caption":..., "source":"web"}, ...] for 2–6 chosen URLs.
-         c) Cap at ~6 useful images total. Prefer real photos/diagrams over
-            decorative stock. Do not fabricate URLs.
+         c) AI-generated material images — ONLY when the user explicitly asks
+            to generate/create material images for the deck (e.g. "生成素材图",
+            "用 AI 画几张参考图", "AI generate reference images"). Then call:
+            ppt_generate_material_images(prompts_json=[
+              {"prompt":"<detailed English or user-language T2I prompt>",
+               "caption":"<short caption>"}, ...
+            ])
+            Cap at ~4 generated images. Do NOT call this for decorative polish,
+            generic "make it prettier", or when KB/web photos already suffice.
+            Do NOT invent an AI-gen need that the user never stated.
+         d) Cap at ~6 useful images total across kb/web/ai-gen. Prefer real
+            photos/diagrams over decorative stock. Do not fabricate URLs.
       4. Do not fabricate citations.
 
       These registered images are auto-attached at ppt_init_deck and embedded
@@ -184,7 +196,7 @@ steps:
       - uploaded file summaries, if any
       - key facts or claims to support
       - useful source material or references
-      - registered visual assets (caption + source=kb|web) that will appear in HTML
+      - registered visual assets (caption + source=kb|web|ai-gen) that will appear in HTML
       - open gaps and assumptions
 
       Save the result:
@@ -197,6 +209,7 @@ steps:
       - wikipedia
       - ppt_search_web_images
       - ppt_register_material_images
+      - ppt_generate_material_images
     inputs:
       - material: requirement_analysis
         required: true
@@ -208,8 +221,9 @@ steps:
     acceptance_criteria: |
       material_summary must be saved and must identify uploaded-file findings
       when files are present, references, useful evidence, gaps, and assumptions.
-      When KB/web images were needed, material_images should be registered via
-      ppt_register_material_images so later steps can embed them in HTML.
+      When KB/web/AI material images were needed, material_images should be
+      registered via ppt_register_material_images / ppt_generate_material_images
+      so later steps can embed them in HTML.
 
   build_outline:
     label: Build Outline
@@ -237,9 +251,9 @@ steps:
            topic=<short topic>,
            role / audience / scene=<from analysis>,
            style_hint=<visual style text>,
-           image_source='none'  (string! not null; use 'ai-gen' only if user asked
-             for AI-generated decoration. Collected KB/web photos are attached
-             automatically from ppt_register_material_images — keep image_source='none'),
+           image_source='none'  (string! not null; always 'none' — slide photos
+             come from registered material_images, including AI materials
+             generated in collect_materials when the user explicitly asked),
            key_points_json='["point1","point2"]'  (JSON string, or omit)
          Defaults: ppt_mode=fast, infographic_source=echarts.
 
@@ -332,7 +346,7 @@ steps:
         ppt_generate_pages()
           — omit deck_dir to auto-find; or pass deck_dir from earlier results.
           — concurrency=4 by default.
-          — Internally: asset-plan → [batch-gen-image if needed] → batch-page-html
+          — Internally: asset-plan → batch-page-html
             (uses each slide_outline brief, including Outline-tab edits;
              auto-publishes preview_html + notes).
 

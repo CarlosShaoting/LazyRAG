@@ -59,8 +59,9 @@ Decorative layers do not get them.
 
 ## 5. real-photo slot rule
 
-Any asset slot whose `asset_plan` intent implies a real photograph MUST reference
-the absolute path to a real local PNG produced by `sn-image-generate`.
+Any real photograph embedded in a slide MUST reference a local image that was
+registered as a material image (KB / web / explicit AI material generation) and
+resolved into `images/page_XXX_inherited.*`.
 Do NOT use `<svg>` placeholders, empty `<div>` blocks, grey squares, or text like "配图待补".
 
 ## 6. Canvas size (advisory, not gated)

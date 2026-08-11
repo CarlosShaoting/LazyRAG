@@ -14,5 +14,7 @@ Removed vs upstream skill:
 - OpenClaw `SKILL.md` orchestration, workbench, progress WebUI wrappers
 - Unused prompts (deck_review, page_review, …)
 - Sibling skills (entry / creative / doctor / search-image)
+- Decorative T2I (`gen-image` / `sn-image-base`); AI material images use
+  framework `image_generator` via `ppt_generate_material_images` in collect
 
 Do not re-expand into a full `ppt_skills/` tree. Port individual fixes only.

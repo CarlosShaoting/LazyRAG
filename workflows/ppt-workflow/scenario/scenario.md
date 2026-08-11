@@ -7,9 +7,9 @@ This workflow helps users create a multi-slide presentation using the
 
 - Outline: **`ppt_build_outline`** (init → preflight → style → outline →
   `ppt_publish_outline`; one editable `slide_outline` list item per page)
-- Generation: **`ppt_generate_pages`** (asset-plan → [batch-gen-image] →
-  batch-page-html using each page's `slide_outline` brief, including human UI
-  edits; auto-publishes `preview_html`)
+- Generation: **`ppt_generate_pages`** (asset-plan → batch-page-html using each
+  page's `slide_outline` brief, including human UI edits; auto-publishes
+  `preview_html`)
 - Preview: full HTML pages in `preview_html` (iframe)
 - Export: **not part of the skill**. User clicks the UI **Export** button
 
@@ -17,8 +17,9 @@ Workflow:
 
 1. `analyze_requirements` — goal, audience, length, visual style, constraints.
 2. `collect_materials` — **optional** facts / KB / web research **and**
-   registering real images (`ppt_search_web_images` +
-   `ppt_register_material_images`) so later HTML embeds them.
+   registering images (`ppt_search_web_images` +
+   `ppt_register_material_images`, or `ppt_generate_material_images` only when
+   the user explicitly asks for AI material images) so later HTML embeds them.
 3. `build_outline` — one call: `ppt_build_outline` → `slide_outline[page1..]`.
 4. `generate_ppt` — one call: `ppt_generate_pages`; no outline rewrite.
 

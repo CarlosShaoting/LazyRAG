@@ -3,8 +3,9 @@
 Preferred high-level pipeline (one tool call each):
   collect (optional): kb / web_search / ppt_search_web_images
     → ppt_register_material_images  (workspace Pool-B images)
+    → ppt_generate_material_images  (ONLY when user explicitly asks for AI material images)
   ppt_build_outline(...)   # init → preflight → style → outline → publish_outline
-  ppt_generate_pages(...)  # asset-plan → [batch-gen-image] → batch-page-html
+  ppt_generate_pages(...)  # asset-plan → batch-page-html
 
 Low-level stages (ppt_init_deck / ppt_run_stage / ppt_publish_*) remain for
 debug and recovery; prefer the wrappers above for full runs.
@@ -29,7 +30,6 @@ import base64
 import json
 import os
 import re
-import subprocess
 import sys
 import uuid
 from collections import Counter
@@ -46,6 +46,7 @@ from lazyllm import ThreadPoolExecutor
 from lazymind.chat.engine.subagent.context import require_context
 from lazymind.chat.engine.subagent.tools import _resolve_artifact_text, _save_artifact
 from lazymind.chat.engine.tools.infra import tool_error, tool_success
+from lazymind.chat.engine.tools.multimodal import image_generator
 from lazymind.chat.service.utils.static_file_url import (
     local_path_from_static_file_url,
 )
@@ -53,12 +54,11 @@ from lazymind.chat.service.utils.static_file_url import (
 _PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 # Vendored SenseNova runtime (not the full skills tree). See workflows/ppt-workflow/README.md.
 _RUNTIME = _PLUGIN_ROOT / 'runtime'
-_IMAGE_GEN = _PLUGIN_ROOT / 'image_gen'
 _RUN_STAGE = _RUNTIME / 'scripts' / 'run_stage.py'
 
 _VALID_STAGES = frozenset({
     'preflight', 'style', 'outline', 'asset-plan',
-    'gen-image', 'page-html', 'batch-gen-image', 'batch-page-html',
+    'page-html', 'batch-page-html',
     'refine-page', 'batch-refine-page',
 })
 
@@ -68,13 +68,7 @@ _INPROCESS_STAGES = frozenset({
     'page-html', 'batch-page-html', 'refine-page', 'batch-refine-page',
 })
 
-# Optional T2I still shells out to image_gen/ (vendored sn-image-base subset).
-_IMAGE_STAGES = frozenset({'gen-image', 'batch-gen-image'})
-
-_STAGE_ORDER_HINT = (
-    'preflight → style → outline → asset-plan → '
-    '[batch-gen-image if needed] → batch-page-html'
-)
+_STAGE_ORDER_HINT = 'preflight → style → outline → asset-plan → batch-page-html'
 
 _NULLISH = frozenset({'', 'null', 'none', 'undefined', 'nil'})
 _PROMPT_PLACEHOLDER_RE = re.compile(r'\{(\w+)\}')
@@ -133,41 +127,6 @@ def _resolve_deck_dir(deck_dir: str) -> Path:
             f'deck_dir missing task_pack.json / info_pack.json: {path}. Call ppt_init_deck first.',
         )
     return path
-
-
-def _parse_stage_json(stdout: str, stderr: str, returncode: int) -> dict:
-    combined = (stdout or '') + '\n' + (stderr or '')
-    payload: dict = {}
-    for line in reversed([ln.strip() for ln in combined.splitlines() if ln.strip()]):
-        if line.startswith('{') and line.endswith('}'):
-            try:
-                payload = json.loads(line)
-                break
-            except json.JSONDecodeError:
-                continue
-    if not payload:
-        payload = {
-            'status': 'failed',
-            'error': (stderr or stdout or 'empty stdout').strip()[:2000],
-        }
-    if returncode != 0 and payload.get('status') not in ('ok', 'skipped'):
-        payload.setdefault('status', 'failed')
-        payload.setdefault('error', (stderr or stdout or f'exit {returncode}')[:2000])
-    return payload
-
-
-def _run_image_stage_cmd(cmd: list[str], *, timeout: int = 1200) -> dict:
-    env = {k: str(v) for k, v in os.environ.items() if v is not None}
-    env['SN_IMAGE_BASE'] = env.get('SN_IMAGE_BASE') or str(_IMAGE_GEN.resolve())
-    proc = subprocess.run(
-        cmd,
-        cwd=str(_RUNTIME / 'scripts'),
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        env=env,
-    )
-    return _parse_stage_json(proc.stdout or '', proc.stderr or '', proc.returncode)
 
 
 def _slugify(text: str, fallback: str = 'ppt_deck') -> str:
@@ -2304,6 +2263,111 @@ def ppt_register_material_images(
     })
 
 
+
+def ppt_generate_material_images(
+    prompts_json: Union[str, list, None] = None,
+    image_size: Optional[str] = None,
+) -> dict:
+    """Generate material images via framework image_generator and register them.
+
+    ONLY call this when the user explicitly asks for AI-generated material images
+    for the slides (e.g. "生成几张素材图", "用 AI 画参考图"). Do NOT call for
+    decorative polish, generic "make it prettier", or when KB/web photos suffice.
+
+    Each prompt is generated with the configured runtime_models image_generator
+    role, then stored like KB/web materials under material_images (Pool B).
+
+    Args:
+        prompts_json (str): JSON array of prompt strings, or objects:
+            {prompt|text, caption?, alt?}. Cap at 4 prompts per call.
+        image_size (str): Optional resolution, e.g. '1024x1024'. Omit for default.
+
+    Returns:
+        Same inventory shape as ppt_register_material_images (count, images, …).
+    """
+    try:
+        items = _parse_images_payload(prompts_json)
+    except ValueError as exc:
+        return tool_error('ppt_generate_material_images', str(exc))
+    if not items:
+        return tool_error(
+            'ppt_generate_material_images',
+            'prompts_json is empty — pass [{"prompt":"...","caption":"..."}, ...]',
+        )
+
+    size = _coerce_str(image_size) or None
+    generated: list[dict] = []
+    errors: list[str] = []
+    for i, item in enumerate(items[:4]):
+        prompt = _coerce_str(
+            item.get('prompt') or item.get('text') or item.get('query') or item.get('url'),
+        )
+        if not prompt:
+            errors.append(f'item[{i}]: missing prompt')
+            continue
+        caption = _coerce_str(item.get('caption') or item.get('alt') or prompt[:80])
+        kwargs: dict[str, Any] = {'prompt': prompt, 'batch_size': 1}
+        if size:
+            kwargs['image_size'] = size
+        try:
+            result = image_generator(**kwargs)
+        except Exception as exc:
+            errors.append(f'item[{i}]: image_generator raised {exc}')
+            continue
+        if not isinstance(result, dict) or not result.get('success'):
+            reason = ''
+            if isinstance(result, dict):
+                err = result.get('error')
+                if isinstance(err, dict):
+                    reason = str(err.get('reason') or err.get('detail') or '')
+                elif err:
+                    reason = str(err)
+            errors.append(f'item[{i}]: generation failed{": " + reason if reason else ""}')
+            continue
+        local_path = _coerce_str(result.get('local_path'))
+        if not local_path and isinstance(result.get('images'), list) and result['images']:
+            first = result['images'][0]
+            if isinstance(first, dict):
+                local_path = _coerce_str(first.get('local_path'))
+        if not local_path:
+            errors.append(f'item[{i}]: image_generator returned no local_path')
+            continue
+        generated.append({
+            'local_path': local_path,
+            'caption': caption,
+            'alt': _coerce_str(item.get('alt') or caption),
+            'source': 'ai-gen',
+        })
+
+    if not generated:
+        return tool_error(
+            'ppt_generate_material_images',
+            'failed to generate any image: ' + '; '.join(errors[:3]),
+        )
+
+    reg = ppt_register_material_images(generated, replace=False)
+    if _tool_failed(reg):
+        return tool_error(
+            'ppt_generate_material_images',
+            f'generated but register failed: {_tool_fail_reason(reg)}',
+            detail=json.dumps({
+                'generated': generated,
+                'register': reg,
+                'errors': errors or None,
+            }, ensure_ascii=False)[:2500],
+        )
+    payload = _tool_payload(reg)
+    return tool_success('ppt_generate_material_images', {
+        **payload,
+        'generated_count': len(generated),
+        'generation_errors': errors or None,
+        'note': (
+            'AI material images registered into material_images. '
+            'ppt_init_deck attaches them as Pool B reference_images.'
+        ),
+    })
+
+
 def ppt_attach_material_images(deck_dir: str) -> dict:
     """Attach workspace material_images into an existing deck's info_pack Pool B.
 
@@ -2358,8 +2422,7 @@ def ppt_init_deck(
     be redrawn. To change a page, call ppt_find_deck then ppt_patch_page_outline
     plus ppt_run_stage(stage='page-html', page=N).
 
-    Prefer omitting optional fields instead of passing null. image_source must be
-    the string 'none' (not JSON null) when no photos are needed.
+    Prefer omitting optional fields instead of passing null.
 
     If collect_materials previously called ppt_register_material_images, those
     files are auto-attached into user_assets.reference_images so outline / page-html
@@ -2373,11 +2436,9 @@ def ppt_init_deck(
         audience (str): Target audience.
         scene (str): Presentation scene.
         style_hint (str): Optional visual style guidance.
-        image_source (str): 'none' | 'ai-gen' | 'web-search'. Default 'none'.
-            Material images from collect do NOT require ai-gen/web-search —
-            keep 'none' and rely on registered reference_images.
-            Never pass null — omit the field or use 'none'.
-        infographic_source (str): 'echarts' | 'ai-gen'. Default 'echarts'.
+        image_source (str): Always 'none'. Decorative T2I slots were removed;
+            slide photos come from material_images (KB/web/AI collect). Omit or pass 'none'.
+        infographic_source (str): Always 'echarts'. Omit or pass 'echarts'.
         ppt_mode (str): 'fast' or 'standard'. Default 'fast'.
         key_points_json (str): JSON array string like '["a","b"]', or omit.
 
@@ -2399,12 +2460,10 @@ def ppt_init_deck(
     mode = _coerce_str(ppt_mode, 'fast').lower()
     if mode not in ('fast', 'standard'):
         mode = 'fast'
-    img_src = _coerce_str(image_source, 'none').lower()
-    if img_src not in ('none', 'ai-gen', 'web-search'):
-        img_src = 'none'
-    info_src = _coerce_str(infographic_source, 'echarts').lower()
-    if info_src not in ('echarts', 'ai-gen'):
-        info_src = 'echarts'
+    # Decorative T2I path removed; legacy image_source/infographic_source
+    # arguments are accepted for schema compatibility but ignored.
+    img_src = 'none'
+    info_src = 'echarts'
 
     if isinstance(key_points_json, list):
         key_points = [str(x) for x in key_points_json][:12]
@@ -2534,52 +2593,6 @@ def _tool_fail_reason(resp: Any) -> str:
     return 'failed'
 
 
-def _deck_image_source(deck: Path) -> str:
-    try:
-        pack = json.loads((deck / 'task_pack.json').read_text(encoding='utf-8'))
-        src = _coerce_str((pack.get('params') or {}).get('image_source'), 'none').lower()
-        return src if src in ('none', 'ai-gen', 'web-search') else 'none'
-    except Exception:
-        return 'none'
-
-
-def _asset_plan_pending_slots(deck: Path) -> int:
-    path = deck / 'asset_plan.json'
-    if not path.exists():
-        return 0
-    try:
-        plan = json.loads(path.read_text(encoding='utf-8'))
-    except Exception:
-        return 0
-    pending = 0
-    for page in plan.get('pages') or []:
-        if not isinstance(page, dict):
-            continue
-        for slot in page.get('slots') or []:
-            if not isinstance(slot, dict):
-                continue
-            if slot.get('status') == 'ok':
-                continue
-            if _coerce_str(slot.get('id') or slot.get('slot_id')):
-                pending += 1
-    return pending
-
-
-def _coerce_optional_bool(value: Any) -> Optional[bool]:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return value
-    text = str(value).strip().lower()
-    if text in _NULLISH or text == '':
-        return None
-    if text in ('1', 'true', 'yes', 'y', 'on'):
-        return True
-    if text in ('0', 'false', 'no', 'n', 'off'):
-        return False
-    return None
-
-
 def ppt_build_outline(
     user_query: str,
     page_count: Union[int, str, None] = 4,
@@ -2609,9 +2622,9 @@ def ppt_build_outline(
         audience (str): Target audience.
         scene (str): Presentation scene.
         style_hint (str): Optional visual style guidance.
-        image_source (str): 'none' | 'ai-gen' | 'web-search'. Default 'none'.
-            Keep 'none' when using registered material images from collect.
-        infographic_source (str): 'echarts' | 'ai-gen'. Default 'echarts'.
+        image_source (str): Always 'none' (legacy values coerced). Material images
+            come from collect_materials registration.
+        infographic_source (str): Always 'echarts'.
         ppt_mode (str): 'fast' or 'standard'. Default 'fast'.
         key_points_json (str): JSON array string like '["a","b"]', or omit.
 
@@ -2718,12 +2731,11 @@ def ppt_build_outline(
 def ppt_generate_pages(
     deck_dir: Optional[str] = None,
     concurrency: Union[int, str, None] = 4,
-    gen_images: Union[bool, str, None] = None,
 ) -> dict:
     """Generate all slide HTML pages from published slide_outline in one call.
 
     Preferred for the full-deck generate_ppt path. Runs:
-      asset-plan → [batch-gen-image if needed] → batch-page-html
+      asset-plan → batch-page-html
     batch-page-html auto-publishes preview_html (+ notes) page-by-page.
 
     Do NOT call this for single-page edits — use ppt_patch_page_outline /
@@ -2733,9 +2745,6 @@ def ppt_generate_pages(
     Args:
         deck_dir (str): Absolute deck directory. Omit to use ppt_find_deck().
         concurrency (int): Parallel page-html workers (default 4, clamped 1-8).
-        gen_images (bool): Force/skip batch-gen-image. Omit = auto:
-            run only when task_pack.image_source != 'none' and asset_plan has
-            pending slots.
 
     Returns:
         deck_dir, stages summary, page-html ok/failed counts, publish counts.
@@ -2773,44 +2782,6 @@ def ppt_generate_pages(
         'pages': plan_payload.get('pages'),
         'slots': plan_payload.get('slots'),
     })
-
-    pending = _asset_plan_pending_slots(deck)
-    img_src = _deck_image_source(deck)
-    want_gen = _coerce_optional_bool(gen_images)
-    if want_gen is None:
-        want_gen = img_src != 'none' and pending > 0
-
-    if want_gen:
-        gen_res = ppt_run_stage(deck_dir_s, stage='batch-gen-image', concurrency=min(2, conc))
-        if _tool_failed(gen_res):
-            return tool_error(
-                'ppt_generate_pages',
-                f'batch-gen-image failed: {_tool_fail_reason(gen_res)}',
-                detail=json.dumps({
-                    'deck_dir': deck_dir_s,
-                    'stages': stages,
-                    'failed': gen_res,
-                }, ensure_ascii=False)[:2500],
-                meta={'deck_dir': deck_dir_s},
-            )
-        gen_payload = _tool_payload(gen_res)
-        stages.append({
-            'step': 'batch-gen-image',
-            'ok': True,
-            'status': gen_payload.get('status', 'ok'),
-            'submitted': gen_payload.get('submitted'),
-            'note': gen_payload.get('note'),
-        })
-    else:
-        stages.append({
-            'step': 'batch-gen-image',
-            'ok': True,
-            'status': 'skipped',
-            'reason': (
-                f'image_source={img_src!r}, pending_slots={pending}'
-                if want_gen is not False else 'gen_images=false'
-            ),
-        })
 
     html_res = ppt_run_stage(
         deck_dir_s, stage='batch-page-html', concurrency=conc,
@@ -2854,7 +2825,6 @@ def ppt_generate_pages(
         'deck_dir': deck_dir_s,
         'status': status,
         'concurrency': conc,
-        'image_source': img_src,
         'pending_image_slots': pending,
         'submitted': html_payload.get('submitted'),
         'ok': html_payload.get('ok'),
@@ -2891,11 +2861,11 @@ def ppt_run_stage(
 
     Args:
         deck_dir (str): Absolute deck directory from ppt_init_deck.
-        stage (str): preflight|style|outline|asset-plan|gen-image|page-html|
-            batch-gen-image|batch-page-html|refine-page|batch-refine-page.
+        stage (str): preflight|style|outline|asset-plan|page-html|
+            batch-page-html|refine-page|batch-refine-page.
             Export is UI-only — do not pass stage=export.
-        page (int): Required for gen-image / page-html / refine-page (1-based).
-        slot (str): Required for gen-image.
+        page (int): Required for page-html / refine-page (1-based).
+        slot (str): Unused (kept for schema compatibility).
         concurrency (int): For batch stages (default 4, clamped to 1-8).
         start_page (int): Optional batch-page-html start.
         end_page (int): Optional batch-page-html end.
@@ -2935,24 +2905,6 @@ def ppt_run_stage(
         payload = _run_stage_inprocess(
             stage_name, deck, page=page_no, concurrency=conc, start_page=sp, end_page=ep,
         )
-        return _stage_tool_result(stage_name, payload)
-
-    if stage_name in _IMAGE_STAGES:
-        cmd = [sys.executable, str(_RUN_STAGE), stage_name, '--deck-dir', str(deck)]
-        if stage_name == 'gen-image':
-            if page_no < 1:
-                return tool_error('ppt_run_stage', 'gen-image requires page>=1')
-            if not slot_id:
-                return tool_error('ppt_run_stage', 'gen-image requires slot')
-            cmd.extend(['--page', str(page_no), '--slot', slot_id])
-        else:
-            cmd.extend(['--concurrency', str(conc)])
-        try:
-            payload = _run_image_stage_cmd(cmd)
-        except subprocess.TimeoutExpired:
-            return tool_error('ppt_run_stage', f'{stage_name} timed out')
-        except Exception as exc:
-            return tool_error('ppt_run_stage', f'{stage_name} failed: {exc}')
         return _stage_tool_result(stage_name, payload)
 
     return tool_error('ppt_run_stage', f'Unhandled stage {stage_name}')

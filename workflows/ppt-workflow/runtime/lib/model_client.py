@@ -5,8 +5,9 @@ Reads env from .env (via python-dotenv) and hits two chat endpoints:
     llm(system, user) -> str                              # SN_TEXT_* / SN_CHAT_* /v1/chat/completions
     vlm(system, user, images) -> str                      # SN_VISION_* / SN_CHAT_* /v1/chat/completions
 
-**T2I is intentionally NOT here.** Image generation routes through
-sn-image-base/scripts/sn_agent_runner.py sn-image-generate. This module is LLM/VLM only.
+**T2I is intentionally NOT here.** AI material images for PPT are generated in
+collect_materials via framework ``image_generator`` /
+``ppt_generate_material_images``. This module is LLM/VLM only.
 
 No asyncio. No adapters. No configs.Configs. Just httpx.
 """
@@ -108,8 +109,8 @@ class VLMConfig:
         )
 
 
-# NOTE: T2I is intentionally NOT handled here. Image generation must go through
-# sn-image-base/scripts/sn_agent_runner.py sn-image-generate. This module is LLM/VLM only.
+# NOTE: T2I is intentionally NOT handled here. AI material images use framework
+# image_generator via ppt_generate_material_images. This module is LLM/VLM only.
 
 
 # ---------------------------------------------------------------------------

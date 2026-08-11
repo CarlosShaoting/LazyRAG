@@ -6,9 +6,7 @@ Usage:
     python run_stage.py style           --deck-dir <deck>
     python run_stage.py outline         --deck-dir <deck>
     python run_stage.py asset-plan      --deck-dir <deck>
-    python run_stage.py gen-image       --deck-dir <deck> --page N --slot SLOT
     python run_stage.py page-html       --deck-dir <deck> --page N
-    python run_stage.py batch-gen-image    --deck-dir <deck> [--concurrency 4]
     python run_stage.py batch-page-html    --deck-dir <deck> [--concurrency 4]
     python run_stage.py refine-page        --deck-dir <deck> --page N
     python run_stage.py batch-refine-page  --deck-dir <deck> [--concurrency 4]
@@ -975,273 +973,28 @@ def cmd_outline(deck: Path) -> int:
     return _ok(path="outline.json", pages=len(pages))
 
 
-_ALLOWED_SLOT_KINDS = {"decoration", "concept_visual", "infographic"}
-
-
 def cmd_asset_plan(deck: Path) -> int:
+    """Write empty per-page asset slots.
+
+    Decorative T2I slots were removed. Slide photos come from collect_materials
+    Pool B (material_images → reference_images / use_image) only.
+    """
     outline = _load_json(deck / "outline.json")
-    style = _load_json(deck / "style_spec.json")
-    tp = _load_json(deck / "task_pack.json")
-    image_source = str((tp.get("params") or {}).get("image_source") or "none").strip().lower()
-    # When image_source is none, T2I is skipped — keep slots empty so page-html
-    # never invents <img src="../images/..."> for files that will not exist.
-    if image_source in ("", "none", "null"):
-        outline_pages = {int(p.get("page_no", 0)): p for p in outline.get("pages", [])}
-        data = {
-            "pages": [
-                {"page_no": pno, "slots": []}
-                for pno in sorted(outline_pages)
-            ],
-        }
-        _write_text(deck / "asset_plan.json", json.dumps(data, ensure_ascii=False, indent=2))
-        return _ok(
-            path="asset_plan.json",
-            pages=len(data["pages"]),
-            slots=0,
-            skipped_t2i_slots_due_to_image_source=image_source or "none",
-        )
-
-    system_prompt = _load_prompt("asset_plan.md")
-    user_prompt = json.dumps({
-        "style_spec": style,
-        "outline": outline,
-    }, ensure_ascii=False, indent=2)
-    try:
-        raw = llm(system_prompt, user_prompt)
-        data = _parse_json_loose(raw)
-    except (ModelClientError, json.JSONDecodeError) as e:
-        return _fail(f"asset_plan: {e}")
-
-    # Build a lookup from outline pages for use_table / use_image checks
     outline_pages = {int(p.get("page_no", 0)): p for p in outline.get("pages", [])}
-    planned_pages = {int(p.get("page_no", 0)): p for p in data.get("pages", []) if p.get("page_no") is not None}
-
-    # Normalize to a full page list. The model sometimes emits only pages with
-    # non-empty slots, but downstream stages expect every outline page to be
-    # present in asset_plan.json, including pages whose slots are intentionally
-    # empty because they use inherited tables/images or pure HTML rendering.
-    normalized_pages = []
-    for pno in sorted(outline_pages):
-        page = planned_pages.get(pno) or {"page_no": pno, "slots": []}
-        page["page_no"] = pno
-        if not isinstance(page.get("slots"), list):
-            page["slots"] = []
-        normalized_pages.append(page)
-    data["pages"] = normalized_pages
-
-    dropped_kinds: list[str] = []
-    dropped_for_inherited: list[int] = []
-
-    for page in data.get("pages", []):
-        pno = int(page.get("page_no", 0))
-        op = outline_pages.get(pno) or {}
-
-        # If the outline page inherits a table or image, clear all T2I slots
-        if op.get("use_table") is not None or op.get("use_image") is not None:
-            if page.get("slots"):
-                dropped_for_inherited.append(pno)
-            page["slots"] = []
-            continue
-
-        # Filter slots by whitelist. Missing or empty slot_kind defaults to
-        # "decoration" instead of being silently dropped — a bare intent string
-        # from the outline should still produce an image slot.
-        filtered = []
-        for slot in page.get("slots", []):
-            kind = slot.get("slot_kind", "").strip()
-            if not kind:
-                kind = "decoration"
-                slot["slot_kind"] = kind
-                dropped_kinds.append(f"p{pno}/{slot.get('slot_id','?')}=<empty>→decoration")
-            elif kind not in _ALLOWED_SLOT_KINDS:
-                dropped_kinds.append(f"p{pno}/{slot.get('slot_id','?')}={kind!r}")
-                continue
-            sid = slot.get("slot_id", "slot")
-            slot["local_path"] = f"images/page_{pno:03d}_{sid}.png"
-            slot["status"] = "pending"
-            slot["quality_review"] = None
-            filtered.append(slot)
-        page["slots"] = filtered
-
+    data = {
+        "pages": [
+            {"page_no": pno, "slots": []}
+            for pno in sorted(outline_pages)
+            if pno > 0
+        ],
+    }
     _write_text(deck / "asset_plan.json", json.dumps(data, ensure_ascii=False, indent=2))
-    total_slots = sum(len(p.get("slots", [])) for p in data.get("pages", []))
-    extra = {"path": "asset_plan.json", "pages": len(data.get("pages", [])), "slots": total_slots}
-    if dropped_kinds:
-        extra["dropped_slots_bad_kind"] = dropped_kinds
-    if dropped_for_inherited:
-        extra["cleared_slots_due_to_inherited"] = dropped_for_inherited
-    return _ok(**extra)
-
-
-def _update_asset_plan_slot(
-    plan_path: Path, page_no: int, slot_id: str, updates: dict
-) -> None:
-    """Atomically re-read asset_plan.json, patch the target slot, write it back.
-
-    Holds _PLAN_LOCK so concurrent gen-image workers can't clobber each other.
-    """
-    with _PLAN_LOCK:
-        plan = _load_json(plan_path)
-        for page in plan.get("pages", []):
-            if int(page.get("page_no", -1)) != page_no:
-                continue
-            for slot in page.get("slots", []):
-                if slot.get("slot_id") == slot_id:
-                    slot.update(updates)
-                    break
-            break
-        _write_text(plan_path, json.dumps(plan, ensure_ascii=False, indent=2))
-
-
-def cmd_gen_image(deck: Path, page_no: int, slot_id: str) -> int:
-    """Generate a single slot's image via sn-image-base's sn_agent_runner (T2I).
-
-    Policy: T2I must route through sn-image-base, NOT through model_client.
-    model_client handles only LLM / VLM.
-    """
-    import subprocess
-
-    plan_path = deck / "asset_plan.json"
-    plan = _load_json(plan_path)
-    page = next((p for p in plan.get("pages", []) if int(p.get("page_no", -1)) == page_no), None)
-    if page is None:
-        return _fail(f"page {page_no} missing from asset_plan")
-    slot = next((s for s in page.get("slots", []) if s.get("slot_id") == slot_id), None)
-    if slot is None:
-        return _fail(f"slot {slot_id!r} missing from page {page_no}")
-
-    # Locate sn-image-base/scripts/sn_agent_runner.py
-    sn_base = os.environ.get("SN_IMAGE_BASE", "").strip()
-    if sn_base:
-        runner = Path(sn_base) / "scripts" / "sn_agent_runner.py"
-    else:
-        # fallback: assume sibling dir under skills/
-        runner = SKILL_DIR.parent / "image_gen" / "scripts" / "sn_agent_runner.py"
-    if not runner.exists():
-        return _fail(f"image_gen sn_agent_runner.py not found at {runner}; set $SN_IMAGE_BASE")
-
-    save_path = deck / slot["local_path"]
-    save_path.parent.mkdir(parents=True, exist_ok=True)
-
-    prompt = slot["image_prompt"]
-    if slot.get("slot_kind") == "infographic":
-        prompt = (
-            "Infographic-style diagram with clean layout, clear labels, and professional design. "
-            "Use icons, arrows, and structured data visualization where appropriate. "
-            "No UI chrome, no watermarks, no garbled text.\n\n"
-            f"{prompt}"
-        )
-
-    cmd = [
-        sys.executable, str(runner), "sn-image-generate",
-        "--prompt", prompt,
-        "--aspect-ratio", slot.get("aspect_ratio", "16:9"),
-        "--image-size", slot.get("image_size", "2k"),
-        "--save-path", str(save_path),
-        "--output-format", "json",
-    ]
-
-    def _record_failure(err: str) -> int:
-        _update_asset_plan_slot(
-            plan_path, page_no, slot_id,
-            {"status": "failed", "quality_review": {"error": err[:300]}},
-        )
-        return _fail(f"gen-image p{page_no} {slot_id}: {err}",
-                     page_no=page_no, slot_id=slot_id)
-
-    try:
-        proc = _run_text_subprocess(cmd, timeout=600)
-    except subprocess.TimeoutExpired:
-        return _record_failure("sn_agent_runner sn-image-generate timed out after 600s")
-    except FileNotFoundError as e:
-        return _record_failure(f"failed to spawn python for sn-image-base: {e}")
-
-    if proc.returncode != 0:
-        # runner failed; parse JSON error if present, else use stderr
-        err = proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}"
-        try:
-            out = json.loads(proc.stdout.strip().splitlines()[-1])
-            if out.get("status") == "failed":
-                err = str(out.get("error", err))
-        except Exception:
-            pass
-        return _record_failure(err)
-
-    # Verify the file actually landed
-    if not save_path.exists() or save_path.stat().st_size == 0:
-        return _record_failure(f"sn-image-generate returned ok but {save_path} is missing/empty")
-
-    # VLM quality gate — T2I models sometimes emit images with color-hex
-    # swatches as text, watermarks, UI chrome, or garbled glyphs. These look
-    # broken on a slide, so reject + delete instead of shipping them.
-    qc_reject = _vlm_image_qc(save_path)
-    if qc_reject is not None:
-        try:
-            save_path.unlink()
-        except OSError:
-            pass
-        _update_asset_plan_slot(
-            plan_path, page_no, slot_id,
-            {"status": "failed", "quality_review": {"rejected_by": "vlm_qc", "reason": qc_reject[:300]}},
-        )
-        return _fail(
-            f"gen-image p{page_no} {slot_id}: rejected by VLM QC ({qc_reject[:120]})",
-            page_no=page_no, slot_id=slot_id, qc_rejected=True,
-        )
-
-    _update_asset_plan_slot(
-        plan_path, page_no, slot_id,
-        {"status": "ok", "quality_review": {"rejected_by": None}},
+    return _ok(
+        path="asset_plan.json",
+        pages=len(data["pages"]),
+        slots=0,
+        note="t2i_slots_disabled_use_material_images",
     )
-    return _ok(page_no=page_no, slot_id=slot_id, path=slot["local_path"])
-
-
-_VLM_QC_SYSTEM = """You are a strict image QC reviewer for presentation slides.
-
-Reject an image if it shows ANY of:
-- Hex color codes or RGB values rendered as visible text inside the image
-  (e.g. "#FF0000", "rgb(120, 30, 200)", a color-picker swatch with numbers)
-- A color palette or swatch grid with labels / codes — this is a design tool
-  leaked into the output, not a slide image
-- Watermarks, website URLs, model-brand marks (e.g. "getty images", "stable diffusion")
-- UI chrome from design tools (toolbars, menu bars, layer panels, rulers)
-- Garbled / nonsense text that looks like text but isn't a real word
-- Big empty white areas with only stray marks
-
-If the image is a normal illustration / photo / abstract decoration with no such defects, accept it.
-
-Output format — STRICTLY ONE of these two lines, nothing else:
-
-  OK
-  REJECT: <one short reason, under 20 words>
-
-No explanations, no JSON, no markdown.
-"""
-
-
-def _vlm_image_qc(image_path: Path) -> str | None:
-    """Run a fast VLM QC check on a generated image. Returns None if the
-    image is acceptable, or a short rejection reason if it should be dropped.
-
-    The QC is best-effort: any error (missing VLM, network, parse failure) is
-    treated as ACCEPT so we never block the pipeline on the QC itself.
-    """
-    try:
-        out = vlm(_VLM_QC_SYSTEM, "Review this image.", images=[image_path])
-    except Exception:
-        return None
-    first = (out or "").strip().splitlines()[0].strip() if (out or "").strip() else ""
-    if not first:
-        return None
-    upper = first.upper()
-    if upper == "OK" or upper.startswith("OK "):
-        return None
-    if upper.startswith("REJECT"):
-        # trim "REJECT:" prefix if present
-        after = first.split(":", 1)[1].strip() if ":" in first else first
-        return after or "vlm rejected without reason"
-    # Unparseable — be permissive, ship it.
-    return None
 
 
 def _normalize_img_srcs(html: str, page_plan: dict, extra_paths: list[str] | None = None) -> tuple[str, int]:
@@ -1981,9 +1734,6 @@ def cmd_refine_page(deck: Path, page_no: int) -> int:
 # Batch helpers (concurrent fan-out)
 # ---------------------------------------------------------------------------
 
-# Serializes the read-modify-write cycle on asset_plan.json so concurrent
-# gen-image workers don't clobber each other's slot updates.
-_PLAN_LOCK = threading.Lock()
 _STDOUT_LOCK = threading.Lock()
 
 
@@ -2034,38 +1784,6 @@ def _run_concurrent(tasks: list[tuple], concurrency: int) -> list[dict]:
             _progress(f"[{completed_count}/{len(tasks)}] {label} {status}")
             results[i] = {"label": label, "exit_code": code, "payload": payload}
     return [r for r in results if r is not None]
-
-
-def cmd_batch_gen_image(deck: Path, concurrency: int) -> int:
-    """Fan out gen-image over every pending slot in asset_plan.json."""
-    plan_path = deck / "asset_plan.json"
-    if not plan_path.exists():
-        return _fail("asset_plan.json missing")
-    plan = _load_json(plan_path)
-    tasks: list[tuple] = []
-    for page in plan.get("pages", []):
-        pno = int(page.get("page_no", 0))
-        for slot in page.get("slots", []):
-            if slot.get("status") == "ok":
-                continue
-            sid = slot.get("slot_id", "slot")
-            tasks.append((cmd_gen_image, (deck, pno, sid), {}, f"p{pno:03d}/{sid}"))
-    if not tasks:
-        return _ok(stage="gen-image", submitted=0, note="nothing pending")
-    results = _run_concurrent(tasks, concurrency)
-    ok = [r["label"] for r in results if r["exit_code"] == 0]
-    failed = [
-        {"label": r["label"], "error": r["payload"].get("error", "")}
-        for r in results if r["exit_code"] != 0
-    ]
-    return _ok(
-        stage="gen-image",
-        concurrency=concurrency,
-        submitted=len(tasks),
-        ok=len(ok),
-        failed=len(failed),
-        failed_detail=failed or None,
-    )
 
 
 def cmd_batch_page_html(deck: Path, concurrency: int,
@@ -2167,11 +1885,6 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--format", choices=("pptx", "pdf"), default=None,
                     help="override task_pack.params.output_format")
 
-    sp = sub.add_parser("gen-image")
-    sp.add_argument("--deck-dir", type=Path, required=True)
-    sp.add_argument("--page", type=int, required=True)
-    sp.add_argument("--slot", type=str, required=True)
-
     sp = sub.add_parser("page-html")
     sp.add_argument("--deck-dir", type=Path, required=True)
     sp.add_argument("--page", type=int, required=True)
@@ -2186,7 +1899,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Batch / concurrent variants (default concurrency=4). Each fans out its
     # per-item work across a thread pool so LLM / VLM / T2I wait times overlap.
-    for name in ("batch-gen-image", "batch-refine-page"):
+    for name in ("batch-refine-page",):
         sp = sub.add_parser(name)
         sp.add_argument("--deck-dir", type=Path, required=True)
         sp.add_argument("--concurrency", type=int, default=4,
@@ -2217,16 +1930,12 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_outline(deck)
     if args.cmd == "asset-plan":
         return cmd_asset_plan(deck)
-    if args.cmd == "gen-image":
-        return cmd_gen_image(deck, args.page, args.slot)
     if args.cmd == "page-html":
         return cmd_page_html(deck, args.page)
     if args.cmd == "refine-page":
         return cmd_refine_page(deck, args.page)
     if args.cmd == "export":
         return cmd_export(deck, getattr(args, "format", None))
-    if args.cmd == "batch-gen-image":
-        return cmd_batch_gen_image(deck, args.concurrency)
     if args.cmd == "batch-page-html":
         return cmd_batch_page_html(deck, args.concurrency,
                                    getattr(args, "start_page", None),

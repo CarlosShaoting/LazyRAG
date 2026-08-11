@@ -15,7 +15,6 @@ workflows/ppt-workflow/
     references/               # html_constraints, style_catalog
     scripts/run_stage.py
     scripts/export_pptx/      # Playwright DOM → editable PPTX
-  image_gen/                  # Optional T2I backend (image_source=ai-gen)
 ```
 
 ## Note on SenseNova skills (important)
@@ -24,14 +23,14 @@ This workflow does **not** vendor the full SenseNova / OpenClaw skills tree
 (`sn-ppt-entry`, `sn-ppt-creative`, `sn-ppt-doctor`, `sn-search-image`, SKILL.md
 orchestration, workbench, etc.).
 
-What we keep under `runtime/` (+ optional `image_gen/`) is a **minimal runtime
-subset** adapted for LazyMind:
+What we keep under `runtime/` is a **minimal runtime subset** adapted for
+LazyMind:
 
 | SenseNova skill piece | In this workflow? | Why |
 |---|---|---|
 | `sn-ppt-standard` run_stage + prompts | Yes → `runtime/` | HTML generation |
 | `export_pptx` (Playwright) | Yes → `runtime/scripts/export_pptx/` | Used by **UI/API** editable export only — **not** a skill tool |
-| `sn-image-base` T2I runner | Yes → `image_gen/` | Only if `image_source=ai-gen` |
+| `sn-image-base` T2I runner | No | Removed; AI material images use framework `image_generator` in collect_materials |
 | `sn-ppt-entry` | No | Replaced by `ppt_init_deck` + workflow scenario |
 | `sn-ppt-creative` | No | Not used (standard HTML mode only) |
 | `sn-ppt-doctor` | No | Env checks live in deploy / docs |
@@ -43,16 +42,18 @@ specific file into `runtime/` and note it here.
 
 ## Material images → final HTML
 
-Optional `collect_materials` can pull facts (`kb`, `web_search`) and real images:
+Optional `collect_materials` can pull facts (`kb`, `web_search`) and images:
 
-1. `ppt_search_web_images` / KB image hits → `ppt_register_material_images`
-2. `ppt_build_outline` auto-inits the deck and attaches them into
+1. KB/web hits → `ppt_register_material_images`
+2. **Only if the user explicitly asks** for AI-generated material images →
+   `ppt_generate_material_images` (framework `image_generator`) → same Pool B
+3. `ppt_build_outline` auto-inits the deck and attaches them into
    `info_pack.user_assets.reference_images`, then style/outline/publish
-3. Outline assigns `use_image.reference_image_index`; UI gets per-page `slide_outline`
-4. `ppt_generate_pages` runs asset-plan + batch-page-html (incl. UI edits) and
+4. Outline assigns `use_image.reference_image_index`; UI gets per-page `slide_outline`
+5. `ppt_generate_pages` runs asset-plan + batch-page-html (incl. UI edits) and
    embeds foreground `<img>`
 
-Keep `image_source='none'` for this path (AI T2I is separate).
+Do not generate material images unless the user explicitly requests them.
 
 ## Outline → HTML split
 
