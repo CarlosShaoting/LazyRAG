@@ -10,7 +10,6 @@ import asyncio
 import base64
 import json
 import logging
-import mimetypes
 import os
 import pathlib
 import shutil
@@ -139,19 +138,28 @@ class RemoteWorkflowExecutor:
                 if event is None:
                     continue
                 kind = event.get('type')
-                if kind not in {'done', 'error'}:
+                if kind == 'artifact':
+                    artifact = {'slot': event.get('slot'), 'content_type': event.get('content_type'),
+                                'seq': event.get('seq', 1), 'value': event.get('value')}
+                    artifact['value'] = await self._persist_files(
+                        client, attempt_id, lease, artifact['value'],
+                        str(artifact.get('content_type') or ''), workspace)
+                    # The ordinary Task Center projection must receive the same
+                    # host-neutral value as the Workflow artifact sink.  A raw
+                    # path here points into this executor's temporary workspace
+                    # and is inaccessible to Core after the attempt finishes.
+                    await self.runtime.task_event(client, task_id, lease, {
+                        **event, 'value': artifact['value'],
+                    })
+                    await self.runtime.artifact(client, attempt_id, lease, artifact)
+                    artifacts.append(artifact)
+                elif kind not in {'done', 'error'}:
                     await self.runtime.task_event(client, task_id, lease, event)
+
                 if kind in {'task_start', 'progress'}:
                     await self.runtime.progress(client, attempt_id, lease, {
                         'progress': event.get('progress', 0),
                         'phase': event.get('current_phase', kind)})
-                elif kind == 'artifact':
-                    artifact = {'slot': event.get('slot'), 'content_type': event.get('content_type'),
-                                'seq': event.get('seq', 1), 'value': event.get('value')}
-                    artifact['value'] = self._embed_files(
-                        artifact['value'], str(artifact.get('content_type') or ''), workspace)
-                    await self.runtime.artifact(client, attempt_id, lease, artifact)
-                    artifacts.append(artifact)
                 elif kind == 'done':
                     terminal_event = event
                     summary = str(event.get('summary') or '')
@@ -204,8 +212,8 @@ class RemoteWorkflowExecutor:
             result[str(material)] = str(target)
         return result
 
-    @staticmethod
-    def _embed_files(value: Any, content_type: str, workspace: str) -> Any:
+    async def _persist_files(self, client: httpx.AsyncClient, attempt: str, lease: str,
+                             value: Any, content_type: str, workspace: str) -> Any:
         if not isinstance(value, dict) or content_type not in {'file', 'file_list', 'image'}:
             return value
         result = dict(value)
@@ -214,13 +222,13 @@ class RemoteWorkflowExecutor:
             paths = result.get(key)
             scalar = isinstance(paths, str)
             values = [paths] if scalar else paths if isinstance(paths, list) else []
-            embedded = []
+            persisted = []
             for raw in values:
                 raw_text = str(raw)
                 if raw_text.startswith((
-                    'http://', 'https://', 'data:', '/static-files/', '/api/core/static-files/',
+                    'http://', 'https://', '/static-files/', '/api/core/static-files/',
                 )):
-                    embedded.append(raw_text)
+                    persisted.append(raw_text)
                     continue
                 path = pathlib.Path(raw_text)
                 if not path.is_absolute():
@@ -228,12 +236,12 @@ class RemoteWorkflowExecutor:
                 try:
                     resolved = path.resolve(strict=True)
                     resolved.relative_to(pathlib.Path(workspace).resolve())
-                    mime = mimetypes.guess_type(resolved.name)[0] or 'application/octet-stream'
-                    data = base64.b64encode(resolved.read_bytes()).decode('ascii')
-                    embedded.append(f'data:{mime};base64,{data}')
+                    stable_path = await self.runtime.upload_artifact_file(
+                        client, attempt, lease, resolved.name, resolved.read_bytes())
+                    persisted.append(stable_path)
                 except (OSError, ValueError):
-                    embedded.append('')
-            result[key] = embedded[0] if scalar and embedded else embedded
+                    persisted.append('')
+            result[key] = persisted[0] if scalar and persisted else persisted
         return result
 
     @staticmethod

@@ -326,6 +326,39 @@ export interface WorkflowUI {
   slots?: Record<string, Record<string, unknown>>;
 }
 
+/**
+ * The catalog keeps reusable slot metadata at the workflow root while UI tabs
+ * commonly reference a slot with only `{ id }`.  Hydrate those references so
+ * renderers can see properties such as `type`, `cardinality`, and `ordered`.
+ */
+export function hydrateWorkflowUI(raw: unknown): WorkflowUI {
+  if (!raw || typeof raw !== 'object') return {};
+  const spec = raw as Record<string, unknown>;
+  const rawUI = spec.ui;
+  if (!rawUI || typeof rawUI !== 'object' || Array.isArray(rawUI)) return {};
+
+  const ui = rawUI as WorkflowUI;
+  const slotDefs = new Map<string, SlotDef>();
+  if (Array.isArray(spec.slots)) {
+    for (const value of spec.slots) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+      const slot = value as SlotDef;
+      if (typeof slot.id === 'string' && slot.id) slotDefs.set(slot.id, slot);
+    }
+  }
+
+  if (!Array.isArray(ui.tabs) || slotDefs.size === 0) return ui;
+  return {
+    ...ui,
+    tabs: ui.tabs.map((tab) => ({
+      ...tab,
+      slots: Array.isArray(tab.slots)
+        ? tab.slots.map((slot) => ({ ...slotDefs.get(slot.id), ...slot }))
+        : [],
+    })),
+  };
+}
+
 export interface SlotVersionEntry {
   revision: number;
   change_source: "ai" | "human";
@@ -577,7 +610,8 @@ export const useWorkflowStore = create<WorkflowStore>()((set, get) => ({
       const res = await WorkflowInfoApi().getWorkflow(workflowId, {
         headers: lang ? { "Accept-Language": lang } : undefined,
       });
-      const ui: WorkflowUI = res?.data?.data?.ui ?? res?.data?.ui ?? {};
+      const spec = res?.data?.data ?? res?.data ?? {};
+      const ui = hydrateWorkflowUI(spec);
       set((state) => ({
         workflowUIByWorkflow: { ...state.workflowUIByWorkflow, [cacheKey]: ui },
       }));

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 
@@ -18,20 +19,67 @@ def test_remote_executor_ignores_non_json_stream_frames():
     assert RemoteWorkflowExecutor._parse_frame('event: heartbeat\n\n') is None
 
 
-def test_remote_executor_embeds_host_local_file(tmp_path):
-    output = tmp_path / 'report.txt'
-    output.write_text('remote result', encoding='utf-8')
-    value = RemoteWorkflowExecutor._embed_files(
-        {'path': 'report.txt', 'name': 'report.txt'}, 'file', str(tmp_path))
-    assert value['path'].startswith('data:text/plain;base64,')
-    assert str(tmp_path) not in value['path']
+def test_remote_executor_persists_artifact_before_task_center_event(monkeypatch):
+    asyncio.run(_assert_remote_executor_persists_artifact_before_task_center_event(monkeypatch))
 
 
-def test_remote_executor_preserves_core_static_file_url():
-    signed_url = '/static-files/ai_generated/result.png?expires=123&sig=test'
-    value = RemoteWorkflowExecutor._embed_files(
-        {'path': signed_url}, 'image', '/tmp/workspace')
-    assert value['path'] == signed_url
+async def _assert_remote_executor_persists_artifact_before_task_center_event(monkeypatch):
+    worker = RemoteWorkflowExecutor()
+
+    class Runtime:
+        task_artifact = None
+        workflow_artifact = None
+        uploaded = None
+
+        async def context(self, *_):
+            return {'metadata': {'task_id': 'task-1'}, 'inputs': {}}
+
+        async def execution_spec(self, *_):
+            return {'task': {'input_slots': [], 'output_slots': ['image_output']},
+                    'params': {}, 'steps': [], 'llm_config': {}}
+
+        async def heartbeat(self, *_):
+            return None
+
+        async def task_event(self, _client, _task, _lease, event):
+            if event.get('type') == 'artifact':
+                self.task_artifact = event
+
+        async def artifact(self, _client, _attempt, _lease, artifact):
+            self.workflow_artifact = artifact
+
+        async def upload_artifact_file(self, _client, attempt, lease, filename, content):
+            self.uploaded = (attempt, lease, filename, content)
+            return '/var/lib/lazymind/uploads/workflow-artifacts/session-1/attempt-1/result.png'
+
+        async def complete(self, *_):
+            return None
+
+        async def fail(self, *_):
+            pytest.fail('the attempt should not fail')
+
+    async def stream(**kwargs):
+        output = os.path.join(kwargs['task_spec']['workspace_path'], 'result.png')
+        with open(output, 'wb') as handle:
+            handle.write(b'png')
+        yield 'data: ' + json.dumps({
+            'type': 'artifact', 'slot': 'image_output', 'content_type': 'image',
+            'seq': 1, 'value': {'path': output},
+        }) + '\n\n'
+        yield 'data: {"type":"done","status":"succeeded","summary":"done"}\n\n'
+
+    from lazymind.chat.engine.subagent import runner
+    runtime = Runtime()
+    worker.runtime = runtime
+    monkeypatch.setattr(runner, 'run_subagent_stream', stream)
+
+    await worker._run_claim(object(), {'attempt_id': 'attempt-1', 'lease_token': 'lease-1'})
+
+    task_value = runtime.task_artifact['value']['path']
+    workflow_value = runtime.workflow_artifact['value']['path']
+    assert task_value == '/var/lib/lazymind/uploads/workflow-artifacts/session-1/attempt-1/result.png'
+    assert task_value == workflow_value
+    assert runtime.uploaded == ('attempt-1', 'lease-1', 'result.png', b'png')
 
 
 @pytest.mark.asyncio
@@ -52,14 +100,6 @@ async def test_remote_executor_materializes_fenced_inputs_in_host_workspace(tmp_
     assert runtime.calls == [('attempt-1', 'lease-1', 'brief')]
     assert values['brief'] == str(tmp_path / 'inputs' / 'brief.txt')
     assert (tmp_path / 'inputs' / 'brief.txt').read_text() == 'hello'
-
-
-def test_remote_executor_does_not_embed_paths_outside_workspace(tmp_path):
-    outside = tmp_path.parent / 'secret.txt'
-    outside.write_text('secret', encoding='utf-8')
-    value = RemoteWorkflowExecutor._embed_files(
-        {'path': str(outside)}, 'file', str(tmp_path))
-    assert value['path'] == ''
 
 
 @pytest.mark.asyncio
