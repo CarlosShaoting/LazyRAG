@@ -12,8 +12,6 @@ import json
 import logging
 import os
 import pathlib
-import shutil
-import tempfile
 import threading
 from typing import Any, Dict, Optional
 
@@ -35,6 +33,7 @@ class RemoteWorkflowExecutor:
         self.executor_id = os.getenv('LAZYMIND_WORKFLOW_EXECUTOR_ID', 'lazymind-remote-1')
         self.token = os.getenv('LAZYMIND_WORKFLOW_EXECUTOR_TOKEN', '').strip()
         self.poll_seconds = float(os.getenv('LAZYMIND_WORKFLOW_EXECUTOR_POLL_SECONDS', '0.5'))
+        self.heartbeat_seconds = float(os.getenv('LAZYMIND_WORKFLOW_EXECUTOR_HEARTBEAT_SECONDS', '10'))
         self.concurrency = max(1, int(os.getenv('LAZYMIND_WORKFLOW_EXECUTOR_CONCURRENCY', '4')))
         self.runtime = RemoteExecutorClient(self.base_url, self.executor_id, 'lazymind', self.token)
 
@@ -77,13 +76,14 @@ class RemoteWorkflowExecutor:
     async def _run_claim(self, client: httpx.AsyncClient, claim: Dict[str, Any]) -> None:
         attempt_id = str(claim['attempt_id'])
         lease = str(claim['lease_token'])
-        workspace = ''
         try:
             context = await self.runtime.context(client, attempt_id, lease)
             metadata = context.get('metadata') or {}
             task_id = str(metadata.get('task_id') or attempt_id)
             spec = await self.runtime.execution_spec(client, task_id, lease)
-            workspace = tempfile.mkdtemp(prefix=f'lazymind-workflow-{attempt_id}-')
+            task = dict(spec.get('task') or {})
+            workspace = str(spec['workspace_path'])
+            pathlib.Path(workspace).mkdir(parents=True, exist_ok=True)
             inputs = await self._materialize_inputs(client, attempt_id, lease, context, workspace)
         except Exception as exc:
             # A claimed Attempt must never remain stuck merely because Host setup
@@ -91,28 +91,32 @@ class RemoteWorkflowExecutor:
             await self.runtime.fail(client, attempt_id, lease, f'executor setup failed: {exc}')
             return
 
-        stopped = asyncio.Event()
-        lease_lost = asyncio.Event()
+        stopped = threading.Event()
+        lease_lost = threading.Event()
 
-        async def heartbeat() -> None:
-            while not stopped.is_set():
-                await asyncio.sleep(10)
-                try:
-                    await self.runtime.heartbeat(client, attempt_id, lease)
-                except Exception:
-                    lease_lost.set()
-                    self._cancel_subagent(task_id)
-                    return
+        def heartbeat() -> None:
+            with httpx.Client(timeout=5.0) as heartbeat_client:
+                while not stopped.wait(self.heartbeat_seconds):
+                    try:
+                        self.runtime.heartbeat_sync(heartbeat_client, attempt_id, lease)
+                    except Exception:
+                        lease_lost.set()
+                        self._cancel_subagent(task_id)
+                        return
 
-        heartbeat_task = asyncio.create_task(heartbeat())
+        heartbeat_thread = threading.Thread(
+            target=heartbeat, name=f'workflow-heartbeat-{attempt_id}', daemon=True)
+        heartbeat_thread.start()
         artifacts: list[Dict[str, Any]] = []
         summary = ''
         failure: Optional[str] = None
         terminal_event: Optional[Dict[str, Any]] = None
         try:
             from lazymind.chat.engine.subagent.runner import run_subagent_stream
-            task = dict(spec.get('task') or {})
             params = dict(spec.get('params') or {})
+            output_types = dict(context.get('declared_output_types') or {})
+            if output_types:
+                params['output_slot_types'] = output_types
             attachment_context = dict(params.get('_attachment_context') or {})
             attachment_context['files'] = list(inputs.values())
             params['_attachment_context'] = attachment_context
@@ -172,32 +176,28 @@ class RemoteWorkflowExecutor:
             failure = str(exc)
         finally:
             stopped.set()
-            heartbeat_task.cancel()
-            await asyncio.gather(heartbeat_task, return_exceptions=True)
+            heartbeat_thread.join(timeout=1)
 
+        if lease_lost.is_set():
+            return
         try:
-            if lease_lost.is_set():
-                return
-            try:
-                if failure:
-                    await self.runtime.fail(client, attempt_id, lease, failure)
-                else:
-                    await self.runtime.complete(client, attempt_id, lease, {
-                        'summary': summary, 'executor_ref': task_id, 'artifacts': artifacts})
-            except httpx.HTTPStatusError as exc:
-                # A Runtime completion validation error is a terminal execution
-                # failure, not a reason to leave the Attempt running until expiry.
-                if exc.response.status_code in {401, 409}:
-                    return
-                failure = str(exc)
+            if failure:
                 await self.runtime.fail(client, attempt_id, lease, failure)
-                terminal_event = {'type': 'error', 'status': 'failed', 'message': failure}
-            if terminal_event is not None:
-                # Runtime terminal state wins first; the ordinary LazyMind event is
-                # then persisted and invokes existing Chat handoff/synthetic hooks.
-                await self.runtime.task_event(client, task_id, lease, terminal_event)
-        finally:
-            shutil.rmtree(workspace, ignore_errors=True)
+            else:
+                await self.runtime.complete(client, attempt_id, lease, {
+                    'summary': summary, 'executor_ref': task_id, 'artifacts': artifacts})
+        except httpx.HTTPStatusError as exc:
+            # A Runtime completion validation error is a terminal execution
+            # failure, not a reason to leave the Attempt running until expiry.
+            if exc.response.status_code in {401, 409}:
+                return
+            failure = str(exc)
+            await self.runtime.fail(client, attempt_id, lease, failure)
+            terminal_event = {'type': 'error', 'status': 'failed', 'message': failure}
+        if terminal_event is not None:
+            # Runtime terminal state wins first; the ordinary LazyMind event is
+            # then persisted and invokes existing Chat handoff/synthetic hooks.
+            await self.runtime.task_event(client, task_id, lease, terminal_event)
 
     async def _materialize_inputs(self, client: httpx.AsyncClient, attempt: str, lease: str,
                                   context: Dict[str, Any], workspace: str) -> Dict[str, str]:

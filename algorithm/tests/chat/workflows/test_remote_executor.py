@@ -1,6 +1,6 @@
-import asyncio
 import json
 import os
+import threading
 
 import httpx
 import pytest
@@ -19,11 +19,8 @@ def test_remote_executor_ignores_non_json_stream_frames():
     assert RemoteWorkflowExecutor._parse_frame('event: heartbeat\n\n') is None
 
 
-def test_remote_executor_persists_artifact_before_task_center_event(monkeypatch):
-    asyncio.run(_assert_remote_executor_persists_artifact_before_task_center_event(monkeypatch))
-
-
-async def _assert_remote_executor_persists_artifact_before_task_center_event(monkeypatch):
+@pytest.mark.asyncio
+async def test_remote_executor_persists_artifact_before_task_center_event(monkeypatch, tmp_path):
     worker = RemoteWorkflowExecutor()
 
     class Runtime:
@@ -36,6 +33,7 @@ async def _assert_remote_executor_persists_artifact_before_task_center_event(mon
 
         async def execution_spec(self, *_):
             return {'task': {'input_slots': [], 'output_slots': ['image_output']},
+                    'workspace_path': str(tmp_path / 'task-1'),
                     'params': {}, 'steps': [], 'llm_config': {}}
 
         async def heartbeat(self, *_):
@@ -127,7 +125,7 @@ async def test_execution_spec_failure_marks_claimed_attempt_failed():
 
 
 @pytest.mark.asyncio
-async def test_completion_rejection_becomes_explicit_failure(monkeypatch):
+async def test_completion_rejection_becomes_explicit_failure(monkeypatch, tmp_path):
     worker = RemoteWorkflowExecutor()
 
     class Runtime:
@@ -138,7 +136,8 @@ async def test_completion_rejection_becomes_explicit_failure(monkeypatch):
             return {'metadata': {'task_id': 'task-1'}, 'inputs': {}}
 
         async def execution_spec(self, *_):
-            return {'task': {'input_slots': [], 'output_slots': []}, 'params': {}, 'steps': [],
+            return {'task': {'input_slots': [], 'output_slots': []},
+                    'workspace_path': str(tmp_path / 'task-1'), 'params': {}, 'steps': [],
                     'llm_config': {}}
 
         async def heartbeat(self, *_):
@@ -169,9 +168,10 @@ async def test_completion_rejection_becomes_explicit_failure(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_reclaimed_attempt_resumes_durable_steps_in_isolated_workspace(monkeypatch):
+async def test_reclaimed_attempt_resumes_durable_steps_in_workspace(monkeypatch, tmp_path):
     worker = RemoteWorkflowExecutor()
     captured = {}
+    workspace = tmp_path / 'task-1'
 
     class Runtime:
         completed = False
@@ -180,7 +180,8 @@ async def test_reclaimed_attempt_resumes_durable_steps_in_isolated_workspace(mon
             return {'metadata': {'task_id': 'task-1'}, 'inputs': {}}
 
         async def execution_spec(self, *_):
-            return {'task': {'input_slots': [], 'output_slots': []}, 'params': {},
+            return {'task': {'input_slots': [], 'output_slots': []},
+                    'workspace_path': str(workspace), 'params': {},
                     'steps': [{'seq': 0, 'role': 'text', 'content': {'content': 'checkpoint'}}],
                     'llm_config': {}, 'tool_config': {'tavily': 'test-token'}}
 
@@ -205,20 +206,18 @@ async def test_reclaimed_attempt_resumes_durable_steps_in_isolated_workspace(mon
     assert runtime.completed is True
     assert captured['resume'] is True
     assert captured['tool_config'] == {'tavily': 'test-token'}
+    assert captured['task_spec']['workspace_path'] == str(workspace)
     assert captured['initial_steps'][0]['content']['content'] == 'checkpoint'
-    workspace = captured['task_spec']['workspace_path']
-    assert 'lazymind-workflow-attempt-1-' in workspace
-    assert not os.path.exists(workspace)
+    assert workspace.exists()
 
 
 @pytest.mark.asyncio
-async def test_lease_loss_cancels_subagent_and_suppresses_stale_terminal(monkeypatch):
-    import asyncio
+async def test_lease_loss_cancels_subagent_and_suppresses_stale_terminal(monkeypatch, tmp_path):
     from lazymind.chat.engine.subagent import runner
-    import lazymind.chat.workflow.remote_executor as remote_module
 
     worker = RemoteWorkflowExecutor()
-    cancelled = asyncio.Event()
+    worker.heartbeat_seconds = 0.01
+    cancelled = threading.Event()
 
     class Runtime:
         terminal_calls = 0
@@ -227,9 +226,10 @@ async def test_lease_loss_cancels_subagent_and_suppresses_stale_terminal(monkeyp
             return {'metadata': {'task_id': 'task-1'}, 'inputs': {}}
 
         async def execution_spec(self, *_):
-            return {'task': {'input_slots': [], 'output_slots': []}, 'params': {}, 'steps': []}
+            return {'task': {'input_slots': [], 'output_slots': []},
+                    'workspace_path': str(tmp_path / 'task-1'), 'params': {}, 'steps': []}
 
-        async def heartbeat(self, *_):
+        def heartbeat_sync(self, *_):
             raise httpx.HTTPStatusError(
                 'lease lost', request=httpx.Request('POST', 'http://runtime/heartbeat'),
                 response=httpx.Response(409))
@@ -244,19 +244,13 @@ async def test_lease_loss_cancels_subagent_and_suppresses_stale_terminal(monkeyp
             self.terminal_calls += 1
 
     async def stream(**_kwargs):
-        await cancelled.wait()
+        cancelled.wait(timeout=1)
         yield 'data: {"type":"error","status":"failed","message":"cancelled"}\n\n'
-
-    original_sleep = asyncio.sleep
-
-    async def immediate_sleep(_seconds):
-        await original_sleep(0)
 
     runtime = Runtime()
     worker.runtime = runtime
     monkeypatch.setattr(runner, 'run_subagent_stream', stream)
     monkeypatch.setattr(worker, '_cancel_subagent', lambda _task: cancelled.set())
-    monkeypatch.setattr(remote_module.asyncio, 'sleep', immediate_sleep)
     await worker._run_claim(object(), {'attempt_id': 'attempt-1', 'lease_token': 'lease-1'})
     assert cancelled.is_set()
     assert runtime.terminal_calls == 0
