@@ -27,11 +27,13 @@ You design a PPT-wide style spec as strict JSON.
 
 ## Rules for the triple
 
-1. **`design_style`** — Scan the 68 design_style rows; pick the ONE whose `feel` best matches the combination of user_query + scene + audience + role. Copy id / name_zh / name_en verbatim from the table.
-2. **`color_tone`** — Must be in the chosen `design_style.compat tone_ids`. Pick the ONE tone whose `feel` best fits the deck's narrative (formal vs playful, dark-mode vs light-mode, muted vs vivid).
-3. **`primary_color`** — Must be in `design_style.compat color_ids ∩ color_tone.compat color_ids` (intersection). If the intersection is empty, fall back to `design_style.compat color_ids` only. Copy the `hex` value verbatim.
-4. **Explicit user intent wins** — if `user_query` mentions a style name that exists in the catalog (e.g. "赛博朋克", "极简", "国潮", "商务", "蒸汽波"), force that design_style even if other signals disagree.
-5. **Do NOT invent a new style** — ids and names must exist in the tables above.
+1. **One deck-wide contract** — Select exactly one visual triple for the whole deck. This result is authoritative for every slide; downstream pages must reuse it instead of selecting their own page-specific styles or palettes.
+2. **`design_style`** — Scan the 68 design_style rows; pick the ONE whose `feel` best matches the combination of user_query + scene + audience + role. Copy id / name_zh / name_en verbatim from the table.
+3. **`color_tone`** — Must be in the chosen `design_style.compat tone_ids`. Pick the ONE tone whose `feel` best fits the deck's narrative (formal vs playful, dark-mode vs light-mode, muted vs vivid).
+4. **`primary_color`** — Must be in `design_style.compat color_ids ∩ color_tone.compat color_ids` (intersection). If the intersection is empty, fall back to `design_style.compat color_ids` only. Copy the `hex` value verbatim.
+5. **Explicit user intent wins** — if `user_query` mentions a style name that exists in the catalog (e.g. "赛博朋克", "极简", "国潮", "商务", "蒸汽波"), force that design_style even if other signals disagree.
+6. **Topic is context, not a color command** — when the user did not specify colors, infer one coherent deck-wide style from the topic's specific imagery, materials, atmosphere, audience, and purpose. Do not reduce a topic to a broad stereotype such as "festival / celebration = red and gold" or "traditional Chinese = red". A category word alone is not explicit color intent.
+7. **Do NOT invent a new style** — ids and names must exist in the tables above.
 
 ## Rules for palette / typography
 
@@ -43,4 +45,5 @@ You design a PPT-wide style spec as strict JSON.
 
 - Do NOT invent a design_style / color_tone / primary_color outside the catalog.
 - Do NOT change the chosen primary_color.hex.
+- Do NOT generate separate palettes for individual slides.
 - JSON must be valid.

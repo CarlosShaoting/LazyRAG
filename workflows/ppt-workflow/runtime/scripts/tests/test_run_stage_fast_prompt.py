@@ -81,6 +81,28 @@ class PagePromptModeTest(unittest.TestCase):
             self.assertEqual(len(calls), 2)
             self.assertIn("自然语言页面要求", calls[1][1])
 
+    def test_editable_brief_reuses_deck_wide_style(self) -> None:
+        html = "<!DOCTYPE html><html><head><title>统一风格</title></head><body><div class='wrapper'><div id='ct'>完成</div></div></body></html>"
+        calls: list[tuple[str, str]] = []
+
+        def fake_llm(system: str, user: str, **_kwargs) -> str:
+            calls.append((system, user))
+            return html
+
+        with tempfile.TemporaryDirectory() as temp, patch.object(
+            run_stage, "llm", side_effect=fake_llm
+        ):
+            deck = self._deck(Path(temp))
+            brief = "主题内容：端午节习俗。采用上下布局。"
+            self.assertEqual(run_stage.cmd_page_html_from_brief(deck, 1, brief), 0)
+            self.assertEqual(len(calls), 1)
+            query = calls[0][1]
+            self.assertIn("PAGE BRIEF", query)
+            self.assertIn(brief, query)
+            self.assertIn("VISUAL DESIGN CONTRACT (JSON)", query)
+            self.assertIn("#2563EB", query)
+            self.assertIn("shared by every slide", query)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,7 +1,7 @@
 """PPT workflow tools — HTML slide pipeline for SubAgent.
 
 Preferred high-level pipeline (one tool call each):
-  collect (optional): kb / web_search / ppt_search_web_images
+  collect: KB-first retrieval; web_search / ppt_search_web_images only for gaps
     → ppt_register_material_images  (workspace Pool-B images)
     → ppt_generate_material_images  (ONLY when user explicitly asks for AI material images)
   ppt_build_outline(...)   # init → preflight → style → outline → publish_outline
@@ -28,9 +28,12 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 import re
+import shutil
 import sys
+import tempfile
 import uuid
 from collections import Counter
 from concurrent.futures import as_completed
@@ -44,10 +47,15 @@ import requests
 from lazyllm import ThreadPoolExecutor
 
 from lazymind.chat.engine.subagent.context import require_context
-from lazymind.chat.engine.subagent.tools import _resolve_artifact_text, _save_artifact
+from lazymind.chat.engine.subagent.tools import (
+    _resolve_artifact_text,
+    _save_artifact,
+    _workflow_client,
+)
 from lazymind.chat.engine.tools.infra import tool_error, tool_success
 from lazymind.chat.engine.tools.multimodal import image_generator
 from lazymind.chat.service.utils.static_file_url import (
+    _upload_root,
     local_path_from_static_file_url,
 )
 
@@ -75,6 +83,7 @@ _PROMPT_PLACEHOLDER_RE = re.compile(r'\{(\w+)\}')
 
 _run_stage_mod: Any = None
 _model_client_mod: Any = None
+_LOG = logging.getLogger(__name__)
 
 
 def _coerce_str(value: Any, default: str = '') -> str:
@@ -103,19 +112,70 @@ def _sanitize_prompt(text: str) -> str:
 def _conversation_root() -> Path:
     """Root shared by every step task of one conversation.
 
-    SubAgent workspaces are per task (<root>/<user>/<task_id>/), so decks and
-    material images written by one step would be invisible to the next step —
-    a follow-up single-page edit could not find the deck it must patch, and
-    collect_materials images could not be attached at ppt_init_deck. Both live
-    here instead, scoped by conversation so nothing leaks across conversations.
+    Remote Workflow attempts run in disposable ``/tmp/lazymind-workflow-*``
+    workspaces.  Never derive durable PPT state from that workspace: the next
+    attempt may run elsewhere and a container replacement discards its writable
+    layer.  Keep mutable deck state below LazyMind's configured upload root,
+    which is shared with Core and persisted by Docker/local-runtime deployments.
+
+    ``LAZYMIND_PPT_STORAGE_ROOT`` is an optional deployment override.  The
+    default remains user- and conversation-scoped so one user's deck cannot be
+    discovered by another user with a coincidentally matching topic/deck name.
     """
     ctx = require_context()
     conversation = _slugify(_coerce_str(getattr(ctx, 'conversation_id', '')), 'no_conversation')
-    workspace = Path(ctx.workspace_path) if ctx.workspace_path else None
-    base = workspace.parent if workspace and workspace.parent != workspace else Path('/tmp')
-    root = base / 'ppt_sessions' / conversation
-    root.mkdir(parents=True, exist_ok=True)
+    params = getattr(ctx, 'params', {})
+    params = params if isinstance(params, dict) else {}
+    user = _slugify(_coerce_str(params.get('user_id')), 'unknown_user')
+    configured = _coerce_str(os.environ.get('LAZYMIND_PPT_STORAGE_ROOT'))
+    base = (
+        Path(configured).expanduser().resolve()
+        if configured else
+        Path(_upload_root()).expanduser().resolve() / 'workflow-workspaces' / 'ppt-workflow'
+    )
+    root = base / user / 'ppt_sessions' / conversation
+    root.mkdir(parents=True, exist_ok=True, mode=0o750)
+    _migrate_legacy_conversation_state(ctx, conversation, root)
     return root
+
+
+def _migrate_legacy_conversation_state(ctx: Any, conversation: str, target: Path) -> None:
+    """Copy missing pre-persistence PPT state into the durable conversation root.
+
+    Older remote attempts used ``/tmp/ppt_sessions/<conversation>``; ordinary
+    SubAgent runs used ``<task-parent>/ppt_sessions/<conversation>``.  Migration
+    is deliberately copy-only and never merges into an existing destination,
+    so stale temporary files cannot overwrite a newer persistent deck.
+    """
+    workspace_text = _coerce_str(getattr(ctx, 'workspace_path', ''))
+    candidates: list[Path] = [
+        Path(tempfile.gettempdir()) / 'ppt_sessions' / conversation,
+    ]
+    if workspace_text:
+        workspace = Path(workspace_text).expanduser().resolve()
+        if workspace.parent != workspace:
+            candidates.append(workspace.parent / 'ppt_sessions' / conversation)
+
+    seen: set[Path] = set()
+    for legacy in candidates:
+        legacy = legacy.resolve()
+        if legacy == target or legacy in seen or not legacy.is_dir():
+            continue
+        seen.add(legacy)
+        for name in ('ppt_decks', _MATERIAL_DIR_NAME):
+            source = legacy / name
+            destination = target / name
+            if not source.is_dir() or destination.exists():
+                continue
+            try:
+                shutil.copytree(source, destination)
+            except OSError as exc:
+                # Failure to migrate an optional legacy cache must not make a
+                # newly requested deck impossible to create in durable storage.
+                _LOG.warning(
+                    'failed to migrate legacy PPT state from %s to %s: %s',
+                    source, destination, exc,
+                )
 
 
 def _resolve_deck_dir(deck_dir: str) -> Path:
@@ -159,20 +219,93 @@ def _strip_tags(fragment: str) -> str:
 
 
 def _extract_slide_copy(html: str) -> dict[str, Any]:
-    """Pull title / subtitle / bullet-like phrases from slide HTML for speaker notes."""
+    """Pull speakable slide content from stable ids, with legacy fallbacks."""
     title = _title_from_html(html)
     subtitle = ''
-    # Common SenseNova structure: header h1 + following <p>
-    hm = re.search(
-        r'<h1[^>]*>[\s\S]*?</h1>\s*<p[^>]*>([\s\S]*?)</p>',
-        html,
-        re.I,
-    )
-    if hm:
-        subtitle = _strip_tags(hm.group(1))[:160]
+    narrative = ''
+    bullets: list[str] = []
+    data_points: list[str] = []
+
+    tree = _HtmlTree(html)
+
+    def _first_semantic_text(*, el: str = '', css_class: str = '') -> str:
+        for index, node in enumerate(tree.nodes):
+            if el and node['el'] != el:
+                continue
+            if css_class and css_class not in node['classes']:
+                continue
+            value = tree.node_text(index).strip()
+            if value:
+                return value
+        return ''
+
+    def _descendant_text(root_index: int, classes: tuple[str, ...]) -> str:
+        for index, node in enumerate(tree.nodes):
+            if not set(node['classes']).intersection(classes):
+                continue
+            if index != root_index and root_index not in tree.ancestors(index):
+                continue
+            value = tree.node_text(index).strip()
+            if value:
+                return value
+        return ''
+
+    def _structured_item(index: int, el: str) -> str:
+        if el.startswith(('bullet-', 'card-')):
+            head = _descendant_text(
+                index, ('point-title', 'card-title', 'section-title', 'item-title'))
+            detail = _descendant_text(
+                index, ('point-desc', 'point-detail', 'card-desc', 'item-desc', 'description'))
+            if head and detail:
+                separator = '：' if re.search(r'[\u4e00-\u9fff]', head + detail) else ': '
+                return f'{head}{separator}{detail}'
+        if el.startswith(('kpi-', 'data-', 'stat-')):
+            label = _descendant_text(
+                index, ('kpi-label', 'data-label', 'stat-label', 'metric-label'))
+            value = _descendant_text(
+                index, ('kpi-value', 'data-value', 'stat-value', 'metric-value'))
+            context = _descendant_text(
+                index, ('kpi-context', 'data-context', 'stat-context', 'data-sub', 'metric-sub'))
+            if label and value:
+                separator = '：' if re.search(r'[\u4e00-\u9fff]', label + value) else ': '
+                suffix = ''
+                if context:
+                    suffix = f'（{context}）' if separator == '：' else f' ({context})'
+                return f'{label}{separator}{value}{suffix}'
+        return tree.node_text(index).strip()
+
+    def _semantic_items(prefixes: tuple[str, ...], limit: int) -> list[str]:
+        values: list[str] = []
+        for index, node in enumerate(tree.nodes):
+            if not node['el'].startswith(prefixes):
+                continue
+            value = _structured_item(index, node['el'])
+            if 2 <= len(value) <= 320 and value not in values:
+                values.append(value)
+            if len(values) >= limit:
+                break
+        return values
+
+    subtitle = _first_semantic_text(el='subtitle')
+    narrative = _first_semantic_text(el='narrative')
+    if not narrative:
+        narrative = _first_semantic_text(css_class='narrative')
+    bullets = _semantic_items(('bullet-', 'card-'), 6)
+    data_points = _semantic_items(('kpi-', 'data-', 'stat-'), 4)
+
+    # Common legacy structure: header h1 + following <p>.
+    if not subtitle:
+        hm = re.search(
+            r'<h1[^>]*>[\s\S]*?</h1>\s*<p[^>]*>([\s\S]*?)</p>',
+            html,
+            re.I,
+        )
+        if hm:
+            subtitle = _strip_tags(hm.group(1))
 
     phrases: list[str] = []
-    # Prefer semantic / card classes used by the HTML pipeline.
+    # Legacy pages may not have data-el anchors. Pull concise visible headings
+    # rather than leaving their notes as a generic presentation plan.
     for pattern in (
         r'class=["\'][^"\']*'
         r'(?:kpi-title|kpi-label|kpi-value|chart-title|card-title|section-title)'
@@ -190,52 +323,107 @@ def _extract_slide_copy(html: str) -> dict[str, Any]:
         if len(phrases) >= 10:
             break
 
+    if not bullets:
+        bullets = phrases[:6]
+
     return {
         'title': title,
-        'subtitle': subtitle,
+        'subtitle': subtitle[:240],
+        'narrative': narrative[:900],
+        'bullets': bullets,
+        'data_points': data_points,
         'phrases': phrases,
     }
 
 
-def _notes_from_html(html: str, page_no: int) -> str:
-    """Build a richer auto speaker-notes paragraph from the page HTML.
+def _speaker_notes_language(html: str, meta: dict[str, Any]) -> str:
+    """Choose notes language from explicit HTML lang, then visible-copy majority."""
+    match = re.search(r'<html\b[^>]*\blang=["\']([^"\']+)', html, re.I)
+    if match:
+        lang = match.group(1).strip().lower()
+        if lang.startswith('zh'):
+            return 'zh'
+        if lang.startswith('en'):
+            return 'en'
+    visible = ' '.join(
+        [str(meta.get('title') or ''), str(meta.get('subtitle') or ''),
+         str(meta.get('narrative') or ''), *map(str, meta.get('bullets') or []),
+         *map(str, meta.get('data_points') or [])]
+    )
+    cjk = len(re.findall(r'[\u4e00-\u9fff]', visible))
+    latin = len(re.findall(r'[A-Za-z]', visible))
+    return 'zh' if cjk >= max(6, latin // 3) else 'en'
 
-    Used at publish time so the UI has a usable script even before the model
-    rewrites notes. Prefer 4–7 sentences / ~120–280 Chinese chars.
+
+def _spoken_sentence(text: str, *, language: str) -> str:
+    """Normalize one extracted content block into a sentence without rewriting it."""
+    value = re.sub(r'\s+', ' ', text or '').strip()
+    if not value:
+        return ''
+    if value.endswith(('.', '!', '?', '。', '！', '？', '；', ';')):
+        return value
+    return value + ('。' if language == 'zh' else '.')
+
+
+def _notes_from_html(html: str, page_no: int) -> str:
+    """Build an immediately speakable script from the page's actual content.
+
+    This is presenter copy, not a plan: it contains the slide's narrative,
+    points and figures and never tells the presenter what they "should" do.
     """
     meta = _extract_slide_copy(html)
     title = meta['title'] or f'第 {page_no} 页'
     subtitle = meta['subtitle']
-    phrases = meta['phrases'][:8]
+    narrative = meta['narrative']
+    bullets = meta['bullets'][:6]
+    data_points = meta['data_points'][:4]
+    language = _speaker_notes_language(html, meta)
 
     parts: list[str] = []
-    if subtitle:
-        parts.append(f'本页主题是「{title}」，副线是「{subtitle}」。')
+    if language == 'zh':
+        parts.append(f'大家好，这一页我们一起了解「{title}」。')
+        if subtitle:
+            parts.append(f'它的核心主题是「{subtitle}」。')
+        if narrative:
+            parts.append(_spoken_sentence(narrative, language=language))
+        if bullets:
+            ordinals = ['第一', '第二', '第三', '第四', '第五', '最后']
+            spoken = '；'.join(
+                f'{ordinals[min(index, len(ordinals) - 1)]}，{item}'
+                for index, item in enumerate(bullets)
+            )
+            parts.append(_spoken_sentence(f'这里有{len(bullets)}个重点：{spoken}', language=language))
+        if data_points:
+            parts.append(_spoken_sentence(
+                '页面中的关键数据包括：' + '；'.join(data_points), language=language))
+        parts.append(f'综合来看，这些信息呈现了「{title}」的主要内容。')
     else:
-        parts.append(f'本页主题是「{title}」。')
+        parts.append(f'Today, I would like to introduce {title}.')
+        if subtitle:
+            parts.append(_spoken_sentence(f'At its heart, this is about {subtitle}', language=language))
+        if narrative:
+            parts.append(_spoken_sentence(narrative, language=language))
+        if bullets:
+            ordinals = ['First', 'Second', 'Third', 'Fourth', 'Fifth', 'Finally']
+            spoken = '; '.join(
+                f'{ordinals[min(index, len(ordinals) - 1)]}, {item}'
+                for index, item in enumerate(bullets)
+            )
+            parts.append(_spoken_sentence(
+                f'There are {len(bullets)} key points: {spoken}', language=language))
+        if data_points:
+            parts.append(_spoken_sentence(
+                'The key figures shown here are ' + '; '.join(data_points), language=language))
+        parts.append(f'Together, these details provide a concise view of {title}.')
 
-    if phrases:
-        lead = '、'.join(phrases[:4])
-        parts.append(
-            f'讲解时请先点明标题，再依次展开：{lead}'
-            + ('等要点。' if len(phrases) > 4 else '。')
-        )
-        if len(phrases) > 4:
-            more = '、'.join(phrases[4:8])
-            parts.append(f'补充说明时可带过 {more}，帮助听众建立完整印象。')
-    else:
-        parts.append(
-            '讲解时请先点出页面标题，再按版块顺序说明核心观点与关键数据，'
-            '并结合图示或卡片信息做简要解读。'
-        )
-
-    parts.append(
-        '建议用一两句解释「为什么重要 / 对听众意味着什么」，'
-        '避免只念标题；最后用一句结论收束本页，并自然过渡到下一页。'
-    )
-    notes = ''.join(parts)
-    # Soft length guard for artifact summary / UI.
-    return notes[:600]
+    notes = ' '.join(part for part in parts if part).strip()
+    if len(notes) <= 1800:
+        return notes
+    # Keep the UI artifact compact without cutting the final sentence mid-word.
+    shortened = notes[:1800]
+    boundaries = [shortened.rfind(mark) for mark in ('。', '！', '？', '.', '!', '?')]
+    boundary = max(boundaries)
+    return shortened[:boundary + 1] if boundary >= 400 else shortened.rstrip()
 
 
 _THINK_BLOCK_RE = re.compile(r'<think\b[^>]*>[\s\S]*?</think>', re.IGNORECASE)
@@ -322,16 +510,31 @@ def _workflow_session_id() -> str:
     return str(cfg.get('workflow_session_id') or '').strip()
 
 
+def _ui_slot_order_list(slot: str) -> list[int]:
+    """Read one Workflow list slot's durable visual order via the public SDK."""
+    session_id = _workflow_session_id()
+    if not session_id:
+        return []
+    try:
+        response = _workflow_client().get_slot_order(session_id, slot).result
+        raw = response.get('order_list') if isinstance(response, dict) else []
+        return [int(value) for value in (raw or [])]
+    except Exception:
+        # Local/legacy execution contexts may expose the same data directly.
+        try:
+            ctx = require_context()
+            return [int(value) for value in (
+                ctx.db.load_slot_order_list(session_id, slot) or [])]
+        except Exception:
+            return []
+
+
 def _delete_ui_slot_item(slot: str, sort_order: int) -> dict[str, Any]:
     """Remove one list-slot item by 1-based sort_order via Go core DELETE."""
     session_id = _workflow_session_id()
     if not session_id:
         return {'slot': slot, 'ok': False, 'skipped': True, 'reason': 'no workflow_session_id'}
-    try:
-        ctx = require_context()
-        order_list = ctx.db.load_slot_order_list(session_id, slot)
-    except Exception as exc:
-        return {'slot': slot, 'ok': False, 'skipped': True, 'reason': str(exc)}
+    order_list = _ui_slot_order_list(slot)
     if not order_list:
         return {'slot': slot, 'ok': False, 'skipped': True, 'reason': 'empty or non-list slot'}
     if sort_order < 1 or sort_order > len(order_list):
@@ -343,11 +546,10 @@ def _delete_ui_slot_item(slot: str, sort_order: int) -> dict[str, Any]:
         }
     list_index = int(order_list[sort_order - 1])
     try:
-        from lazymind.config import config as _cfg
-        import httpx
-        core_url = str(_cfg['core_api_url']).rstrip('/')
-        resp = httpx.delete(
-            f'{core_url}/workflow-sessions/{session_id}/slots/{slot}/items/idx/{list_index}',
+        client = _workflow_client()
+        resp = client.transport.delete(
+            f'{client.base_url}/workflow-sessions/{session_id}/slots/{slot}/items/idx/{list_index}',
+            headers=client._headers(),
             timeout=10.0,
         )
     except Exception as exc:
@@ -520,8 +722,8 @@ def _notes_stub(title_hint: str, page_no: int) -> str:
     """Fallback when HTML extraction is unavailable."""
     title = (title_hint or '').strip() or f'第 {page_no} 页'
     return (
-        f'本页主题是「{title}」。讲解时先点出页面标题，再按版块顺序说明核心要点与数据，'
-        f'补充为什么这些信息对听众重要，最后用一句话收束本页结论，并自然过渡到下一页。'
+        f'大家好，这一页我们一起了解「{title}」。页面围绕这个主题呈现了核心信息与关键数据，'
+        f'帮助我们快速建立整体认识。综合来看，这些内容概括了「{title}」最重要的信息。'
     )
 
 
@@ -2180,8 +2382,13 @@ def ppt_register_material_images(
         replace (bool): If true, clear previous material images first. Default false
             (append, capped at 12 total).
 
+    Each registered image is also published as its own ``image`` artifact in
+    the ordered ``material_images`` list.  The Materials tab therefore renders
+    actual preview cards instead of one text inventory containing local paths.
+
     Returns:
-        On success: count, images (path/caption/source), manifest_path.
+        On success: count, images (path/caption/source), manifest_path, and UI
+        publication details.
     """
     try:
         items = _parse_images_payload(images_json)
@@ -2205,9 +2412,10 @@ def ppt_register_material_images(
 
     registered: list[dict] = []
     errors: list[str] = []
+    first_new_index = len(existing)
     for i, item in enumerate(items[:room]):
         try:
-            entry = _stage_one_material_image(item, len(existing) + i)
+            entry = _stage_one_material_image(item, first_new_index + i)
             existing.append(entry)
             registered.append(entry)
         except Exception as exc:
@@ -2225,21 +2433,41 @@ def ppt_register_material_images(
     )
     manifest_path = _write_material_manifest(manifest)
 
-    # Persist a compact inventory for the Materials tab / generate_ppt context.
-    lines = [
-        f'{idx + 1}. [{img.get("source") or "material"}] {img.get("caption") or img.get("alt")}'
-        f' → {img.get("path")}'
-        for idx, img in enumerate(existing)
-    ]
-    try:
-        _save_artifact(
-            key='material_images',
-            content_type='text',
-            value='\n'.join(lines),
-            sort_order=1,
-        )
-    except Exception:
-        pass
+    # Publish each newly registered file as one image-list item. On an explicit
+    # replacement, overwrite the existing visible positions and remove any
+    # trailing cards so the UI list mirrors the new manifest exactly.
+    ui_count = len(_ui_slot_order_list('material_images'))
+
+    ui_deleted: list[dict[str, Any]] = []
+    if do_replace and ui_count > len(existing):
+        for sort_order in range(ui_count, len(existing), -1):
+            ui_deleted.append(_delete_ui_slot_item('material_images', sort_order))
+
+    ui_published = 0
+    ui_errors: list[str] = []
+    for offset, image in enumerate(registered):
+        final_position = len(existing) - len(registered) + offset + 1
+        overwrite_position: Optional[int] = None
+        if do_replace and final_position <= ui_count:
+            overwrite_position = final_position
+        source = _coerce_str(image.get('source'), 'material') or 'material'
+        caption = _coerce_str(image.get('caption') or image.get('alt'))
+        try:
+            saved = _save_artifact(
+                key='material_images',
+                content_type='image',
+                value=image.get('path'),
+                source_tool=source,
+                sort_order=overwrite_position,
+                caption=caption,
+            )
+            if _tool_failed(saved):
+                ui_errors.append(
+                    f'item[{offset}]: {_tool_fail_reason(saved) or "artifact publish failed"}')
+            else:
+                ui_published += 1
+        except Exception as exc:
+            ui_errors.append(f'item[{offset}]: {exc}')
 
     return tool_success('ppt_register_material_images', {
         'count': len(registered),
@@ -2255,8 +2483,12 @@ def ppt_register_material_images(
         ],
         'manifest_path': str(manifest_path),
         'errors': errors or None,
+        'ui_published': ui_published,
+        'ui_deleted': ui_deleted or None,
+        'ui_errors': ui_errors or None,
         'note': (
-            'ppt_init_deck will attach these into reference_images so outline '
+            'Each image is published as a previewable material_images list item. '
+            'ppt_init_deck also attaches these into reference_images so outline '
             'can set use_image and page-html inserts them into slide HTML.'
         ),
     })
@@ -2803,7 +3035,6 @@ def ppt_generate_pages(
         'deck_dir': deck_dir_s,
         'status': status,
         'concurrency': conc,
-        'pending_image_slots': pending,
         'submitted': html_payload.get('submitted'),
         'ok': html_payload.get('ok'),
         'failed': html_payload.get('failed'),
@@ -3418,7 +3649,7 @@ def ppt_edit_page_html(
             'redraw brings the deleted content back.'
         )
 
-    published = _publish_pages_from_disk(deck, [page_no], with_notes=False)
+    published = _publish_pages_from_disk(deck, [page_no], with_notes=True)
     return tool_success('ppt_edit_page_html', {
         'deck_dir': str(deck),
         'page': page_no,

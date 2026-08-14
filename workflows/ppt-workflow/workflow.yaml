@@ -74,9 +74,9 @@ slots:
 
   - id: material_images
     label: Material Images
-    type: text
-    cardinality: single
-    summary_max_chars: 800
+    type: image
+    cardinality: list
+    ordered: true
 
   - id: slide_outline
     label: Slide Outline

@@ -15,19 +15,22 @@ Allowed verdicts: PASS, RETRY, DONE, FAIL.
   or inferred page count, tone/style, structure, and constraints -> PASS
 - Missing or too vague -> RETRY
 - 2 consecutive failures -> FAIL
-- After PASS, the parent may advance to either `build_outline` (preferred) or
-  optional `collect_materials`. Do not require materials before outline.
+- After PASS, always advance to `collect_materials`. Never select
+  `build_outline` directly; the deterministic path prevents required KB/image
+  collection from being skipped.
 
 ### collect_materials
 
-- Optional step. `material_summary` is present and summarizes sources,
+- `material_summary` is present and summarizes sources,
   assumptions, references, and gaps -> PASS
 - When the brief needed real photos/diagrams, prefer that
-  `ppt_register_material_images` ran (material_images inventory present) so
+  `ppt_register_material_images` ran (one previewable `material_images` image
+  list item per registered visual, rather than a text/path inventory) so
   later steps can embed them in HTML — but do not FAIL solely for missing images
 - Missing material_summary -> RETRY
 - 2 consecutive failures -> FAIL
-- Never FAIL the whole workflow solely because collect was skipped.
+- This step must not be skipped. It may finish without web calls when user/KB
+  material is already sufficient.
 
 ### build_outline
 

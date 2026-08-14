@@ -277,6 +277,25 @@ def _build_deterministic_page_query(payload: dict) -> str:
     return "\n".join(lines).strip()
 
 
+def _build_brief_page_query(brief: str, style: dict) -> str:
+    """Attach the authoritative deck style to an editable per-page brief."""
+    return "\n".join([
+        "Create this slide from the editable page brief below.",
+        "The page brief controls content and layout only.",
+        "Apply the VISUAL DESIGN CONTRACT exactly. It is shared by every slide in the deck.",
+        "Do not infer, select, or substitute a page-specific style, color tone, primary color, palette, or typography.",
+        "If the page brief contains conflicting visual wording, the VISUAL DESIGN CONTRACT wins.",
+        "",
+        "PAGE BRIEF:",
+        brief.strip(),
+        "",
+        "VISUAL DESIGN CONTRACT (JSON):",
+        json.dumps(style, ensure_ascii=False, indent=2),
+        "",
+        "Return the complete slide HTML document only. The system prompt owns all mechanical HTML/PPTX constraints.",
+    ]).strip()
+
+
 _STYLE_DIMENSIONS_PATH = SKILL_DIR.parent.parent / "reference" / "style_dimensions.json"
 
 
@@ -1418,6 +1437,7 @@ def cmd_page_html_from_brief(deck: Path, page_no: int, brief: str) -> int:
     if not brief_text:
         return _fail(f'page-html brief p{page_no}: empty brief', page_no=page_no)
 
+    style = _load_json(deck / 'style_spec.json')
     outline = _load_json(deck / 'outline.json')
     plan = _load_json(deck / 'asset_plan.json')
     ip = _load_json(deck / 'info_pack.json')
@@ -1431,10 +1451,11 @@ def cmd_page_html_from_brief(deck: Path, page_no: int, brief: str) -> int:
         return _fail(f'asset_plan missing page {page_no}')
 
     inherited_image = _resolve_inherited_image(ip, page_outline, deck, page_no)
+    page_query = _build_brief_page_query(brief_text, style)
     return _write_page_html_from_query(
         deck,
         page_no,
-        brief_text,
+        page_query,
         page_plan=page_plan,
         inherited_image=inherited_image,
         prompt_mode='slide-outline-brief',

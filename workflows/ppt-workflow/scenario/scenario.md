@@ -16,17 +16,18 @@ This workflow helps users create a multi-slide presentation using the
 Workflow:
 
 1. `analyze_requirements` — goal, audience, length, visual style, constraints.
-2. `collect_materials` — **optional** facts / KB / web research **and**
-   registering images (`ppt_search_web_images` +
+2. `collect_materials` — always runs after analysis; uses supplied KB first and
+   calls web tools only for a concrete remaining gap; collects facts and
+   registers images (`ppt_search_web_images` +
    `ppt_register_material_images`, or `ppt_generate_material_images` only when
    the user explicitly asks for AI material images) so later HTML embeds them.
 3. `build_outline` — one call: `ppt_build_outline` → `slide_outline[page1..]`.
 4. `generate_ppt` — one call: `ppt_generate_pages`; no outline rewrite.
 
-After `analyze_requirements` succeeds, **prefer** advancing to `build_outline`
-when the brief + user request / uploaded PDF/PPTX already have enough content.
-Queue `collect_materials` when KB/web facts or slide photos/diagrams are still
-needed.
+After `analyze_requirements` succeeds, always advance to `collect_materials`.
+This removes the ambiguous two-ready-step choice. The collection step must use
+a supplied/selected KB before any web tool and must skip web retrieval when the
+request, uploads, and KB already provide enough material.
 
 After the first deck is generated, the user may continue chatting to revise
 individual pages. Do not require them to restart the workflow.
@@ -44,7 +45,7 @@ draft, plan, or structure a multi-slide presentation.
 | User intent | Recommended step | Tool guidance |
 |---|---|---|
 | Change audience / goal / tone / constraints | `analyze_requirements` | full rerun of analysis |
-| After analysis, plan pages | `build_outline` | **preferred** next step; skip collect when facts suffice |
+| After analysis | `collect_materials` | mandatory next step; KB first, web only for a concrete gap |
 | Add or update references/materials | `collect_materials` | KB/web facts and/or register images for HTML |
 | Edit page briefs before HTML | (user edits Outline tab) | then `generate_ppt` |
 | Generate / regenerate HTML slides | `generate_ppt` | uses `slide_outline` briefs; no re-outline |
@@ -53,7 +54,7 @@ draft, plan, or structure a multi-slide presentation.
 After analysis, call:
 
 ```text
-advance_step_and_hand_off(step_id="build_outline")
+advance_step_and_hand_off(step_id="collect_materials")
 ```
 
 After outline is ready (and user optionally edits briefs), call:

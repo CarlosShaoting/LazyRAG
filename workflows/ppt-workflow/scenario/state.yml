@@ -5,18 +5,7 @@ transitions:
     - to: analyze_requirements
 
   analyze_requirements:
-    - to: build_outline
-      when: >
-        Prefer this when the requirement brief plus the user request / uploaded
-        PDF/PPTX or chat context already contain enough facts to plan the deck, and
-        no KB/web photos need embedding in the slides.
-        Skip collect_materials unless extra research or real images are needed.
     - to: collect_materials
-      when: >
-        Use when the deck still needs KB retrieval, web research, real photos /
-        diagrams for HTML slides, AI-generated material images the user
-        explicitly requested, or a dedicated material_summary beyond what
-        analyze_requirements already captured.
 
   collect_materials:
     - to: build_outline
@@ -31,7 +20,6 @@ steps:
   analyze_requirements:
     label: Analyze Requirements
     mode: auto
-    route: choice
     prompt: |
       You are a senior presentation strategist.
 
@@ -41,13 +29,15 @@ steps:
       {{runtime_instruction}}
 
       Analyze the presentation requirements. Produce a concise but useful
-      requirement brief in the user's language.
+      requirement brief in the user's language. The next step is always
+      collect_materials; do not try to skip directly to build_outline.
 
       Step boundary (mandatory):
-      - This step only analyzes requirements and chooses the next route.
+      - This step only analyzes requirements.
       - Do NOT search or call a knowledge base in this step. When the user asks
-        to use a knowledge base, record that requirement and route to
-        collect_materials; that is the only step that performs KB retrieval.
+        to use a knowledge base, record that requirement clearly;
+        collect_materials is the next step and is the only step that performs
+        KB retrieval.
 
       Input availability rule:
       - A user upload is NOT required. For a text-only request, immediately
@@ -73,8 +63,12 @@ steps:
       - presentation goal
       - target audience
       - expected slide count; infer 4-6 slides if not specified (max 10)
-      - tone and visual style (free description: e.g. cyberpunk neon, ink wash,
-        corporate blue, cinematic space — NOT a fixed theme enum)
+      - communication tone
+      - visual style constraints explicitly stated by the user (for example a
+        named style, color, brand guide, or reference image). If the user did
+        not specify any visual constraint, write "未指定". Do not invent colors,
+        palettes, theme names, or cultural / holiday color stereotypes here;
+        the deck-wide style stage chooses those once for the whole deck.
       - required sections / narrative arc
       - available source material and missing information
       - practical assumptions
@@ -85,9 +79,8 @@ steps:
         (default: no — do not invent this need)
 
       If the user already attached a PDF/PPTX/report or pasted key facts, fold the
-      usable numbers and claims into the brief so a later build_outline step can
-      skip a separate collect_materials pass — unless real KB/web images are
-      still needed for the slides.
+      usable numbers and claims into the brief. collect_materials will reuse
+      these facts and may complete without any network search.
 
       Save the result:
         save_artifact(key='requirement_analysis', content_type='text', value=<analysis>)
@@ -97,7 +90,8 @@ steps:
       - material: requirement_analysis
     acceptance_criteria: |
       requirement_analysis must be saved and must cover goal, audience, slide
-      count, tone/style, structure, constraints, and assumptions.
+      count, communication tone, explicit visual constraints (or "未指定"),
+      structure, constraints, and assumptions.
 
   collect_materials:
     label: Collect Materials
@@ -105,10 +99,10 @@ steps:
     prompt: |
       You are a presentation research and material collection assistant.
 
-      This step is OPTIONAL. Prefer analyze_requirements → build_outline when
-      the brief already has enough facts from the user request or an uploaded
-      report. Run this step when KB/web research, a dedicated summary, or
-      real images for the slides are still needed.
+      This step always follows analyze_requirements. Entering this step does not
+      mean web research is required: first reuse the user request and uploads,
+      then search a supplied/selected knowledge base when present, and call web
+      tools only when a concrete unresolved need remains.
 
       Requirement analysis:
       {{requirement_analysis}}
@@ -122,8 +116,8 @@ steps:
       {{runtime_instruction}}
 
       Collect facts AND visual assets that should guide the presentation.
-      Use the conversation, uploaded files, requirement analysis, knowledge-base
-      retrieval, and web research.
+      Use the conversation, uploaded files, requirement analysis, and KB/web
+      retrieval subject to the KB-first gate below.
 
       Uploaded file parsing:
       - You CAN read PPT/PPTX with the attachment reader. If the user uploaded a
@@ -136,8 +130,10 @@ steps:
         in gaps/assumptions.
 
       Retrieval policy (do this before writing the summary):
-      1. Facts from KB: if the user mentions a knowledge base / selected docs,
-         or the topic looks internal, call kb (semantic search). Prefer hits
+      1. KB-first gate (mandatory): if the user supplied, selected, or mentioned
+         a knowledge base / selected documents, or the topic looks internal,
+         call kb semantic search BEFORE calling any web tool. Do not call
+         web_search, wikipedia, or ppt_search_web_images first. Prefer KB hits
          with numbers, definitions, and product facts. When kb returns image
          hits, keep their local_path or image_url + a short caption.
          Use this exact discovery-and-search sequence; do not omit kb_ids:
@@ -165,15 +161,24 @@ steps:
             record that as a gap and do not claim KB retrieval succeeded.
          e) Treat retrieval as successful only when the tool returns evidence;
             base claims on that evidence and retain its document/citation markers.
-      2. Facts from the web: if the topic needs current public facts, call
-         web_search (one intent per query). Use wikipedia only as a thin fallback.
+         f) If KB evidence and KB images are sufficient for the requested deck,
+            STOP retrieval and do not call any web tool.
+      2. Web fallback gate: call web_search only when at least one of these is true:
+         - the user explicitly requested web research or latest/current facts;
+         - KB search completed but left a specific factual gap required by the deck;
+         - no applicable/readable KB exists and external facts are genuinely required.
+         Before each web call, identify the exact unresolved gap and use one focused
+         intent per query. Do not call web_search merely because it is available,
+         because the topic is public, or to duplicate facts already found in KB.
+         Use wikipedia only as a thin fallback under the same gate.
       3. Images for slides (required when visuals would help, or the user /
          analysis asks for photos/diagrams/产品图):
          a) Register KB image hits first via ppt_register_material_images with
             [{"local_path":..., "caption":..., "source":"kb"}, ...]
             (image_url also works if local_path is absent).
-         b) For public visual concepts, call ppt_search_web_images(query=...),
-            then ppt_register_material_images with
+         b) Call ppt_search_web_images only when required slide visuals are still
+            missing after KB image retrieval, or when no applicable KB is available.
+            Then register only the necessary results with
             [{"url":..., "caption":..., "source":"web"}, ...] for 2–6 chosen URLs.
          c) AI-generated material images — ONLY when the user explicitly asks
             to generate/create material images for the deck (e.g. "生成素材图",
@@ -191,6 +196,13 @@ steps:
 
       These registered images are auto-attached at ppt_init_deck and embedded
       into the final slide HTML as foreground <img> (via outline use_image).
+      ppt_register_material_images / ppt_generate_material_images also publish
+      one content_type=image artifact per registered visual, so material_images
+      is a previewable ordered image list in the Materials tab. Never save a
+      path inventory or Markdown list into material_images; put textual source
+      notes in material_summary instead. Preserve each supplied caption as the
+      displayed material name; source belongs in metadata/summary and must not
+      be prepended to the caption.
 
       Produce a material summary with:
       - uploaded file summaries, if any
@@ -223,7 +235,8 @@ steps:
       when files are present, references, useful evidence, gaps, and assumptions.
       When KB/web/AI material images were needed, material_images should be
       registered via ppt_register_material_images / ppt_generate_material_images
-      so later steps can embed them in HTML.
+      as individual image-list artifacts so the Materials tab can preview them
+      and later steps can embed them in HTML.
 
   build_outline:
     label: Build Outline
@@ -250,11 +263,16 @@ steps:
            page_count=<int 1-10>,
            topic=<short topic>,
            role / audience / scene=<from analysis>,
-           style_hint=<visual style text>,
+           style_hint=<ONLY visual constraints explicitly stated by the user>,
            key_points_json='["point1","point2"]'  (JSON string, or omit)
          Defaults: ppt_mode=fast.
          Slide photos come from registered material_images (KB/web, or
          ppt_generate_material_images when the user explicitly asked).
+
+      Omit style_hint when the user did not explicitly request a style, color,
+      brand guide, or visual reference. Do not copy model-inferred visual ideas
+      from requirement_analysis into style_hint. The PPT runtime selects one
+      deck-wide style and applies that same contract to every page.
 
       This single call runs init → preflight → style → outline → publish_outline
       and writes slide_outline list items (sort_order=page) for the Outline tab.

@@ -42,15 +42,20 @@ specific file into `runtime/` and note it here.
 
 ## Material images → final HTML
 
-Optional `collect_materials` can pull facts (`kb`, `web_search`) and images:
+`collect_materials` always follows analysis. It searches a supplied KB first and
+uses web tools only for a concrete gap; it can complete without web access when
+the request, uploads, or KB are sufficient:
 
 1. KB/web hits → `ppt_register_material_images`
 2. **Only if the user explicitly asks** for AI-generated material images →
    `ppt_generate_material_images` (framework `image_generator`) → same Pool B
-3. `ppt_build_outline` auto-inits the deck and attaches them into
+3. Every registered visual is published as an ordered `image` artifact, so the
+   existing Materials layout shows preview cards with the original caption
+   instead of local paths
+4. `ppt_build_outline` auto-inits the deck and attaches them into
    `info_pack.user_assets.reference_images`, then style/outline/publish
-4. Outline assigns `use_image.reference_image_index`; UI gets per-page `slide_outline`
-5. `ppt_generate_pages` runs asset-plan + batch-page-html (incl. UI edits) and
+5. Outline assigns `use_image.reference_image_index`; UI gets per-page `slide_outline`
+6. `ppt_generate_pages` runs asset-plan + batch-page-html (incl. UI edits) and
    embeds foreground `<img>`
 
 Do not generate material images unless the user explicitly requests them.
@@ -70,13 +75,16 @@ material images are kept outside them, shared by every step task of one
 conversation:
 
 ```
-<workspace_root>/<user_id>/ppt_sessions/<conversation_id>/
+<upload_root>/workflow-workspaces/ppt-workflow/<user_id>/ppt_sessions/<conversation_id>/
   ppt_decks/<deck_id>/     # task_pack, outline, pages/, images/
   material_images/         # registered in collect_materials, attached at init
 ```
 
-Without this, a follow-up edit task would see an empty workspace, `ppt_find_deck`
-would find nothing, and the whole deck would be regenerated instead of edited.
+`upload_root` is resolved from `LAZYMIND_UPLOAD_ROOT` / `LAZYMIND_SHARED_UPLOAD_DIR`;
+deployments may override only the PPT workspace with `LAZYMIND_PPT_STORAGE_ROOT`.
+This location must be a persistent/shared mount. Without it, a follow-up edit
+task would see an empty workspace after an executor/container replacement,
+`ppt_find_deck` would find nothing, and the approved slide could not be edited.
 
 ## Single-page edit
 

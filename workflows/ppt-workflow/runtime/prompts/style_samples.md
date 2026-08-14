@@ -44,4 +44,6 @@ Return JSON only, no markdown fences:
 4. `palette.primary` must equal `primary_color.hex` exactly.
 5. Prefer choices that are distinctive and useful for a visual preview, not safe defaults.
 6. If the user explicitly requested a style, keep all three samples within that intent while varying tone, color, or layout personality.
-7. JSON must be valid.
+7. Treat the topic as context, not as a literal color command. When the user did not name colors, use topic-specific imagery, materials, atmosphere, audience, and purpose; do not fall back to broad stereotypes such as "festival / celebration = red and gold" or "traditional Chinese = red".
+8. Every sample is a complete deck-wide contract: after one is selected, every slide must reuse it and must not select a separate page palette.
+9. JSON must be valid.

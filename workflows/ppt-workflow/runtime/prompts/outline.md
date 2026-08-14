@@ -39,6 +39,13 @@ All reader-visible text fields (`title`, `subtitle`, every `bullets[].head`/`det
 
 ## Rules
 
+- `style_spec.json` is the single authoritative visual contract for the entire
+  deck. Every page must use the same design style, color tone, primary color,
+  palette, and typography.
+- `visual_hints` describes page composition, hierarchy, imagery, and mood only.
+  Do not introduce a new page-specific palette, named visual theme, or primary
+  color, and do not override / reinterpret `style_spec.json` based on the page
+  topic. The page HTML stage receives `style_spec.json` separately.
 - `pages` length MUST equal `page_count` exactly.
 - **Page structure**: if `page_count == 1`, output exactly one page and mark it `cover` (no `closing` / `section_header`). If `page_count >= 2`, include exactly 1 `cover` (page 1) + 1 `closing` (last page) + at least 1 `section_header` between `cover` and `closing` (if `page_count >= 5`, include 1–3 section_headers to break up the deck). Never mark every page as `content`.
 - `title` <= 24 chars. Always required.
