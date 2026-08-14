@@ -20,6 +20,7 @@ import type {
   TabDef,
   WorkflowUI,
   SlotDef,
+  CompositePanelNode,
   CompositeLayoutNode,
   CompositeColumnNode,
   InnerTabsNode,
@@ -549,6 +550,7 @@ function InnerTabsCell({
             {rev ? (
               <SlotRenderer
                 slot={rev}
+                widget={def?.widget}
                 expectedType={def?.type}
                 sessionId={session.session_id}
                 slotId={slotId}
@@ -669,7 +671,7 @@ function CompositeThumbnailRail({
     if (!onReorder || reordering) return;
     dragSrcIdx.current = pageIdx;
     setDraggingIdx(pageIdx);
-    event.dataTransfer.setData('application/x-ppt-page-sort', String(pageIdx));
+    event.dataTransfer.setData('application/x-workflow-page-sort', String(pageIdx));
     event.dataTransfer.effectAllowed = 'move';
   };
 
@@ -699,10 +701,18 @@ function CompositeThumbnailRail({
   };
 
   const canDrag = Boolean(onReorder) && !reordering;
+  const hasAnyHtmlPreview = pages.some((sortOrder) =>
+    Boolean(findSlotRevision(session, tab, 'preview_html', sortOrder)),
+  );
 
   return (
     <div
-      className={`composite-thumb-rail composite-thumb-rail--${isCol ? 'col' : 'row'}`}
+      className={[
+        'composite-thumb-rail',
+        `composite-thumb-rail--${isCol ? 'col' : 'row'}`,
+        `composite-thumb-rail--${position}`,
+        !hasAnyHtmlPreview ? 'composite-thumb-rail--compact' : '',
+      ].filter(Boolean).join(' ')}
       onDragLeave={canDrag ? (event) => {
         if (!(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) {
           setInsertIdx(null);
@@ -726,6 +736,7 @@ function CompositeThumbnailRail({
           {canDrag && <div className={`composite-thumb-rail__insert${insertIdx === 0 ? ' composite-thumb-rail__insert--active' : ''}`} aria-hidden='true' />}
           {pages.map((sortOrder, pageIdx) => {
             const revision = findSlotRevision(session, tab, 'preview_html', sortOrder);
+            const hasHtmlPreview = Boolean(revision);
             return (
               <React.Fragment key={`${sortOrder}-${pageIdx}`}>
                 <button
@@ -737,6 +748,7 @@ function CompositeThumbnailRail({
                     sortOrder === currentPage ? 'composite-thumb-rail__item--active' : '',
                     canDrag ? 'composite-thumb-rail__item--draggable' : '',
                     draggingIdx === pageIdx ? 'composite-thumb-rail__item--dragging' : '',
+                    !hasHtmlPreview ? 'composite-thumb-rail__item--fallback' : '',
                   ].filter(Boolean).join(' ')}
                   onClick={() => onChange(sortOrder)}
                   onDragStart={(event) => handleDragStart(pageIdx, event)}
@@ -747,9 +759,16 @@ function CompositeThumbnailRail({
                   aria-label={t('chat.workflowRowAria', { index: pageIdx + 1 })}
                   aria-current={sortOrder === currentPage ? 'true' : undefined}
                 >
-                  <span className='composite-thumb-rail__badge'>{pageIdx + 1}</span>
-                  <span className='composite-thumb-rail__preview' aria-hidden='true'>
-                    {revision ? <SlideThumb slot={revision} sessionId={session.session_id} /> : '—'}
+                  {hasHtmlPreview && <span className='composite-thumb-rail__badge'>{pageIdx + 1}</span>}
+                  <span
+                    className={`composite-thumb-rail__preview${hasHtmlPreview ? '' : ' composite-thumb-rail__preview--fallback'}`}
+                    aria-hidden='true'
+                  >
+                    {revision ? (
+                      <SlideThumb slot={revision} sessionId={session.session_id} />
+                    ) : (
+                      <span className='composite-thumb-rail__page-number'>{pageIdx + 1}</span>
+                    )}
                   </span>
                 </button>
                 {canDrag && <div className={`composite-thumb-rail__insert${insertIdx === pageIdx + 1 ? ' composite-thumb-rail__insert--active' : ''}`} aria-hidden='true' />}
@@ -826,33 +845,46 @@ function CompositeSlotGrid({
   const canExportHtml = session.workflow_id === 'ppt-workflow'
     || tab.slots.some((slot) => slot.id === 'preview_html');
   const activePage = currentPage ?? rows[0];
-  const canReorderPages = paged && canExportHtml && rows.length > 1 && !readOnly;
+  const reorderableCompositeSlotIds = tab.slots
+    .filter((slot) => slot.cardinality === 'list' && slot.ordered)
+    .map((slot) => slot.id)
+    .filter((slotId) => getTabSlotRevisions(session, tab, slotId)
+      .filter((revision) => revision.selected && revision.list_index !== undefined)
+      .length > 1);
+  const canReorderPages = paged
+    && rows.length > 1
+    && reorderableCompositeSlotIds.length > 0
+    && !readOnly;
 
   const handlePageReorder = useCallback(async (nextPages: number[]) => {
     if (!canReorderPages || reordering || nextPages.length !== rows.length) return;
     if (nextPages.every((page, index) => page === rows[index])) return;
 
     const focusedVisualIdx = Math.max(0, nextPages.indexOf(activePage));
-    // A PPT page is represented by three aligned list slots. Reorder all of them
-    // together so outline, slide HTML and speaker notes keep the same page identity.
-    const alignedSlotIds = ['slide_outline', 'preview_html', 'preview_notes'];
+    // Composite pagination aligns every participating ordered-list slot by its
+    // visual sort_order. Reorder all such slots together so page identity stays
+    // aligned for text, images, HTML previews, notes, and future widget types.
     setReordering(true);
     setExportError(null);
     try {
-      for (const slotId of alignedSlotIds) {
-        const revisions = (session.slots ?? [])
-          .filter((revision) => revision.slot === slotId && revision.selected && revision.sort_order !== undefined)
+      for (const slotId of reorderableCompositeSlotIds) {
+        const revisions = getTabSlotRevisions(session, tab, slotId)
+          .filter((revision) => revision.selected
+            && revision.sort_order !== undefined
+            && revision.list_index !== undefined)
           .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
         if (revisions.length < 2) continue;
         const bySortOrder = new Map(revisions.map((revision) => [revision.sort_order as number, revision]));
-        const nextListOrder = nextPages.map((sortOrder) => bySortOrder.get(sortOrder)?.list_index);
-        if (nextListOrder.some((listIndex) => listIndex === undefined)) {
+        const nextListOrder = nextPages
+          .map((sortOrder) => bySortOrder.get(sortOrder)?.list_index)
+          .filter((listIndex): listIndex is number => listIndex !== undefined);
+        if (nextListOrder.length !== revisions.length) {
           throw new Error(t('chat.workflowPageReorderFailed'));
         }
         await reorderSlotItems(
           session.session_id,
           slotId,
-          nextListOrder as number[],
+          nextListOrder,
           revisions[0]?.order_version ?? 0,
         );
       }
@@ -865,7 +897,7 @@ function CompositeSlotGrid({
     } finally {
       setReordering(false);
     }
-  }, [activePage, canReorderPages, onFocusSortOrder, onRefresh, reorderSlotItems, reordering, rows, session, t]);
+  }, [activePage, canReorderPages, onFocusSortOrder, onRefresh, reorderSlotItems, reordering, reorderableCompositeSlotIds, rows, session, tab, t]);
 
   const runExport = useCallback(async (mode: 'editable' | 'raster' | 'pdf') => {
     if (exporting) return;
@@ -911,16 +943,106 @@ function CompositeSlotGrid({
     );
   }
 
+  const renderSlotCell = (
+    slotId: string,
+    sortOrder: number,
+    key: React.Key,
+    style?: React.CSSProperties,
+  ) => {
+    const def = tab.slots.find((slot) => slot.id === slotId);
+    const rev = findSlotRevision(session, tab, def?.id ?? slotId, sortOrder);
+    return (
+      <div key={key} className='composite-grid__cell' style={style}>
+        {def?.label && <span className='composite-grid__cell-label'>{def.label}</span>}
+        {rev ? (
+          <SlotRenderer
+            slot={rev}
+            widget={def?.widget}
+            expectedType={def?.type}
+            sessionId={session.session_id}
+            slotId={slotId}
+            revisionCount={rev.revision_count}
+            onRefresh={onRefresh}
+            onReference={onReference}
+            hideImageMutationActions={hideImageMutationActions}
+            readOnly={readOnly}
+          />
+        ) : (
+          <div className='composite-grid__cell-empty'>—</div>
+        )}
+      </div>
+    );
+  };
+
+  const hasNestedContainer = (node: CompositePanelNode): boolean =>
+    Boolean(node.children?.some((child) => child.direction || hasNestedContainer(child)));
+
+  const formatCLayout = tab.composite_layout && !Array.isArray(tab.composite_layout)
+    ? tab.composite_layout
+    : undefined;
+  const renderNestedComposite = (
+    node: CompositePanelNode,
+    sortOrder: number,
+    path: string,
+    root = false,
+  ): React.ReactNode => {
+    if (node.slot) return renderSlotCell(node.slot, sortOrder, path);
+    if (node.tabs?.length) {
+      const tabSlotIds = (node.tabs as unknown[])
+        .map((item) => typeof item === 'string'
+          ? item
+          : String((item as { slot?: string })?.slot ?? ''))
+        .filter(Boolean);
+      return (
+        <div key={path} className='composite-grid__cell'>
+          <InnerTabsCell
+            tabsNode={{ tabs: tabSlotIds }}
+            tab={tab}
+            session={session}
+            slotDefs={tab.slots}
+            sortOrder={sortOrder}
+            onRefresh={onRefresh}
+            onReference={onReference}
+            hideImageMutationActions={hideImageMutationActions}
+            readOnly={readOnly}
+          />
+        </div>
+      );
+    }
+    if (!node.direction || !node.children?.length) {
+      return <div key={path} className='composite-grid__cell-empty'>—</div>;
+    }
+    const children = node.children;
+    return (
+      <div
+        key={path}
+        className={`composite-grid__tree composite-grid__tree--${node.direction}${root ? ' composite-grid__tree--root' : ''}`}
+      >
+        {children.map((child, index) => (
+          <div
+            key={`${path}-${index}`}
+            className='composite-grid__tree-child'
+            style={{ flex: `${child.weight ?? 1} 1 0` }}
+          >
+            {renderNestedComposite(child, sortOrder, `${path}-${index}`)}
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   const renderRow = (sortOrder: number) => (
         <div
           key={sortOrder}
-          className={`composite-grid__row${stackCompositeCells ? ' composite-grid__row--stack' : ''}`}
+          className={`composite-grid__row${formatCLayout && hasNestedContainer(formatCLayout) ? ' composite-grid__row--tree' : stackCompositeCells ? ' composite-grid__row--stack' : ''}`}
           onClick={() => onFocusSortOrder?.(sortOrder)}
           role='button'
           tabIndex={0}
           aria-label={t('chat.workflowRowAria', { index: sortOrder })}
         >
-          {columns.map((col, colIdx) => {
+          {formatCLayout && hasNestedContainer(formatCLayout)
+            ? renderNestedComposite(formatCLayout, sortOrder, `page-${sortOrder}`, true)
+            : columns.map((col, colIdx) => {
             const flexBasis = `${(col.weight / totalWeight) * 100}%`;
             if (isInnerTabsNode(col.slotId)) {
               return (
@@ -944,35 +1066,11 @@ function CompositeSlotGrid({
               );
             }
             const slotId = col.slotId as string;
-            const def = tab.slots.find((s) => s.id === slotId);
-            const artifactKey = def?.id ?? slotId;
-            const rev = findSlotRevision(session, tab, artifactKey, sortOrder);
-            return (
-              <div
-                key={slotId}
-                className='composite-grid__cell'
-                style={{ flexBasis, flexGrow: col.weight, flexShrink: 1 }}
-              >
-                {def?.label && (
-                  <span className='composite-grid__cell-label'>{def.label}</span>
-                )}
-                {rev ? (
-                  <SlotRenderer
-                    slot={rev}
-                    expectedType={def?.type}
-                    sessionId={session.session_id}
-                    slotId={slotId}
-                    revisionCount={rev.revision_count}
-                    onRefresh={onRefresh}
-                    onReference={onReference}
-                    hideImageMutationActions={hideImageMutationActions}
-                    readOnly={readOnly}
-                  />
-                ) : (
-                  <div className='composite-grid__cell-empty'>—</div>
-                )}
-              </div>
-            );
+            return renderSlotCell(slotId, sortOrder, slotId, {
+              flexBasis,
+              flexGrow: col.weight,
+              flexShrink: 1,
+            });
           })}
         </div>
   );
@@ -1231,6 +1329,7 @@ function SortableImageList({
               <SlotRenderer
                 slot={rev}
                 cardMode
+                widget={slotDef.widget}
                 expectedType={slotDef.type}
                 sessionId={session.session_id}
                 slotId={slotDef.id}
@@ -1326,6 +1425,7 @@ function NamedTabSlot({
           >
             <SlotRenderer
               slot={rev}
+              widget={slotDef.widget}
               originalFileSlot={
                 slotDef.id === 'delivered_markdown'
                   ? session.slots?.find((item) => item.slot === 'final_document' && item.selected)

@@ -980,7 +980,10 @@ def discard_draft(key: str, sort_order: Optional[int] = None) -> Dict[str, Any]:
 
 
 def list_artifacts(task_ref: Optional[str] = None) -> Dict[str, Any]:
-    """List the artifact keys produced so far in the current task.
+    """List Workflow output artifacts produced so far in the current task.
+
+    This does not list user-uploaded attachments. Use find_user_attachment only when
+    the User Attachments context provides an exact filename.
 
     Args:
         task_ref (str): Optional task reference; when omitted lists artifacts of the current task.

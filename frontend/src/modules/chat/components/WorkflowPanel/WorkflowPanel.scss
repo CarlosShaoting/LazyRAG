@@ -11,7 +11,7 @@
 
   &--expanded {
     position: absolute;
-    inset: 16px calc(clamp(320px, 27vw, 440px) + 16px) 16px 16px;
+    inset: 16px calc(var(--workflow-expanded-rail-width, clamp(320px, 27vw, 440px)) + 16px) 16px 16px;
     z-index: 100;
     height: auto;
     border-color: #dbe4f0;
@@ -683,6 +683,18 @@
         background: rgba(0, 0, 0, 0.03);
       }
     }
+
+    &--markdown {
+      white-space: normal;
+
+      .rag-markdown > :first-child {
+        margin-top: 0;
+      }
+
+      .rag-markdown > :last-child {
+        margin-bottom: 0;
+      }
+    }
   }
 
   &__text-editor {
@@ -711,7 +723,7 @@
 
   // Caption (description) — intentionally muted
   &__caption {
-    margin-top: 4px;
+    display: none;
   }
 
   &__caption-text {
@@ -1953,6 +1965,43 @@
         align-self: center;
       }
     }
+
+    &--tree {
+      flex: 1;
+      min-height: 0;
+    }
+  }
+
+  &__tree {
+    display: flex;
+    flex: 1;
+    gap: 12px;
+    min-width: 0;
+    min-height: 0;
+
+    &--row {
+      flex-direction: row;
+    }
+
+    &--column {
+      flex-direction: column;
+    }
+
+    &--root {
+      width: 100%;
+      min-height: 420px;
+    }
+  }
+
+  &__tree-child {
+    display: flex;
+    min-width: 0;
+    min-height: 0;
+
+    > .composite-grid__cell,
+    > .composite-grid__tree {
+      flex: 1;
+    }
   }
 
   &__cell {
@@ -2007,6 +2056,7 @@
   &--right {
     flex-direction: row;
     align-items: stretch;
+    gap: 8px;
   }
 }
 
@@ -2083,6 +2133,21 @@
     border-right: 1px solid #d8dee8;
   }
 
+  &--col#{&}--right {
+    border-right: 0;
+    border-left: 1px solid #d8dee8;
+  }
+
+  // A text-only Composite uses the same compact 28px page controls in every
+  // dock direction. The wide filmstrip is reserved for actual HTML previews.
+  &--col#{&}--compact {
+    width: 40px;
+    min-height: 0;
+    padding: 4px 6px;
+    background: transparent;
+    border: 0;
+  }
+
   // Pack arrows + thumbs at the top; rail itself still stretches full height for the sidebar chrome.
   &__nav {
     display: flex;
@@ -2095,6 +2160,12 @@
       align-items: stretch;
       flex: 0 1 auto;
       overflow: hidden;
+    }
+
+    .composite-thumb-rail--col.composite-thumb-rail--compact & {
+      flex: 1 1 auto;
+      align-items: center;
+      justify-content: center;
     }
 
     .composite-thumb-rail--row & {
@@ -2188,6 +2259,23 @@
       width: 128px;
     }
 
+    // Text-only composite pages have no HTML slide to capture. Use a compact,
+    // neutral square page marker instead of an empty dark 16:9 thumbnail.
+    &--fallback {
+      box-sizing: border-box;
+      background: #fff;
+      border-radius: 6px;
+
+      .composite-thumb-rail__list--col &,
+      .composite-thumb-rail__list--row & {
+        width: 28px;
+      }
+
+      .composite-thumb-rail__list--col & {
+        align-self: center;
+      }
+    }
+
     &:hover {
       border-color: #a5b4fc;
     }
@@ -2234,6 +2322,21 @@
     aspect-ratio: 16 / 9;
     overflow: hidden;
     pointer-events: none;
+
+    &--fallback {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      aspect-ratio: 1;
+      background: #fff;
+      color: #111827;
+    }
+  }
+
+  &__page-number {
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
   }
 
   &__empty {

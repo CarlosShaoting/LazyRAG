@@ -1,4 +1,6 @@
 .detail-container {
+  --workflow-expanded-rail-width: clamp(320px, 27vw, 440px);
+
   position: relative;
 
   height: 100%;
@@ -29,7 +31,7 @@
       top: 49px;
       right: 0;
       bottom: 0;
-      width: clamp(320px, 27vw, 440px);
+      width: var(--workflow-expanded-rail-width);
       min-width: 320px;
       z-index: 30;
       border-left: 1px solid #dfe6ef;
@@ -96,7 +98,7 @@
     position: absolute;
     top: 0;
     right: 0;
-    width: clamp(320px, 27vw, 440px);
+    width: var(--workflow-expanded-rail-width);
     height: 49px;
     display: flex;
     align-items: stretch;
@@ -106,6 +108,34 @@
     border-bottom: 1px solid #e5e7eb;
     background: #fff;
     z-index: 40;
+
+    &__toggle {
+      position: absolute !important;
+      top: 10px;
+      left: 8px;
+      width: 28px;
+      height: 28px;
+      border: 1px solid #dfe6ef !important;
+      border-radius: 6px;
+      padding: 0 !important;
+      font-size: 20px !important;
+      line-height: 1;
+
+      &:hover {
+        color: #2563eb;
+        background: #eef4ff;
+      }
+    }
+
+    &--collapsed {
+      width: 40px;
+      gap: 0;
+      border-left: 1px solid #dfe6ef;
+
+      .expanded-rail-tabs__toggle {
+        position: static !important;
+      }
+    }
 
     button {
       position: relative;
@@ -141,6 +171,10 @@
         font-size: 11px;
       }
     }
+  }
+
+  &--workflow-rail-collapsed {
+    --workflow-expanded-rail-width: 40px;
   }
 
   .drag-overlay {
@@ -255,7 +289,7 @@
     top: 49px;
     right: 0;
     bottom: 0;
-    width: clamp(320px, 27vw, 440px);
+    width: var(--workflow-expanded-rail-width);
     min-width: 320px;
     height: auto;
     padding: 16px;

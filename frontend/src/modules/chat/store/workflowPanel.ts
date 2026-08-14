@@ -254,6 +254,15 @@ export interface SlotDef {
   caption_key?: string;
   /** Maximum characters shown in the artifact summary injected into the AI prompt. */
   summary_max_chars?: number;
+  /** Runtime widget configuration from ui.slots, hydrated when the workflow UI is loaded. */
+  widget?: SlotWidgetConfig;
+}
+
+export interface SlotWidgetConfig {
+  widgetType?: string;
+  readOnly?: boolean;
+  maxHeight?: number;
+  [key: string]: unknown;
 }
 
 // composite_layout node types (recursive) — format C.
@@ -577,7 +586,30 @@ export const useWorkflowStore = create<WorkflowStore>()((set, get) => ({
       const res = await WorkflowInfoApi().getWorkflow(workflowId, {
         headers: lang ? { "Accept-Language": lang } : undefined,
       });
-      const ui: WorkflowUI = res?.data?.data?.ui ?? res?.data?.ui ?? {};
+      const payload = res?.data?.data ?? res?.data ?? {};
+      const rawUi: WorkflowUI = payload.ui ?? {};
+      const declaredSlots: SlotDef[] = Array.isArray(payload.slots) ? payload.slots : [];
+      const declaredSlotById = new Map(declaredSlots.map((slot) => [slot.id, slot]));
+      // workflow.yaml keeps the full slot contract at the top level while
+      // ui.tabs only stores lightweight `{id}` references. Hydrate those refs
+      // before caching the UI so every layout (including Composite pagination)
+      // receives cardinality/ordered/type instead of being coupled to a
+      // workflow-specific slot name such as preview_html.
+      const ui: WorkflowUI = {
+        ...rawUi,
+        tabs: rawUi.tabs?.map((tab) => ({
+          ...tab,
+          slots: (tab.slots ?? []).map((slot) => {
+            const declared = declaredSlotById.get(slot.id);
+            const widget = rawUi.slots?.[slot.id];
+            return {
+              ...(declared ?? {}),
+              ...slot,
+              ...(widget ? { widget } : {}),
+            } as SlotDef;
+          }),
+        })),
+      };
       set((state) => ({
         workflowUIByWorkflow: { ...state.workflowUIByWorkflow, [cacheKey]: ui },
       }));
