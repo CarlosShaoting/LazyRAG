@@ -3,17 +3,6 @@ import { WorkflowInfoApi, WorkflowSessionApi, TempUploadServiceApi } from "@/mod
 import i18n from "@/i18n";
 import type { ChatConfig } from "@/modules/chat/components/ChatConfigs";
 import { extractErrorCode, getLocalizedErrorMessage } from "@/components/request";
-import {
-  emptyWorkflowProjection,
-  markWorkflowResyncRequired,
-  reduceWorkflowEvent,
-  type WorkflowProjectionState,
-  type WorkflowStreamEvent,
-} from '@/modules/chat/store/workflowProjection';
-import {
-  subscribeWorkflowEventStream,
-  type WorkflowEventStreamSubscription,
-} from '@/modules/chat/utils/workflowEventStream';
 import { reconcileWorkflowSessionStatus } from '@/modules/chat/store/workflowStatus';
 
 export function buildWorkflowSearchConfig(
@@ -43,6 +32,12 @@ const DRAFT_FLUSH_DELAY_MS = 60_000;
 const DRAFT_LS_PREFIX = 'slotDraft:';
 
 const _drafts = new Map<string, DraftEntry>();
+
+// A write-back can finish while a session request that started earlier is still
+// in flight. Do not discard the refresh in that case: queue one follow-up load
+// so the selected artifact eventually converges to the new provider_sync revision.
+const _activeSessionLoads = new Map<string, Promise<void>>();
+const _queuedActiveSessionLoads = new Map<string, { silentError?: boolean }>();
 
 function _draftKey(sessionId: string, slotId: string, listIndex: number): string {
   return `${sessionId}:${slotId}:${listIndex}`;
@@ -177,8 +172,22 @@ export interface SlotRevision {
   artifact_value?: any;
   /** Human-readable description for image/file artifacts. */
   caption?: string;
-  /** change_source: 'ai' (generated) or 'human' (manually edited). */
-  change_source?: "ai" | "human";
+  /** change_source: ai / human / provider_sync (Feishu-confirmed). */
+  change_source?: "ai" | "human" | "provider_sync";
+  /** Whether this draft has a server-owned Feishu baseline. */
+  write_back_ready?: boolean;
+  /** Whether the selected draft differs from that Feishu baseline. */
+  write_back_dirty?: boolean;
+  /** Server-owned delivery state for the selected draft. */
+  write_back_state?: 'initial_delivery' | 'synced_clean' | 'synced_dirty' | 'blocked';
+  /** Public Feishu document URL resolved by the server from source_document. */
+  write_back_url?: string;
+  /** Cloud provider bound to source_document, for example "feishu". */
+  provider?: string;
+  /** Stable cloud-document identity. It is never a local revision number. */
+  provider_document_id?: string;
+  /** Most recent local revision confirmed equal to the cloud document. */
+  last_synced_revision?: number;
   /** Number of revisions for this (slot_id, list_index) — used to show version badge. */
   revision_count?: number;
 }
@@ -187,6 +196,11 @@ export interface WorkflowSession {
   session_id: string;
   conversation_id: string;
   workflow_id: string;
+  /** Immutable package revision selected when this session was created. */
+  pinned_revision_id?: string;
+  pinned_revision_no?: number;
+  /** Current published package revision; absent for built-ins without a resource head. */
+  head_revision_no?: number;
   status: "active" | "completed" | "failed" | "waiting" | "stopped";
   current_step_id: string;
   /** Global intent/constraint for this session, JSON string e.g. {"text":"..."} */
@@ -330,16 +344,67 @@ export interface CompositeBehavior {
 }
 
 export interface WorkflowUI {
+  name?: string;
   tabs?: TabDef[];
   /** Global widget config keyed by slot id. */
   slots?: Record<string, Record<string, unknown>>;
 }
 
+/**
+ * The catalog keeps reusable slot metadata at the workflow root while UI tabs
+ * commonly reference a slot with only `{ id }`.  Hydrate those references so
+ * renderers can see properties such as `type`, `cardinality`, and `ordered`.
+ */
+export function hydrateWorkflowUI(raw: unknown, fallbackName?: string): WorkflowUI {
+  if (!raw || typeof raw !== 'object') return {};
+  const spec = raw as Record<string, unknown>;
+  const rawUI = spec.ui;
+  if (!rawUI || typeof rawUI !== 'object' || Array.isArray(rawUI)) return {};
+
+  const ui = rawUI as WorkflowUI;
+  const slotDefs = new Map<string, SlotDef>();
+  if (Array.isArray(spec.slots)) {
+    for (const value of spec.slots) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+      const slot = value as SlotDef;
+      if (typeof slot.id === 'string' && slot.id) slotDefs.set(slot.id, slot);
+    }
+  }
+
+  const name = typeof spec.name === 'string' ? spec.name : fallbackName;
+  if (!Array.isArray(ui.tabs)) {
+    return name === undefined ? ui : { ...ui, name };
+  }
+  const hasWidgetConfigs = Boolean(ui.slots && Object.keys(ui.slots).length > 0);
+  if (slotDefs.size === 0 && !hasWidgetConfigs) {
+    return name === undefined ? ui : { ...ui, name };
+  }
+  return {
+    ...ui,
+    ...(name === undefined ? {} : { name }),
+    tabs: ui.tabs.map((tab) => ({
+      ...tab,
+      slots: Array.isArray(tab.slots)
+        ? tab.slots.map((slot) => {
+          const widget = ui.slots?.[slot.id];
+          return {
+            ...slotDefs.get(slot.id),
+            ...slot,
+            ...(widget ? { widget } : {}),
+          } as SlotDef;
+        })
+        : [],
+    })),
+  };
+}
+
 export interface SlotVersionEntry {
   revision: number;
-  change_source: "ai" | "human";
+  change_source: "ai" | "human" | "provider_sync";
   created_at: string;
   selected: boolean;
+  /** Whether this historical Writer revision was provider-confirmed. */
+  provider_synced?: boolean;
   content_snapshot?: any;
 }
 
@@ -362,9 +427,6 @@ interface WorkflowStore {
    *  so server refreshes don't overwrite the user's tab / sort_order focus. */
   focusedTabByConversation: Record<string, string | undefined>;
   focusedSortOrderByConversation: Record<string, number | undefined>;
-  /** Canonical Event Stream projection shared by in-chat and standalone panels. */
-  projectionBySession: Record<string, WorkflowProjectionState>;
-
   setSession: (conversationId: string, session: WorkflowSession | null) => void;
   updateSlot: (conversationId: string, slot: SlotRevision) => void;
   loadActiveSession: (
@@ -387,6 +449,7 @@ interface WorkflowStore {
     value: any,
     contentType?: string,
     mode?: 'draft' | 'checkpoint',
+    baseRevision?: number,
   ) => Promise<number | undefined>;
   reorderSlotItems: (sessionId: string, slotId: string, newSortOrderSeq: number[], version: number) => Promise<void>;
   getSlotVersions: (sessionId: string, slotId: string, listIndex: number) => Promise<SlotVersionEntry[]>;
@@ -397,11 +460,7 @@ interface WorkflowStore {
   // value persists across `setSession()` refreshes that would otherwise wipe it.
   setFocusedTab: (conversationId: string, tabId: string) => void;
   setFocusedSortOrder: (conversationId: string, sortOrder: number | undefined) => void;
-  applyWorkflowEvent: (conversationId: string, sessionId: string, event: WorkflowStreamEvent) => void;
-  subscribeWorkflowSession: (conversationId: string, sessionId: string) => () => void;
 }
-
-const workflowStreams = new Map<string, { refs: number; subscription: WorkflowEventStreamSubscription }>();
 
 export const useWorkflowStore = create<WorkflowStore>()((set, get) => ({
   sessionByConversation: {},
@@ -412,7 +471,6 @@ export const useWorkflowStore = create<WorkflowStore>()((set, get) => ({
   dismissedSessionsByConversation: {},
   focusedTabByConversation: {},
   focusedSortOrderByConversation: {},
-  projectionBySession: {},
 
   bumpDismissedRefresh: (conversationId) => {
     set((s) => ({
@@ -421,8 +479,6 @@ export const useWorkflowStore = create<WorkflowStore>()((set, get) => ({
         [conversationId]: (s.dismissedRefreshTrigger[conversationId] ?? 0) + 1,
       },
     }));
-    // Also refresh the cached dismissed list so any remounted component gets fresh data.
-    get().fetchDismissedSessions(conversationId);
   },
 
   fetchDismissedSessions: async (conversationId) => {
@@ -483,54 +539,80 @@ export const useWorkflowStore = create<WorkflowStore>()((set, get) => ({
 
   loadActiveSession: async (conversationId, options) => {
     if (!conversationId) return;
-    // Deduplicate concurrent calls for the same conversation.
-    if (get().loadingByConversation[conversationId]) return;
-    set((s) => ({
-      loadingByConversation: { ...s.loadingByConversation, [conversationId]: true },
-    }));
-    try {
-      const requestOptions = options?.silentError
-        ? ({ silentError: true } as never)
-        : undefined;
-      const res = await WorkflowSessionApi().getLatestSession(
-        conversationId,
-        requestOptions,
-      );
-      const session: WorkflowSession | null = res?.data?.data?.session ?? null;
-      // Runtime controls and rollback candidates come from Go's projection.
-      // Steps are attempt history only; they never define Past/Ready locally.
-      if (session?.session_id) {
-        try {
-          const [stepsRes, projectionRes] = await Promise.all([
-            WorkflowSessionApi().getSteps(session.session_id, requestOptions),
-            WorkflowSessionApi().getProjection(
-              session.session_id,
-              { silentError: true } as never,
-            ),
-          ]);
-          const rawSteps = stepsRes?.data?.data?.steps ?? [];
-          session.steps = rawSteps.filter((s: WorkflowSessionStep) => s.step_id !== '__end__');
-          session.projection = projectionRes?.data?.data?.projection ?? {};
-          session.status = reconcileWorkflowSessionStatus(session.status, session.projection);
-        } catch (error) {
-          session.steps = [];
-          session.projection = {};
-          const errorCode = extractErrorCode(error);
-          if (errorCode === "WORKFLOW_DEFINITION_CHANGED") {
-            session.runtime_error_code = errorCode;
-            session.runtime_error_message = getLocalizedErrorMessage(error);
+    const activeLoad = _activeSessionLoads.get(conversationId);
+    if (activeLoad) {
+      const queuedOptions = _queuedActiveSessionLoads.get(conversationId);
+      _queuedActiveSessionLoads.set(conversationId, {
+        silentError: queuedOptions
+          ? Boolean(queuedOptions.silentError && options?.silentError)
+          : options?.silentError,
+      });
+      await activeLoad;
+      return;
+    }
+
+    const load = (async () => {
+      set((s) => ({
+        loadingByConversation: { ...s.loadingByConversation, [conversationId]: true },
+      }));
+      try {
+        const requestOptions = options?.silentError
+          ? ({ silentError: true } as never)
+          : undefined;
+        const res = await WorkflowSessionApi().getLatestSession(
+          conversationId,
+          requestOptions,
+        );
+        const session: WorkflowSession | null = res?.data?.data?.session ?? null;
+        // Runtime controls and rollback candidates come from Go's projection.
+        // Steps are attempt history only; they never define Past/Ready locally.
+        if (session?.session_id) {
+          try {
+            const [stepsRes, projectionRes] = await Promise.all([
+              WorkflowSessionApi().getSteps(session.session_id, requestOptions),
+              WorkflowSessionApi().getProjection(
+                session.session_id,
+                { silentError: true } as never,
+              ),
+            ]);
+            const rawSteps = stepsRes?.data?.data?.steps ?? [];
+            session.steps = rawSteps.filter((s: WorkflowSessionStep) => s.step_id !== '__end__');
+            session.projection = projectionRes?.data?.data?.projection ?? {};
+            session.status = reconcileWorkflowSessionStatus(session.status, session.projection);
+          } catch (error) {
+            session.steps = [];
+            session.projection = {};
+            const errorCode = extractErrorCode(error);
+            if (errorCode === "WORKFLOW_DEFINITION_CHANGED") {
+              session.runtime_error_code = errorCode;
+              session.runtime_error_message = getLocalizedErrorMessage(error);
+            }
           }
         }
+        get().setSession(conversationId, session);
+        // Also refresh dismissed sessions so the restore button appears immediately on load.
+        get().fetchDismissedSessions(conversationId);
+      } catch {
+        // ignore
+      } finally {
+        set((s) => ({
+          loadingByConversation: { ...s.loadingByConversation, [conversationId]: false },
+        }));
       }
-      get().setSession(conversationId, session);
-      // Also refresh dismissed sessions so the restore button appears immediately on load.
-      get().fetchDismissedSessions(conversationId);
-    } catch {
-      // ignore
+    })();
+
+    _activeSessionLoads.set(conversationId, load);
+    try {
+      await load;
     } finally {
-      set((s) => ({
-        loadingByConversation: { ...s.loadingByConversation, [conversationId]: false },
-      }));
+      if (_activeSessionLoads.get(conversationId) === load) {
+        _activeSessionLoads.delete(conversationId);
+      }
+      const queuedOptions = _queuedActiveSessionLoads.get(conversationId);
+      if (queuedOptions) {
+        _queuedActiveSessionLoads.delete(conversationId);
+        await get().loadActiveSession(conversationId, queuedOptions);
+      }
     }
   },
 
@@ -587,29 +669,7 @@ export const useWorkflowStore = create<WorkflowStore>()((set, get) => ({
         headers: lang ? { "Accept-Language": lang } : undefined,
       });
       const payload = res?.data?.data ?? res?.data ?? {};
-      const rawUi: WorkflowUI = payload.ui ?? {};
-      const declaredSlots: SlotDef[] = Array.isArray(payload.slots) ? payload.slots : [];
-      const declaredSlotById = new Map(declaredSlots.map((slot) => [slot.id, slot]));
-      // workflow.yaml keeps the full slot contract at the top level while
-      // ui.tabs only stores lightweight `{id}` references. Hydrate those refs
-      // before caching the UI so every layout (including Composite pagination)
-      // receives cardinality/ordered/type instead of being coupled to a
-      // workflow-specific slot name such as preview_html.
-      const ui: WorkflowUI = {
-        ...rawUi,
-        tabs: rawUi.tabs?.map((tab) => ({
-          ...tab,
-          slots: (tab.slots ?? []).map((slot) => {
-            const declared = declaredSlotById.get(slot.id);
-            const widget = rawUi.slots?.[slot.id];
-            return {
-              ...(declared ?? {}),
-              ...slot,
-              ...(widget ? { widget } : {}),
-            } as SlotDef;
-          }),
-        })),
-      };
+      const ui = hydrateWorkflowUI(payload, workflowId);
       set((state) => ({
         workflowUIByWorkflow: { ...state.workflowUIByWorkflow, [cacheKey]: ui },
       }));
@@ -623,9 +683,9 @@ export const useWorkflowStore = create<WorkflowStore>()((set, get) => ({
     await WorkflowSessionApi().deleteSlotItem(sessionId, slotId, listIndex, orderVersion);
   },
 
-  patchSlotItemValue: async (sessionId, slotId, listIndex, value, contentType, mode) => {
+  patchSlotItemValue: async (sessionId, slotId, listIndex, value, contentType, mode, baseRevision) => {
     const res = await WorkflowSessionApi().patchSlotItem(
-      sessionId, slotId, listIndex, value, contentType, mode,
+      sessionId, slotId, listIndex, value, contentType, mode, baseRevision,
     );
     const revision = res?.data?.data?.revision;
     return typeof revision === 'number' ? revision : undefined;
@@ -694,58 +754,4 @@ export const useWorkflowStore = create<WorkflowStore>()((set, get) => ({
     });
   },
 
-  applyWorkflowEvent: (conversationId, sessionId, event) => {
-    set((state) => {
-      const previous = state.projectionBySession[sessionId] ?? emptyWorkflowProjection();
-      const projectionState = reduceWorkflowEvent(previous, event);
-      const session = state.sessionByConversation[conversationId];
-      if (!session || session.session_id !== sessionId) {
-        return { projectionBySession: { ...state.projectionBySession, [sessionId]: projectionState } };
-      }
-      const projection = projectionState.projection as WorkflowRuntimeProjection & { status?: string };
-      const reconciledStatus = reconcileWorkflowSessionStatus(session.status, projection);
-      return {
-        projectionBySession: { ...state.projectionBySession, [sessionId]: projectionState },
-        sessionByConversation: {
-          ...state.sessionByConversation,
-          [conversationId]: { ...session, status: reconciledStatus, projection },
-        },
-      };
-    });
-    const projectionState = get().projectionBySession[sessionId];
-    if (projectionState?.resyncRequired) {
-      // Closing and reconnecting without Last-Event-ID asks the server for a fresh snapshot.
-      workflowStreams.get(sessionId)?.subscription.resync();
-    }
-  },
-
-  subscribeWorkflowSession: (conversationId, sessionId) => {
-    const existing = workflowStreams.get(sessionId);
-    if (existing) {
-      existing.refs += 1;
-    } else {
-      const current = get().projectionBySession[sessionId] ?? emptyWorkflowProjection();
-      const subscription = subscribeWorkflowEventStream(
-        sessionId,
-        current.resyncRequired ? 0 : current.cursor,
-        (event) => get().applyWorkflowEvent(conversationId, sessionId, event),
-        () => set((state) => ({
-          projectionBySession: {
-            ...state.projectionBySession,
-            [sessionId]: markWorkflowResyncRequired(state.projectionBySession[sessionId] ?? emptyWorkflowProjection()),
-          },
-        })),
-      );
-      workflowStreams.set(sessionId, { refs: 1, subscription });
-    }
-    return () => {
-      const current = workflowStreams.get(sessionId);
-      if (!current) return;
-      current.refs -= 1;
-      if (current.refs <= 0) {
-        current.subscription.close();
-        workflowStreams.delete(sessionId);
-      }
-    };
-  },
 }));

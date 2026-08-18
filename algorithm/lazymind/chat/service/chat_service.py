@@ -894,6 +894,29 @@ async def _handle_chat_impl(
     intent_tools = [] if workflow_turn_is_bound else [intentwriter]
     all_tools = (intent_tools + agent_tools + artifact_tools + subagent_tools + attachment_tools
                  + skill_listing_tools + ask_user_tools + workflow_tools + mcp_tools)
+    active_workflow_tool_isolation = bool(
+        isinstance(effective_workflow_context, dict)
+        and effective_workflow_context.get('session_id')
+        and workflow_tools
+        and task_profile is not None
+        and task_profile.primary_outcome in {'execute', 'transform'}
+    )
+    if active_workflow_tool_isolation:
+        # An active workflow owns mutation of its artifacts. Generic execution tools
+        # would create side artifacts outside the workflow lineage (for example a
+        # standalone generated image), so expose only workflow control/query tools.
+        # The Workflow's declarative rerun_when metadata still decides the owning step.
+        active_configs = []
+        attachment_configs = []
+        all_tools = [intentwriter, *ask_user_tools, *workflow_tools]
+        LOG.info(
+            '[ChatServer] [ACTIVE_WORKFLOW_TOOL_ISOLATION] [sid=%s] '
+            '[workflow_id=%s] [outcome=%s] [tools=%s]',
+            conversation.session_id,
+            effective_workflow_context.get('workflow_id'),
+            task_profile.primary_outcome,
+            [getattr(tool, '__name__', str(tool)) for tool in all_tools],
+        )
     skill_config = agent.available_skills
     selected_skills = agent.available_skills
     if workflow_turn_is_bound:
