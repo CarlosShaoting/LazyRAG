@@ -891,10 +891,6 @@ export default function MainLayout() {
             </div>
           )}
           <div className="sider-bar-bottom">
-            <div className="bottom-item language-item">
-              <GlobalOutlined className="bottom-icon" />
-              {shouldRenderMenuContent && <LanguageSwitcher />}
-            </div>
             {showSettingsTrigger && (
               <Popover
                 content={
@@ -945,6 +941,10 @@ export default function MainLayout() {
                       );
                       return btn;
                     })}
+                    <div className="settings-popover-language">
+                      <GlobalOutlined className="settings-popover-icon" />
+                      <LanguageSwitcher />
+                    </div>
                     {!hideLocalUserControls && (
                       isLoggedIn ? (
                         <Button

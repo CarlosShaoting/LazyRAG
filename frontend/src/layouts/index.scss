@@ -1401,12 +1401,6 @@
     overflow-y: auto;
   }
 
-  .language-item {
-    .language-switcher {
-      flex: 1;
-      min-width: 0;
-    }
-  }
 }
 
 .settings-popover {
@@ -1480,6 +1474,31 @@
 
   .settings-popover-icon {
     font-size: 16px;
+  }
+
+  .settings-popover-language {
+    height: 28px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 6px;
+    border-radius: 6px;
+    color: #323c47;
+
+    &:hover {
+      background: #f3f7fd;
+      color: #006ae6;
+    }
+
+    .language-switcher {
+      flex: 1;
+      width: 100%;
+      min-width: 0;
+
+      .ant-select-arrow {
+        inset-inline-end: 0;
+      }
+    }
   }
 }
 
