@@ -3727,10 +3727,28 @@ export function SlotRenderer({
     if (isSlideSpecArtifact(slot.artifact_value) && !isHtmlSlideArtifact(slot.artifact_value)) {
       return <SlotJsonSlide slot={slot} compact={cardMode} />;
     }
-    return <SlotHtmlSlide slot={slot} compact={cardMode} />;
+    return (
+      <SlotHtmlSlide
+        slot={slot}
+        compact={cardMode}
+        sessionId={sessionId}
+        slotId={artifactSlotKey}
+        readOnly={readOnly}
+        onRefresh={onRefresh}
+      />
+    );
   }
   if (isHtmlSlideArtifact(slot.artifact_value)) {
-    return <SlotHtmlSlide slot={slot} compact={cardMode} />;
+    return (
+      <SlotHtmlSlide
+        slot={slot}
+        compact={cardMode}
+        sessionId={sessionId}
+        slotId={artifactSlotKey}
+        readOnly={readOnly}
+        onRefresh={onRefresh}
+      />
+    );
   }
   if (normalized === 'image') {
     return (

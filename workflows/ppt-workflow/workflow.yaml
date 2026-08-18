@@ -39,6 +39,15 @@ tool_scripts:
       - ppt_patch_page_outline
       - ppt_edit_page_html
       - ppt_delete_page
+      - ppt_preview_selection_edit
+      - ppt_apply_selection_edit
+
+artifact_actions:
+  rewrite_selection:
+    slots:
+      - preview_html
+    preview_tool: ppt_preview_selection_edit
+    execute_tool: ppt_apply_selection_edit
 
 steps:
   - id: analyze_requirements

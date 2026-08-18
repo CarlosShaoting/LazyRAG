@@ -62,6 +62,107 @@ class PartialEditTests(unittest.TestCase):
                 'value': 'new',
             }])
 
+    def test_selected_element_style_is_scoped_and_sanitized(self):
+        edited, applied, _notes, _removed = TOOLS._apply_html_ops(PAGE_HTML, [{
+            'op': 'set_style',
+            'el': 'title',
+            'styles': {'font-size': '48px', 'color': '#ffffff'},
+        }])
+        TOOLS._validate_local_html_edit(PAGE_HTML, edited)
+        self.assertIn(
+            '<h1 data-el="title" style="font-size: 48px; color: #ffffff">',
+            edited,
+        )
+        self.assertEqual(len(applied), 1)
+        with self.assertRaisesRegex(ValueError, 'unsafe CSS value'):
+            TOOLS._apply_html_ops(PAGE_HTML, [{
+                'op': 'set_style',
+                'el': 'title',
+                'styles': {'background': 'url(javascript:alert(1))'},
+            }])
+
+    def test_common_relative_css_requests_do_not_call_llm(self):
+        selection = {
+            'type': 'ppt_html',
+            'page': 1,
+            'el': 'title',
+            'computed_style': {
+                'font_size': '40px',
+                'width': '600px',
+                'height': '80px',
+            },
+        }
+        with mock.patch.object(TOOLS, '_agent_llm_call') as llm:
+            ops, old_text, new_text = TOOLS._selection_edit_ops(
+                '字体变大，宽度变小', selection, TOOLS._HtmlTree(PAGE_HTML),
+            )
+        self.assertEqual(ops, [{
+            'op': 'set_style',
+            'el': 'title',
+            'styles': {'font-size': '46px', 'width': '510px'},
+        }])
+        self.assertEqual(old_text, 'Old title')
+        self.assertEqual(new_text, old_text)
+        llm.assert_not_called()
+
+    def test_exact_css_sizes_and_alignment_are_deterministic(self):
+        with mock.patch.object(TOOLS, '_agent_llm_call') as llm:
+            ops, _old_text, _new_text = TOOLS._selection_edit_ops(
+                '字号改为 32px，宽度设置为 50%，文字居中并加粗',
+                {'type': 'ppt_html', 'page': 1, 'el': 'title'},
+                TOOLS._HtmlTree(PAGE_HTML),
+            )
+        self.assertEqual(ops[0]['styles'], {
+            'font-size': '32px',
+            'width': '50%',
+            'font-weight': '700',
+            'text-align': 'center',
+        })
+        llm.assert_not_called()
+
+    def test_remove_background_is_a_style_edit_not_node_deletion(self):
+        with mock.patch.object(TOOLS, '_agent_llm_call') as llm:
+            ops, _old_text, _new_text = TOOLS._selection_edit_ops(
+                '去掉背景色',
+                {'type': 'ppt_html', 'page': 1, 'el': 'title'},
+                TOOLS._HtmlTree(PAGE_HTML),
+            )
+        self.assertEqual(ops, [{
+            'op': 'set_style',
+            'el': 'title',
+            'styles': {'background': 'transparent'},
+        }])
+        llm.assert_not_called()
+
+    def test_selection_preview_then_apply_updates_export_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            deck, page = make_deck(root)
+            public, _ = TOOLS._inline_preview_images(
+                TOOLS._sanitize_page_html(PAGE_HTML), deck, page,
+            )
+            artifact = TOOLS._with_ppt_source_meta(
+                public, page, TOOLS._html_sha256(PAGE_HTML),
+            )
+            preview = TOOLS.ppt_preview_selection_edit(
+                artifact=artifact,
+                instruction='修改标题成 New title',
+                selection={'type': 'ppt_html', 'page': 1, 'el': 'title'},
+                artifact_store=str(root / 'artifacts'),
+                slot='preview_html',
+            )
+            self.assertEqual(preview['preview']['new_text'], 'New title')
+            self.assertIn('New title', preview['candidate_html'])
+            self.assertEqual(page.read_text(encoding='utf-8'), PAGE_HTML)
+
+            applied = TOOLS.ppt_apply_selection_edit(
+                commit_token=preview['commit']['token'],
+                artifact_store=str(root / 'artifacts'),
+                slot='preview_html',
+            )
+            self.assertEqual(applied['representation'], 'ppt_html')
+            self.assertIn('New title', page.read_text(encoding='utf-8'))
+
     def test_read_hash_guards_against_stale_edit(self):
         with tempfile.TemporaryDirectory() as tmp:
             deck, page = make_deck(Path(tmp))

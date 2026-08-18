@@ -738,6 +738,39 @@ _PREVIEW_IMAGE_MIME = {
     '.bmp': 'image/bmp',
 }
 
+_PPT_SOURCE_META_RE = re.compile(
+    r'<!--\s*lazymind-ppt-source:([A-Za-z0-9_=-]+)\s*-->', re.I,
+)
+
+
+def _strip_ppt_source_meta(html: str) -> str:
+    return _PPT_SOURCE_META_RE.sub('', html or '', count=1).lstrip()
+
+
+def _with_ppt_source_meta(html: str, source_path: Path, source_sha256: str) -> str:
+    payload = base64.urlsafe_b64encode(json.dumps({
+        'path': str(source_path.resolve()),
+        'sha256': source_sha256,
+    }, ensure_ascii=False, separators=(',', ':')).encode('utf-8')).decode('ascii')
+    return f'<!-- lazymind-ppt-source:{payload} -->\n{_strip_ppt_source_meta(html)}'
+
+
+def _read_ppt_source_meta(html: str) -> dict[str, str]:
+    match = _PPT_SOURCE_META_RE.search(html or '')
+    if not match:
+        raise ValueError(
+            'This slide predates element editing metadata. Regenerate or republish the page first.',
+        )
+    try:
+        data = json.loads(base64.urlsafe_b64decode(match.group(1)).decode('utf-8'))
+    except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise ValueError('invalid PPT source metadata') from exc
+    path = _coerce_str(data.get('path')) if isinstance(data, dict) else ''
+    sha256 = _coerce_str(data.get('sha256')) if isinstance(data, dict) else ''
+    if not path or not re.fullmatch(r'[0-9a-f]{64}', sha256):
+        raise ValueError('incomplete PPT source metadata')
+    return {'path': path, 'sha256': sha256}
+
 
 def _inline_preview_images(html: str, deck: Path, html_path: Path) -> tuple[str, int]:
     """Make local slide images self-contained for the UI's iframe srcDoc.
@@ -792,10 +825,12 @@ def _publish_one_page(
     path = _page_html_path(deck, page_no)
     if not path.exists():
         return {'page': page_no, 'ok': False, 'error': f'missing {path.name}'}
-    html = _sanitize_page_html(path.read_text(encoding='utf-8'))
+    source_html = path.read_text(encoding='utf-8')
+    html = _sanitize_page_html(source_html)
     if not html or '<html' not in html.lower():
         return {'page': page_no, 'ok': False, 'error': 'not a valid HTML document'}
     html, inlined_images = _inline_preview_images(html, deck, path)
+    html = _with_ppt_source_meta(html, path, _html_sha256(source_html))
     title = _title_from_html(html)
     html_res = _save_artifact(
         key='preview_html',
@@ -1289,7 +1324,12 @@ _GRID_REPEAT_RE = re.compile(
 
 _HTML_EDIT_OPS_HELP = (
     'Valid ops: delete_node(el|group|class|match, index?), '
-    'replace_text(el|match, value, all?).'
+    'replace_text(el|match, value, all?), set_style(el, styles).'
+)
+
+_SAFE_STYLE_PROPERTY_RE = re.compile(r'^(?:--)?[a-z][a-z0-9-]{0,63}$')
+_UNSAFE_STYLE_VALUE_RE = re.compile(
+    r'(?:url\s*\(|expression\s*\(|javascript\s*:|behavior\s*:|-moz-binding)', re.I,
 )
 
 
@@ -1701,6 +1741,51 @@ def _sync_doc_title(html: str, old: str, new: str, applied: list[str]) -> str:
     return html[:match.start()] + match.group(1) + new + match.group(3) + html[match.end():]
 
 
+def _set_inline_styles(html: str, node: dict[str, Any], styles: Any) -> str:
+    """Merge a constrained style map into one selected element's start tag."""
+    if not isinstance(styles, dict) or not styles:
+        raise ValueError('set_style requires a non-empty styles object')
+    clean: dict[str, str] = {}
+    for raw_name, raw_value in styles.items():
+        name = _coerce_str(raw_name).lower()
+        value = _coerce_str(raw_value)
+        if not _SAFE_STYLE_PROPERTY_RE.fullmatch(name):
+            raise ValueError(f'unsafe CSS property {name!r}')
+        if not value or len(value) > 500 or any(ch in value for ch in '<>;'):
+            raise ValueError(f'unsafe CSS value for {name!r}')
+        if _UNSAFE_STYLE_VALUE_RE.search(value):
+            raise ValueError(f'unsafe CSS value for {name!r}')
+        clean[name] = value
+
+    start_tag = html[node['start']:node['open_end']]
+    style_match = re.search(r'\sstyle\s*=\s*(["\'])(.*?)\1', start_tag, re.I | re.S)
+    declarations: dict[str, str] = {}
+    if style_match:
+        for part in style_match.group(2).split(';'):
+            if ':' not in part:
+                continue
+            key, value = part.split(':', 1)
+            key = key.strip().lower()
+            if _SAFE_STYLE_PROPERTY_RE.fullmatch(key):
+                declarations[key] = value.strip()
+    declarations.update(clean)
+    encoded = _html_escape(
+        '; '.join(f'{name}: {value}' for name, value in declarations.items()), quote=True,
+    )
+    if style_match:
+        revised_tag = (
+            start_tag[:style_match.start()] + f' style="{encoded}"'
+            + start_tag[style_match.end():]
+        )
+    else:
+        closing = '/>' if start_tag.rstrip().endswith('/>') else '>'
+        at = start_tag.rfind(closing)
+        if at < 0:
+            raise ValueError('selected element has an invalid start tag')
+        revised_tag = start_tag[:at] + f' style="{encoded}"' + start_tag[at:]
+    return html[:node['start']] + revised_tag + html[node['open_end']:]
+
+
 def _apply_html_ops(html: str, ops: list[dict]) -> tuple[str, list[str], list[str], list[str]]:
     """Apply deterministic edits to one page's HTML. Raises ValueError on bad ops.
 
@@ -1814,6 +1899,19 @@ def _apply_html_ops(html: str, ops: list[dict]) -> tuple[str, list[str], list[st
                     html = html[:offset] + escaped_value + html[offset + len(needle):]
                 removed_texts.append(needle)
                 applied.append(f'replaced {needle!r} -> {value!r} ({len(targets)}x)')
+        elif name == 'set_style':
+            el = _coerce_str(op.get('el'))
+            if not el:
+                raise ValueError('set_style requires el')
+            tree = _HtmlTree(html)
+            target = _resolve_el(tree, el, op)[0]
+            if tree.is_protected(target):
+                raise ValueError('refusing to restyle the protected page shell')
+            html = _set_inline_styles(html, tree.nodes[target], op.get('styles'))
+            applied.append(
+                f'styled el="{el}": '
+                + ', '.join(sorted(str(key) for key in (op.get('styles') or {}))),
+            )
         else:
             raise ValueError(f'unknown op {op.get("op")!r}. {_HTML_EDIT_OPS_HELP}')
     return html, applied, notes, removed_texts
@@ -3812,3 +3910,384 @@ def ppt_edit_page_html(
         'published_count': published['published_count'],
         'publish_failed': published['failed'],
     })
+
+
+def _artifact_html_text(artifact: Any, artifact_store: str) -> str:
+    if isinstance(artifact, str):
+        return artifact
+    if not isinstance(artifact, dict):
+        raise ValueError('preview_html artifact is not text')
+    if isinstance(artifact.get('text'), str):
+        return artifact['text']
+    raw_path = _coerce_str(artifact.get('path'))
+    if not raw_path:
+        raise ValueError('preview_html artifact has no text or path')
+    path = Path(raw_path).expanduser()
+    if not path.is_absolute():
+        path = Path(artifact_store).expanduser() / path
+    path = path.resolve()
+    if not path.is_file():
+        raise ValueError('preview_html artifact file no longer exists')
+    return path.read_text(encoding='utf-8')
+
+
+def _validated_action_source(artifact_html: str) -> tuple[Path, Path, str]:
+    meta = _read_ppt_source_meta(artifact_html)
+    source = Path(meta['path']).expanduser().resolve()
+    if source.parent.name != 'pages' or not re.fullmatch(r'page_\d{3}\.html', source.name):
+        raise ValueError('PPT source metadata does not point to a page')
+    deck = source.parent.parent
+    if not source.is_file() or not (deck / 'task_pack.json').is_file():
+        raise ValueError('PPT source page no longer exists')
+    original = source.read_text(encoding='utf-8')
+    current_sha = _html_sha256(original)
+    if current_sha != meta['sha256']:
+        error = ValueError('The slide changed after this preview was loaded. Refresh and retry.')
+        error.error_code = 'SELECTION_STALE'
+        raise error
+    public, _ = _inline_preview_images(_sanitize_page_html(original), deck, source)
+    if _strip_ppt_source_meta(artifact_html).strip() != public.strip():
+        error = ValueError('The selected artifact does not match its source slide. Refresh and retry.')
+        error.error_code = 'SELECTION_STALE'
+        raise error
+    return source, deck, original
+
+
+def _extract_json_plan(text: str) -> dict[str, Any]:
+    cleaned = (text or '').strip()
+    start, end = cleaned.find('{'), cleaned.rfind('}')
+    if start < 0 or end <= start:
+        raise ValueError('AI edit planner did not return JSON')
+    data = json.loads(cleaned[start:end + 1])
+    if not isinstance(data, dict):
+        raise ValueError('AI edit planner returned an invalid operation')
+    return data
+
+
+_CSS_SIZE_CONTEXTS = {
+    'font-size': r'(?:字体(?:大小)?|字号|文字大小|font[\s-]*size)',
+    'width': r'(?:宽度|宽一些|窄一些|width)',
+    'height': r'(?:高度|高一些|矮一些|height)',
+    'line-height': r'(?:行高|line[\s-]*height)',
+    'letter-spacing': r'(?:字间距|字符间距|letter[\s-]*spacing)',
+}
+_CSS_COMPUTED_KEYS = {
+    'font-size': 'font_size',
+    'width': 'width',
+    'height': 'height',
+    'line-height': 'line_height',
+    'letter-spacing': 'letter_spacing',
+}
+_CSS_SIZE_LIMITS = {
+    'font-size': (6.0, 240.0),
+    'width': (20.0, 1600.0),
+    'height': (10.0, 900.0),
+    'line-height': (6.0, 360.0),
+    'letter-spacing': (-20.0, 100.0),
+}
+
+
+def _css_number(value: float) -> str:
+    rounded = round(value, 2)
+    return str(int(rounded)) if rounded.is_integer() else f'{rounded:g}'
+
+
+def _computed_style_px(selection: dict[str, Any], property_name: str) -> Optional[float]:
+    computed = selection.get('computed_style')
+    if not isinstance(computed, dict):
+        return None
+    raw = _coerce_str(computed.get(_CSS_COMPUTED_KEYS[property_name])).lower()
+    match = re.fullmatch(r'(-?\d+(?:\.\d+)?)px', raw)
+    if not match:
+        return None
+    value = float(match.group(1))
+    low, high = _CSS_SIZE_LIMITS[property_name]
+    return value if low <= value <= high else None
+
+
+def _near_context(command: str, context: str, phrase: str) -> bool:
+    gap = r'[^，,。；;\n]{0,12}'
+    return bool(re.search(
+        rf'(?:{context}){gap}(?:{phrase})|(?:{phrase}){gap}(?:{context})',
+        command,
+        re.I,
+    ))
+
+
+def _relative_style_value(
+    command: str,
+    selection: dict[str, Any],
+    property_name: str,
+    context: str,
+) -> Optional[str]:
+    larger = r'(?:变大|调大|放大|增大|加大|大一点|更大|变宽|调宽|加宽|宽一点|更宽|变高|调高|加高|高一点|increase|larger|bigger|wider|taller)'
+    smaller = r'(?:变小|调小|缩小|减小|小一点|更小|变窄|调窄|窄一点|更窄|变矮|调矮|矮一点|decrease|smaller|narrower|shorter)'
+    direction = 1 if _near_context(command, context, larger) else -1 if _near_context(command, context, smaller) else 0
+    if not direction:
+        return None
+    current = _computed_style_px(selection, property_name)
+    if current is None:
+        return None
+    # An explicit percentage means "increase/decrease by N percent". Keep a
+    # conservative default for natural phrases such as "大一点" / "窄一点".
+    percent_match = re.search(
+        rf'(?:{context})[^，,。；;\n]{{0,18}}?(\d+(?:\.\d+)?)\s*%',
+        command,
+        re.I,
+    )
+    delta = min(float(percent_match.group(1)) / 100.0, 2.0) if percent_match else 0.15
+    value = current * (1.0 + delta if direction > 0 else max(0.1, 1.0 - delta))
+    low, high = _CSS_SIZE_LIMITS[property_name]
+    return f'{_css_number(min(max(value, low), high))}px'
+
+
+def _explicit_style_value(command: str, property_name: str, context: str) -> Optional[str]:
+    match = re.search(
+        rf'(?:{context})[^，,。；;\n]{{0,14}}?'
+        r'(\d+(?:\.\d+)?)\s*(px|pt|rem|em|%|vw|vh)',
+        command,
+        re.I,
+    )
+    if not match:
+        # Unit-less values are accepted only with an explicit setter, and are
+        # interpreted as pixels rather than guessing from a bare number.
+        match = re.search(
+            rf'(?:{context})[^，,。；;\n]{{0,10}}?'
+            r'(?:改成|改为|设为|设置为|调到|变成|到|为|to|=|:)\s*'
+            r'(\d+(?:\.\d+)?)\b',
+            command,
+            re.I,
+        )
+        if not match:
+            return None
+        unit = 'px'
+    else:
+        unit = match.group(2).lower()
+    number = float(match.group(1))
+    if number < 0 or number > 5000:
+        raise ValueError(f'{property_name} is outside the supported range')
+    return f'{_css_number(number)}{unit}'
+
+
+def _deterministic_selection_styles(
+    command: str,
+    selection: dict[str, Any],
+) -> dict[str, str]:
+    """Translate common local-polish phrases without an LLM round trip."""
+    styles: dict[str, str] = {}
+    for property_name, context in _CSS_SIZE_CONTEXTS.items():
+        relative = _relative_style_value(command, selection, property_name, context)
+        explicit = None if relative else _explicit_style_value(command, property_name, context)
+        if relative or explicit:
+            styles[property_name] = relative or explicit or ''
+
+    if re.search(r'(?:取消加粗|不加粗|正常字重|font[\s-]*weight\s*(?:normal|400))', command, re.I):
+        styles['font-weight'] = '400'
+    elif re.search(r'(?:字体|文字|标题)?\s*(?:加粗|粗体|更粗)|font[\s-]*weight\s*(?:bold|[7-9]00)', command, re.I):
+        styles['font-weight'] = '700'
+
+    if re.search(r'(?:文字|文本|内容|标题)\s*(?:居中|居中对齐)|text[\s-]*align\s*(?:center|居中)', command, re.I):
+        styles['text-align'] = 'center'
+    elif re.search(r'(?:左对齐|靠左对齐|text[\s-]*align\s*left)', command, re.I):
+        styles['text-align'] = 'left'
+    elif re.search(r'(?:右对齐|靠右对齐|text[\s-]*align\s*right)', command, re.I):
+        styles['text-align'] = 'right'
+
+    if re.search(r'(?:宽度|width)\s*(?:自适应|自动|auto)', command, re.I):
+        styles['width'] = 'auto'
+    if re.search(r'(?:高度|height)\s*(?:自适应|自动|auto)', command, re.I):
+        styles['height'] = 'auto'
+    if re.search(r'(?:去掉|取消|不要)\s*(?:背景|背景色)|background(?:-color)?\s*(?:none|transparent)', command, re.I):
+        styles['background'] = 'transparent'
+    if re.search(r'(?:去掉|取消|不要)\s*(?:边框|描边)|border\s*none', command, re.I):
+        styles['border'] = 'none'
+    return styles
+
+
+def _selection_edit_ops(
+    instruction: str,
+    selection: dict[str, Any],
+    tree: _HtmlTree,
+) -> tuple[list[dict[str, Any]], str, str]:
+    el = _coerce_str(selection.get('el'))
+    if not el:
+        raise ValueError("PPT HTML selection requires a data-el target")
+    target = _resolve_el(tree, el, {})[0]
+    node = tree.nodes[target]
+    old_text = tree.node_text(target).strip()
+    group = _coerce_str(selection.get('group'))
+    command = _coerce_str(instruction)
+    if not command:
+        raise ValueError('instruction must not be empty')
+
+    styles = _deterministic_selection_styles(command, selection)
+    if styles:
+        return [{'op': 'set_style', 'el': el, 'styles': styles}], old_text, old_text
+
+    if re.search(r'(?:删除|删掉|移除|去掉|delete|remove)', command, re.I):
+        use_group = bool(group and re.search(r'(?:整组|整个组|整个模块|整块|all|group)', command, re.I))
+        op = {'op': 'delete_node', 'group': group} if use_group else {'op': 'delete_node', 'el': el}
+        return [op], old_text, ''
+
+    replacement = re.search(
+        r'(?:修改(?:标题|文字|内容)?(?:成|为)|改成|改为|替换为|变成|rename(?:\s+it)?\s+to)\s*[：:]?\s*(.+)$',
+        command, re.I | re.S,
+    )
+    if replacement:
+        value = replacement.group(1).strip().strip('“”\"\'')
+        if not value:
+            raise ValueError('replacement text must not be empty')
+        op: dict[str, Any] = {'op': 'replace_text', 'el': el, 'value': value}
+        inner = tree.html[node['open_end']:node['end']]
+        if '<' in inner[:inner.rfind('</') if '</' in inner else len(inner)].strip() and old_text:
+            op['match'] = old_text
+        return [op], old_text, value
+
+    prompt = json.dumps({
+        'instruction': command,
+        'selected_element': {
+            'el': el,
+            'group': group or None,
+            'tag': node['tag'],
+            'classes': node['classes'],
+            'text': old_text,
+            'computed_style': selection.get('computed_style'),
+        },
+        'allowed_operations': [
+            {'op': 'replace_text', 'value': 'new plain text'},
+            {'op': 'delete_node'},
+            {'op': 'set_style', 'styles': {'css-property': 'safe value'}},
+        ],
+    }, ensure_ascii=False)
+    planned = _extract_json_plan(_agent_llm_call(
+        'You plan a precise local edit to one already-selected PPT HTML element. '
+        'Return one JSON object only. Never return HTML, selectors, JavaScript, URLs, '
+        'or edits to other elements. Use only replace_text, delete_node, or set_style. '
+        'For layout requests prefer ordinary flex/grid properties in styles.',
+        prompt,
+        request_name='ppt-selection-edit',
+    ))
+    name = _coerce_str(planned.get('op')).lower().replace('-', '_')
+    if name == 'replace_text':
+        value = _coerce_str(planned.get('value'))
+        if not value:
+            raise ValueError('AI edit planner returned empty replacement text')
+        return [{'op': name, 'el': el, 'value': value}], old_text, value
+    if name == 'delete_node':
+        return [{'op': name, 'el': el}], old_text, ''
+    if name == 'set_style':
+        return [{'op': name, 'el': el, 'styles': planned.get('styles')}], old_text, old_text
+    raise ValueError('AI edit planner returned an unsupported operation')
+
+
+def ppt_preview_selection_edit(
+    artifact: Any,
+    instruction: str,
+    selection: dict[str, Any],
+    artifact_store: str = '',
+    slot: str = '',
+) -> dict[str, Any]:
+    """Preview one bounded edit against a selected data-el in a PPT HTML page."""
+    if slot != 'preview_html' or _coerce_str(selection.get('type')) != 'ppt_html':
+        raise ValueError('selection edit requires a preview_html PPT element')
+    artifact_html = _artifact_html_text(artifact, artifact_store)
+    source, deck, original = _validated_action_source(artifact_html)
+    selected_page = _coerce_int(selection.get('page'), 0, lo=0)
+    source_page = int(source.stem.rsplit('_', 1)[-1])
+    if selected_page and selected_page != source_page:
+        raise ValueError('selected page does not match the artifact source')
+    tree = _HtmlTree(original)
+    ops, old_text, new_text = _selection_edit_ops(instruction, selection, tree)
+    edited, applied, notes, removed = _apply_html_ops(original, ops)
+    _validate_local_html_edit(original, edited)
+
+    public_html, _ = _inline_preview_images(_sanitize_page_html(edited), deck, source)
+    public_html = _with_ppt_source_meta(public_html, source, _html_sha256(edited))
+    action_root = Path(artifact_store).expanduser().resolve() / 'ppt-selection-actions'
+    action_root.mkdir(parents=True, exist_ok=True, mode=0o750)
+    token = uuid.uuid4().hex
+    raw_candidate = action_root / f'{token}.html'
+    manifest = action_root / f'{token}.json'
+    raw_candidate.write_text(edited, encoding='utf-8')
+    manifest.write_text(json.dumps({
+        'source_path': str(source),
+        'expected_sha256': _html_sha256(original),
+        'candidate_path': str(raw_candidate),
+        'candidate_sha256': _html_sha256(edited),
+        'public_html': public_html,
+        'page': source_page,
+        'applied': applied,
+        'layout_notes': notes,
+        'removed_texts': removed,
+    }, ensure_ascii=False), encoding='utf-8')
+    return {
+        'representation': 'ppt_html',
+        'target': {
+            'type': 'block',
+            'block_type': tree.nodes[_resolve_el(tree, _coerce_str(selection.get('el')), {})[0]]['tag'],
+            'el': _coerce_str(selection.get('el')),
+            'group': _coerce_str(selection.get('group')) or None,
+            'page': source_page,
+        },
+        'preview': {'old_text': old_text, 'new_text': new_text},
+        'patch': {'type': 'ppt_html_ops', 'payload': {'ops': ops}},
+        'artifact': {
+            'content_type': 'text',
+            'value': public_html,
+            'caption': _title_from_html(edited) or None,
+        },
+        'candidate_html': public_html,
+        'commit': {'token': token},
+        'layout_notes': notes or None,
+    }
+
+
+def ppt_apply_selection_edit(
+    commit_token: str,
+    artifact: Any = None,
+    artifact_store: str = '',
+    slot: str = '',
+) -> dict[str, Any]:
+    """Commit an immutable preview candidate after rechecking the source hash."""
+    token = _coerce_str(commit_token)
+    if slot != 'preview_html' or not re.fullmatch(r'[0-9a-f]{32}', token):
+        raise ValueError('invalid PPT selection edit token')
+    action_root = Path(artifact_store).expanduser().resolve() / 'ppt-selection-actions'
+    manifest_path = (action_root / f'{token}.json').resolve()
+    try:
+        manifest_path.relative_to(action_root)
+    except ValueError as exc:
+        raise ValueError('invalid PPT selection edit token') from exc
+    if not manifest_path.is_file():
+        raise ValueError('PPT selection edit preview expired; preview it again')
+    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+    source = Path(_coerce_str(manifest.get('source_path'))).resolve()
+    candidate = Path(_coerce_str(manifest.get('candidate_path'))).resolve()
+    if source.parent.name != 'pages' or source.parent.parent == source.parent:
+        raise ValueError('invalid PPT source page')
+    if not source.is_file() or not candidate.is_file():
+        raise ValueError('PPT selection edit files no longer exist')
+    original = source.read_text(encoding='utf-8')
+    revised = candidate.read_text(encoding='utf-8')
+    if _html_sha256(original) != _coerce_str(manifest.get('expected_sha256')):
+        error = ValueError('The slide changed after the edit preview. Refresh and retry.')
+        error.error_code = 'SELECTION_STALE'
+        raise error
+    if _html_sha256(revised) != _coerce_str(manifest.get('candidate_sha256')):
+        raise ValueError('PPT selection edit candidate was modified')
+    _validate_local_html_edit(original, revised)
+    tmp = source.with_name(source.name + f'.{token}.tmp')
+    tmp.write_text(revised, encoding='utf-8')
+    os.replace(tmp, source)
+    return {
+        'representation': 'ppt_html',
+        'artifact': {
+            'content_type': 'text',
+            'value': manifest.get('public_html'),
+            'caption': _title_from_html(revised) or None,
+        },
+        'page': manifest.get('page'),
+        'applied': manifest.get('applied'),
+        'layout_notes': manifest.get('layout_notes') or None,
+        'html_sha256': _html_sha256(revised),
+    }

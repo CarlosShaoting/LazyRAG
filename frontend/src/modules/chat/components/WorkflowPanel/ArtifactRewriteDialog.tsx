@@ -104,7 +104,7 @@ function isReadyPreview(value: unknown): value is RewriteSelectionPreview {
     && typeof data.preview?.old_text === 'string'
     && typeof data.preview?.new_text === 'string'
     && typeof data.artifact?.content_type === 'string'
-    && Boolean(data.artifact.value && typeof data.artifact.value === 'object');
+    && Boolean(data.artifact.value && ['object', 'string'].includes(typeof data.artifact.value));
 }
 
 export function ArtifactRewriteDialog({
@@ -212,7 +212,17 @@ export function ArtifactRewriteDialog({
             instruction: trimmedInstruction,
             selection: selection.type === 'ir'
               ? { type: 'ir', node_id: selection.node_id }
-              : { type: 'markdown', selected_text: selection.selected_text },
+              : selection.type === 'ppt_html'
+                ? {
+                  type: 'ppt_html',
+                  page: selection.page,
+                  el: selection.el,
+                  ...(selection.group ? { group: selection.group } : {}),
+                  ...(selection.computed_style
+                    ? { computed_style: selection.computed_style }
+                    : {}),
+                }
+                : { type: 'markdown', selected_text: selection.selected_text },
           },
         },
         { silentError: true } as never,

@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { SlotRevision } from '@/modules/chat/store/workflowPanel';
+import { WorkflowSessionApi, type RewriteSelectionPreview } from '@/modules/chat/utils/request';
 import { resolveCoreAssetUrl, resolveMarkdownImageUrlAsync, isExpiredSignedUrl } from '@/modules/knowledge/utils/imageUrl';
+import {
+  ArtifactRewriteDialog,
+  type ArtifactRewriteSelection,
+} from '../ArtifactRewriteDialog';
 import { extractHtmlFromArtifact, htmlForStaticPreview } from './exportHtmlToPptx';
 import { htmlWithInlinedEcharts } from './echartsInline';
 
@@ -16,8 +21,6 @@ async function loadArtifactText(raw: unknown): Promise<string> {
   if (typeof raw !== 'object') return String(raw);
   const obj = raw as Record<string, unknown>;
   if (typeof obj.text === 'string') return obj.text;
-
-  // Offloaded large text: { type:'text', path, size }
   if (obj.path && (obj.type === 'text' || obj.type === 'json')) {
     const pathForSign = String(obj.path ?? obj.url ?? '').trim();
     const apiUrlRaw = obj.url ? String(obj.url).trim() : '';
@@ -34,7 +37,6 @@ async function loadArtifactText(raw: unknown): Promise<string> {
   return '';
 }
 
-/** Width-only scale: always 16:9, no height feedback loop / page-switch jump. */
 function scaleFromWidth(containerW: number): number {
   if (!containerW || containerW < 1) return 0.5;
   return Math.max(0.15, Math.min(containerW / 1600, 1));
@@ -42,33 +44,68 @@ function scaleFromWidth(containerW: number): number {
 
 function scaleFromViewport(): number {
   if (typeof window === 'undefined') return 0.8;
-  return Math.max(
-    0.25,
-    Math.min(
-      (window.innerWidth - 64) / 1600,
-      (window.innerHeight - 104) / 900,
-      1,
-    ),
-  );
+  return Math.max(0.25, Math.min(
+    (window.innerWidth - 64) / 1600,
+    (window.innerHeight - 104) / 900,
+    1,
+  ));
 }
+
+const EDITOR_STYLE = `
+  [data-el], [data-group] { cursor: crosshair !important; }
+  .lazymind-ppt-edit-hover {
+    outline: 5px solid rgba(99, 102, 241, .9) !important;
+    outline-offset: 3px !important;
+  }
+  .lazymind-ppt-edit-selected {
+    outline: 6px solid #f59e0b !important;
+    outline-offset: 4px !important;
+  }
+`;
 
 export function SlotHtmlSlide({
   slot,
   compact = false,
+  sessionId,
+  slotId,
+  readOnly = false,
+  onRefresh,
 }: {
   slot: SlotRevision;
   compact?: boolean;
+  sessionId?: string;
+  slotId?: string;
+  readOnly?: boolean;
+  onRefresh?: () => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const frameCleanupRef = useRef(new Map<HTMLIFrameElement, () => void>());
+  const selectedNodeRef = useRef<HTMLElement | null>(null);
   const [html, setHtml] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // null until first measure — avoids mounting at 0.4 then jumping to 0.5+.
   const [scale, setScale] = useState<number | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [expandedScale, setExpandedScale] = useState(scaleFromViewport);
-  const frameDocCleanupRef = useRef<(() => void) | null>(null);
+  const [selection, setSelection] = useState<ArtifactRewriteSelection | null>(null);
+  const [editPreview, setEditPreview] = useState<RewriteSelectionPreview | null>(null);
+  const [applying, setApplying] = useState(false);
+  const [applyError, setApplyError] = useState<string>();
 
+  const page = slot.sort_order ?? ((slot.list_index ?? 0) + 1);
+  const listIndex = slot.list_index ?? -1;
+  const actionSlotId = slotId || slot.slot_id || slot.slot;
+  const editable = Boolean(sessionId && actionSlotId && !readOnly && !compact && page > 0);
+  const displayHtml = editPreview?.candidate_html || html;
+  const srcDoc = useMemo(
+    () => (displayHtml ? htmlForStaticPreview(displayHtml) : ''),
+    [displayHtml],
+  );
+
+  const clearSelectedNode = useCallback(() => {
+    selectedNodeRef.current?.classList.remove('lazymind-ppt-edit-selected');
+    selectedNodeRef.current = null;
+  }, []);
   const closeExpanded = useCallback(() => setExpanded(false), []);
 
   useEffect(() => {
@@ -87,33 +124,17 @@ export function SlotHtmlSlide({
   }, [closeExpanded, expanded]);
 
   useEffect(() => () => {
-    frameDocCleanupRef.current?.();
-    frameDocCleanupRef.current = null;
-  }, []);
-
-  const attachFrameZoomClick = (frame: HTMLIFrameElement | null) => {
-    frameDocCleanupRef.current?.();
-    frameDocCleanupRef.current = null;
-    const doc = frame?.contentDocument;
-    if (!doc) return;
-    const onClick = () => setExpanded(true);
-    const onMouseEnter = () => setHovered(true);
-    const onMouseLeave = () => setHovered(false);
-    doc.documentElement.style.setProperty('cursor', 'pointer', 'important');
-    doc.body?.style.setProperty('cursor', 'pointer', 'important');
-    doc.addEventListener('click', onClick);
-    doc.addEventListener('mouseenter', onMouseEnter);
-    doc.addEventListener('mouseleave', onMouseLeave);
-    frameDocCleanupRef.current = () => {
-      doc.removeEventListener('click', onClick);
-      doc.removeEventListener('mouseenter', onMouseEnter);
-      doc.removeEventListener('mouseleave', onMouseLeave);
-    };
-  };
+    frameCleanupRef.current.forEach((cleanup) => cleanup());
+    frameCleanupRef.current.clear();
+    clearSelectedNode();
+  }, [clearSelectedNode]);
 
   useEffect(() => {
     let cancelled = false;
     setError(null);
+    setEditPreview(null);
+    setApplyError(undefined);
+    clearSelectedNode();
     (async () => {
       const text = await loadArtifactText(slot.artifact_value);
       if (cancelled) return;
@@ -123,39 +144,163 @@ export function SlotHtmlSlide({
         setHtml(null);
         return;
       }
-      // Inline echarts so ../assets/echarts.min.js works inside srcDoc.
       const withCharts = await htmlWithInlinedEcharts(extracted);
-      if (cancelled) return;
-      setHtml(withCharts);
+      if (!cancelled) setHtml(withCharts);
     })().catch(() => {
       if (!cancelled) {
         setError('Failed to load HTML slide');
         setHtml(null);
       }
     });
-    return () => {
-      cancelled = true;
-    };
-  }, [slot.artifact_value, slot.slot_id, slot.revision]);
+    return () => { cancelled = true; };
+  }, [clearSelectedNode, slot.artifact_value, slot.revision, slot.slot_id]);
 
   useEffect(() => {
     const host = hostRef.current;
-    if (!host) return;
-    const update = () => {
-      const w = host.getBoundingClientRect().width;
-      setScale(scaleFromWidth(Math.max(0, w)));
-    };
+    if (!host) return undefined;
+    const update = () => setScale(scaleFromWidth(Math.max(0, host.getBoundingClientRect().width)));
     update();
-    const ro = new ResizeObserver(update);
-    ro.observe(host);
-    return () => ro.disconnect();
+    const observer = new ResizeObserver(update);
+    observer.observe(host);
+    return () => observer.disconnect();
   }, [compact]);
 
-  const srcDoc = useMemo(() => (html ? htmlForStaticPreview(html) : ''), [html]);
+  const selectElement = useCallback((frame: HTMLIFrameElement, target: HTMLElement) => {
+    clearSelectedNode();
+    target.classList.add('lazymind-ppt-edit-selected');
+    selectedNodeRef.current = target;
+    const targetRect = target.getBoundingClientRect();
+    const frameRect = frame.getBoundingClientRect();
+    const scaleX = frame.offsetWidth ? frameRect.width / frame.offsetWidth : 1;
+    const left = frameRect.left + (targetRect.left + targetRect.width / 2) * scaleX;
+    const topEdge = frameRect.top + targetRect.top * scaleX;
+    const bottomEdge = frameRect.top + targetRect.bottom * scaleX;
+    const below = bottomEdge + 92 < window.innerHeight;
+    const computed = frame.contentWindow?.getComputedStyle(target);
+    setSelection({
+      type: 'ppt_html',
+      page,
+      el: target.dataset.el || '',
+      ...(target.dataset.group ? { group: target.dataset.group } : {}),
+      ...(computed ? {
+        computed_style: {
+          font_size: computed.fontSize,
+          width: computed.width,
+          height: computed.height,
+          line_height: computed.lineHeight,
+          letter_spacing: computed.letterSpacing,
+          text_align: computed.textAlign,
+          font_weight: computed.fontWeight,
+        },
+      } : {}),
+      selectedText: (target.innerText || target.textContent || '').trim(),
+      anchor: {
+        left,
+        top: below ? bottomEdge : topEdge,
+        placement: below ? 'below' : 'above',
+      },
+    });
+  }, [clearSelectedNode, page]);
 
-  if (error) {
-    return <div className='slot-html-slide slot-html-slide--error'>{error}</div>;
-  }
+  const attachFrameInteractions = useCallback((frame: HTMLIFrameElement) => {
+    frameCleanupRef.current.get(frame)?.();
+    const doc = frame.contentDocument;
+    if (!doc) return;
+    const style = doc.createElement('style');
+    style.dataset.lazymindPptEditor = 'true';
+    style.textContent = EDITOR_STYLE;
+    doc.head?.appendChild(style);
+    let hoverTarget: HTMLElement | null = null;
+    const addressable = (eventTarget: EventTarget | null) => {
+      const element = eventTarget as HTMLElement | null;
+      if (!element || typeof element.closest !== 'function') return null;
+      const target = element.closest<HTMLElement>('[data-el]');
+      return target?.dataset.el ? target : null;
+    };
+    const onMouseOver = (event: MouseEvent) => {
+      const target = editable && !editPreview ? addressable(event.target) : null;
+      if (target === hoverTarget) return;
+      hoverTarget?.classList.remove('lazymind-ppt-edit-hover');
+      hoverTarget = target;
+      hoverTarget?.classList.add('lazymind-ppt-edit-hover');
+    };
+    const onMouseOut = () => {
+      hoverTarget?.classList.remove('lazymind-ppt-edit-hover');
+      hoverTarget = null;
+    };
+    const onClick = (event: MouseEvent) => {
+      const target = editable && !editPreview ? addressable(event.target) : null;
+      if (target) {
+        event.preventDefault();
+        event.stopPropagation();
+        selectElement(frame, target);
+      }
+    };
+    const onMouseEnter = () => setHovered(true);
+    const onMouseLeave = () => setHovered(false);
+    doc.addEventListener('mouseover', onMouseOver);
+    doc.addEventListener('mouseout', onMouseOut);
+    doc.addEventListener('click', onClick);
+    doc.addEventListener('mouseenter', onMouseEnter);
+    doc.addEventListener('mouseleave', onMouseLeave);
+    const cleanup = () => {
+      hoverTarget?.classList.remove('lazymind-ppt-edit-hover');
+      doc.removeEventListener('mouseover', onMouseOver);
+      doc.removeEventListener('mouseout', onMouseOut);
+      doc.removeEventListener('click', onClick);
+      doc.removeEventListener('mouseenter', onMouseEnter);
+      doc.removeEventListener('mouseleave', onMouseLeave);
+      style.remove();
+    };
+    frameCleanupRef.current.set(frame, cleanup);
+  }, [editPreview, editable, selectElement]);
+
+  const cancelPreview = useCallback(() => {
+    setEditPreview(null);
+    setApplyError(undefined);
+    setSelection(null);
+    clearSelectedNode();
+  }, [clearSelectedNode]);
+
+  const persistPreview = useCallback(async (preview: RewriteSelectionPreview) => {
+    const token = preview.commit?.token;
+    if (!token || !sessionId || !actionSlotId) return;
+    setApplying(true);
+    setApplyError(undefined);
+    try {
+      const response = await WorkflowSessionApi().executeArtifactAction(
+        sessionId,
+        actionSlotId,
+        listIndex,
+        {
+          action: 'rewrite_selection',
+          base_revision: slot.revision,
+          input: { commit_token: token },
+        },
+        { silentError: true } as never,
+      );
+      if (response.data?.code !== 0 || response.data?.data?.status !== 'applied') {
+        throw new Error('invalid apply response');
+      }
+      if (preview.candidate_html) setHtml(preview.candidate_html);
+      setEditPreview(null);
+      setSelection(null);
+      clearSelectedNode();
+      onRefresh?.();
+    } catch (requestError) {
+      const message = (requestError as { response?: { data?: { message?: string } } })
+        ?.response?.data?.message;
+      setApplyError(message || '应用失败，请刷新后重试');
+    } finally {
+      setApplying(false);
+    }
+  }, [actionSlotId, clearSelectedNode, listIndex, onRefresh, sessionId, slot.revision]);
+
+  const retryPersistPreview = useCallback(() => {
+    if (editPreview && !applying) void persistPreview(editPreview);
+  }, [applying, editPreview, persistPreview]);
+
+  if (error) return <div className='slot-html-slide slot-html-slide--error'>{error}</div>;
   if (!html || scale == null) {
     return (
       <div ref={hostRef} className={`slot-html-slide${compact ? ' slot-html-slide--compact' : ''}`}>
@@ -166,6 +311,23 @@ export function SlotHtmlSlide({
     );
   }
 
+  const renderFrame = (zoomed: boolean) => (
+    <iframe
+      className={`slot-html-slide__frame${zoomed ? ' slot-html-slide__frame--zoomed' : ''}`}
+      title={`${zoomed ? '放大预览-' : 'slide-'}${page}`}
+      sandbox='allow-scripts allow-same-origin'
+      srcDoc={srcDoc}
+      onLoad={(event) => attachFrameInteractions(event.currentTarget)}
+      aria-label={editable ? '点击幻灯片元素进行局部编辑' : '点击放大幻灯片'}
+      style={{
+        width: 1600,
+        height: 900,
+        transform: `scale(${zoomed ? expandedScale : scale})`,
+        transformOrigin: 'top left',
+      }}
+    />
+  );
+
   return (
     <div
       ref={hostRef}
@@ -173,27 +335,63 @@ export function SlotHtmlSlide({
         'slot-html-slide',
         compact ? 'slot-html-slide--compact' : '',
         hovered ? 'slot-html-slide--hovered' : '',
+        editable ? 'slot-html-slide--editable' : '',
       ].filter(Boolean).join(' ')}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
       <div className='slot-html-slide__viewport slot-html-slide__viewport--interactive'>
-        <iframe
-          className='slot-html-slide__frame'
-          title={`slide-${slot.sort_order ?? slot.list_index ?? 0}`}
-          data-zoom-hint='点击放大'
-          sandbox='allow-scripts allow-same-origin'
-          srcDoc={srcDoc}
-          onLoad={(event) => attachFrameZoomClick(event.currentTarget)}
-          aria-label='点击放大幻灯片'
-          style={{
-            width: 1600,
-            height: 900,
-            transform: `scale(${scale})`,
-            transformOrigin: 'top left',
+        {renderFrame(false)}
+        {editable && !editPreview && (
+          <div className='slot-html-slide__edit-hint'>点击元素进行 AI 局部编辑</div>
+        )}
+        <button
+          type='button'
+          className='slot-html-slide__expand-button'
+          onClick={() => setExpanded(true)}
+          aria-label='放大幻灯片'
+        >
+          放大
+        </button>
+        {editPreview && (
+          <div className='slot-html-slide__edit-confirm' role='status'>
+            <span>
+              {applying
+                ? `正在保存 ${editPreview.target.el || '所选元素'}…`
+                : applyError
+                  ? '自动保存失败'
+                  : '正在准备保存…'}
+            </span>
+            {applyError && <span className='slot-html-slide__edit-error'>{applyError}</span>}
+            {applyError && (
+              <>
+                <button type='button' onClick={cancelPreview}>取消候选</button>
+                <button type='button' className='is-primary' onClick={retryPersistPreview}>重试保存</button>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      {editable && sessionId && actionSlotId && (
+        <ArtifactRewriteDialog
+          open={Boolean(selection)}
+          sessionId={sessionId}
+          slotId={actionSlotId}
+          listIndex={listIndex}
+          baseRevision={slot.revision}
+          selection={selection}
+          onClose={() => setSelection(null)}
+          onApplied={() => undefined}
+          onPreviewReady={(preview) => {
+            setApplyError(undefined);
+            setEditPreview(preview);
+            setExpanded(false);
+            void persistPreview(preview);
           }}
         />
-      </div>
+      )}
+
       {expanded && typeof document !== 'undefined' && createPortal(
         <div
           className='slot-html-slide__zoom-overlay'
@@ -204,33 +402,12 @@ export function SlotHtmlSlide({
             if (event.target === event.currentTarget) closeExpanded();
           }}
         >
-          <button
-            type='button'
-            className='slot-html-slide__zoom-close'
-            aria-label='关闭放大预览'
-            onClick={closeExpanded}
-          >
-            ×
-          </button>
+          <button type='button' className='slot-html-slide__zoom-close' aria-label='关闭放大预览' onClick={closeExpanded}>×</button>
           <div
             className='slot-html-slide__zoom-stage'
-            style={{
-              width: 1600 * expandedScale,
-              height: 900 * expandedScale,
-            }}
+            style={{ width: 1600 * expandedScale, height: 900 * expandedScale }}
           >
-            <iframe
-              className='slot-html-slide__frame slot-html-slide__frame--zoomed'
-              title={`放大预览-${slot.sort_order ?? slot.list_index ?? 0}`}
-              sandbox='allow-scripts allow-same-origin'
-              srcDoc={srcDoc}
-              style={{
-                width: 1600,
-                height: 900,
-                transform: `scale(${expandedScale})`,
-                transformOrigin: 'top left',
-              }}
-            />
+            {renderFrame(true)}
           </div>
         </div>,
         document.body,
