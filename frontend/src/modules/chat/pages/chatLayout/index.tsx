@@ -112,7 +112,6 @@ const ChatLayout: FC<IChatLayoutProps> = (props) => {
   const [panelWidth, setPanelWidth] = useState<number>(0); // 0 = use CSS default
   const [workflowPanelExpanded, setWorkflowPanelExpanded] = useState(false);
   const [expandedRailTab, setExpandedRailTab] = useState<"chat" | "tasks">("chat");
-  const [expandedRailCollapsed, setExpandedRailCollapsed] = useState(false);
 
   useEffect(() => {
     let restoredExpanded = false;
@@ -124,19 +123,13 @@ const ChatLayout: FC<IChatLayoutProps> = (props) => {
       // Keep the default compact layout when browser storage is unavailable.
     }
     setWorkflowPanelExpanded(restoredExpanded);
-    if (restoredExpanded) {
-      setExpandedRailTab("chat");
-      setExpandedRailCollapsed(false);
-    }
+    if (restoredExpanded) setExpandedRailTab("chat");
 
     const handleExpandedChange = (event: Event) => {
       const detail = (event as CustomEvent<{ conversationId: string; expanded: boolean }>).detail;
       if (detail.conversationId === sessionId) {
         setWorkflowPanelExpanded(detail.expanded);
-        if (detail.expanded) {
-          setExpandedRailTab("chat");
-          setExpandedRailCollapsed(false);
-        }
+        if (detail.expanded) setExpandedRailTab("chat");
       }
     };
     window.addEventListener(WORKFLOW_PANEL_EXPANDED_EVENT, handleExpandedChange);
@@ -725,7 +718,7 @@ const ChatLayout: FC<IChatLayoutProps> = (props) => {
 
   return (
     <div
-      className={`detail-container${workflowPanelExpanded ? " detail-container--workflow-expanded" : ""}${workflowPanelExpanded && expandedRailCollapsed ? " detail-container--workflow-rail-collapsed" : ""}`}
+      className={`detail-container${workflowPanelExpanded ? " detail-container--workflow-expanded" : ""}`}
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}
@@ -742,51 +735,31 @@ const ChatLayout: FC<IChatLayoutProps> = (props) => {
         </div>
       )}
       {workflowPanelExpanded && (
-        <div className={`expanded-rail-tabs${expandedRailCollapsed ? " expanded-rail-tabs--collapsed" : ""}`} role="tablist">
+        <div className="expanded-rail-tabs" role="tablist">
           <button
             type="button"
-            className="expanded-rail-tabs__toggle"
-            onClick={() => setExpandedRailCollapsed((collapsed) => !collapsed)}
-            aria-expanded={!expandedRailCollapsed}
-            aria-label={t(expandedRailCollapsed ? "common.expand" : "common.collapse")}
-            title={t(expandedRailCollapsed ? "common.expand" : "common.collapse")}
+            role="tab"
+            aria-selected={expandedRailTab === "chat"}
+            className={expandedRailTab === "chat" ? "active" : ""}
+            onClick={() => setExpandedRailTab("chat")}
           >
-            {expandedRailCollapsed ? "‹" : "›"}
+            <MessageOutlined aria-hidden />
+            <span>{t("chat.workflowRailConversation")}</span>
           </button>
-          {!expandedRailCollapsed && (
-            <>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={expandedRailTab === "chat"}
-                className={expandedRailTab === "chat" ? "active" : ""}
-                onClick={() => {
-                  if (expandedRailTab === "chat") setExpandedRailCollapsed(true);
-                  else setExpandedRailTab("chat");
-                }}
-              >
-                <MessageOutlined aria-hidden />
-                <span>{t("chat.workflowRailConversation")}</span>
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={expandedRailTab === "tasks"}
-                className={expandedRailTab === "tasks" ? "active" : ""}
-                onClick={() => {
-                  if (expandedRailTab === "tasks") setExpandedRailCollapsed(true);
-                  else setExpandedRailTab("tasks");
-                }}
-              >
-                <UnorderedListOutlined aria-hidden />
-                <span>{t("taskCenter.panelTitle")}</span>
-                {tasks.length > 0 && <span className="expanded-rail-tabs__count">{tasks.length}</span>}
-              </button>
-            </>
-          )}
+          <button
+            type="button"
+            role="tab"
+            aria-selected={expandedRailTab === "tasks"}
+            className={expandedRailTab === "tasks" ? "active" : ""}
+            onClick={() => setExpandedRailTab("tasks")}
+          >
+            <UnorderedListOutlined aria-hidden />
+            <span>{t("taskCenter.panelTitle")}</span>
+            {tasks.length > 0 && <span className="expanded-rail-tabs__count">{tasks.length}</span>}
+          </button>
         </div>
       )}
-      <div className={`chat-conversation-pane${workflowPanelExpanded && (expandedRailCollapsed || expandedRailTab !== "chat") ? " chat-conversation-pane--hidden" : ""}${isTaskPanelRestoreVisible ? " chat-conversation-pane--task-restore-visible" : ""}`}>
+      <div className={`chat-conversation-pane${workflowPanelExpanded && expandedRailTab !== "chat" ? " chat-conversation-pane--hidden" : ""}${isTaskPanelRestoreVisible ? " chat-conversation-pane--task-restore-visible" : ""}`}>
       <ChatContainerComponent
         ref={chatRef}
         canChat={chatEnabled}
@@ -840,7 +813,7 @@ const ChatLayout: FC<IChatLayoutProps> = (props) => {
           <span className="task-panel-restore-label">{t("taskCenter.panelTitle")} ({tasks.length})</span>
         </button>
       )}
-      {((tasks.length > 0 && !workflowPanelExpanded && !isTaskPanelCollapsed) || (workflowPanelExpanded && !expandedRailCollapsed)) && (
+      {((tasks.length > 0 && !workflowPanelExpanded && !isTaskPanelCollapsed) || workflowPanelExpanded) && (
         <div
           className={`right-box${workflowPanelExpanded ? " right-box--expanded-tab" : ""}${workflowPanelExpanded && expandedRailTab !== "tasks" ? " right-box--tab-hidden" : ""}`}
           style={!workflowPanelExpanded && panelWidth ? { width: panelWidth, minWidth: panelWidth } : undefined}

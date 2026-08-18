@@ -1,6 +1,4 @@
 .detail-container {
-  --workflow-expanded-rail-width: clamp(320px, 27vw, 440px);
-
   position: relative;
 
   height: 100%;
@@ -31,7 +29,7 @@
       top: 42px;
       right: 0;
       bottom: 0;
-      width: var(--workflow-expanded-rail-width);
+      width: clamp(320px, 27vw, 440px);
       min-width: 320px;
       z-index: 30;
       border-left: 1px solid #dfe6ef;
@@ -102,50 +100,18 @@
     position: absolute;
     top: 0;
     right: 0;
-    width: var(--workflow-expanded-rail-width);
+    width: clamp(320px, 27vw, 440px);
     height: 42px;
     box-sizing: border-box;
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     align-items: stretch;
     gap: 2px;
-    padding: 4px 8px 4px 44px;
+    padding: 4px 8px;
     border-left: 1px solid #dfe6ef;
     border-bottom: 1px solid #e5e7eb;
     background: #fff;
     z-index: 40;
-
-    &__toggle {
-      position: absolute !important;
-      top: 7px;
-      left: 8px;
-      width: 28px;
-      height: 28px;
-      border: 1px solid #dfe6ef !important;
-      border-radius: 6px;
-      padding: 0 !important;
-      font-size: 20px !important;
-      line-height: 1;
-
-      &:hover {
-        color: #2563eb;
-        background: #eef4ff;
-      }
-    }
-
-    &--collapsed {
-      width: 40px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 0;
-      padding: 4px;
-      border-left: 1px solid #dfe6ef;
-
-      .expanded-rail-tabs__toggle {
-        position: static !important;
-      }
-    }
 
     button {
       display: inline-flex;
@@ -208,10 +174,6 @@
         color: #fff;
       }
     }
-  }
-
-  &--workflow-rail-collapsed {
-    --workflow-expanded-rail-width: 40px;
   }
 
   .drag-overlay {
@@ -326,7 +288,7 @@
     top: 42px;
     right: 0;
     bottom: 0;
-    width: var(--workflow-expanded-rail-width);
+    width: clamp(320px, 27vw, 440px);
     min-width: 320px;
     height: auto;
     padding: 16px;
