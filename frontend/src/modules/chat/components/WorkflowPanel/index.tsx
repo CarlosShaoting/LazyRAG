@@ -1893,18 +1893,6 @@ export function WorkflowPanel({
       <div className='workflow-panel__header'>
         <div className='workflow-panel__header-left'>
           <span className='workflow-panel__title'>{ui.name || session.workflow_id}</span>
-          {typeof session.pinned_revision_no === 'number' && session.pinned_revision_no > 0 && (
-            <span className='workflow-panel__revision'>
-              {t('chat.workflowPinnedVersion', { version: session.pinned_revision_no })}
-            </span>
-          )}
-          {typeof session.head_revision_no === 'number'
-            && typeof session.pinned_revision_no === 'number'
-            && session.head_revision_no > session.pinned_revision_no && (
-              <span className='workflow-panel__revision workflow-panel__revision--updated'>
-                {t('chat.workflowUpdateAvailable', { version: session.head_revision_no })}
-              </span>
-            )}
           <span
             className={`workflow-panel__status workflow-panel__status--${displayStatus}`}
             aria-label={t('chat.workflowStatusAria', { status: t(STATUS_KEY[displayStatus] ?? displayStatus) })}

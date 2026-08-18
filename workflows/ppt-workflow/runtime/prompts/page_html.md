@@ -50,6 +50,7 @@ HTML 中**所有面向读者可见的文字内容**（`<title>`、标题、副�
 ## 图片引用
 
 - 所有 `<img src>` 必须使用相对路径 `../images/<basename>`，其中 `<basename>` 来自 user message 给出的路径（例如 `../images/page_003_inherited.png`）。
+- user message 中只要出现 `INHERITED FOREGROUND IMAGE`，其中的 `path` 就是本页已经由素材收集阶段选定并复制好的图片。**必须原样生成且只生成一个 `<img src="该 path">`**；输出结束前检查该 `<img>` 确实存在。禁止只创建 `.image-section`、`.image-placeholder` 等空容器来代替图片。
 - **若 user message 没有给出任何可用图片路径，禁止输出任何 `<img>` 标签**（包括用生图 prompt 当 alt、编造文件名）。改用 CSS / SVG / ECharts 做视觉。
 - 禁止 `file://` / 绝对路径 / 未提供的 CDN 或远程 URL / 自己编造的文件名 / 基于自己想象的 `/mnt/data/...` 路径。
 - `background-image: url(...)` 使用的本地图片同样遵守该路径格式。
@@ -120,6 +121,14 @@ Use ECharts only when no such diagram image is available for the data on this pa
 
 - `#bg` / `.wrapper` / 卡片等需要背景的容器，`background` 或 `background-image` **最多一层**：一个纯色、或一个 `linear-gradient(...)`、或一个 `radial-gradient(...)`、或一个 `url(...)`。禁止多层叠加（形如 `background: linear-gradient(...), radial-gradient(...), url(...);` 只会丢层或渲染为纯色块）。
 - 若需要"图片 + 遮罩叠加"效果，用两个子元素实现（`<img class="bg-photo">` + 同级 `<div class="bg-overlay">`），不要叠背景层。
+
+## 可编辑 PPTX 导出兼容（硬性）
+
+- 禁止使用 `clip-path`、`filter: blur(...)`、`backdrop-filter`、CSS animation / transition 来承载页面可见效果；这些效果无法稳定重建为可编辑 PowerPoint 形状。
+- `::before` / `::after` 只能用于不超过 80×80px 的小型点、短线或角标。禁止用伪元素制作大面积背景、图片遮罩、渐变面板或覆盖内容区；大面积视觉层必须写成显式 `<div>`。
+- 禁止使用带 `transparent` 或 alpha=0 色标的大面积渐变遮罩。需要弱化背景时使用一个显式 `<div>` 和单一 `rgba(...)` 半透明填充，且不得覆盖继承图片。
+- 不得在 `<img>` 上方叠放深色、黑色、渐变或半透明遮罩。继承图片必须保持清晰可见。
+- 不得输出空的图片框、空的绝对定位大矩形或仅用于占位的装饰容器；没有可渲染内容就删除该容器并让其他内容重新排版。
 
 ## 伪元素装饰与文本
 

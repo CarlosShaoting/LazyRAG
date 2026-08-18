@@ -91,3 +91,49 @@ print('YELLOW_WASH', int('val="FFD700"><a:alpha' in xml))
     await rm(deckDir, { recursive: true, force: true });
   }
 });
+
+test('editable export preserves transparent gradient stops and skips clipped rectangle paint', async () => {
+  const deckDir = await mkdtemp(path.join(os.tmpdir(), 'lazymind-transparent-overlay-'));
+  try {
+    const outputPath = path.join(deckDir, 'overlay.pptx');
+    const inspectPy = path.join(deckDir, 'inspect.py');
+    const ir = festivalIr();
+    ir.rest = [{
+      tag: 'DIV',
+      bounds: { x: 800, y: 80, w: 700, h: 360 },
+      styles: {
+        backgroundColor: 'rgba(0, 0, 0, 0)',
+        backgroundImage: 'linear-gradient(90deg, rgb(5, 5, 16) 0%, transparent 30%, transparent 60%, rgba(5, 5, 16, 0.8) 100%)',
+        opacity: '1',
+      },
+      children: [],
+    }, {
+      tag: 'DIV',
+      bounds: { x: 600, y: 100, w: 900, h: 700 },
+      styles: {
+        backgroundColor: 'rgb(1, 2, 3)',
+        backgroundImage: 'none',
+        clipPath: 'polygon(10% 0%, 100% 0%, 85% 100%, 0% 100%)',
+        opacity: '1',
+      },
+      children: [],
+    }];
+    await writeFile(inspectPy, `
+import zipfile, sys
+z = zipfile.ZipFile(sys.argv[1])
+xml = z.read('ppt/slides/slide1.xml').decode()
+print('ALPHA_ZERO', xml.count('<a:alpha val="0"/>'))
+print('CLIPPED_RECT', int('val="010203"' in xml))
+`);
+    await buildPptx(
+      [{ path: path.join(deckDir, 'page_001.html'), ir }],
+      deckDir,
+      outputPath,
+    );
+    const out = execFileSync('python3', [inspectPy, outputPath], { encoding: 'utf8' });
+    assert.match(out, /ALPHA_ZERO [1-9]/);
+    assert.match(out, /CLIPPED_RECT 0/);
+  } finally {
+    await rm(deckDir, { recursive: true, force: true });
+  }
+});

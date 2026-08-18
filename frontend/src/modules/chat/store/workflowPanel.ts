@@ -198,9 +198,6 @@ export interface WorkflowSession {
   workflow_id: string;
   /** Immutable package revision selected when this session was created. */
   pinned_revision_id?: string;
-  pinned_revision_no?: number;
-  /** Current published package revision; absent for built-ins without a resource head. */
-  head_revision_no?: number;
   status: "active" | "completed" | "failed" | "waiting" | "stopped";
   current_step_id: string;
   /** Global intent/constraint for this session, JSON string e.g. {"text":"..."} */

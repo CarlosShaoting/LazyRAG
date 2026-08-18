@@ -259,7 +259,7 @@ def _build_deterministic_page_query(payload: dict) -> str:
     inherited_path = payload.get("inherited_image_local_path")
     if inherited_path:
         image_contract = {
-            "path": inherited_path,
+            "path": _page_relative_asset_path(inherited_path),
             "size": payload.get("inherited_image_size"),
             "alt": payload.get("inherited_image_alt"),
             "caption_hint": payload.get("inherited_image_caption_hint"),
@@ -277,9 +277,23 @@ def _build_deterministic_page_query(payload: dict) -> str:
     return "\n".join(lines).strip()
 
 
-def _build_brief_page_query(brief: str, style: dict) -> str:
+def _page_relative_asset_path(path: str) -> str:
+    """Return the path spelling expected by HTML files stored in ``pages/``."""
+    normalized = str(path or '').strip().replace('\\', '/')
+    if not normalized or normalized.startswith(('../', 'data:', 'http://', 'https://')):
+        return normalized
+    return f"../{normalized.lstrip('./')}"
+
+
+def _build_brief_page_query(
+    brief: str,
+    style: dict,
+    *,
+    inherited_image: dict | None = None,
+    inherited_image_size: dict | None = None,
+) -> str:
     """Attach the authoritative deck style to an editable per-page brief."""
-    return "\n".join([
+    lines = [
         "Create this slide from the editable page brief below.",
         "The page brief controls content and layout only.",
         "Apply the VISUAL DESIGN CONTRACT exactly. It is shared by every slide in the deck.",
@@ -291,9 +305,25 @@ def _build_brief_page_query(brief: str, style: dict) -> str:
         "",
         "VISUAL DESIGN CONTRACT (JSON):",
         json.dumps(style, ensure_ascii=False, indent=2),
+    ]
+    inherited_path = (inherited_image or {}).get('local_path')
+    if inherited_path:
+        lines.extend([
+            "",
+            "INHERITED FOREGROUND IMAGE — this material image is mandatory on the slide (JSON):",
+            json.dumps({
+                "path": _page_relative_asset_path(inherited_path),
+                "size": inherited_image_size,
+                "alt": (inherited_image or {}).get('alt') or None,
+            }, ensure_ascii=False, indent=2),
+            "Insert exactly one foreground <img> whose src is the exact path above. "
+            "Do not leave an empty image container and do not use the image as a CSS background.",
+        ])
+    lines.extend([
         "",
         "Return the complete slide HTML document only. The system prompt owns all mechanical HTML/PPTX constraints.",
-    ]).strip()
+    ])
+    return "\n".join(lines).strip()
 
 
 _STYLE_DIMENSIONS_PATH = SKILL_DIR.parent.parent / "reference" / "style_dimensions.json"
@@ -1044,7 +1074,7 @@ def _normalize_img_srcs(html: str, page_plan: dict, extra_paths: list[str] | Non
         return html, 0
 
     def _fix(m: re.Match) -> str:
-        raw = m.group(2)
+        raw = m.group(3)
         # keep data URIs and external http URLs untouched
         if raw.startswith(("data:", "http://", "https://")):
             return m.group(0)
@@ -1052,9 +1082,12 @@ def _normalize_img_srcs(html: str, page_plan: dict, extra_paths: list[str] | Non
         target = wanted.get(base)
         if target is None:
             return m.group(0)
-        return f'{m.group(1)}"{target}"'
+        return f'{m.group(1)}{m.group(2)}{target}{m.group(2)}'
 
-    pattern = re.compile(r'(<img\b[^>]*\bsrc=)"([^"]*)"', re.IGNORECASE)
+    pattern = re.compile(
+        r'(<img\b[^>]*\bsrc\s*=\s*)(["\'])([^"\']*)\2',
+        re.IGNORECASE,
+    )
     count_holder = {"n": 0}
 
     def _count_wrapper(m: re.Match) -> str:
@@ -1065,6 +1098,22 @@ def _normalize_img_srcs(html: str, page_plan: dict, extra_paths: list[str] | Non
 
     new_html = pattern.sub(_count_wrapper, html)
     return new_html, count_holder["n"]
+
+
+def _html_has_foreground_image(html: str, expected_path: str) -> bool:
+    """Return whether HTML contains an ``img`` for the selected material image."""
+    expected_basename = str(expected_path or '').replace('\\', '/').rsplit('/', 1)[-1]
+    if not expected_basename:
+        return False
+    for tag_match in re.finditer(r'<img\b[^>]*>', html or '', re.IGNORECASE):
+        tag = tag_match.group(0)
+        src_match = re.search(r'\bsrc\s*=\s*(["\'])(.*?)\1', tag, re.IGNORECASE)
+        if not src_match:
+            continue
+        src = src_match.group(2).strip().replace('\\', '/')
+        if src.rsplit('/', 1)[-1].split('?', 1)[0] == expected_basename:
+            return True
+    return False
 
 
 def _strip_missing_local_imgs(html: str, deck: Path) -> tuple[str, int]:
@@ -1451,7 +1500,15 @@ def cmd_page_html_from_brief(deck: Path, page_no: int, brief: str) -> int:
         return _fail(f'asset_plan missing page {page_no}')
 
     inherited_image = _resolve_inherited_image(ip, page_outline, deck, page_no)
-    page_query = _build_brief_page_query(brief_text, style)
+    inherited_image_size = None
+    if inherited_image and inherited_image.get('local_path'):
+        inherited_image_size = _read_image_size(deck / inherited_image['local_path'])
+    page_query = _build_brief_page_query(
+        brief_text,
+        style,
+        inherited_image=inherited_image,
+        inherited_image_size=inherited_image_size,
+    )
     return _write_page_html_from_query(
         deck,
         page_no,
@@ -1509,6 +1566,32 @@ def _write_page_html_from_query(
         extra_paths.append(inherited_image['local_path'])
     html, fixed = _normalize_img_srcs(html, page_plan, extra_paths=extra_paths)
     html, imgs_dropped = _strip_missing_local_imgs(html, deck)
+
+    required_image_path = (inherited_image or {}).get('local_path')
+    if required_image_path and not _html_has_foreground_image(html, required_image_path):
+        required_src = _page_relative_asset_path(required_image_path)
+        repair_query = (
+            f'{rewritten_query}\n\n'
+            'MANDATORY CORRECTION: Your previous HTML omitted the material image selected '
+            'for this slide. Regenerate the complete HTML document and include exactly one '
+            f'foreground <img src="{required_src}">. The image must be clearly visible, must '
+            'not be a CSS background, and must not be covered by a dark/gradient overlay.'
+        )
+        try:
+            html = llm(gen_system, repair_query)
+        except ModelClientError as e:
+            return _fail(f'page-html image repair p{page_no}: {e}', page_no=page_no)
+        html = _sanitize_page_html(html)
+        html, retry_fixed = _normalize_img_srcs(html, page_plan, extra_paths=extra_paths)
+        html, retry_dropped = _strip_missing_local_imgs(html, deck)
+        fixed += retry_fixed
+        imgs_dropped += retry_dropped
+        if not _html_has_foreground_image(html, required_image_path):
+            return _fail(
+                f'page-html p{page_no}: required material image {required_src!r} '
+                'was omitted after one repair attempt',
+                page_no=page_no,
+            )
 
     out_path = deck / 'pages' / f'page_{page_no:03d}.html'
     _write_text(out_path, html)

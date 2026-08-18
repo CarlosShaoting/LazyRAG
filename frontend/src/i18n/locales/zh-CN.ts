@@ -1663,8 +1663,6 @@ const zhCN = {
     workflowExportModeRaster: "图片版 PPTX",
     workflowExportModePdf: "PDF",
     workflowExportModeEditable: "可编辑 PPTX",
-    workflowPinnedVersion: "运行版本 #{{version}}",
-    workflowUpdateAvailable: "线上最新 #{{version}}（有更新）",
     workflowPanelLoading: "正在加载工作流面板",
     workflowPanelExpand: "展开工作流面板",
     workflowPanelShrink: "缩小工作流面板",

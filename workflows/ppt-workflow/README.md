@@ -97,10 +97,13 @@ rebuilding the deck:
    `replace_bullet`, `insert_bullet`, `set_bullets`, `set_field`,
    `delete_data_point`, `set_data_points`; all ops for a page in one call
 4. Make the slide match, either
-   - `ppt_read_page_html(deck_dir, page=N)` for the element list, then
-     `ppt_edit_page_html(deck_dir, page=N, ops_json=[…])` — deterministic
-     `delete_node` / `replace_text` on the existing HTML, no LLM redraw, and it
-     republishes the page itself, or
+   - `ppt_read_page_html(deck_dir, page=N)` for the element list and
+     `html_sha256`, then
+     `ppt_edit_page_html(deck_dir, page=N, ops_json=[…],
+     expected_sha256=<html_sha256>)` — deterministic `delete_node` /
+     `replace_text` on the existing HTML, no LLM redraw, and it republishes the
+     page itself. Always pass the hash from the immediately preceding read; a
+     stale edit is rejected instead of overwriting a newer page, or
    - `ppt_run_stage(deck_dir, stage='page-html', page=N)` — LLM redraw of that page
 
 ## Delete an entire page
@@ -123,7 +126,8 @@ body via `data-group`. Those ids are the addressing layer for editing:
 - `ppt_read_page_html` returns them as a small JSON element list (id, tag, text
   preview) instead of the HTML body
 - `ppt_edit_page_html` deletes or retexts by `el` / `group`, so "只删这一项"
-  never depends on matching text that may appear twice
+  never depends on matching text that may appear twice; replacement text is
+  HTML-escaped and an ambiguous text fallback is rejected unless `all=true`
 - the PPTX exporter carries each id into the shape name (`objectName`), so an
   exported deck stays id-addressable — `python-pptx` can drop one element by
   `shape.name` without regenerating anything

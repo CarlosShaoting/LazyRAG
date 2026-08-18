@@ -32,6 +32,7 @@ const BROWSER_EXTRACT_FN = () => {
     '-webkit-background-clip', 'background-clip',
     '-webkit-text-fill-color',
     'transform',
+    'clip-path', '-webkit-clip-path',
     '-webkit-mask-image', 'mask-image',
     'word-break', 'overflow-wrap', 'white-space',
     'z-index', 'position',

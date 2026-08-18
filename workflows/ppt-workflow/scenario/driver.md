@@ -59,6 +59,10 @@ Single-page edit (user/runtime asked to change specific sort_order pages only):
 
 - The requested page(s) have updated `preview_html` HTML (+ notes only if
   requested) with the matching sort_order -> DONE
+- For the deterministic HTML path, `ppt_read_page_html` must immediately precede
+  `ppt_edit_page_html`, and the returned `html_sha256` must be passed as
+  `expected_sha256`. A stale-hash rejection means read the current page and retry;
+  never overwrite a page using an earlier inventory.
 - Do not require regenerating untouched pages
 - For content changes (bullet removed/reworded, retitled), the page outline should
   have been patched via `ppt_patch_page_outline` before `page-html`. If the page

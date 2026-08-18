@@ -1117,6 +1117,13 @@ export function buildShapeElement(node) {
   const b = node.bounds;
   if (!hasVisualDecoration(node)) return null;
 
+  // PowerPoint reconstruction does not currently preserve arbitrary CSS
+  // clip-path geometry. Exporting the unclipped fill turns decorative polygons
+  // into large rectangular blocks, so keep their children/text but omit the
+  // unsupported container paint.
+  const clipPath = s.clipPath || s.WebkitClipPath || s.webkitClipPath;
+  if (clipPath && clipPath !== 'none') return null;
+
   // Skip fullscreen decorative radial-only backgrounds (e.g. #bg::before with
   // multi-layer translucent gold/red radials). Flattening them to a single
   // solid rgba paints a muddy full-page wash over the real #bg gradient.
@@ -1174,11 +1181,10 @@ export function buildShapeElement(node) {
     const radial = (!grad && radialLayer) ? parseRadialGradient(radialLayer) : null;
     if (grad && grad.stops.length >= 2) {
       const stops = grad.stops
-        .filter(st => !st.isTransparent)
         .map((st, i, arr) => ({
           pos: st.position !== undefined ? st.position : Math.round(i * 100 / Math.max(arr.length - 1, 1)),
           color: st.color,
-          alpha: st.rawColor ? extractCssAlpha(st.rawColor) : 1,
+          alpha: st.isTransparent ? 0 : (st.rawColor ? extractCssAlpha(st.rawColor) : 1),
         }));
       if (stops.length >= 2) {
         const tok = _currentGradientHandler.registerLinear({ angle: grad.angle, stops });
@@ -1201,11 +1207,10 @@ export function buildShapeElement(node) {
       })();
       if (isEllipseShape) {
         const stops = radial.stops
-          .filter(st => !st.isTransparent)
           .map((st, i, arr) => ({
             pos: st.position !== undefined ? st.position : Math.round(i * 100 / Math.max(arr.length - 1, 1)),
             color: st.color,
-            alpha: st.rawColor ? extractCssAlpha(st.rawColor) : 1,
+            alpha: st.isTransparent ? 0 : (st.rawColor ? extractCssAlpha(st.rawColor) : 1),
           }));
         if (stops.length >= 2) {
           const tok = _currentGradientHandler.registerRadial({ stops });
@@ -1317,23 +1322,47 @@ export function buildShapeElement(node) {
     };
   }
 
-  // CSS filter: blur() → pptxgenjs glow 效果模拟
-  // filter: blur(80px) 的元素是扩散光晕，用大半径 shadow 模拟
+  // CSS filter: blur() → editable radial fade.
+  //
+  // A common generated background glow is a large, solid circle with
+  // `filter: blur(100px+)`. PowerPoint cannot blur the shape itself. The old
+  // approximation kept the original semi-opaque fill and added an outer
+  // shadow, which exposed the unblurred circle as a large cyan/magenta disc.
+  // For sizeable blurs, replace the hard fill with a low-alpha radial fade;
+  // this preserves the ambient glow without putting an opaque object over the
+  // slide. Small blurs retain the native shadow approximation.
   if (s.filter && s.filter.includes('blur')) {
     const blurMatch = s.filter.match(/blur\(\s*([\d.]+)px\s*\)/);
     if (blurMatch) {
       const blurPx = parseFloat(blurMatch[1]);
-      const fillColor = shape.fill?.color || '000000';
-      shape.shadow = {
-        type: 'outer',
-        blur: pxToPt(blurPx),
-        offset: 0,
-        color: fillColor,
-        opacity: 0.6,
-      };
-      // blur 元素本身应该接近不可见，只保留发光效果
-      if (shape.fill) {
-        shape.fill.transparency = Math.max(shape.fill.transparency || 0, 50);
+      const fillColor = bgColor || shape.fill?.color || null;
+      const transparency = Number.isFinite(shape.fill?.transparency)
+        ? shape.fill.transparency : 0;
+      const sourceAlpha = Math.max(0, Math.min(1, 1 - transparency / 100));
+
+      if (blurPx >= 12 && fillColor && _currentGradientHandler) {
+        // Ambient light must stay subordinate to slide content. The element's
+        // own opacity is respected, with a conservative cap for PowerPoint
+        // renderers where gradient alpha often looks stronger than Chromium.
+        // Do not retain a flat center plateau: even at low alpha it still reads
+        // as a circular object on dark slides instead of diffuse light.
+        const peakAlpha = Math.min(0.1, sourceAlpha * 0.4);
+        const tok = _currentGradientHandler.registerRadial({
+          stops: [
+            { pos: 0, color: fillColor, alpha: peakAlpha },
+            { pos: 100, color: fillColor, alpha: 0 },
+          ],
+        });
+        shape.fill = { color: tok };
+        delete shape.shadow;
+      } else if (fillColor) {
+        shape.shadow = {
+          type: 'outer',
+          blur: pxToPt(blurPx),
+          offset: 0,
+          color: fillColor,
+          opacity: Math.min(0.3, sourceAlpha * 0.75),
+        };
       }
     }
   }
@@ -1356,16 +1385,17 @@ export function buildImageElement(node, deckDir) {
 
   // 解析图片路径
   let imgPath = node.src;
+  const isInlineImage = /^data:image\/[a-z0-9.+-]+;base64,/i.test(imgPath);
   if (imgPath.startsWith('file://')) {
     imgPath = imgPath.slice(7);
   }
   try { imgPath = decodeURIComponent(imgPath); } catch { /* keep as-is */ }
-  if (!imgPath.startsWith('/')) {
+  if (!isInlineImage && !imgPath.startsWith('/')) {
     imgPath = resolve(deckDir, 'pages', imgPath);
   }
 
   // 检查文件是否存在
-  if (!existsSync(imgPath)) {
+  if (!isInlineImage && !existsSync(imgPath)) {
     // 尝试从 deck_dir 相对路径解析
     const altPath = resolve(deckDir, imgPath.replace(/^\.\.\//, ''));
     if (existsSync(altPath)) {
@@ -1386,7 +1416,7 @@ export function buildImageElement(node, deckDir) {
   const displayH = pxToInch(b.h);
 
   const element = {
-    path: imgPath,
+    ...(isInlineImage ? { data: imgPath } : { path: imgPath }),
     x: pxToInch(b.x),
     y: pxToInch(b.y),
     w: displayW,
@@ -1933,14 +1963,13 @@ export function buildSlideFromIR(pptx, ir, deckDir) {
       if (linearLayer) {
         const linear = parseLinearGradient(linearLayer);
         if (linear && linear.stops.length >= 2) {
-          // Skip unparseable stops (isTransparent) so failed cssColorToHex
-          // never becomes opaque black in the registered gradient.
+          // Keep transparent stops with alpha=0. Dropping them turns CSS fade
+          // overlays into opaque rectangular fills in editable PowerPoint.
           const stops = linear.stops
-            .filter(st => !st.isTransparent)
             .map((st, i, arr) => ({
               pos: st.position !== undefined ? st.position : Math.round(i * 100 / Math.max(arr.length - 1, 1)),
               color: st.color,
-              alpha: st.rawColor ? extractCssAlpha(st.rawColor) : 1,
+              alpha: st.isTransparent ? 0 : (st.rawColor ? extractCssAlpha(st.rawColor) : 1),
             }));
           if (stops.length >= 2 && Math.max(...stops.map(s => s.alpha)) >= 0.3) {
             const tok = _currentGradientHandler.registerLinear({ angle: linear.angle, stops });

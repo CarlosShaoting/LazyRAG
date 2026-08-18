@@ -27,6 +27,7 @@ are offloaded and the model never sees the body, so saves get stuck forever.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import logging
 import os
@@ -38,6 +39,7 @@ import uuid
 from collections import Counter
 from concurrent.futures import as_completed
 from datetime import datetime, timedelta, timezone
+from html import escape as _html_escape
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, List, Optional, Union
@@ -804,6 +806,12 @@ def _publish_one_page(
         caption=title or None,
         internal_publish=True,
     )
+    if _tool_failed(html_res):
+        return {
+            'page': page_no,
+            'ok': False,
+            'error': f'preview_html publish failed: {_tool_fail_reason(html_res)}',
+        }
     notes_res = None
     if with_notes:
         notes_res = _save_artifact(
@@ -814,6 +822,12 @@ def _publish_one_page(
             sort_order=page_no,
             internal_publish=True,
         )
+        if _tool_failed(notes_res):
+            return {
+                'page': page_no,
+                'ok': False,
+                'error': f'preview_notes publish failed: {_tool_fail_reason(notes_res)}',
+            }
     return {
         'page': page_no,
         'ok': True,
@@ -967,14 +981,17 @@ def _page_list(page: dict, key: str) -> list:
     return items
 
 
-def _parse_ops_payload(ops_json: Union[str, list, dict, None]) -> list[dict]:
+def _parse_ops_payload(
+    ops_json: Union[str, list, dict, None],
+    help_text: str = _OUTLINE_OPS_HELP,
+) -> list[dict]:
     if ops_json is None or (isinstance(ops_json, str) and _coerce_str(ops_json) == ''):
-        raise ValueError(f'ops_json is required. {_OUTLINE_OPS_HELP}')
+        raise ValueError(f'ops_json is required. {help_text}')
     data = json.loads(ops_json) if isinstance(ops_json, str) else ops_json
     if isinstance(data, dict):
         data = [data]
     if not isinstance(data, list) or not data:
-        raise ValueError(f'ops_json must be a non-empty JSON list. {_OUTLINE_OPS_HELP}')
+        raise ValueError(f'ops_json must be a non-empty JSON list. {help_text}')
     for item in data:
         if not isinstance(item, dict):
             raise ValueError(f'each op must be an object, got {type(item).__name__}')
@@ -1179,6 +1196,13 @@ def _publish_one_slide_outline(deck: Path, page_no: int) -> dict[str, Any]:
         caption=title,
         internal_publish=True,
     )
+    if _tool_failed(save_res):
+        return {
+            'page': page_no,
+            'ok': False,
+            'error': f'slide_outline publish failed: {_tool_fail_reason(save_res)}',
+            'save': save_res,
+        }
     return {
         'page': page_no,
         'ok': True,
@@ -1398,6 +1422,42 @@ class _HtmlTree(HTMLParser):
             sibling for sibling in self.nodes[parent]['children']
             if (self.nodes[sibling]['tag'], tuple(self.nodes[sibling]['classes'])) == signature
         ]
+
+
+def _html_sha256(html: str) -> str:
+    return hashlib.sha256(html.encode('utf-8')).hexdigest()
+
+
+def _protected_structure_signature(tree: _HtmlTree) -> dict[str, int]:
+    """Counts for slide-shell nodes that a local edit must never change."""
+    return {
+        'html': sum(node['tag'] == 'html' for node in tree.nodes),
+        'head': sum(node['tag'] == 'head' for node in tree.nodes),
+        'body': sum(node['tag'] == 'body' for node in tree.nodes),
+        '#bg': sum(node['id'] == 'bg' for node in tree.nodes),
+        '#ct': sum(node['id'] == 'ct' for node in tree.nodes),
+        '.wrapper': sum('wrapper' in node['classes'] for node in tree.nodes),
+    }
+
+
+def _validate_local_html_edit(original: str, edited: str) -> None:
+    """Reject no-op or shell-changing edits before anything reaches disk/UI."""
+    if edited == original:
+        raise ValueError('edit made no change; verify the target id and replacement value')
+    before = _protected_structure_signature(_HtmlTree(original))
+    after = _protected_structure_signature(_HtmlTree(edited))
+    if before != after:
+        changed = [
+            f'{key}: {before[key]} -> {after[key]}'
+            for key in before if before[key] != after[key]
+        ]
+        raise ValueError(
+            'edit would change the protected page shell (' + ', '.join(changed) + ')',
+        )
+    if after['html'] != 1 or after['body'] != 1 or after['.wrapper'] != 1 or after['#ct'] != 1:
+        raise ValueError(
+            'page shell is not uniquely addressable; expected one html/body/.wrapper/#ct',
+        )
 
 
 def _shrink_grid_tracks(
@@ -1695,6 +1755,7 @@ def _apply_html_ops(html: str, ops: list[dict]) -> tuple[str, list[str], list[st
             value = _coerce_str(op.get('value'))
             if not value:
                 raise ValueError('replace_text requires value')
+            escaped_value = _html_escape(value, quote=False)
             needle = _coerce_str(op.get('match'))
             el = _coerce_str(op.get('el'))
             tree = _HtmlTree(html)
@@ -1710,26 +1771,48 @@ def _apply_html_ops(html: str, ops: list[dict]) -> tuple[str, list[str], list[st
                             f'el="{el}" wraps nested markup; pass match as well to say which '
                             'text to replace, or target the inner element directly',
                         )
-                    if needle not in body:
+                    hits = [
+                        offset for offset in _text_occurrences(tree, needle)
+                        if node['open_end'] <= offset < node['end']
+                    ]
+                    if not hits:
                         raise ValueError(f'el="{el}" does not contain {needle!r}')
-                    start = node['open_end'] + body.index(needle)
-                    html = html[:start] + value + html[start + len(needle):]
-                    applied.append(f'retexted el="{el}": {needle!r} -> {value!r}')
-                    html = _sync_doc_title(html, needle, value, applied)
+                    if len(hits) > 1 and not op.get('all'):
+                        raise ValueError(
+                            f'el="{el}" contains {len(hits)} visible matches for {needle!r}; '
+                            'pass all=true or target a more specific inner data-el',
+                        )
+                    targets = hits if op.get('all') else hits[:1]
+                    for start in reversed(targets):
+                        html = html[:start] + escaped_value + html[start + len(needle):]
+                    removed_texts.append(needle)
+                    applied.append(
+                        f'retexted el="{el}": {needle!r} -> {value!r} ({len(targets)}x)',
+                    )
+                    html = _sync_doc_title(html, needle, escaped_value, applied)
                 else:
                     start = node['open_end']
-                    html = html[:start] + value + html[start + len(body):]
+                    old_value = _strip_tags(body).strip()
+                    html = html[:start] + escaped_value + html[start + len(body):]
+                    if old_value:
+                        removed_texts.append(old_value)
                     applied.append(f'retexted el="{el}" -> {value!r}')
-                    html = _sync_doc_title(html, body.strip(), value, applied)
+                    html = _sync_doc_title(html, body.strip(), escaped_value, applied)
             else:
                 if not needle:
                     raise ValueError('replace_text requires el or match')
                 hits = _text_occurrences(tree, needle)
                 if not hits:
                     raise ValueError(f'no visible text matches {needle!r}')
+                if len(hits) > 1 and not op.get('all'):
+                    raise ValueError(
+                        f'{needle!r} appears {len(hits)} times; pass el to target one '
+                        'element or all=true to replace every visible match',
+                    )
                 targets = hits if op.get('all') else hits[:1]
                 for offset in reversed(targets):
-                    html = html[:offset] + value + html[offset + len(needle):]
+                    html = html[:offset] + escaped_value + html[offset + len(needle):]
+                removed_texts.append(needle)
                 applied.append(f'replaced {needle!r} -> {value!r} ({len(targets)}x)')
         else:
             raise ValueError(f'unknown op {op.get("op")!r}. {_HTML_EDIT_OPS_HELP}')
@@ -3380,10 +3463,14 @@ def ppt_read_page_html(deck_dir: str, page: int) -> dict:
     if not path.exists():
         return tool_error('ppt_read_page_html', f'missing HTML: {path}')
 
-    html = _sanitize_page_html(path.read_text(encoding='utf-8'))
+    raw_html = path.read_text(encoding='utf-8')
+    html = _sanitize_page_html(raw_html)
     return tool_success('ppt_read_page_html', {
         'page': page_no,
         'html_path': str(path.resolve()),
+        # Hash the exact on-disk bytes used by ppt_edit_page_html, not the
+        # sanitized inventory view (which trims surrounding whitespace).
+        'html_sha256': _html_sha256(raw_html),
         'title_hint': _title_from_html(html),
         'bytes': len(html.encode('utf-8')),
         **_element_inventory(_HtmlTree(html)),
@@ -3498,6 +3585,7 @@ def ppt_patch_page_outline(
     except (FileNotFoundError, ValueError, KeyError, json.JSONDecodeError) as exc:
         return tool_error('ppt_patch_page_outline', str(exc))
 
+    outline_before = json.loads(json.dumps(outline, ensure_ascii=False))
     bullets_before = len(page_outline.get('bullets') or [])
     try:
         applied = _apply_outline_ops(page_outline, ops)
@@ -3526,6 +3614,19 @@ def ppt_patch_page_outline(
         outline_pub = _publish_one_slide_outline(deck, page_no)
     except Exception as exc:
         outline_pub = {'ok': False, 'error': str(exc)}
+    if not outline_pub.get('ok'):
+        try:
+            _write_outline(deck, outline_before)
+        except OSError as exc:
+            return tool_error(
+                'ppt_patch_page_outline',
+                f'outline publish failed and restoring outline.json also failed: {exc}',
+            )
+        return tool_error(
+            'ppt_patch_page_outline',
+            'patched outline was not published, so outline.json was restored. '
+            f'Publish error: {outline_pub.get("error") or "unknown"}',
+        )
 
     warnings = _stale_count_hints(page_outline, ops)
     if bullets_after < 3:
@@ -3547,7 +3648,8 @@ def ppt_patch_page_outline(
         'slide_outline_published': bool(outline_pub and outline_pub.get('ok')),
         'next_step': (
             f"For a text-only change, use ppt_read_page_html then "
-            f"ppt_edit_page_html(page={page_no}) with stable data-el ids; do not redraw. "
+            f"ppt_edit_page_html(page={page_no}, expected_sha256=<html_sha256 from read>) "
+            f"with stable data-el ids; do not redraw. "
             f"Only for a structural/layout change use ppt_run_stage(deck_dir, "
             f"stage='page-html', page={page_no}). Both paths auto-publish; stop afterward."
         ),
@@ -3558,6 +3660,7 @@ def ppt_edit_page_html(
     deck_dir: str,
     page: int,
     ops_json: Union[str, list, dict, None] = None,
+    expected_sha256: Optional[str] = None,
 ) -> dict:
     """Edit one slide's existing HTML in place, without re-running the page LLM.
 
@@ -3570,7 +3673,8 @@ def ppt_edit_page_html(
     Prefer ppt_run_stage(stage='page-html') instead when the page genuinely needs
     redrawing (new layout, added content, "重画好看点").
 
-    Call ppt_read_page_html first to get the element list and pick an `el` id.
+    Call ppt_read_page_html immediately before this tool to get the element list,
+    pick an `el` id, and pass its html_sha256 as expected_sha256.
 
     Also patch the outline for the same page (ppt_patch_page_outline) so a later
     redraw keeps the change; this tool warns when the outline still disagrees.
@@ -3578,6 +3682,10 @@ def ppt_edit_page_html(
     Args:
         deck_dir (str): Absolute deck directory (from ppt_find_deck).
         page (int): 1-based page number.
+        expected_sha256 (str): Pass the html_sha256 returned by
+            ppt_read_page_html. The edit is rejected if another task changed the
+            page after it was read, preventing a stale local edit from overwriting
+            newer work.
         ops_json: JSON list of ops (a single op object is also accepted).
             Address elements by id whenever the page has them — ids do not move
             when other content changes, so this is the reliable form:
@@ -3594,7 +3702,7 @@ def ppt_edit_page_html(
                  repeated element, not just the text. Ambiguous matches are
                  refused with the candidate list instead of guessing.
               {"op": "replace_text", "match": "128K", "value": "256K"}
-                 Add "all": true for every hit.
+                 The match must be unique; add "all": true to replace every hit.
             A CSS grid on the parent is narrowed by the number of removed items so
             the row keeps no empty cell. match/class only ever address rendered
             content, never CSS, JS or attributes. Page structure
@@ -3618,20 +3726,38 @@ def ppt_edit_page_html(
             f'missing {path.name}; run ppt_run_stage(stage="page-html", page={page_no}) first.',
         )
     try:
-        ops = _parse_ops_payload(ops_json)
+        ops = _parse_ops_payload(ops_json, _HTML_EDIT_OPS_HELP)
     except (ValueError, json.JSONDecodeError) as exc:
         return tool_error('ppt_edit_page_html', f'invalid ops_json: {exc}')
 
     original = path.read_text(encoding='utf-8')
-    try:
-        edited, applied, notes, removed_texts = _apply_html_ops(original, ops)
-    except ValueError as exc:
-        return tool_error('ppt_edit_page_html', f'op rejected, page unchanged: {exc}')
-    if '<html' not in edited.lower() or 'wrapper' not in edited:
+    original_sha256 = _html_sha256(original)
+    expected = _coerce_str(expected_sha256).removeprefix('sha256:').lower()
+    if not expected:
         return tool_error(
             'ppt_edit_page_html',
-            'edit would break the page skeleton (missing <html> or .wrapper); page unchanged.',
+            'expected_sha256 is required; no edit was applied. Call '
+            'ppt_read_page_html immediately before editing and pass its '
+            'html_sha256 value.',
         )
+    if not re.fullmatch(r'[0-9a-f]{64}', expected):
+        return tool_error(
+            'ppt_edit_page_html',
+            'expected_sha256 must be the 64-character html_sha256 returned by '
+            'ppt_read_page_html; no edit was applied.',
+        )
+    if expected != original_sha256:
+        return tool_error(
+            'ppt_edit_page_html',
+            'page changed after ppt_read_page_html; no edit was applied. '
+            f'expected sha256={expected}, current sha256={original_sha256}. '
+            'Read the page again and retry against its current element ids.',
+        )
+    try:
+        edited, applied, notes, removed_texts = _apply_html_ops(original, ops)
+        _validate_local_html_edit(original, edited)
+    except ValueError as exc:
+        return tool_error('ppt_edit_page_html', f'op rejected, page unchanged: {exc}')
 
     tmp = path.with_name(path.name + '.tmp')
     try:
@@ -3650,6 +3776,29 @@ def ppt_edit_page_html(
         )
 
     published = _publish_pages_from_disk(deck, [page_no], with_notes=True)
+    if published['published_count'] != 1 or published.get('failed'):
+        rollback_tmp = path.with_name(path.name + '.rollback.tmp')
+        rollback_publish = None
+        try:
+            rollback_tmp.write_text(original, encoding='utf-8')
+            os.replace(rollback_tmp, path)
+            # If preview_html was emitted before preview_notes failed, publish the
+            # original once more so disk and UI converge on the same revision.
+            rollback_publish = _publish_pages_from_disk(deck, [page_no], with_notes=True)
+        except OSError as exc:
+            return tool_error(
+                'ppt_edit_page_html',
+                f'publish failed and restoring {path.name} also failed: {exc}',
+            )
+        rollback_error = (
+            rollback_publish.get('failed') if rollback_publish else 'not run'
+        )
+        return tool_error(
+            'ppt_edit_page_html',
+            'edited page was not published completely, so the file was restored '
+            f'to sha256={original_sha256}. Publish error: {published.get("failed")}. '
+            f'Rollback publish: {rollback_error}',
+        )
     return tool_success('ppt_edit_page_html', {
         'deck_dir': str(deck),
         'page': page_no,
@@ -3658,6 +3807,8 @@ def ppt_edit_page_html(
         'warnings': warnings or None,
         'bytes_before': len(original.encode('utf-8')),
         'bytes_after': len(edited.encode('utf-8')),
+        'html_sha256_before': original_sha256,
+        'html_sha256_after': _html_sha256(edited),
         'published_count': published['published_count'],
         'publish_failed': published['failed'],
     })

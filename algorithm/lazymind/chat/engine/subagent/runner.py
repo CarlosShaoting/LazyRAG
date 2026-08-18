@@ -56,6 +56,24 @@ DRAFT_STREAM_EVENT_TYPES = frozenset({
     'artifact_stream_abort',
 })
 
+PPT_PUBLISHER_OWNED_SLOTS = frozenset({
+    'slide_outline',
+    'preview_html',
+    'preview_notes',
+})
+
+
+def _ppt_publisher_owns_outputs(ctx: 'SubAgentContext') -> bool:
+    """Return whether this PPT step's declared outputs are written by ppt_* tools."""
+    workflow_id = str((ctx.params or {}).get('workflow_id') or '').removeprefix('builtin:')
+    slots = {str(key).strip() for key in ctx.output_slots if str(key).strip()}
+    return (
+        str(ctx.agent_type or '') == 'workflow_step'
+        and workflow_id == 'ppt-workflow'
+        and bool(slots)
+        and slots.issubset(PPT_PUBLISHER_OWNED_SLOTS)
+    )
+
 
 async def merge_agent_and_stream_events(
     agent_events: AsyncIterator[Any],
@@ -271,9 +289,9 @@ def _resolve_runtime_tools(
 
     When explicit is None/empty, fall back to all DEFAULT_TOOLS.
 
-    Note: save_artifacts, get_artifact, and list_artifacts are always available regardless
-    of this list — they are injected as mandatory base tools in _build_subagent_tools.
-    Names of base tools in the explicit list are silently ignored (already present).
+    Note: artifact infrastructure tools are managed separately by _build_subagent_tools.
+    Generic artifact writes are intentionally omitted for publisher-owned PPT output slots.
+    Names of base tools in the explicit list are silently ignored.
     """
     if explicit:
         core_tool_names = set(SUBAGENT_CORE_TOOL_NAMES)
@@ -301,23 +319,29 @@ def _resolve_runtime_tools(
 def _build_subagent_tools(
     extra_tools: Optional[List[Any]],
     attachment_configs: Optional[List[Any]] = None,
+    *,
+    include_artifact_writes: bool = True,
 ) -> List[Any]:
     """Combine mandatory SubAgent infra tools with optional domain tools.
 
-    Artifact and knowledge tools are always included regardless of the explicit
-    tools list. Attachment tools are included as one group when the parent task
-    carries attachment context, so the runtime tool list and its system prompt stay
-    consistent.
+    Read-only artifact and knowledge tools are always included regardless of the
+    explicit tools list. Publisher-owned workflow steps can disable generic artifact
+    writes so domain tools remain the only authority for their output slots.
+    Attachment tools are included as one group when the parent task carries attachment
+    context, so the runtime tool list and its system prompt stay consistent.
     """
     base = [
-        subagent_tools.save_artifacts,
         subagent_tools.get_artifact,
         subagent_tools.list_artifacts,
         subagent_tools.list_knowledge_bases,
         subagent_tools.find_artifact,
-        subagent_tools.patch_artifact,
-        subagent_tools.discard_draft,
     ]
+    if include_artifact_writes:
+        base.extend([
+            subagent_tools.save_artifacts,
+            subagent_tools.patch_artifact,
+            subagent_tools.discard_draft,
+        ])
     if attachment_configs:
         base.extend(config.tool for config in attachment_configs)
     if extra_tools:
@@ -537,6 +561,7 @@ def _build_subagent_plan(
                 authoritative=True,
                 content_kind='instruction',
             )
+    publisher_owned_outputs = _ppt_publisher_owns_outputs(ctx)
     if ctx.params.get('required_output_artifact_keys') is not None:
         required_keys = _coerce_str_list(ctx.params.get('required_output_artifact_keys'))
     elif str(ctx.agent_type or '') == 'workflow_step':
@@ -544,7 +569,14 @@ def _build_subagent_plan(
     else:
         required_keys = list(ctx.output_slots)
     output_lines = []
-    if required_keys:
+    if publisher_owned_outputs:
+        output_lines.append(
+            'The declared PPT output slots are publisher-owned. The declared ppt_* tool '
+            'writes them at the correct list_index and revision automatically. Do not call '
+            'save_artifacts, patch_artifact, or any generic artifact write for these slots. '
+            'After the ppt_* generation/edit tool succeeds, stop and return a short summary.'
+        )
+    elif required_keys:
         output_lines.append(
             'Required output artifacts: '
             + ', '.join(required_keys)
@@ -557,34 +589,37 @@ def _build_subagent_plan(
             'the objective or step prompt, and never save placeholder content.'
         )
     optional_keys = [k for k in ctx.output_slots if k not in required_keys]
-    if optional_keys:
+    if optional_keys and not publisher_owned_outputs:
         output_lines.append(
             'Optional output artifact keys: ' + ', '.join(optional_keys)
         )
+    if not publisher_owned_outputs:
+        output_lines.append(
+            '## Exact save_artifacts call shape\n'
+            'Use this exact JSON structure:\n'
+            '{"artifacts":[{"key":"<declared output key>","value":"<actual content>",'
+            '"content_type":"text","caption":"<optional label>"}]}\n'
+            'The payload field MUST be named value. Never use content, data, body, or text '
+            'as a replacement for value. key and value are required inside EVERY artifacts item.\n'
+            'For multiple outputs, put all entries in the same artifacts array. Do not make a '
+            'small test/placeholder save before saving the real output.'
+        )
+        output_lines.append(
+            '## Overwrite vs. Append for list slots\n'
+            'Each save_artifacts entry has an optional sort_order parameter (1-based):\n'
+            '- Omit sort_order → append a new item at the end of the list.\n'
+            '- Pass sort_order=N → overwrite the item currently at display position N.\n'
+            'sort_order is NOT a page number or a desired append position. During a normal full '
+            'run that creates page 1, page 2, page 3, OMIT sort_order on all three entries.\n'
+            'If the objective says the user wants to replace a specific item '
+            '(e.g. "重新收集第二张图", "replace item 3", "redo position N"), '
+            'you MUST pass sort_order=N. Omitting it will append a new item instead of replacing.'
+        )
     output_lines.append(
-        '## Exact save_artifacts call shape\n'
-        'Use this exact JSON structure:\n'
-        '{"artifacts":[{"key":"<declared output key>","value":"<actual content>",'
-        '"content_type":"text","caption":"<optional label>"}]}\n'
-        'The payload field MUST be named value. Never use content, data, body, or text '
-        'as a replacement for value. key and value are required inside EVERY artifacts item.\n'
-        'For multiple outputs, put all entries in the same artifacts array. Do not make a '
-        'small test/placeholder save before saving the real output.'
-    )
-    output_lines.append(
-        '## Overwrite vs. Append for list slots\n'
-        'Each save_artifacts entry has an optional sort_order parameter (1-based):\n'
-        '- Omit sort_order → append a new item at the end of the list.\n'
-        '- Pass sort_order=N → overwrite the item currently at display position N.\n'
-        'sort_order is NOT a page number or a desired append position. During a normal full '
-        'run that creates page 1, page 2, page 3, OMIT sort_order on all three entries.\n'
-        'If the objective says the user wants to replace a specific item '
-        '(e.g. "重新收集第二张图", "replace item 3", "redo position N"), '
-        'you MUST pass sort_order=N. Omitting it will append a new item instead of replacing.'
-    )
-    output_lines.append(
-        'After all required artifacts are saved, write a final summary that contains the '
-        'actual results and key findings — not only a reference to the artifacts. '
+        ('After the publisher tool succeeds, ' if publisher_owned_outputs
+         else 'After all required artifacts are saved, ')
+        + 'write a final summary that contains the actual results and key findings — not only '
+        'a reference to the artifacts. '
         'For example, if you searched for information, include the information itself. '
         'The summary must be self-contained and directly usable by the caller without '
         'opening any artifact.'
@@ -872,7 +907,11 @@ async def run_subagent_stream(
             )
             else []
         )
-        subagent_tools_all = _build_subagent_tools(runtime_tools, attachment_configs)
+        subagent_tools_all = _build_subagent_tools(
+            runtime_tools,
+            attachment_configs,
+            include_artifact_writes=not _ppt_publisher_owns_outputs(ctx),
+        )
         runtime_configs = _tool_configs_for_runtime_tools(runtime_tools)
         plan = _build_subagent_plan(
             ctx,

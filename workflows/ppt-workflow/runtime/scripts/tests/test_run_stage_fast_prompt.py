@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
@@ -46,6 +47,23 @@ class PagePromptModeTest(unittest.TestCase):
         for name, value in fixtures.items():
             (deck / name).write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
         return deck
+
+    def _attach_reference_image(self, deck: Path, root: Path) -> Path:
+        source = root / 'collected_material.png'
+        source.write_bytes(base64.b64decode(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII='
+        ))
+        info_path = deck / 'info_pack.json'
+        info = json.loads(info_path.read_text(encoding='utf-8'))
+        info['user_assets'] = {
+            'reference_images': [{'path': str(source), 'caption': '素材收集得到的图片'}],
+        }
+        info_path.write_text(json.dumps(info, ensure_ascii=False), encoding='utf-8')
+        outline_path = deck / 'outline.json'
+        outline = json.loads(outline_path.read_text(encoding='utf-8'))
+        outline['pages'][0]['use_image'] = {'reference_image_index': 0}
+        outline_path.write_text(json.dumps(outline, ensure_ascii=False), encoding='utf-8')
+        return source
 
     def test_deterministic_mode_makes_one_model_call(self) -> None:
         html = "<!DOCTYPE html><html><head><title>快速生成</title></head><body><div class='wrapper'><div id='ct'>完成</div></div></body></html>"
@@ -102,6 +120,34 @@ class PagePromptModeTest(unittest.TestCase):
             self.assertIn("VISUAL DESIGN CONTRACT (JSON)", query)
             self.assertIn("#2563EB", query)
             self.assertIn("shared by every slide", query)
+
+    def test_editable_brief_passes_collected_image_and_repairs_omission(self) -> None:
+        missing = "<!DOCTYPE html><html><body><div class='wrapper'><div id='bg'></div><div id='ct'><div class='image-section'></div></div></div></body></html>"
+        repaired = "<!DOCTYPE html><html><body><div class='wrapper'><div id='bg'></div><div id='ct'><img data-el='image-1' src='images/page_001_inherited.png'></div></div></body></html>"
+        replies = iter([missing, repaired])
+        calls: list[tuple[str, str]] = []
+
+        def fake_llm(system: str, user: str, **_kwargs) -> str:
+            calls.append((system, user))
+            return next(replies)
+
+        with tempfile.TemporaryDirectory() as temp, patch.object(
+            run_stage, 'llm', side_effect=fake_llm
+        ):
+            root = Path(temp)
+            deck = self._deck(root)
+            self._attach_reference_image(deck, root)
+            self.assertEqual(
+                run_stage.cmd_page_html_from_brief(deck, 1, '使用素材图片介绍主题。'),
+                0,
+            )
+            self.assertEqual(len(calls), 2)
+            self.assertIn('INHERITED FOREGROUND IMAGE', calls[0][1])
+            self.assertIn('../images/page_001_inherited.png', calls[0][1])
+            self.assertIn('MANDATORY CORRECTION', calls[1][1])
+            output = (deck / 'pages' / 'page_001.html').read_text(encoding='utf-8')
+            self.assertIn("src='../images/page_001_inherited.png'", output)
+            self.assertTrue((deck / 'images' / 'page_001_inherited.png').is_file())
 
 
 if __name__ == "__main__":

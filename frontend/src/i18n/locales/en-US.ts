@@ -1708,8 +1708,6 @@ const enUS = {
     workflowExportModeRaster: "Raster PPTX",
     workflowExportModePdf: "PDF",
     workflowExportModeEditable: "Editable PPTX",
-    workflowPinnedVersion: "Running version #{{version}}",
-    workflowUpdateAvailable: "Latest #{{version}} (update available)",
     workflowPanelLoading: "Loading workflow panel",
     workflowPanelExpand: "Expand workflow panel",
     workflowPanelShrink: "Shrink workflow panel",
