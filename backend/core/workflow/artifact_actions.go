@@ -186,27 +186,24 @@ func resolveArtifactActionWorkflow(
 	if action != "rewrite_selection" || target.session.WorkflowID != "ppt-workflow" {
 		return pinned, nil
 	}
-	type workflowHead struct {
-		WorkflowID string `gorm:"column:plugin_id"`
-		RevisionID string `gorm:"column:head_revision_id"`
-		TreeHash   string `gorm:"column:tree_hash"`
-	}
-	var head workflowHead
-	err := target.db.WithContext(ctx).Table("plugins p").
-		Select("p.plugin_id, p.head_revision_id, pr.tree_hash").
-		Joins("JOIN plugin_revisions pr ON pr.id = p.head_revision_id").
-		Where("p.plugin_ref = ? AND p.status = ?", "builtin:ppt-workflow", "active").
-		Take(&head).Error
+	var resource orm.WorkflowResource
+	err := target.db.WithContext(ctx).
+		Where(&orm.WorkflowResource{WorkflowRef: "builtin:ppt-workflow", Status: "active"}).
+		Take(&resource).Error
 	if err != nil {
 		return artifactActionWorkflowVersion{}, fmt.Errorf("load final PPT action revision: %w", err)
 	}
-	if head.WorkflowID != "ppt-workflow" || head.RevisionID == "" || head.TreeHash == "" {
+	var revision orm.WorkflowRevision
+	if err := target.db.WithContext(ctx).Where("id = ?", resource.HeadRevisionID).Take(&revision).Error; err != nil {
+		return artifactActionWorkflowVersion{}, fmt.Errorf("load final PPT action revision: %w", err)
+	}
+	if resource.WorkflowID != "ppt-workflow" || resource.HeadRevisionID == "" || revision.TreeHash == "" {
 		return artifactActionWorkflowVersion{}, fmt.Errorf("final PPT action revision is incomplete")
 	}
 	return artifactActionWorkflowVersion{
-		workflowID: head.WorkflowID,
-		revisionID: head.RevisionID,
-		treeHash:   head.TreeHash,
+		workflowID: resource.WorkflowID,
+		revisionID: resource.HeadRevisionID,
+		treeHash:   revision.TreeHash,
 	}, nil
 }
 
