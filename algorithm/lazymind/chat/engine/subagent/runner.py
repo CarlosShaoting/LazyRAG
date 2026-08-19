@@ -56,6 +56,7 @@ DRAFT_STREAM_EVENT_TYPES = frozenset({
     'artifact_stream_abort',
 })
 
+
 def _publisher_owns_outputs(ctx: 'SubAgentContext') -> bool:
     """Return whether this step's outputs are written by package publisher tools."""
     policy = (ctx.params or {}).get('workflow_runtime') or {}
