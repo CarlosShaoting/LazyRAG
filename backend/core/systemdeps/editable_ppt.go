@@ -174,7 +174,7 @@ func InstallEditablePPT(ctx context.Context, runtimeRoot string) (EditablePPTSta
 
 	stagedStatus := buildEditablePPTStatus(EditablePPTConfig{InstalledDir: extractedDir})
 	if !stagedStatus.Installed {
-		return stagedStatus, errors.New(stagedStatus.Message)
+		return stagedStatus, fmt.Errorf("editable PPTX dependency validation failed: %s", stagedStatus.Message)
 	}
 	installDir := EditablePPTInstallDir(runtimeRoot)
 	if err := os.RemoveAll(installDir); err != nil {

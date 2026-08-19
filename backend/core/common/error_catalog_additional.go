@@ -369,6 +369,37 @@ func init() {
 	registerAdditionalError("write managed artifact", http.StatusInternalServerError, 2002096)
 	registerAdditionalError("commit managed artifact", http.StatusInternalServerError, 2002097)
 
+	// Chat attachment, editable PPTX, and Workflow artifact errors.
+	registerAdditionalErrorPattern("resolve turn %q", "Failed to resolve chat turn attachments", http.StatusInternalServerError, 2002098)
+	registerAdditionalError("invalid editable pptx bundle manifest", http.StatusBadRequest, 2002099)
+	registerAdditionalErrorPattern("editable pptx dependency bundle targets %s/%s, current runtime is %s/%s", "Editable PPTX dependency bundle targets a different platform", http.StatusBadRequest, 2002100)
+	registerAdditionalError("editable pptx dependency install is only supported in local/desktop runtime", http.StatusForbidden, 2002101)
+	registerAdditionalErrorPattern("editable pptx dependency bundle is not configured for %s/%s", "Editable PPTX dependency bundle is not configured for this platform", http.StatusBadRequest, 2002102)
+	registerAdditionalError("extract editable pptx dependency bundle", http.StatusBadRequest, 2002103)
+	registerAdditionalError("editable pptx dependency validation failed", http.StatusBadRequest, 2002104)
+	registerAdditionalError("editable pptx install completed but chromium was not detected", http.StatusInternalServerError, 2002105)
+	registerAdditionalError("lazymind_ppt_export_cli / lazymind_workflows_dir is not set", http.StatusServiceUnavailable, 2002106)
+	registerAdditionalError("editable ppt deps node_modules missing", http.StatusBadRequest, 2002107)
+	registerAdditionalError("create exporter node_modules link", http.StatusInternalServerError, 2002108)
+	registerAdditionalError("mklink /j failed", http.StatusInternalServerError, 2002109)
+	registerAdditionalErrorPattern("editable pptx dependency bundle is not supported on %s/%s", "Editable PPTX dependency bundle is not supported on this platform", http.StatusBadRequest, 2002110)
+	registerAdditionalError("editable pptx dependency download failed", http.StatusBadGateway, 2002111)
+	registerAdditionalError("download editable pptx dependency bundle", http.StatusBadGateway, 2002112)
+	registerAdditionalError("editable pptx dependency bundle sha256 is not configured", http.StatusBadRequest, 2002113)
+	registerAdditionalError("editable pptx dependency bundle checksum mismatch", http.StatusBadGateway, 2002114)
+	registerAdditionalError("unsafe absolute symlink in archive", http.StatusBadRequest, 2002115)
+	registerAdditionalError("unsafe symlink target in archive", http.StatusBadRequest, 2002116)
+	registerAdditionalError("unsafe archive path", http.StatusBadRequest, 2002117)
+	registerAdditionalError("playwright chromium cannot start", http.StatusInternalServerError, 2002118)
+	registerAdditionalError("build ppt capabilities request failed", http.StatusInternalServerError, 2002119)
+	registerAdditionalError("ppt capabilities upstream unreachable", http.StatusBadGateway, 2002120)
+	registerAdditionalError("ppt capabilities upstream error", http.StatusBadGateway, 2002121)
+	registerAdditionalError("invalid ppt capabilities response", http.StatusBadGateway, 2002122)
+	registerAdditionalError("ppt export upstream unreachable", http.StatusBadGateway, 2002123)
+	registerAdditionalError("final ppt action revision is incomplete", http.StatusInternalServerError, 2002124)
+	registerAdditionalError("parse workflow slot manifest", http.StatusInternalServerError, 2002125)
+	registerAdditionalErrorPattern("artifact slot %q is not declared in workflow revision %s", "Artifact slot is not declared in the Workflow revision", http.StatusUnprocessableEntity, 2002126)
+
 }
 
 func registerAdditionalError(message string, status, code int) {
