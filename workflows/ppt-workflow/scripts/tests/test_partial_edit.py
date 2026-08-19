@@ -21,6 +21,20 @@ PAGE_HTML = """<!DOCTYPE html>
 </div></div></body></html>
 """
 
+LEGACY_PAGE_HTML = """<!doctype html>
+<html><head><title>Legacy title</title></head><body>
+<main class="slide"><h1 data-el="title">Legacy title</h1></main>
+</body></html>
+"""
+
+LEGACY_CARD_HTML = """<!doctype html>
+<html><head><title>Cards</title><style>.cards{display:grid;grid-template-columns:repeat(2,1fr)}</style></head><body>
+<main class="slide"><div class="cards">
+  <div class="card"><h3 data-el="card-1-head">First</h3><p data-el="card-1-detail">First detail</p></div>
+  <div class="card"><h3 data-el="card-2-head">Second</h3><p data-el="card-2-detail">Second detail</p></div>
+</div></main></body></html>
+"""
+
 
 def make_deck(root: Path) -> tuple[Path, Path]:
     deck = root / 'deck'
@@ -41,6 +55,59 @@ def make_deck(root: Path) -> tuple[Path, Path]:
 
 
 class PartialEditTests(unittest.TestCase):
+    def test_delete_this_item_removes_legacy_outer_card(self):
+        selection = {
+            'type': 'ppt_html',
+            'page': 1,
+            'el': 'card-1-head',
+        }
+        with mock.patch.object(TOOLS, '_agent_llm_call') as llm:
+            ops, old_text, new_text = TOOLS._selection_edit_ops(
+                '删除这一条', selection, TOOLS._HtmlTree(LEGACY_CARD_HTML),
+            )
+        self.assertEqual(ops, [{
+            'op': 'delete_node',
+            'el': 'card-1-head',
+            'scope': 'item',
+        }])
+        self.assertIn('First detail', old_text)
+        self.assertEqual(new_text, '')
+        llm.assert_not_called()
+
+        edited, _applied, notes, removed = TOOLS._apply_html_ops(LEGACY_CARD_HTML, ops)
+        TOOLS._validate_local_html_edit(LEGACY_CARD_HTML, edited)
+        self.assertNotIn('class="card"><h3 data-el="card-1-head"', edited)
+        self.assertNotIn('First detail', edited)
+        self.assertIn('card-2-head', edited)
+        self.assertIn('Second detail', edited)
+        self.assertIn('First detail', removed[0])
+        self.assertIn('grid tracks reduced 2 -> 1', notes)
+
+    def test_legacy_data_uri_artifact_can_preview_and_persist(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            encoded = TOOLS.base64.b64encode(LEGACY_PAGE_HTML.encode('utf-8')).decode('ascii')
+            artifact = {'path': f'data:text/plain;base64,{encoded}', 'type': 'text'}
+            preview = TOOLS.ppt_preview_selection_edit(
+                artifact=artifact,
+                instruction='修改标题成 Legacy edited',
+                selection={'type': 'ppt_html', 'page': 1, 'el': 'title'},
+                artifact_store=tmp,
+                slot='preview_html',
+            )
+            self.assertIn('Legacy edited', preview['candidate_html'])
+            manifest = json.loads((
+                Path(tmp) / 'ppt-selection-actions' / f"{preview['commit']['token']}.json"
+            ).read_text(encoding='utf-8'))
+            self.assertEqual(manifest['mode'], 'artifact_only')
+
+            applied = TOOLS.ppt_apply_selection_edit(
+                commit_token=preview['commit']['token'],
+                artifact=artifact,
+                artifact_store=tmp,
+                slot='preview_html',
+            )
+            self.assertIn('Legacy edited', applied['artifact']['value'])
+
     def test_replacement_is_html_escaped_and_title_stays_in_sync(self):
         edited, _applied, _notes, removed = TOOLS._apply_html_ops(PAGE_HTML, [{
             'op': 'replace_text',

@@ -27,6 +27,7 @@ are offloaded and the model never sees the body, so saves get stuck forever.
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import json
 import logging
@@ -1494,9 +1495,16 @@ def _validate_local_html_edit(original: str, edited: str) -> None:
         raise ValueError(
             'edit would change the protected page shell (' + ', '.join(changed) + ')',
         )
-    if after['html'] != 1 or after['body'] != 1 or after['.wrapper'] != 1 or after['#ct'] != 1:
+    if after['html'] != 1 or after['body'] != 1:
         raise ValueError(
-            'page shell is not uniquely addressable; expected one html/body/.wrapper/#ct',
+            'page shell is not uniquely addressable; expected one html and one body',
+        )
+    # `.wrapper` and `#ct` were introduced by newer generators. They remain
+    # protected when present, but legacy decks without either shell anchor are
+    # still safe to edit because data-el resolves the exact content node.
+    if after['.wrapper'] > 1 or after['#ct'] > 1:
+        raise ValueError(
+            'page shell is ambiguous; expected at most one .wrapper and one #ct',
         )
 
 
@@ -1660,7 +1668,21 @@ def _select_delete_targets(tree: _HtmlTree, op: dict) -> list[int]:
     nth = _coerce_int(op.get('index'), 1, lo=1)
 
     if el:
-        return _resolve_el(tree, el, op)
+        matches = _resolve_el(tree, el, op)
+        if _coerce_str(op.get('scope')).lower() == 'item':
+            # Legacy PPT pages often put data-el on a card's heading/detail
+            # instead of on the card itself. A user saying "delete this item"
+            # expects the bordered card/list row to disappear, not just its
+            # inner words. Promote the selected content node to its nearest
+            # repeated-item container; current pages already put data-el on
+            # that outer container, so this remains a no-op for them.
+            promoted: list[int] = []
+            for match in matches:
+                target = tree.find_repeated_item(match)
+                if target not in promoted:
+                    promoted.append(target)
+            return promoted
+        return matches
     if group:
         matches = [i for i, node in enumerate(tree.nodes) if node['group'] == group]
         if not matches:
@@ -3922,6 +3944,23 @@ def _artifact_html_text(artifact: Any, artifact_store: str) -> str:
     raw_path = _coerce_str(artifact.get('path'))
     if not raw_path:
         raise ValueError('preview_html artifact has no text or path')
+    if raw_path.startswith('data:'):
+        header, separator, payload = raw_path.partition(',')
+        if not separator or ';base64' not in header.lower():
+            raise ValueError('preview_html data URI must use base64 encoding')
+        media_type = header[5:].split(';', 1)[0].lower()
+        if media_type not in ('text/html', 'text/plain'):
+            raise ValueError('preview_html data URI has an unsupported media type')
+        try:
+            decoded = base64.b64decode(payload, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise ValueError('preview_html data URI is invalid') from exc
+        if len(decoded) > 64 * 1024 * 1024:
+            raise ValueError('preview_html data URI is too large')
+        try:
+            return decoded.decode('utf-8')
+        except UnicodeDecodeError as exc:
+            raise ValueError('preview_html data URI is not UTF-8') from exc
     path = Path(raw_path).expanduser()
     if not path.is_absolute():
         path = Path(artifact_store).expanduser() / path
@@ -4126,7 +4165,11 @@ def _selection_edit_ops(
 
     if re.search(r'(?:删除|删掉|移除|去掉|delete|remove)', command, re.I):
         use_group = bool(group and re.search(r'(?:整组|整个组|整个模块|整块|all|group)', command, re.I))
-        op = {'op': 'delete_node', 'group': group} if use_group else {'op': 'delete_node', 'el': el}
+        if use_group:
+            op = {'op': 'delete_node', 'group': group}
+        else:
+            op = {'op': 'delete_node', 'el': el, 'scope': 'item'}
+            old_text = tree.node_text(tree.find_repeated_item(target)).strip()
         return [op], old_text, ''
 
     replacement = re.search(
@@ -4174,7 +4217,10 @@ def _selection_edit_ops(
             raise ValueError('AI edit planner returned empty replacement text')
         return [{'op': name, 'el': el, 'value': value}], old_text, value
     if name == 'delete_node':
-        return [{'op': name, 'el': el}], old_text, ''
+        delete_target = tree.find_repeated_item(target)
+        return [
+            {'op': name, 'el': el, 'scope': 'item'},
+        ], tree.node_text(delete_target).strip(), ''
     if name == 'set_style':
         return [{'op': name, 'el': el, 'styles': planned.get('styles')}], old_text, old_text
     raise ValueError('AI edit planner returned an unsupported operation')
@@ -4191,18 +4237,31 @@ def ppt_preview_selection_edit(
     if slot != 'preview_html' or _coerce_str(selection.get('type')) != 'ppt_html':
         raise ValueError('selection edit requires a preview_html PPT element')
     artifact_html = _artifact_html_text(artifact, artifact_store)
-    source, deck, original = _validated_action_source(artifact_html)
+    has_source = bool(_PPT_SOURCE_META_RE.search(artifact_html))
+    if has_source:
+        source, deck, original = _validated_action_source(artifact_html)
+    else:
+        # Decks produced before source metadata existed use the selected slot
+        # artifact as their export authority. Edit that artifact directly and
+        # let Core persist a new human revision; never guess a source disk path.
+        source, deck, original = None, None, artifact_html
+        shell = _protected_structure_signature(_HtmlTree(original))
+        if '<html' not in original.lower() or shell['html'] != 1 or shell['body'] != 1:
+            raise ValueError('legacy PPT artifact is not a complete HTML page')
     selected_page = _coerce_int(selection.get('page'), 0, lo=0)
-    source_page = int(source.stem.rsplit('_', 1)[-1])
-    if selected_page and selected_page != source_page:
+    source_page = int(source.stem.rsplit('_', 1)[-1]) if source is not None else (selected_page or 1)
+    if source is not None and selected_page and selected_page != source_page:
         raise ValueError('selected page does not match the artifact source')
     tree = _HtmlTree(original)
     ops, old_text, new_text = _selection_edit_ops(instruction, selection, tree)
     edited, applied, notes, removed = _apply_html_ops(original, ops)
     _validate_local_html_edit(original, edited)
 
-    public_html, _ = _inline_preview_images(_sanitize_page_html(edited), deck, source)
-    public_html = _with_ppt_source_meta(public_html, source, _html_sha256(edited))
+    if source is not None and deck is not None:
+        public_html, _ = _inline_preview_images(_sanitize_page_html(edited), deck, source)
+        public_html = _with_ppt_source_meta(public_html, source, _html_sha256(edited))
+    else:
+        public_html = edited
     action_root = Path(artifact_store).expanduser().resolve() / 'ppt-selection-actions'
     action_root.mkdir(parents=True, exist_ok=True, mode=0o750)
     token = uuid.uuid4().hex
@@ -4210,8 +4269,10 @@ def ppt_preview_selection_edit(
     manifest = action_root / f'{token}.json'
     raw_candidate.write_text(edited, encoding='utf-8')
     manifest.write_text(json.dumps({
-        'source_path': str(source),
+        'mode': 'source_page' if source is not None else 'artifact_only',
+        'source_path': str(source) if source is not None else None,
         'expected_sha256': _html_sha256(original),
+        'artifact_sha256': _html_sha256(artifact_html),
         'candidate_path': str(raw_candidate),
         'candidate_sha256': _html_sha256(edited),
         'public_html': public_html,
@@ -4261,24 +4322,42 @@ def ppt_apply_selection_edit(
     if not manifest_path.is_file():
         raise ValueError('PPT selection edit preview expired; preview it again')
     manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
-    source = Path(_coerce_str(manifest.get('source_path'))).resolve()
     candidate = Path(_coerce_str(manifest.get('candidate_path'))).resolve()
-    if source.parent.name != 'pages' or source.parent.parent == source.parent:
-        raise ValueError('invalid PPT source page')
-    if not source.is_file() or not candidate.is_file():
-        raise ValueError('PPT selection edit files no longer exist')
-    original = source.read_text(encoding='utf-8')
+    try:
+        candidate.relative_to(action_root)
+    except ValueError as exc:
+        raise ValueError('invalid PPT selection edit candidate') from exc
+    if not candidate.is_file():
+        raise ValueError('PPT selection edit candidate no longer exists')
     revised = candidate.read_text(encoding='utf-8')
-    if _html_sha256(original) != _coerce_str(manifest.get('expected_sha256')):
-        error = ValueError('The slide changed after the edit preview. Refresh and retry.')
-        error.error_code = 'SELECTION_STALE'
-        raise error
     if _html_sha256(revised) != _coerce_str(manifest.get('candidate_sha256')):
         raise ValueError('PPT selection edit candidate was modified')
+    mode = _coerce_str(manifest.get('mode'), 'source_page')
+    if mode == 'artifact_only':
+        current_artifact = _artifact_html_text(artifact, artifact_store)
+        if _html_sha256(current_artifact) != _coerce_str(manifest.get('artifact_sha256')):
+            error = ValueError('The slide changed after the edit preview. Refresh and retry.')
+            error.error_code = 'SELECTION_STALE'
+            raise error
+        original = current_artifact
+    elif mode == 'source_page':
+        source = Path(_coerce_str(manifest.get('source_path'))).resolve()
+        if source.parent.name != 'pages' or source.parent.parent == source.parent:
+            raise ValueError('invalid PPT source page')
+        if not source.is_file():
+            raise ValueError('PPT selection edit source no longer exists')
+        original = source.read_text(encoding='utf-8')
+        if _html_sha256(original) != _coerce_str(manifest.get('expected_sha256')):
+            error = ValueError('The slide changed after the edit preview. Refresh and retry.')
+            error.error_code = 'SELECTION_STALE'
+            raise error
+    else:
+        raise ValueError('invalid PPT selection edit mode')
     _validate_local_html_edit(original, revised)
-    tmp = source.with_name(source.name + f'.{token}.tmp')
-    tmp.write_text(revised, encoding='utf-8')
-    os.replace(tmp, source)
+    if mode == 'source_page':
+        tmp = source.with_name(source.name + f'.{token}.tmp')
+        tmp.write_text(revised, encoding='utf-8')
+        os.replace(tmp, source)
     return {
         'representation': 'ppt_html',
         'artifact': {
