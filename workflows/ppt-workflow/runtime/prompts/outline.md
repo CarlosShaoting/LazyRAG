@@ -60,7 +60,8 @@ All reader-visible text fields (`title`, `subtitle`, every `bullets[].head`/`det
   * Walk through `document_digest.inherited_tables` and assign each to the most relevant page (ideally a `data` page) via `use_table`.
   * **Aim to use EVERY image across the deck** — if Pool A + Pool B together have 9 items and page_count=12, at least 9 pages should have `use_image` set (most likely via `reference_image_index`). Each image MUST be used at most once across the deck. Do not discard uploaded material just because digest was null.
   * If there are MORE images than pages, pick the most impactful (those matching key_points; high-level diagrams / market share charts over low-information screenshots).
-  * `use_image` payload is EITHER `{"doc_index": D, "image_index": I}` (Pool A) OR `{"reference_image_index": N}` (Pool B). Never mix fields, never invent indices outside the pool bounds.
+  * `use_image` payload is EITHER `{"doc_index": D, "image_index": I}` (Pool A) OR `{"reference_image_index": N}` (Pool B). It is ONE object or null, NEVER an array/list. Never put two images on one page through `use_image`, never mix fields, and never invent indices outside the pool bounds.
+  * Naming an image such as `material_03` only inside `visual_hints`, `narrative`, or a bullet does NOT bind that image. You MUST also set the page's structured `use_image` field to the matching `reference_image_index`.
 - Inherit domain facts from `document_digest` faithfully — do NOT invent metrics. If no digest is available, lean on `query_normalized.key_points` + general knowledge around the topic.
 - Do **not** invent decorative AI image slots. Slide visuals are CSS / SVG / ECharts and/or Pool A/B `use_image` only.
 - JSON only, no markdown fences, no commentary.

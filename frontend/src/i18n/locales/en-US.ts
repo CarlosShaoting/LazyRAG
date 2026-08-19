@@ -1698,6 +1698,7 @@ const enUS = {
     workflowPreviousPage: "Previous slide",
     workflowNextPage: "Next slide",
     workflowPageDragHint: "Drag to reorder slides",
+    workflowPageMultiSelectDragHint: "Ctrl/Cmd-click to select multiple slides, then drag any selected slide to move the group",
     workflowPageReorderFailed: "Failed to reorder slides. Please try again.",
     workflowExportPptx: "Export",
     workflowExportingPptx: "Exporting…",

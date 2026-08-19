@@ -75,7 +75,7 @@ def test_sort_order_uses_durable_slot_order_during_workflow_rewind():
 
 def test_ppt_preview_slots_reject_direct_model_saves():
     ctx = MagicMock()
-    ctx.params = {'workflow_id': 'ppt-workflow'}
+    ctx.params = {'workflow_runtime': {'publisher_owned_slots': ['preview_html']}}
     ctx.output_slots = ['preview_html']
 
     with patch(

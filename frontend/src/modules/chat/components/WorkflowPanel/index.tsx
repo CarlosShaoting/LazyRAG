@@ -47,6 +47,7 @@ import {
 import { resolveCoreAssetUrl, resolveMarkdownImageUrlAsync, isExpiredSignedUrl } from '@/modules/knowledge/utils/imageUrl';
 import { WorkflowPanelTabActiveContext, SlotEditingContext, type SlotFooterAction } from './slotEditingContext';
 import { findWriterArtifactStream } from './writerArtifactStream';
+import { moveSelectedCompositePages, sameCompositePageOrder } from './compositePageReorder';
 import './WorkflowPanel.scss';
 
 const DOCUMENT_FOOTER_LINK_ORDER = 20;
@@ -498,6 +499,39 @@ function resolveWriterFinalSlotDefs(tab: TabDef, session: WorkflowSession): Slot
   });
 }
 
+function getCompositeHtmlSlotIds(tab: TabDef, session: WorkflowSession): Set<string> {
+  const participating = new Set(tab.slots.map((slot) => slot.id));
+  const declaredHtmlSlots = new Set(
+    tab.slots
+      .filter((slot) => slot.widget?.widgetType === 'html-slide')
+      .map((slot) => slot.id),
+  );
+  const htmlSlots = new Set<string>();
+  for (const revision of session.slots ?? []) {
+    if (revision.selected && participating.has(revision.slot)
+        && (declaredHtmlSlots.has(revision.slot)
+          || extractHtmlFromArtifact(revision.artifact_value))) {
+      htmlSlots.add(revision.slot);
+    }
+  }
+  return htmlSlots;
+}
+
+/** Pick the first HTML material in this composite row for its filmstrip thumbnail. */
+function findCompositeHtmlRevision(
+  session: WorkflowSession,
+  tab: TabDef,
+  sortOrder: number,
+): SlotRevision | undefined {
+  const htmlSlotIds = getCompositeHtmlSlotIds(tab, session);
+  for (const slot of tab.slots) {
+    if (!htmlSlotIds.has(slot.id)) continue;
+    const revision = findSlotRevision(session, tab, slot.id, sortOrder);
+    if (revision) return revision;
+  }
+  return undefined;
+}
+
 /** Get all distinct sort_orders present across the participating slots. */
 function getCompositeRows(
   tab: TabDef,
@@ -507,21 +541,10 @@ function getCompositeRows(
   const orders = new Set<number>();
   const scopeStepId = tab.step_id
     ?? (session.steps?.some((s) => s.step_id === tab.id) ? tab.id : undefined);
-  const htmlSlotDeclared = participating.has('preview_html');
   for (const slot of session.slots ?? []) {
     const matchesTabStep = scopeStepId ? slot.step_id === scopeStepId : slot.selected;
-    if (matchesTabStep && participating.has(slot.slot)) {
-      if (htmlSlotDeclared && slot.slot !== 'preview_html') continue;
-      if (slot.sort_order !== undefined) {
-        if (!htmlSlotDeclared || extractHtmlFromArtifact(slot.artifact_value)) {
-          orders.add(slot.sort_order);
-        } else if (slot.artifact_value && typeof slot.artifact_value === 'object') {
-          const value = slot.artifact_value as Record<string, unknown>;
-          if (value.path && (value.type === 'text' || value.type === 'json' || typeof value.text === 'string')) {
-            orders.add(slot.sort_order);
-          }
-        }
-      }
+    if (matchesTabStep && participating.has(slot.slot) && slot.sort_order !== undefined) {
+      orders.add(slot.sort_order);
     }
   }
   return Array.from(orders).sort((a, b) => a - b);
@@ -705,9 +728,19 @@ function CompositeThumbnailRail({
   const { t } = useTranslation();
   const isCol = position === 'left' || position === 'right';
   const idx = Math.max(0, pages.indexOf(currentPage));
-  const dragSrcIdx = useRef<number | null>(null);
+  const dragPagesRef = useRef<Set<number>>(new Set());
   const [insertIdx, setInsertIdx] = useState<number | null>(null);
-  const [draggingIdx, setDraggingIdx] = useState<number | null>(null);
+  const [selectedPages, setSelectedPages] = useState<Set<number>>(new Set());
+  const [draggingPages, setDraggingPages] = useState<Set<number>>(new Set());
+
+  useEffect(() => {
+    const available = new Set(pages);
+    setSelectedPages((selected) => {
+      const next = new Set(Array.from(selected).filter((page) => available.has(page)));
+      if (next.size === selected.size) return selected;
+      return next;
+    });
+  }, [pages.join(',')]);
 
   const computeInsertIdx = useCallback((event: React.DragEvent, itemIdx: number) => {
     const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
@@ -715,42 +748,63 @@ function CompositeThumbnailRail({
     return event.clientX < rect.left + rect.width / 2 ? itemIdx : itemIdx + 1;
   }, [isCol]);
 
-  const handleDragStart = (pageIdx: number, event: React.DragEvent) => {
+  const handlePageClick = (sortOrder: number, event: React.MouseEvent) => {
+    if (event.ctrlKey || event.metaKey) {
+      setSelectedPages((selected) => {
+        const next = new Set(selected);
+        if (next.has(sortOrder)) next.delete(sortOrder);
+        else next.add(sortOrder);
+        return next;
+      });
+    } else {
+      setSelectedPages(new Set([sortOrder]));
+    }
+    onChange(sortOrder);
+  };
+
+  const handleDragStart = (sortOrder: number, event: React.DragEvent) => {
     if (!onReorder || reordering) return;
-    dragSrcIdx.current = pageIdx;
-    setDraggingIdx(pageIdx);
-    event.dataTransfer.setData('application/x-workflow-page-sort', String(pageIdx));
+    const moving = selectedPages.has(sortOrder)
+      ? new Set(selectedPages)
+      : new Set([sortOrder]);
+    dragPagesRef.current = moving;
+    setSelectedPages(moving);
+    setDraggingPages(moving);
+    event.dataTransfer.setData(
+      'application/x-workflow-page-sort',
+      JSON.stringify(Array.from(moving)),
+    );
     event.dataTransfer.effectAllowed = 'move';
   };
 
   const handleDragOver = (pageIdx: number, event: React.DragEvent) => {
-    if (!onReorder || dragSrcIdx.current === null) return;
+    if (!onReorder || dragPagesRef.current.size === 0) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
     setInsertIdx(computeInsertIdx(event, pageIdx));
   };
 
   const resetDrag = () => {
-    dragSrcIdx.current = null;
+    dragPagesRef.current = new Set();
     setInsertIdx(null);
-    setDraggingIdx(null);
+    setDraggingPages(new Set());
   };
 
   const handleDrop = async (pageIdx: number, event: React.DragEvent) => {
     event.preventDefault();
-    const srcIdx = dragSrcIdx.current;
+    const moving = dragPagesRef.current;
     const gapIdx = computeInsertIdx(event, pageIdx);
     resetDrag();
-    if (srcIdx === null || !onReorder || gapIdx === srcIdx || gapIdx === srcIdx + 1) return;
-    const next = [...pages];
-    const [moved] = next.splice(srcIdx, 1);
-    next.splice(gapIdx > srcIdx ? gapIdx - 1 : gapIdx, 0, moved);
+    if (!moving.size || !onReorder) return;
+    const next = moveSelectedCompositePages(pages, moving, gapIdx);
+    if (sameCompositePageOrder(next, pages)) return;
     await onReorder(next);
+    setSelectedPages(new Set());
   };
 
   const canDrag = Boolean(onReorder) && !reordering;
   const hasAnyHtmlPreview = pages.some((sortOrder) =>
-    Boolean(findSlotRevision(session, tab, 'preview_html', sortOrder)),
+    Boolean(findCompositeHtmlRevision(session, tab, sortOrder)),
   );
 
   return (
@@ -783,8 +837,10 @@ function CompositeThumbnailRail({
         >
           {canDrag && <div className={`composite-thumb-rail__insert${insertIdx === 0 ? ' composite-thumb-rail__insert--active' : ''}`} aria-hidden='true' />}
           {pages.map((sortOrder, pageIdx) => {
-            const revision = findSlotRevision(session, tab, 'preview_html', sortOrder);
+            const revision = findCompositeHtmlRevision(session, tab, sortOrder);
             const hasHtmlPreview = Boolean(revision);
+            const selected = selectedPages.has(sortOrder);
+            const dragging = draggingPages.has(sortOrder);
             return (
               <React.Fragment key={`${sortOrder}-${pageIdx}`}>
                 <button
@@ -794,20 +850,27 @@ function CompositeThumbnailRail({
                   className={[
                     'composite-thumb-rail__item',
                     sortOrder === currentPage ? 'composite-thumb-rail__item--active' : '',
+                    selected ? 'composite-thumb-rail__item--selected' : '',
                     canDrag ? 'composite-thumb-rail__item--draggable' : '',
-                    draggingIdx === pageIdx ? 'composite-thumb-rail__item--dragging' : '',
+                    dragging ? 'composite-thumb-rail__item--dragging' : '',
                     !hasHtmlPreview ? 'composite-thumb-rail__item--fallback' : '',
                   ].filter(Boolean).join(' ')}
-                  onClick={() => onChange(sortOrder)}
-                  onDragStart={(event) => handleDragStart(pageIdx, event)}
+                  onClick={(event) => handlePageClick(sortOrder, event)}
+                  onDragStart={(event) => handleDragStart(sortOrder, event)}
                   onDragOver={(event) => handleDragOver(pageIdx, event)}
                   onDrop={(event) => { void handleDrop(pageIdx, event); }}
                   onDragEnd={resetDrag}
-                  title={canDrag ? t('chat.workflowPageDragHint') : undefined}
+                  title={canDrag ? t('chat.workflowPageMultiSelectDragHint') : undefined}
                   aria-label={t('chat.workflowRowAria', { index: pageIdx + 1 })}
                   aria-current={sortOrder === currentPage ? 'true' : undefined}
+                  aria-pressed={selected}
                 >
                   {hasHtmlPreview && <span className='composite-thumb-rail__badge'>{pageIdx + 1}</span>}
+                  {selectedPages.size > 1 && selected && (
+                    <span className='composite-thumb-rail__selection-badge' aria-hidden='true'>
+                      {selectedPages.size}
+                    </span>
+                  )}
                   <span
                     className={`composite-thumb-rail__preview${hasHtmlPreview ? '' : ' composite-thumb-rail__preview--fallback'}`}
                     aria-hidden='true'

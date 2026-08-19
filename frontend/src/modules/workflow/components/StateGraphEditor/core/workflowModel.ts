@@ -161,12 +161,29 @@ export interface WorkflowToolScript {
   functions: string[];
 }
 
+export interface WorkflowRuntimePolicy {
+  publisher_owned_slots?: string[];
+  collects_knowledge?: boolean;
+  completed_edit_step?: string;
+  clarification_fields?: Array<{
+    id: string;
+    label?: string;
+    question: string;
+    type?: 'text' | 'boolean' | 'single' | 'multiple';
+    choices?: string[];
+  }>;
+}
+
 export interface WorkflowModel {
   id: string;
   name: string;
   description?: string;
   when_to_use?: string;
   tool_scripts?: WorkflowToolScript[];
+  /** Host-neutral execution policy; preserved even though the editor has no dedicated controls. */
+  runtime?: WorkflowRuntimePolicy;
+  /** Artifact actions are package contracts and are preserved as opaque declarations. */
+  artifact_actions?: Record<string, unknown>;
   /** Step metadata only (id + label). Execution details live in state.yml / GraphModel. */
   steps: Array<{ id: string; label: string }>;
   /** Slot definitions — list format, each entry is a complete WorkflowSlotDef. */

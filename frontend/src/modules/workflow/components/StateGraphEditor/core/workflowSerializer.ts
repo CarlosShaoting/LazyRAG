@@ -15,6 +15,8 @@ export function serializeWorkflowModel(model: WorkflowModel, graphModel?: GraphM
   doc.name = model.name;
   if (model.description) doc.description = model.description;
   if (model.when_to_use) doc.when_to_use = model.when_to_use;
+  if (model.runtime) doc.runtime = model.runtime;
+  if (model.artifact_actions) doc.artifact_actions = model.artifact_actions;
 
   if (model.tool_scripts && model.tool_scripts.length > 0) {
     doc.tool_scripts = model.tool_scripts.map((ts) => ({

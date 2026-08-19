@@ -14,7 +14,9 @@ import (
 	"lazymind/core/modelconfig"
 	"lazymind/core/store"
 	"lazymind/core/subagent"
+	workflowstore "lazymind/core/workflow/store"
 
+	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
 )
 
@@ -171,10 +173,10 @@ type artifactActionWorkflowVersion struct {
 	treeHash   string
 }
 
-// resolveArtifactActionWorkflow keeps workflow execution/history pinned while
-// allowing the final built-in PPT editor to operate on decks created by older
-// plugin revisions. This explicit human action creates a new slot revision; it
-// does not resume or mutate the historical workflow execution.
+// resolveArtifactActionWorkflow keeps workflow execution/history pinned unless
+// the active package explicitly declares revision_policy: head for this human
+// artifact action. The policy lives in the package rather than a workflow-id
+// branch, allowing a current editor to handle artifacts from older revisions.
 func resolveArtifactActionWorkflow(
 	ctx context.Context, target *artifactActionTarget, action string,
 ) (artifactActionWorkflowVersion, error) {
@@ -183,22 +185,52 @@ func resolveArtifactActionWorkflow(
 		revisionID: target.session.WorkflowRevisionID,
 		treeHash:   target.session.WorkflowTreeHash,
 	}
-	if action != "rewrite_selection" || target.session.WorkflowID != "ppt-workflow" {
+	if target.db == nil {
 		return pinned, nil
 	}
 	var resource orm.WorkflowResource
-	err := target.db.WithContext(ctx).
-		Where(&orm.WorkflowResource{WorkflowRef: "builtin:ppt-workflow", Status: "active"}).
-		Take(&resource).Error
+	query := target.db.WithContext(ctx).Where(
+		"status = 'active' AND (owner_user_id = ? OR owner_user_id = '')",
+		target.session.CreateUserID,
+	)
+	if target.session.WorkflowRef != "" {
+		query = query.Where("plugin_ref = ?", target.session.WorkflowRef) // workflow-naming: persistence
+	} else {
+		query = query.Where("plugin_id = ?", target.session.WorkflowID) // workflow-naming: persistence
+	}
+	err := query.Take(&resource).Error
 	if err != nil {
-		return artifactActionWorkflowVersion{}, fmt.Errorf("load final PPT action revision: %w", err)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return pinned, nil
+		}
+		return artifactActionWorkflowVersion{}, fmt.Errorf("load artifact action head revision: %w", err)
+	}
+	pkg, err := workflowstore.New(target.db).GetWorkflowPackage(
+		ctx, target.session.CreateUserID, resource.WorkflowRef, resource.HeadRevisionID,
+	)
+	if err != nil {
+		if errors.Is(err, workflowstore.ErrNotFound) {
+			return pinned, nil
+		}
+		return artifactActionWorkflowVersion{}, fmt.Errorf("load artifact action head revision: %w", err)
+	}
+	var manifest struct {
+		ArtifactActions map[string]struct {
+			RevisionPolicy string `yaml:"revision_policy"`
+		} `yaml:"artifact_actions"`
+	}
+	if err := yaml.Unmarshal(pkg.Files["workflow.yaml"], &manifest); err != nil {
+		return artifactActionWorkflowVersion{}, fmt.Errorf("parse artifact action policy: %w", err)
+	}
+	if manifest.ArtifactActions[action].RevisionPolicy != "head" {
+		return pinned, nil
 	}
 	var revision orm.WorkflowRevision
 	if err := target.db.WithContext(ctx).Where("id = ?", resource.HeadRevisionID).Take(&revision).Error; err != nil {
-		return artifactActionWorkflowVersion{}, fmt.Errorf("load final PPT action revision: %w", err)
+		return artifactActionWorkflowVersion{}, fmt.Errorf("load artifact action head revision: %w", err)
 	}
-	if resource.WorkflowID != "ppt-workflow" || resource.HeadRevisionID == "" || revision.TreeHash == "" {
-		return artifactActionWorkflowVersion{}, fmt.Errorf("final PPT action revision is incomplete")
+	if resource.HeadRevisionID == "" || revision.TreeHash == "" {
+		return artifactActionWorkflowVersion{}, fmt.Errorf("artifact action head revision is incomplete")
 	}
 	return artifactActionWorkflowVersion{
 		workflowID: resource.WorkflowID,

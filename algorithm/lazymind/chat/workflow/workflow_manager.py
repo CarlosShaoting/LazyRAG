@@ -30,6 +30,7 @@ class WorkflowAgentContribution:
     stop_tools: List[str]
     agentic_config_patch: Dict[str, Any]
     runtime_context: str
+    runtime_policy: Optional[Dict[str, Any]] = None
 
 
 @dataclass(frozen=True)
@@ -433,6 +434,237 @@ def _workflow_trigger_tool_name(workflow_id: str) -> str:
     return f'trigger_{stem}_workflow'
 
 
+def _selected_runtime_policy(
+    workflow_context: Dict[str, Any],
+    workflow_catalog: List[Dict[str, Any]],
+    allowed_refs: set[str],
+) -> Dict[str, Any]:
+    """Resolve immutable package runtime policy without workflow-id branches."""
+    direct = workflow_context.get('runtime')
+    if isinstance(direct, dict):
+        return dict(direct)
+    identifiers = set(allowed_refs)
+    for key in ('workflow_ref', 'workflow_id'):
+        value = str(workflow_context.get(key) or '').strip()
+        if value:
+            identifiers.add(value)
+    identifiers |= {value.removeprefix('builtin:') for value in identifiers}
+    for item in workflow_catalog:
+        item_ids = {
+            str(item.get('workflow_ref') or '').strip(),
+            str(item.get('workflow_id') or '').strip(),
+        }
+        item_ids |= {value.removeprefix('builtin:') for value in item_ids}
+        runtime = item.get('runtime')
+        if identifiers & item_ids and isinstance(runtime, dict):
+            return dict(runtime)
+    return {}
+
+
+def _runtime_clarification_fields(runtime_policy: Any) -> List[Dict[str, Any]]:
+    """Normalize package-declared semantic inputs for model-facing guidance."""
+    if not isinstance(runtime_policy, dict):
+        return []
+    result: List[Dict[str, Any]] = []
+    for raw in runtime_policy.get('clarification_fields') or []:
+        if not isinstance(raw, dict):
+            continue
+        field_id = _clean_workflow_text(raw.get('id'))
+        question = _clean_workflow_text(raw.get('question'))
+        if not field_id or not question:
+            continue
+        question_type = _clean_workflow_text(raw.get('type')).lower() or 'text'
+        if question_type not in {'text', 'boolean', 'single', 'multiple'}:
+            question_type = 'text'
+        choices = [
+            choice for value in (raw.get('choices') or [])
+            if (choice := _clean_workflow_text(value))
+        ]
+        result.append({
+            'id': field_id,
+            'label': _clean_workflow_text(raw.get('label')) or field_id,
+            'question': question,
+            'type': question_type,
+            'choices': choices,
+        })
+    return result
+
+
+def _startup_clarification_policies(
+    runtime_policy: Any,
+    workflow_catalog: Any = None,
+    *,
+    discovery_mode: bool = False,
+) -> List[Dict[str, Any]]:
+    if isinstance(runtime_policy, dict) and _runtime_clarification_fields(runtime_policy):
+        return [runtime_policy]
+    if not discovery_mode:
+        return []
+    return [
+        item['runtime']
+        for item in (workflow_catalog or [])
+        if isinstance(item, dict)
+        and isinstance(item.get('runtime'), dict)
+        and _runtime_clarification_fields(item['runtime'])
+    ]
+
+
+def _tool_call_arguments(tool_call: Any) -> Dict[str, Any]:
+    if not isinstance(tool_call, dict):
+        return {}
+    function = tool_call.get('function')
+    if not isinstance(function, dict) or str(function.get('name') or '') != 'ask_user':
+        return {}
+    arguments = function.get('arguments')
+    if isinstance(arguments, dict):
+        return arguments
+    if isinstance(arguments, str):
+        try:
+            parsed = json.loads(arguments)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def _question_fingerprint(value: Any) -> str:
+    return re.sub(r'[^0-9a-z\u4e00-\u9fff]+', '', str(value or '').lower())
+
+
+def _history_startup_ask_index(
+    conversation_history: Any,
+    runtime_policy: Any,
+    workflow_catalog: Any = None,
+    *,
+    discovery_mode: bool = False,
+) -> int:
+    policies = _startup_clarification_policies(
+        runtime_policy,
+        workflow_catalog,
+        discovery_mode=discovery_mode,
+    )
+    declared_fields = [
+        field
+        for policy in policies
+        for field in _runtime_clarification_fields(policy)
+    ]
+    if not declared_fields:
+        return -1
+    field_ids = {str(field['id']) for field in declared_fields}
+    question_fingerprints = {
+        fingerprint
+        for field in declared_fields
+        if (fingerprint := _question_fingerprint(field.get('question')))
+    }
+    history = conversation_history if isinstance(conversation_history, list) else []
+    for index in range(len(history) - 1, -1, -1):
+        message = history[index]
+        if not isinstance(message, dict) or message.get('role') != 'assistant':
+            continue
+        matched = False
+        for call in message.get('tool_calls') or []:
+            arguments = _tool_call_arguments(call)
+            if not arguments:
+                continue
+            for question in arguments.get('questions') or []:
+                if not isinstance(question, dict):
+                    continue
+                if str(question.get('id') or '').strip() in field_ids:
+                    matched = True
+                    break
+                fingerprint = _question_fingerprint(question.get('text'))
+                if fingerprint and any(
+                    fingerprint in declared or declared in fingerprint
+                    for declared in question_fingerprints
+                ):
+                    matched = True
+                    break
+            if matched:
+                break
+        if not matched:
+            continue
+
+        # An ask belongs to the current startup exchange only while no later
+        # assistant response has continued/completed that request. Otherwise a
+        # historical PPT task would suppress clarification for every future PPT
+        # started in the same conversation. The current answer may appear as a
+        # trailing user message in some history adapters; allow only that one.
+        tail = [entry for entry in history[index + 1:] if isinstance(entry, dict)]
+        if any(entry.get('role') == 'assistant' for entry in tail):
+            continue
+        if sum(entry.get('role') == 'user' for entry in tail) > 1:
+            continue
+        return index
+    return -1
+
+
+def workflow_startup_clarification_already_asked(
+    conversation_history: Any,
+    runtime_policy: Any,
+    workflow_catalog: Any = None,
+    *,
+    discovery_mode: bool = False,
+) -> bool:
+    """Return whether this Workflow's one startup question card was already shown."""
+    return _history_startup_ask_index(
+        conversation_history,
+        runtime_policy,
+        workflow_catalog,
+        discovery_mode=discovery_mode,
+    ) >= 0
+
+
+def _merge_startup_clarification_context(
+    current_query: str,
+    conversation_history: Any,
+    runtime_policy: Any,
+) -> str:
+    """Merge the original request with the answer turn before trigger creation."""
+    ask_index = _history_startup_ask_index(conversation_history, runtime_policy)
+    if ask_index < 0:
+        return current_query
+    history = conversation_history if isinstance(conversation_history, list) else []
+    original = ''
+    for index in range(ask_index - 1, -1, -1):
+        message = history[index]
+        if isinstance(message, dict) and message.get('role') == 'user':
+            original = str(message.get('content') or '').strip()
+            if original:
+                break
+    answer = str(current_query or '').strip()
+    if not original or not answer or original == answer:
+        return answer or original
+    return (
+        f'Original workflow request:\n{original}\n\n'
+        f'Clarification answers:\n{answer}'
+    )
+
+
+def _startup_clarification_guidance(runtime_policy: Any) -> str:
+    fields = _runtime_clarification_fields(runtime_policy)
+    if not fields:
+        return ''
+    return (
+        'This Workflow declares startup_clarification_fields. Before calling its trigger, '
+        'inspect the current request, relevant attachment names/content already available, '
+        'and prior conversation turns. Treat a field as present only when it is explicit or '
+        'unambiguously inferable. Do not ask for fields that are already present. If one or '
+        'more fields are missing, call ask_user exactly once TOTAL with only those missing fields, '
+        'putting all of them in that single card, then stop without triggering the Workflow in '
+        'that turn. Include each '
+        'declared field id in its question object. Whenever meaningful, generate 2-4 concise, '
+        'context-specific suggested answers from the current request and use type=single so the '
+        'user can click one; declared choices are useful seeds, not a limit. Keep type=text only '
+        'when responsible suggestions cannot be inferred. On the answer turn, NEVER call ask_user '
+        'again or reassess fields as missing. Combine the original request, all already-known '
+        'fields, and the new answers into one concise request_context and pass that value to '
+        'the trigger; an answer-only current_query must never replace the original request. '
+        'If no field is missing, trigger immediately. Never ask for an upload unless the '
+        'Workflow separately declares it as a required input. Declared fields: '
+        + json.dumps(fields, ensure_ascii=False, default=str)
+    )
+
+
 def workflow_activation_from_catalog_item(item: Dict[str, Any]) -> Dict[str, Any]:
     """Return the model-facing trigger metadata for one catalog item.
 
@@ -447,6 +679,8 @@ def workflow_activation_from_catalog_item(item: Dict[str, Any]) -> Dict[str, Any
     name = _clean_workflow_text(item.get('name')) or workflow_id
     description = _clean_workflow_text(item.get('description'))
     when_to_use = _clean_workflow_text(item.get('when_to_use'))
+    runtime_policy = item.get('runtime') if isinstance(item.get('runtime'), dict) else {}
+    clarification_guidance = _startup_clarification_guidance(runtime_policy)
     return {
         'workflow_ref': workflow_ref,
         'workflow_id': workflow_id,
@@ -454,12 +688,15 @@ def workflow_activation_from_catalog_item(item: Dict[str, Any]) -> Dict[str, Any
         'tool_name': _workflow_trigger_tool_name(workflow_id),
         'tool_description': _clean_workflow_text(
             f'Start the executable Workflow "{name}" when it matches the user request. '
-            f'Description: {description} When to use: {when_to_use}'
+            f'Description: {description} When to use: {when_to_use} '
+            f'{clarification_guidance}'
         ),
         'prompt': _clean_workflow_text(
             f'Workflow "{name}" ({workflow_ref}) is available. '
-            f'Description: {description} When to use: {when_to_use}'
+            f'Description: {description} When to use: {when_to_use} '
+            f'{clarification_guidance}'
         ),
+        'runtime': runtime_policy,
     }
 
 
@@ -494,6 +731,9 @@ def build_workflow_discovery_context(
             'description': _clean_workflow_text(item.get('description')),
             'when_to_use': _clean_workflow_text(item.get('when_to_use')),
             'trigger_tool': name,
+            'startup_clarification_fields': _runtime_clarification_fields(
+                activation.get('runtime'),
+            ),
         })
     if not items:
         return WorkflowDiscoveryContext([], '')
@@ -503,7 +743,11 @@ def build_workflow_discovery_context(
         'same way Skill descriptions are used: compare the current user request with each '
         'description and when_to_use before deciding. Call a trigger tool only when the '
         'Workflow is clearly appropriate, or when the user explicitly asks to run/open/start '
-        'that Workflow. Do not trigger a Workflow merely because it exists, and do not ask the '
+        'that Workflow. For a matching Workflow with startup_clarification_fields, inspect the '
+        'request and prior conversation first. If fields are missing, call ask_user once with '
+        'only the missing declared questions and stop; if none are missing, trigger immediately. '
+        'After the user answers, pass the trigger a merged request_context containing the original '
+        'request plus the answers. Do not trigger a Workflow merely because it exists, and do not ask the '
         'user to list Workflows before making this routing decision. A triggered Workflow '
         'receives current_query as request_context/user_input; after a successful trigger, '
         'continue from returned ready_steps with advance_step until terminal, required input, '
@@ -519,6 +763,7 @@ def build_workflow_discovery_context(
 def _workflow_trigger_tools(
     activations: List[Dict[str, Any]], allowed_refs: set[str], current_query: str = '',
     conversation_id: str = '', session_holder: Optional[Dict[str, str]] = None,
+    conversation_history: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Any]:
     """Bind backend-prepared activations to public package reads."""
     attachments_available = _conversation_has_attachments()
@@ -543,8 +788,21 @@ def _workflow_trigger_tools(
 
         def make_trigger(
             bound_id: str, bound_ref: str, bound_revision: str, bound_query: str,
+            bound_clarification_answer: bool,
         ) -> Any:
-            def run_trigger(input_bindings: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+            def run_trigger(
+                input_bindings: Optional[Dict[str, str]] = None,
+                request_context: Optional[str] = None,
+            ) -> Dict[str, Any]:
+                # Once startup clarification has happened, the Host-composed
+                # query is authoritative because it contains both the original
+                # request and this turn's answers. A model-supplied answer-only
+                # request_context must not discard the known topic/page count.
+                effective_context = (
+                    bound_query
+                    if bound_clarification_answer
+                    else str(request_context or '').strip() or bound_query
+                )
                 existing_session_id = str(
                     (session_holder or {}).get('session_id') or '',
                 ).strip()
@@ -559,14 +817,13 @@ def _workflow_trigger_tools(
                         'workflow_ref': bound_ref,
                         'workflow_id': bound_id,
                         'revision_id': bound_revision,
-                        'request_context': bound_query,
+                        'request_context': effective_context,
                         'session_id': existing_session_id,
                         'next_action': {
                             'tool': 'get_ready_steps',
                             'instruction': 'Read the current Ready frontier and continue execution.',
                         },
                     }
-                effective_context = bound_query
                 resolved_bindings: Dict[str, Any] = {}
                 for material_id, attachment_ref in (input_bindings or {}).items():
                     from lazymind.chat.engine.subagent.tools import _resolve_attachment
@@ -665,16 +922,28 @@ def _workflow_trigger_tools(
             if attachments_available:
                 def bound_trigger(
                     input_bindings: Optional[Dict[str, str]] = None,
+                    request_context: Optional[str] = None,
                 ) -> Dict[str, Any]:
-                    """Initialize the selected Workflow with optional user attachments."""
-                    return run_trigger(input_bindings)
+                    """Initialize with optional attachments and a merged clarified request."""
+                    return run_trigger(input_bindings, request_context)
             else:
-                def bound_trigger() -> Dict[str, Any]:
-                    """Initialize the selected Workflow without attachment bindings."""
-                    return run_trigger()
+                def bound_trigger(request_context: Optional[str] = None) -> Dict[str, Any]:
+                    """Initialize with the current or merged clarified request context."""
+                    return run_trigger(request_context=request_context)
             return bound_trigger
 
-        trigger_workflow = make_trigger(workflow_id, workflow_ref, revision_id, current_query)
+        trigger_query = _merge_startup_clarification_context(
+            current_query,
+            conversation_history,
+            item.get('runtime'),
+        )
+        trigger_workflow = make_trigger(
+            workflow_id,
+            workflow_ref,
+            revision_id,
+            trigger_query,
+            trigger_query != str(current_query or '').strip(),
+        )
 
         trigger_workflow.__name__ = name
         description = str(item.get('tool_description') or '').strip()
@@ -685,7 +954,11 @@ def _workflow_trigger_tools(
             ' No user attachments are available; start without input bindings so the '
             'Workflow can generate from text or collect images itself.'
         )
-        trigger_workflow.__doc__ = description + attachment_guidance
+        trigger_workflow.__doc__ = (
+            description + attachment_guidance
+            + ' If this turn follows startup clarification, request_context must merge the '
+            'original request with every clarification answer; otherwise omit it.'
+        )
         tools.append(trigger_workflow)
     return tools
 
@@ -711,6 +984,7 @@ def resolve_workflow_injection(
     disabled_builtin_workflows: Optional[List[str]] = None,
     allowed_workflow_refs: Optional[List[str]] = None,
     workflow_activations: Optional[List[Dict[str, Any]]] = None,
+    conversation_history: Optional[List[Dict[str, Any]]] = None,
 ) -> WorkflowAgentContribution:
     """Map public Workflow APIs to LazyMind Chat tools; no Runtime decisions live here."""
     cfg = _agentic_config()
@@ -736,6 +1010,7 @@ def resolve_workflow_injection(
     allowed_refs = {
         str(value).strip() for value in (allowed_workflow_refs or []) if str(value).strip()
     }
+    runtime_policy = _selected_runtime_policy(context, catalog, allowed_refs)
     allowed_items = [
         item for item in catalog
         if str(item.get('workflow_ref') or '') in allowed_refs
@@ -755,6 +1030,20 @@ def resolve_workflow_injection(
     allowed_ids = list(dict.fromkeys(allowed_ids))
 
     activations = workflow_activations or []
+    if allowed_refs and runtime_policy:
+        activations = [
+            {
+                **item,
+                **(
+                    {'runtime': runtime_policy}
+                    if isinstance(item, dict)
+                    and str(item.get('workflow_ref') or '') in allowed_refs
+                    and not isinstance(item.get('runtime'), dict)
+                    else {}
+                ),
+            }
+            for item in activations
+        ]
     discovery_context = WorkflowDiscoveryContext([], '')
     if not allowed_refs and not session_id:
         discovery_context = build_workflow_discovery_context(
@@ -773,6 +1062,7 @@ def resolve_workflow_injection(
     session_holder: Dict[str, str] = {'session_id': session_id}
     trigger_tools = _workflow_trigger_tools(
         activations, allowed_refs, current_query, conversation_id, session_holder,
+        conversation_history,
     )
     toolkit = HostWorkflowToolkit(
         _client, allowed_workflow_ids=allowed_ids, origin_ref=conversation_id,
@@ -865,14 +1155,15 @@ def resolve_workflow_injection(
                 'target, and call advance_step so Runtime starts a new step attempt and '
                 'publishes a new Workflow artifact revision. '
             )
-            if workflow_id.removeprefix('builtin:') == 'ppt-workflow':
+            completed_edit_step = str(runtime_policy.get('completed_edit_step') or '').strip()
+            if completed_edit_step:
                 completed_followup += (
-                    'For AI PPT Planner, any request to modify, repair, delete, or '
-                    'regenerate one or more existing slides maps to the generate_ppt '
-                    'step. If generate_ppt is present in rewindable_steps, you MUST call '
-                    'advance_step(step_ids=["generate_ppt"]) now. That step launches the '
-                    'PPT SubAgent, edits the existing deck, and publishes preview_html; '
-                    'never paste HTML into the chat as a substitute. '
+                    'This Workflow declares that requests to modify, repair, delete, or '
+                    f'regenerate completed output map to the {completed_edit_step!r} step. '
+                    f'If {completed_edit_step!r} is present in rewindable_steps, you MUST '
+                    f'call advance_step(step_ids=[{completed_edit_step!r}]) now. That step '
+                    'owns the existing artifacts and publishes their new revisions; never '
+                    'paste replacement content into chat as a substitute. '
                 )
         runtime_context = (
             '## Workflow Runtime [AUTHORITATIVE]\n'
@@ -910,7 +1201,7 @@ def resolve_workflow_injection(
             # user-requested continuous run can keep advancing.  Only the
             # explicit hand-off variant transfers ownership and ends the turn.
             tools, ['advance_step_and_hand_off'],
-            patch, runtime_context,
+            patch, runtime_context, runtime_policy,
         )
 
     del disabled_builtin_workflows
@@ -921,19 +1212,26 @@ def resolve_workflow_injection(
             if str(item.get('workflow_ref') or '') in allowed_refs
             and str(item.get('prompt') or '').strip()
         ]
+        clarification_guidance = _startup_clarification_guidance(runtime_policy)
+        entry_instruction = (
+            clarification_guidance + ' '
+            if clarification_guidance else
+            'No startup clarification fields are declared, so call the bound trigger now. '
+        )
         selection_context = (
             '## Explicit Workflow Selection [AUTHORITATIVE]\n'
             + '\n'.join(activation_prompts) + '\n'
             + 'A Workflow is an executable, versioned procedure, not a document to search, '
             + 'summarize, or merely describe. The @workflow mention means the user explicitly '
-            + 'selected and authorized this exact procedure. Call its bound trigger now. '
+            + 'selected and authorized this exact procedure. ' + entry_instruction
             + 'Conversation attachments are optional unless the selected Workflow Runtime '
             + 'explicitly returns a required-input result. Never infer that an upload is '
             + 'required merely because the Workflow supports uploaded materials. A non-empty '
-            + 'text-only current_query is sufficient to trigger generation Workflows. '
-            + 'Treat current_query as the '
-            + 'workflow request_context and as user_input for the first Ready step; do not '
-            + 'ask for a second trigger message when current_query is non-empty. After each '
+            + 'text-only current_query is sufficient to trigger generation Workflows once any '
+            + 'declared startup clarification is complete. Treat current_query as the workflow '
+            + 'request_context and as user_input for the first Ready step unless this is a '
+            + 'clarification-answer turn; then pass the trigger a merged request_context containing '
+            + 'the original request and all answers; do not ask for a second trigger message. After each '
             + 'successful advance_step, continue in this same turn from its returned ready_steps '
             + 'until terminal, required input, explicit user boundary, or failure. In Human Approval '
             + 'chat mode, approval is for the step result after execution, not for starting the step. '
@@ -953,7 +1251,7 @@ def resolve_workflow_injection(
     elif discovery_context.prompt:
         selection_context = discovery_context.prompt
     return WorkflowAgentContribution(
-        tools, [], patch, selection_context,
+        tools, [], patch, selection_context, runtime_policy,
     )
 
 

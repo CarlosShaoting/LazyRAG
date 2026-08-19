@@ -46,6 +46,16 @@ steps:
         user asks to use it. Never ask the user to upload a file merely because
         this workflow supports optional uploaded materials.
 
+      Startup clarification contract:
+      - The Chat host collects presentation topic, exact slide count, target
+        customer/audience, and visual style before creating this workflow
+        session. Extract all four faithfully from {{user_input}}; clarification
+        answers may have been merged into the original request.
+      - Do not replace an explicitly supplied value with a generic default.
+      - Do not interpret the phrase "make a PPT" itself as a presentation topic,
+        and do not confuse the number of source files with the requested slide
+        count.
+
       Uploaded source reading:
       - You CAN read user-uploaded PPT/PPTX files with the attachment reader.
         When the request asks you to base the new deck on an uploaded PPT/PPTX,
@@ -61,14 +71,14 @@ steps:
 
       Include:
       - presentation goal
-      - target audience
-      - expected slide count; infer 4-6 slides if not specified (max 10)
+      - presentation topic
+      - target customer / audience
+      - exact expected slide count (max 10)
       - communication tone
-      - visual style constraints explicitly stated by the user (for example a
-        named style, color, brand guide, or reference image). If the user did
-        not specify any visual constraint, write "未指定". Do not invent colors,
+      - visual style constraints supplied by the user (for example a named
+        style, color, brand guide, or reference image). Do not invent colors,
         palettes, theme names, or cultural / holiday color stereotypes here;
-        the deck-wide style stage chooses those once for the whole deck.
+        the deck-wide style stage applies the requested direction consistently.
       - required sections / narrative arc
       - available source material and missing information
       - practical assumptions
@@ -89,9 +99,9 @@ steps:
     outputs:
       - material: requirement_analysis
     acceptance_criteria: |
-      requirement_analysis must be saved and must cover goal, audience, slide
-      count, communication tone, explicit visual constraints (or "未指定"),
-      structure, constraints, and assumptions.
+      requirement_analysis must be saved and must cover goal, presentation
+      topic, exact slide count, target customer/audience, communication tone,
+      explicit visual constraints, structure, constraints, and assumptions.
 
   collect_materials:
     label: Collect Materials

@@ -56,22 +56,20 @@ DRAFT_STREAM_EVENT_TYPES = frozenset({
     'artifact_stream_abort',
 })
 
-PPT_PUBLISHER_OWNED_SLOTS = frozenset({
-    'slide_outline',
-    'preview_html',
-    'preview_notes',
-})
-
-
-def _ppt_publisher_owns_outputs(ctx: 'SubAgentContext') -> bool:
-    """Return whether this PPT step's declared outputs are written by ppt_* tools."""
-    workflow_id = str((ctx.params or {}).get('workflow_id') or '').removeprefix('builtin:')
+def _publisher_owns_outputs(ctx: 'SubAgentContext') -> bool:
+    """Return whether this step's outputs are written by package publisher tools."""
+    policy = (ctx.params or {}).get('workflow_runtime') or {}
+    owned = {
+        str(key).strip()
+        for key in (policy.get('publisher_owned_slots') or [])
+        if str(key).strip()
+    } if isinstance(policy, dict) else set()
     slots = {str(key).strip() for key in ctx.output_slots if str(key).strip()}
     return (
         str(ctx.agent_type or '') == 'workflow_step'
-        and workflow_id == 'ppt-workflow'
+        and bool(owned)
         and bool(slots)
-        and slots.issubset(PPT_PUBLISHER_OWNED_SLOTS)
+        and slots.issubset(owned)
     )
 
 
@@ -290,7 +288,8 @@ def _resolve_runtime_tools(
     When explicit is None/empty, fall back to all DEFAULT_TOOLS.
 
     Note: artifact infrastructure tools are managed separately by _build_subagent_tools.
-    Generic artifact writes are intentionally omitted for publisher-owned PPT output slots.
+    Generic artifact writes are intentionally omitted for package-declared
+    publisher-owned output slots.
     Names of base tools in the explicit list are silently ignored.
     """
     if explicit:
@@ -561,7 +560,7 @@ def _build_subagent_plan(
                 authoritative=True,
                 content_kind='instruction',
             )
-    publisher_owned_outputs = _ppt_publisher_owns_outputs(ctx)
+    publisher_owned_outputs = _publisher_owns_outputs(ctx)
     if ctx.params.get('required_output_artifact_keys') is not None:
         required_keys = _coerce_str_list(ctx.params.get('required_output_artifact_keys'))
     elif str(ctx.agent_type or '') == 'workflow_step':
@@ -571,10 +570,10 @@ def _build_subagent_plan(
     output_lines = []
     if publisher_owned_outputs:
         output_lines.append(
-            'The declared PPT output slots are publisher-owned. The declared ppt_* tool '
+            'The declared output slots are publisher-owned. The Workflow package tool '
             'writes them at the correct list_index and revision automatically. Do not call '
             'save_artifacts, patch_artifact, or any generic artifact write for these slots. '
-            'After the ppt_* generation/edit tool succeeds, stop and return a short summary.'
+            'After the package publisher tool succeeds, stop and return a short summary.'
         )
     elif required_keys:
         output_lines.append(
@@ -910,7 +909,7 @@ async def run_subagent_stream(
         subagent_tools_all = _build_subagent_tools(
             runtime_tools,
             attachment_configs,
-            include_artifact_writes=not _ppt_publisher_owns_outputs(ctx),
+            include_artifact_writes=not _publisher_owns_outputs(ctx),
         )
         runtime_configs = _tool_configs_for_runtime_tools(runtime_tools)
         plan = _build_subagent_plan(

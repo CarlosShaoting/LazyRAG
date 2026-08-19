@@ -950,6 +950,104 @@ def cmd_style_samples(deck: Path) -> int:
     )
 
 
+def _outline_reference_image_mentions(
+    page: dict,
+    available_reference_images: list[dict],
+) -> list[int]:
+    """Return Pool-B image indices explicitly mentioned by an outline page.
+
+    Some models put ``material_03`` in ``visual_hints`` but omit the
+    structured ``use_image`` field.  The page renderer cannot infer an image
+    from prose, so retain that intent here before applying a sequential
+    fallback.
+    """
+    page_text = json.dumps(page, ensure_ascii=False).lower()
+    mentions: list[tuple[int, int]] = []
+    for entry in available_reference_images:
+        index = entry.get("reference_image_index")
+        if not isinstance(index, int) or isinstance(index, bool) or index < 0:
+            continue
+        basename = str(entry.get("basename") or "").strip().lower()
+        candidates = [basename, Path(basename).stem] if basename else []
+        material_match = re.match(r"material[_\s-]*0*(\d+)", basename)
+        if material_match:
+            number = int(material_match.group(1))
+            candidates.extend((f"material_{number:02d}", f"material_{number}"))
+        positions = [page_text.find(candidate) for candidate in candidates if candidate]
+        positions = [position for position in positions if position >= 0]
+        if positions:
+            mentions.append((min(positions), index))
+    return [index for _, index in sorted(mentions)]
+
+
+def _ensure_outline_reference_images(
+    pages: list[dict],
+    available_reference_images: list[dict],
+) -> int:
+    """Repair missing/invalid Pool-B image bindings in an LLM outline.
+
+    Valid document-embedded (Pool-A) bindings are left untouched.  Valid
+    Pool-B bindings are de-duplicated, then empty pages first receive images
+    named in their own prose and finally the remaining images in source order.
+    """
+    available_indices = [
+        entry.get("reference_image_index")
+        for entry in available_reference_images
+        if isinstance(entry.get("reference_image_index"), int)
+        and not isinstance(entry.get("reference_image_index"), bool)
+        and entry.get("reference_image_index") >= 0
+    ]
+    available_set = set(available_indices)
+    used: set[int] = set()
+    repaired = 0
+
+    for page in pages:
+        original = page.get("use_image")
+        if original is None:
+            continue
+        candidates = original if isinstance(original, list) else [original]
+        selected: dict | None = None
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            if "reference_image_index" in candidate:
+                index = candidate.get("reference_image_index")
+                if (
+                    isinstance(index, int)
+                    and not isinstance(index, bool)
+                    and index in available_set
+                    and index not in used
+                ):
+                    selected = {"reference_image_index": index}
+                    used.add(index)
+                    break
+                continue
+            if "doc_index" in candidate and "image_index" in candidate:
+                selected = candidate
+                break
+        if selected is None:
+            page["use_image"] = None
+            repaired += 1
+        elif isinstance(original, list) or selected != original:
+            page["use_image"] = selected
+            repaired += 1
+
+    for page in pages:
+        if page.get("use_image") is not None:
+            continue
+        mentioned = _outline_reference_image_mentions(page, available_reference_images)
+        index = next((item for item in mentioned if item not in used), None)
+        if index is None:
+            index = next((item for item in available_indices if item not in used), None)
+        if index is None:
+            break
+        page["use_image"] = {"reference_image_index": index}
+        used.add(index)
+        repaired += 1
+
+    return repaired
+
+
 def cmd_outline(deck: Path) -> int:
     tp = _load_json(deck / "task_pack.json")
     ip = _load_json(deck / "info_pack.json")
@@ -1010,8 +1108,16 @@ def cmd_outline(deck: Path) -> int:
     expected = int(tp.get("params", {}).get("page_count", 0))
     if expected and len(pages) != expected:
         return _fail(f"outline page_count mismatch: got {len(pages)}, expected {expected}")
+    image_bindings_repaired = _ensure_outline_reference_images(
+        pages,
+        available_reference_images,
+    )
     _write_text(deck / "outline.json", json.dumps(data, ensure_ascii=False, indent=2))
-    return _ok(path="outline.json", pages=len(pages))
+    return _ok(
+        path="outline.json",
+        pages=len(pages),
+        image_bindings_repaired=image_bindings_repaired,
+    )
 
 
 def cmd_asset_plan(deck: Path) -> int:

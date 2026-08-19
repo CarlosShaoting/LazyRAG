@@ -113,24 +113,41 @@ _mcp_tool_cache_lock = threading.Lock()
 def _workflow_collects_knowledge_internally(
     workflow_context: Optional[Dict[str, Any]],
     workflow_refs: List[str] | None,
+    workflow_catalog: List[Dict[str, Any]] | None = None,
 ) -> bool:
     """Return whether the selected Workflow owns knowledge retrieval itself.
 
-    PPT planning deliberately performs KB retrieval in ``collect_materials``.
-    Keeping the ChatAgent's global KB tools enabled would let the model search
-    before the Workflow starts, bypassing that ordered step boundary.
+    This is an immutable package policy. Keeping the ChatAgent's global KB
+    tools enabled for such a Workflow would bypass its ordered retrieval step.
     """
+    context = workflow_context if isinstance(workflow_context, dict) else {}
+    runtime = context.get('runtime')
+    if isinstance(runtime, dict) and runtime.get('collects_knowledge') is True:
+        return True
     refs = {
-        str(value).strip().removeprefix('builtin:')
+        str(value).strip()
         for value in (workflow_refs or [])
         if str(value).strip()
     }
-    context = workflow_context if isinstance(workflow_context, dict) else {}
     for key in ('workflow_ref', 'workflow_id'):
-        value = str(context.get(key) or '').strip().removeprefix('builtin:')
+        value = str(context.get(key) or '').strip()
         if value:
             refs.add(value)
-    return 'ppt-workflow' in refs
+    normalized_refs = refs | {value.removeprefix('builtin:') for value in refs}
+    for item in workflow_catalog or []:
+        if not isinstance(item, dict):
+            continue
+        identifiers = {
+            str(item.get('workflow_ref') or '').strip(),
+            str(item.get('workflow_id') or '').strip(),
+        }
+        identifiers |= {value.removeprefix('builtin:') for value in identifiers}
+        item_runtime = item.get('runtime')
+        if (normalized_refs & identifiers
+                and isinstance(item_runtime, dict)
+                and item_runtime.get('collects_knowledge') is True):
+            return True
+    return False
 
 
 def _select_episode_reference_items(
@@ -417,6 +434,39 @@ def _should_register_ask_user(
     )
 
 
+def _workflow_startup_clarification_available(
+    runtime_policy: Any,
+    workflow_context: Any,
+    workflow_catalog: Any = None,
+    *,
+    discovery_mode: bool = False,
+) -> bool:
+    """Allow a declaratively interactive Workflow to clarify before Session creation."""
+    context = workflow_context if isinstance(workflow_context, dict) else {}
+    if str(context.get('session_id') or '').strip():
+        return False
+
+    def has_fields(policy: Any) -> bool:
+        return bool(
+            isinstance(policy, dict)
+            and any(
+                isinstance(field, dict)
+                and str(field.get('id') or '').strip()
+                and str(field.get('question') or '').strip()
+                for field in (policy.get('clarification_fields') or [])
+            )
+        )
+
+    if has_fields(runtime_policy):
+        return True
+    if not discovery_mode:
+        return False
+    return any(
+        isinstance(item, dict) and has_fields(item.get('runtime'))
+        for item in (workflow_catalog or [])
+    )
+
+
 def _task_profile_inputs(request: ChatRequest) -> dict[str, Any]:
     query, _ = _normalize_cite_message_query_for_agent(request.message.query)
     user_input, _ = _normalize_cite_message_query_for_agent(request.message.user_query or query)
@@ -554,6 +604,7 @@ async def _handle_chat_impl(
         guard_workflow_agent_stream,
         resolve_workflow_injection,
         update_intentwriter,
+        workflow_startup_clarification_already_asked,
     )
 
     conversation_id = (conversation.conversation_id or '').strip()
@@ -793,6 +844,7 @@ async def _handle_chat_impl(
         disabled_builtin_workflows=list(dict.fromkeys(effective_disabled_builtin_workflows)),
         allowed_workflow_refs=effective_allowed_workflow_refs,
         workflow_activations=workflow.activations,
+        conversation_history=agent_history,
     )
     workflow_tools = workflow_contribution.tools
     agentic_config.update(workflow_contribution.agentic_config_patch)
@@ -838,9 +890,10 @@ async def _handle_chat_impl(
     if _workflow_collects_knowledge_internally(
         effective_workflow_context,
         explicit_resource_payload.get('workflow_refs'),
+        effective_workflow_catalog,
     ):
-        # The PPT Workflow exposes KB retrieval only to collect_materials.  Do
-        # not let the parent ChatAgent run a competing search before analysis.
+        # The selected Workflow declares that retrieval belongs inside its own
+        # ordered steps, so parent ChatAgent must not run a competing search.
         active_configs = [
             cfg for cfg in active_configs if cfg.name not in {'kb', 'temp_kb'}
         ]
@@ -874,11 +927,33 @@ async def _handle_chat_impl(
     )
     # ask_user is a ChatAgent-only stop-tool. It is NOT in DEFAULT_TOOLS so SubAgents
     # (whose tool resolution falls back to DEFAULT_TOOLS) never see it.
-    # Auto workflow mode is non-interactive by contract: ask_user must be absent,
-    # not merely discouraged by prompt text.
-    allow_ask_user = (
-        not workflow_turn_is_bound
-        and _should_register_ask_user(agentic_config, disabled)
+    # Legacy auto workflow mode remains non-interactive unless the selected
+    # package explicitly declares startup clarification fields. That declaration
+    # is an opt-in interaction contract before a Session exists.
+    workflow_startup_clarification_declared = _workflow_startup_clarification_available(
+        workflow_contribution.runtime_policy,
+        effective_workflow_context,
+        effective_workflow_catalog,
+        discovery_mode=not workflow_turn_is_bound,
+    )
+    workflow_startup_clarification_asked = (
+        workflow_startup_clarification_declared
+        and workflow_startup_clarification_already_asked(
+            agent_history,
+            workflow_contribution.runtime_policy,
+            effective_workflow_catalog,
+            discovery_mode=not workflow_turn_is_bound,
+        )
+    )
+    allow_ask_user = False if workflow_startup_clarification_asked else (
+        (
+            not workflow_turn_is_bound
+            and _should_register_ask_user(agentic_config, disabled)
+        )
+        or (
+            workflow_startup_clarification_declared
+            and 'ask_user' not in disabled
+        )
     )
     ask_user_tools = _build_ask_user_tool() if allow_ask_user else []
     ask_user_configs = [ASK_USER_TOOL_CONFIG] if ask_user_tools else []

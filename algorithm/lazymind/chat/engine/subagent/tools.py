@@ -286,15 +286,18 @@ def _save_artifact(key: str, value: Any, content_type: str = 'text',
         A confirmation that the artifact was saved.
     """
     ctx = require_context()
-    workflow_id = str(ctx.params.get('workflow_id') or '').removeprefix('builtin:')
-    if (workflow_id == 'ppt-workflow'
-            and key in {'slide_outline', 'preview_html', 'preview_notes'}
-            and not internal_publish):
+    policy = (ctx.params or {}).get('workflow_runtime') or {}
+    publisher_owned_slots = {
+        str(slot).strip()
+        for slot in (policy.get('publisher_owned_slots') or [])
+        if str(slot).strip()
+    } if isinstance(policy, dict) else set()
+    if key in publisher_owned_slots and not internal_publish:
         return tool_error(
             'save_artifacts',
-            f'PPT slot {key!r} is publisher-owned. Use the declared ppt_* edit/generation '
-            'tool; it writes the correct existing list_index and revision automatically. '
-            'Do not save slide HTML or outlines directly.',
+            f'Workflow slot {key!r} is publisher-owned. Use the package-declared '
+            'publisher tool; it writes the correct existing list_index and revision '
+            'automatically. Do not save this slot directly.',
         )
     if ctx.output_slots and key not in ctx.output_slots:
         return tool_error(

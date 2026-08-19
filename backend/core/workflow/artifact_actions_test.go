@@ -9,12 +9,12 @@ import (
 	"lazymind/core/common/orm"
 )
 
-func TestPPTRewriteSelectionUsesFinalBuiltinActionRevision(t *testing.T) {
+func TestDeclaredHeadArtifactActionUsesCurrentRevision(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&orm.WorkflowResource{}, &orm.WorkflowRevision{}); err != nil {
+	if err := db.AutoMigrate(&orm.WorkflowResource{}, &orm.WorkflowRevision{}, &orm.WorkflowRevisionEntry{}, &orm.WorkflowBlob{}); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
@@ -33,6 +33,14 @@ func TestPPTRewriteSelectionUsesFinalBuiltinActionRevision(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
+	manifest := []byte("id: ppt-workflow\nartifact_actions:\n  rewrite_selection:\n    revision_policy: head\n")
+	hash := "manifest-hash"
+	if err := db.Create(&orm.WorkflowBlob{Hash: hash, Size: int64(len(manifest)), Mime: "text/yaml", FileType: "workflow", Content: manifest, CreatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&orm.WorkflowRevisionEntry{RevisionID: "final", Path: "workflow.yaml", EntryType: "file", BlobHash: &hash, Size: int64(len(manifest)), Mime: "text/yaml", FileType: "workflow", Mode: 420}).Error; err != nil {
+		t.Fatal(err)
+	}
 	target := &artifactActionTarget{db: db, session: &orm.WorkflowSession{
 		WorkflowID: "ppt-workflow", WorkflowRef: "builtin:ppt-workflow",
 		WorkflowRevisionID: "legacy", WorkflowTreeHash: "legacy-tree",
@@ -42,7 +50,7 @@ func TestPPTRewriteSelectionUsesFinalBuiltinActionRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.revisionID != "final" || got.treeHash != "final-tree" {
-		t.Fatalf("expected final PPT action revision, got %#v", got)
+		t.Fatalf("expected declared head action revision, got %#v", got)
 	}
 }
 

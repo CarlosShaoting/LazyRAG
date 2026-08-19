@@ -436,16 +436,27 @@ func ChatConversations(w http.ResponseWriter, r *http.Request) {
 
 		if activeSess, err := workflow.GetLatestSession(r.Context(), db, convID); err == nil &&
 			workflowSessionAvailableForRequest(activeSess, raw) {
+			refOrID := activeSess.WorkflowRef
+			if refOrID == "" {
+				refOrID = activeSess.WorkflowID
+			}
+			runtimePolicy, hasRuntimePolicy := workflow.RuntimePolicyForRevision(
+				r.Context(), db, userID, refOrID, activeSess.WorkflowRevisionID,
+			)
 			existing, hasPC := reqBody["workflow_context"].(map[string]any)
 			if !hasPC || existing == nil {
 				// Case 1: inject from DB.
-				reqBody["workflow_context"] = map[string]any{
+				existing = map[string]any{
 					"session_id":    activeSess.ID,
 					"workflow_id":   activeSess.WorkflowID,
 					"current_step":  activeSess.CurrentStepID,
 					"workflow_mode": workflowMode,
 					"workflow_ref":  activeSess.WorkflowRef, "revision_id": activeSess.WorkflowRevisionID, "revision_no": activeSess.WorkflowRevisionNo, "tree_hash": activeSess.WorkflowTreeHash, "remote_root": activeSess.WorkflowRemoteRoot,
 				}
+				if hasRuntimePolicy {
+					existing["runtime"] = runtimePolicy
+				}
+				reqBody["workflow_context"] = existing
 				fmt.Printf("[WORKFLOW_CONTEXT_INJECTED] conversation_id=%s session_id=%s workflow_id=%s current_step=%s workflow_mode=%s\n",
 					convID, activeSess.ID, activeSess.WorkflowID, activeSess.CurrentStepID, workflowMode)
 			} else {
@@ -469,6 +480,10 @@ func ChatConversations(w http.ResponseWriter, r *http.Request) {
 				existing["revision_no"] = activeSess.WorkflowRevisionNo
 				existing["tree_hash"] = activeSess.WorkflowTreeHash
 				existing["remote_root"] = activeSess.WorkflowRemoteRoot
+				delete(existing, "runtime")
+				if hasRuntimePolicy {
+					existing["runtime"] = runtimePolicy
+				}
 				if stale {
 					fmt.Printf("[WORKFLOW_CONTEXT_CORRECTED] conversation_id=%s session_id=%s workflow_id=%s current_step=%s\n",
 						convID, activeSess.ID, activeSess.WorkflowID, activeSess.CurrentStepID)
@@ -486,7 +501,7 @@ func ChatConversations(w http.ResponseWriter, r *http.Request) {
 			// No request-addressable session in DB but the frontend sent a
 			// workflow_context — clear it to avoid Python entering advance-step mode
 			// with a stale, dismissed, or unrelated session.
-			for _, key := range []string{"session_id", "workflow_id", "current_step", "workflow_ref", "revision_id", "revision_no", "tree_hash", "remote_root"} {
+			for _, key := range []string{"session_id", "workflow_id", "current_step", "workflow_ref", "revision_id", "revision_no", "tree_hash", "remote_root", "runtime"} {
 				delete(existing, key)
 			}
 			existing["workflow_mode"] = workflowMode

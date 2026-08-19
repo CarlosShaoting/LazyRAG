@@ -3,6 +3,7 @@ package graphengine
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -76,6 +77,62 @@ func TestCompileArbitraryDAGAndProjectBlockedMerge(t *testing.T) {
 	})
 	if projection.Nodes["f"].Readiness != "ready" {
 		t.Fatalf("F should be ready: %#v", projection.Nodes["f"])
+	}
+}
+
+func TestCompilePreservesDeclaredRuntimePolicy(t *testing.T) {
+	workflowYAML := strings.Replace(validWorkflow, "id: graph-test", `id: graph-test
+runtime:
+  publisher_owned_slots: [final]
+  collects_knowledge: true
+  completed_edit_step: f
+  clarification_fields:
+    - id: topic
+      label: Topic
+      question: What is the presentation topic?
+      type: text
+    - id: style
+      label: Style
+      question: Which visual style should be used?
+      type: single
+      choices: [Professional, Minimal]`, 1)
+	result := Compile(workflowYAML, validState, "", ProfilePublish)
+	if !result.Valid {
+		t.Fatalf("expected valid runtime policy, diagnostics=%#v", result.Diagnostics)
+	}
+	policy := result.Graph.Runtime
+	if !policy.CollectsKnowledge || policy.CompletedEditStep != "f" || len(policy.PublisherOwnedSlots) != 1 || policy.PublisherOwnedSlots[0] != "final" {
+		t.Fatalf("runtime policy was not compiled: %#v", policy)
+	}
+	if len(policy.ClarificationFields) != 2 || policy.ClarificationFields[0].ID != "topic" || policy.ClarificationFields[1].Choices[1] != "Minimal" {
+		t.Fatalf("runtime clarification fields were not compiled: %#v", policy.ClarificationFields)
+	}
+}
+
+func TestCompileRejectsInvalidRuntimeClarificationFields(t *testing.T) {
+	workflowYAML := strings.Replace(validWorkflow, "id: graph-test", `id: graph-test
+runtime:
+  clarification_fields:
+    - id: style
+      question: ""
+      type: select
+    - id: style
+      question: Duplicate
+      type: single`, 1)
+	result := Compile(workflowYAML, validState, "", ProfilePublish)
+	codes := map[string]bool{}
+	for _, diagnostic := range result.Diagnostics {
+		codes[diagnostic.Code] = true
+	}
+	for _, code := range []string{
+		"E_RUNTIME_CLARIFICATION_QUESTION_REQUIRED",
+		"E_RUNTIME_CLARIFICATION_TYPE_INVALID",
+		"E_RUNTIME_CLARIFICATION_ID_DUPLICATE",
+		"E_RUNTIME_CLARIFICATION_CHOICES_REQUIRED",
+	} {
+		if !codes[code] {
+			t.Fatalf("expected %s, diagnostics=%#v", code, result.Diagnostics)
+		}
 	}
 }
 

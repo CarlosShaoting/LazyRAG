@@ -1,11 +1,13 @@
 import jsYaml from 'js-yaml';
-import type { WorkflowModel, WorkflowSlotDef, WorkflowToolScript, WorkflowUiTab, WidgetConfig, CompositePanelNode, CompositeTab, CompositeBehavior } from './workflowModel';
+import type { WorkflowModel, WorkflowSlotDef, WorkflowToolScript, WorkflowUiTab, WidgetConfig, CompositePanelNode, CompositeTab, CompositeBehavior, WorkflowRuntimePolicy } from './workflowModel';
 
 interface RawWorkflowYaml {
   id?: unknown;
   name?: unknown;
   description?: unknown;
   when_to_use?: unknown;
+  runtime?: unknown;
+  artifact_actions?: unknown;
   tool_scripts?: unknown;
   steps?: unknown;
   slots?: unknown;
@@ -259,6 +261,12 @@ export function parseWorkflowYaml(yamlText: string): WorkflowModel | null {
     name: String(raw.name ?? ''),
     description: raw.description !== undefined ? String(raw.description) : undefined,
     when_to_use: raw.when_to_use !== undefined ? String(raw.when_to_use) : undefined,
+    runtime: raw.runtime && typeof raw.runtime === 'object' && !Array.isArray(raw.runtime)
+      ? raw.runtime as WorkflowRuntimePolicy
+      : undefined,
+    artifact_actions: raw.artifact_actions && typeof raw.artifact_actions === 'object' && !Array.isArray(raw.artifact_actions)
+      ? raw.artifact_actions as Record<string, unknown>
+      : undefined,
     tool_scripts: parseToolScripts(raw.tool_scripts),
     steps: parseSteps(raw.steps),
     slots: parseSlots(raw.slots),

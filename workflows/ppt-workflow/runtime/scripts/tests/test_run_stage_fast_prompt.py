@@ -17,6 +17,92 @@ if str(SCRIPT_DIR) not in sys.path:
 import run_stage  # noqa: E402
 
 
+class OutlineReferenceImageRepairTest(unittest.TestCase):
+    def test_repairs_prose_only_material_reference_and_fills_other_pages(self) -> None:
+        pages = [
+            {"page_no": 1, "visual_hints": "封面", "use_image": None},
+            {
+                "page_no": 2,
+                "visual_hints": "左侧放 material_03，右侧放信息卡片",
+                "use_image": None,
+            },
+            {"page_no": 3, "visual_hints": "结尾", "use_image": None},
+        ]
+        images = [
+            {"reference_image_index": 0, "basename": "material_01_a.png"},
+            {"reference_image_index": 1, "basename": "material_02_b.jpg"},
+            {"reference_image_index": 2, "basename": "material_03_c.jpg"},
+        ]
+
+        repaired = run_stage._ensure_outline_reference_images(pages, images)
+
+        self.assertEqual(repaired, 3)
+        self.assertEqual(pages[1]["use_image"], {"reference_image_index": 2})
+        self.assertEqual(pages[0]["use_image"], {"reference_image_index": 0})
+        self.assertEqual(pages[2]["use_image"], {"reference_image_index": 1})
+
+    def test_collapses_model_generated_image_arrays_to_one_image_per_page(self) -> None:
+        pages = [
+            {
+                "page_no": 1,
+                "use_image": [
+                    {"reference_image_index": 0},
+                    {"reference_image_index": 1},
+                ],
+            },
+            {
+                "page_no": 2,
+                "use_image": [
+                    {"reference_image_index": 2},
+                    {"reference_image_index": 3},
+                ],
+            },
+            {
+                "page_no": 3,
+                "use_image": [
+                    {"reference_image_index": 4},
+                    {"reference_image_index": 5},
+                ],
+            },
+        ]
+        images = [
+            {"reference_image_index": index, "basename": f"material_{index + 1:02d}.jpg"}
+            for index in range(6)
+        ]
+
+        repaired = run_stage._ensure_outline_reference_images(pages, images)
+
+        self.assertEqual(repaired, 3)
+        self.assertEqual(
+            [page["use_image"] for page in pages],
+            [
+                {"reference_image_index": 0},
+                {"reference_image_index": 2},
+                {"reference_image_index": 4},
+            ],
+        )
+
+    def test_preserves_pool_a_and_repairs_invalid_or_duplicate_pool_b(self) -> None:
+        pages = [
+            {"page_no": 1, "use_image": {"doc_index": 0, "image_index": 1}},
+            {"page_no": 2, "use_image": {"reference_image_index": 4}},
+            {"page_no": 3, "use_image": {"reference_image_index": 4}},
+            {"page_no": 4, "use_image": {"reference_image_index": 99}},
+        ]
+        images = [
+            {"reference_image_index": 4, "basename": "material_05.png"},
+            {"reference_image_index": 7, "basename": "material_08.png"},
+        ]
+
+        repaired = run_stage._ensure_outline_reference_images(pages, images)
+
+        self.assertEqual(repaired, 3)
+        self.assertEqual(pages[0]["use_image"], {"doc_index": 0, "image_index": 1})
+        self.assertEqual(pages[1]["use_image"], {"reference_image_index": 4})
+        self.assertEqual(pages[2]["use_image"], {"reference_image_index": 7})
+        self.assertIsNone(pages[3]["use_image"])
+
+
 class PagePromptModeTest(unittest.TestCase):
     def _deck(self, root: Path) -> Path:
         deck = root / "deck"

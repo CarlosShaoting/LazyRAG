@@ -15,9 +15,46 @@ when_to_use: >
   Uploaded materials are optional: text-only requests must start immediately
   from the user's prompt and must never ask for an upload unless the user
   explicitly asks to base the deck on a source file that is not available.
+  Before starting, collect only any missing presentation topic, slide count,
+  target customer/audience, and visual style declared by runtime policy.
   Do not trigger for simple one-off explanations, ordinary image generation,
   ordinary long-form writing, or requests that only ask to preview an uploaded
   PowerPoint file.
+
+runtime:
+  publisher_owned_slots:
+    - slide_outline
+    - preview_html
+    - preview_notes
+  collects_knowledge: true
+  completed_edit_step: generate_ppt
+  clarification_fields:
+    - id: topic
+      label: 主题
+      question: 这份 PPT 的主题是什么？
+      type: text
+    - id: slide_count
+      label: 页数
+      question: 希望生成多少页？
+      type: single
+      choices:
+        - 3 页
+        - 5 页
+        - 8 页
+        - 10 页
+    - id: target_customer
+      label: 对应客户
+      question: 这份 PPT 面向哪位客户或哪类受众？
+      type: text
+    - id: visual_style
+      label: 风格
+      question: 希望采用什么视觉风格？
+      type: single
+      choices:
+        - 商务专业
+        - 科技未来
+        - 简洁极简
+        - 正式汇报
 
 tool_scripts:
   - path: scripts/tools.py
@@ -44,6 +81,7 @@ tool_scripts:
 
 artifact_actions:
   rewrite_selection:
+    revision_policy: head
     slots:
       - preview_html
     preview_tool: ppt_preview_selection_edit

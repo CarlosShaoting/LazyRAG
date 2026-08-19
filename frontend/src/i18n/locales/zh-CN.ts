@@ -1653,6 +1653,7 @@ const zhCN = {
     workflowPreviousPage: "上一张幻灯片",
     workflowNextPage: "下一张幻灯片",
     workflowPageDragHint: "拖拽可调整幻灯片顺序",
+    workflowPageMultiSelectDragHint: "Ctrl/Cmd 点击可多选，拖拽任一选中页可整组调整顺序",
     workflowPageReorderFailed: "幻灯片顺序调整失败，请重试。",
     workflowExportPptx: "导出",
     workflowExportingPptx: "正在导出…",

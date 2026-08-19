@@ -12,10 +12,11 @@ import (
 )
 
 type rawWorkflow struct {
-	ID    string           `yaml:"id"`
-	Slots []map[string]any `yaml:"slots"`
-	Steps []map[string]any `yaml:"steps"`
-	UI    map[string]any   `yaml:"ui"`
+	ID      string           `yaml:"id"`
+	Runtime RuntimePolicy    `yaml:"runtime"`
+	Slots   []map[string]any `yaml:"slots"`
+	Steps   []map[string]any `yaml:"steps"`
+	UI      map[string]any   `yaml:"ui"`
 }
 
 type rawState struct {
@@ -62,6 +63,7 @@ func Compile(workflowYAML, stateYAML, scenario string, profile Profile) CompileR
 	graph := &CompiledStateGraph{
 		SchemaVersion: SchemaVersion, StartRoute: state.StartRoute, Nodes: map[string]CompiledNode{}, MaterialProducers: map[string]ProducerRef{},
 		InputExpressions: map[string]Expression{}, OptionalInputs: map[string][]MaterialRef{},
+		Runtime: plugin.Runtime,
 	}
 	if graph.StartRoute == "" {
 		graph.StartRoute = "all"
@@ -171,6 +173,82 @@ func Compile(workflowYAML, stateYAML, scenario string, profile Profile) CompileR
 			graph.InputExpressions[id] = *node.Input
 		}
 		graph.OptionalInputs[id] = node.OptionalInputs
+	}
+	for i, slotID := range graph.Runtime.PublisherOwnedSlots {
+		if !knownMaterials[slotID] {
+			result.Diagnostics = append(result.Diagnostics, materialDiag(
+				"E_RUNTIME_PUBLISHER_SLOT_UNKNOWN", "error",
+				fmt.Sprintf("workflow.yaml.runtime.publisher_owned_slots[%d]", i), slotID,
+				"runtime publisher-owned slot is not declared: "+slotID,
+			))
+		}
+	}
+	if stepID := strings.TrimSpace(graph.Runtime.CompletedEditStep); stepID != "" {
+		graph.Runtime.CompletedEditStep = stepID
+		if _, ok := workflowSteps[stepID]; !ok {
+			result.Diagnostics = append(result.Diagnostics, nodeDiag(
+				"E_RUNTIME_EDIT_STEP_UNKNOWN", "error", "workflow.yaml.runtime.completed_edit_step",
+				stepID, "runtime completed edit step is not declared: "+stepID,
+			))
+		}
+	}
+	clarificationIDs := map[string]bool{}
+	for i := range graph.Runtime.ClarificationFields {
+		field := &graph.Runtime.ClarificationFields[i]
+		path := fmt.Sprintf("workflow.yaml.runtime.clarification_fields[%d]", i)
+		field.ID = strings.TrimSpace(field.ID)
+		field.Label = strings.TrimSpace(field.Label)
+		field.Question = strings.TrimSpace(field.Question)
+		field.Type = strings.ToLower(strings.TrimSpace(field.Type))
+		if field.Type == "" {
+			field.Type = "text"
+		}
+		if field.ID == "" {
+			result.Diagnostics = append(result.Diagnostics, diag(
+				"E_RUNTIME_CLARIFICATION_ID_REQUIRED", "error", path+".id",
+				"runtime clarification field id is required",
+			))
+		} else if clarificationIDs[field.ID] {
+			result.Diagnostics = append(result.Diagnostics, diag(
+				"E_RUNTIME_CLARIFICATION_ID_DUPLICATE", "error", path+".id",
+				"runtime clarification field id is duplicated: "+field.ID,
+			))
+		} else {
+			clarificationIDs[field.ID] = true
+		}
+		if field.Label == "" {
+			field.Label = field.ID
+		}
+		if field.Question == "" {
+			result.Diagnostics = append(result.Diagnostics, diag(
+				"E_RUNTIME_CLARIFICATION_QUESTION_REQUIRED", "error", path+".question",
+				"runtime clarification field question is required",
+			))
+		}
+		switch field.Type {
+		case "text", "boolean", "single", "multiple":
+		default:
+			result.Diagnostics = append(result.Diagnostics, diag(
+				"E_RUNTIME_CLARIFICATION_TYPE_INVALID", "error", path+".type",
+				"runtime clarification field type must be text, boolean, single, or multiple",
+			))
+		}
+		choices := make([]string, 0, len(field.Choices))
+		seenChoices := map[string]bool{}
+		for _, rawChoice := range field.Choices {
+			choice := strings.TrimSpace(rawChoice)
+			if choice != "" && !seenChoices[choice] {
+				seenChoices[choice] = true
+				choices = append(choices, choice)
+			}
+		}
+		field.Choices = choices
+		if (field.Type == "single" || field.Type == "multiple") && len(field.Choices) == 0 {
+			result.Diagnostics = append(result.Diagnostics, diag(
+				"E_RUNTIME_CLARIFICATION_CHOICES_REQUIRED", "error", path+".choices",
+				"single and multiple runtime clarification fields require choices",
+			))
+		}
 	}
 
 	// Material producer table. External is explicit; implicit unproduced slots are
