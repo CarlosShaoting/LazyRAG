@@ -1114,7 +1114,10 @@ def resolve_workflow_injection(
         initialize_selected_session = (
             (lambda: trigger_tools[0]()) if len(trigger_tools) == 1 else None
         )
-        launch_user_input = lambda: session_holder.get('request_context', '')
+
+        def launch_user_input() -> str:
+            return session_holder.get('request_context', '')
+
         handoff = _handoff_tool(
             lambda: session_holder.get('session_id', ''),
             user_input=launch_user_input,
