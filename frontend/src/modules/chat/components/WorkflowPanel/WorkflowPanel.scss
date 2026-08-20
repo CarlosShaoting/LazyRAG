@@ -2667,7 +2667,10 @@
 
 .slot-html-slide {
   width: 100%;
-  background: #0f172a;
+  // Keep letterbox space neutral when a fixed 16:9 slide is rendered inside
+  // a user-sized composite pane. The slide remains fully visible without the
+  // dark frame that previously appeared around light or colourful pages.
+  background: #fff;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   overflow: hidden;
@@ -2702,7 +2705,7 @@
     aspect-ratio: 16 / 9;
     overflow: hidden;
     transition: none;
-    background: #0f172a;
+    background: #fff;
 
     &--placeholder {
       display: flex;
