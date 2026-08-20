@@ -478,7 +478,7 @@ steps:
 }
 
 func TestBundledWorkflowsCompileForRuntime(t *testing.T) {
-	for _, workflowID := range []string{"writer-workflow", "image-workflow", "test-workflow"} {
+	for _, workflowID := range []string{"writer-workflow", "image-workflow", "test-workflow", "ppt-workflow"} {
 		root := filepath.Join("..", "..", "..", "..", "workflows", workflowID)
 		workflowYAML, err := os.ReadFile(filepath.Join(root, "workflow.yaml"))
 		if err != nil {
@@ -641,6 +641,63 @@ func TestChoiceWhenHintsExposeAllCandidatesAsReachable(t *testing.T) {
 	selected := SelectRouteTarget(graph, "__start__", "write", DecideRoute(graph, "__start__", nil))
 	if len(selected.Activated) != 1 || selected.Activated[0] != "write" || len(selected.Pruned) != 1 || selected.Pruned[0] != "revise" {
 		t.Fatalf("advancing one choice candidate must prune its siblings: %#v", selected)
+	}
+}
+
+func TestValidateUIDeclarativeHTMLSlideExport(t *testing.T) {
+	known := map[string]bool{"deck_pages": true, "speaker_notes": true}
+	specs := map[string]uiMaterialSpec{
+		"deck_pages":    {Type: "text", Cardinality: "list", Ordered: true},
+		"speaker_notes": {Type: "text", Cardinality: "list", Ordered: true},
+	}
+	ui := map[string]any{
+		"slots": map[string]any{
+			"deck_pages": map[string]any{"widgetType": "html-slide"},
+		},
+		"tabs": []map[string]any{{
+			"id": "deck", "layout": "composite",
+			"slots": []map[string]any{{"id": "deck_pages"}, {"id": "speaker_notes"}},
+			"actions": []map[string]any{{
+				"id": "export", "type": "export", "provider": "html-presentation",
+				"inputs":  map[string]string{"pages": "deck_pages", "notes": "speaker_notes"},
+				"formats": []string{"pdf", "editable-pptx"}, "alignment": "sort_order",
+			}},
+		}},
+	}
+
+	diagnostics := validateUI(ui, known, map[string]bool{}, specs, ProfilePublish)
+	if len(diagnostics) != 0 {
+		t.Fatalf("declarative HTML slide export should be valid: %#v", diagnostics)
+	}
+}
+
+func TestValidateUIRejectsInvalidExportMappings(t *testing.T) {
+	known := map[string]bool{"page": true, "notes": true}
+	specs := map[string]uiMaterialSpec{
+		"page":  {Type: "image", Cardinality: "single"},
+		"notes": {Type: "text", Cardinality: "list", Ordered: false},
+	}
+	ui := map[string]any{
+		"slots": map[string]any{"page": map[string]any{"widgetType": "html-slide"}},
+		"tabs": []map[string]any{{
+			"id": "deck", "slots": []map[string]any{{"id": "page"}},
+			"actions": []map[string]any{{
+				"id": "export", "type": "export", "provider": "html-presentation",
+				"inputs":  map[string]string{"pages": "page", "notes": "notes"},
+				"formats": []string{"pdf"}, "alignment": "sort_order",
+			}},
+		}},
+	}
+
+	diagnostics := validateUI(ui, known, map[string]bool{}, specs, ProfilePublish)
+	for _, code := range []string{
+		"E_UI_WIDGET_INCOMPATIBLE",
+		"E_UI_ACTION_INPUT_OUTSIDE_TAB",
+		"E_UI_ACTION_ALIGNMENT_INCOMPATIBLE",
+	} {
+		if !hasDiagnostic(diagnostics, code) {
+			t.Fatalf("expected %s, diagnostics=%#v", code, diagnostics)
+		}
 	}
 }
 

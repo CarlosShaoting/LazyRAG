@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import { Modal, Popconfirm, Tooltip } from 'antd';
+import { Popconfirm, Tooltip } from 'antd';
 import {
   CloudUploadOutlined,
   DownloadOutlined,
@@ -15,9 +15,7 @@ import { useTaskCenterStore, type SubAgentTask, type TaskArtifactStream } from '
 import { uploadFileInChunks } from '@/modules/chat/utils/chunkUpload';
 import { WorkflowSessionApi } from '@/modules/chat/utils/request';
 import StateGraphModal from '@/components/StateGraphModal';
-import { axiosInstance, BASE_URL } from '@/components/request';
 import {
-  CHAT_EDITABLE_PPT_DEPENDENCY_MISSING_EVENT,
   WORKFLOW_PANEL_EXPANDED_EVENT,
   WORKFLOW_PANEL_EXPANDED_STORAGE_PREFIX,
 } from '@/modules/chat/constants/chat';
@@ -39,12 +37,7 @@ import {
   SlotMarkdownStream,
 } from './SlotComponents';
 import { SlideThumb } from './ppt/SlideThumb';
-import {
-  extractHtmlFromArtifact,
-  exportHtmlSlidesAsRasterPdf,
-  exportHtmlSlidesAsRasterPptx,
-} from './ppt/exportHtmlToPptx';
-import { resolveCoreAssetUrl, resolveMarkdownImageUrlAsync, isExpiredSignedUrl } from '@/modules/knowledge/utils/imageUrl';
+import { WorkflowTabActions } from './actions/WorkflowTabActions';
 import { WorkflowPanelTabActiveContext, SlotEditingContext, type SlotFooterAction } from './slotEditingContext';
 import { findWriterArtifactStream } from './writerArtifactStream';
 import { moveSelectedCompositePages, sameCompositePageOrder } from './compositePageReorder';
@@ -499,33 +492,14 @@ function resolveWriterFinalSlotDefs(tab: TabDef, session: WorkflowSession): Slot
   });
 }
 
-function getCompositeHtmlSlotIds(tab: TabDef, session: WorkflowSession): Set<string> {
-  const participating = new Set(tab.slots.map((slot) => slot.id));
-  const declaredHtmlSlots = new Set(
-    tab.slots
-      .filter((slot) => slot.widget?.widgetType === 'html-slide')
-      .map((slot) => slot.id),
-  );
-  const htmlSlots = new Set<string>();
-  for (const revision of session.slots ?? []) {
-    if (revision.selected && participating.has(revision.slot)
-        && (declaredHtmlSlots.has(revision.slot)
-          || extractHtmlFromArtifact(revision.artifact_value))) {
-      htmlSlots.add(revision.slot);
-    }
-  }
-  return htmlSlots;
-}
-
 /** Pick the first HTML material in this composite row for its filmstrip thumbnail. */
 function findCompositeHtmlRevision(
   session: WorkflowSession,
   tab: TabDef,
   sortOrder: number,
 ): SlotRevision | undefined {
-  const htmlSlotIds = getCompositeHtmlSlotIds(tab, session);
   for (const slot of tab.slots) {
-    if (!htmlSlotIds.has(slot.id)) continue;
+    if (slot.widget?.widgetType !== 'html-slide') continue;
     const revision = findSlotRevision(session, tab, slot.id, sortOrder);
     if (revision) return revision;
   }
@@ -646,65 +620,6 @@ function InnerTabsCell({
 // ---------------------------------------------------------------------------
 
 type PageBarPosition = 'top' | 'bottom' | 'left' | 'right';
-
-async function loadPptArtifactText(raw: unknown): Promise<string> {
-  const inline = extractHtmlFromArtifact(raw);
-  if (inline) return inline;
-  if (!raw || typeof raw !== 'object') return '';
-  const value = raw as Record<string, unknown>;
-  if (typeof value.text === 'string') return value.text;
-  const path = String(value.path ?? value.url ?? '').trim();
-  if (!path) return '';
-  const direct = value.url ? resolveCoreAssetUrl(String(value.url)) : '';
-  const url = direct && !isExpiredSignedUrl(direct)
-    ? direct
-    : await resolveMarkdownImageUrlAsync(path);
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`Failed to load slide (${response.status})`);
-  return response.text();
-}
-
-async function collectPptPages(
-  tab: TabDef,
-  session: WorkflowSession,
-  rows: number[],
-): Promise<Array<{ html: string; notes: string }>> {
-  const pages = await Promise.all(rows.map(async (sortOrder) => {
-    const htmlRevision = findSlotRevision(session, tab, 'preview_html', sortOrder);
-    const notesRevision = findSlotRevision(session, tab, 'preview_notes', sortOrder);
-    return {
-      html: await loadPptArtifactText(htmlRevision?.artifact_value),
-      notes: notesRevision ? String(notesRevision.artifact_value ?? '') : '',
-    };
-  }));
-  return pages.filter((page) => page.html.trim());
-}
-
-function downloadPptBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
-}
-
-async function resolvePptExportError(error: unknown, fallback: string): Promise<string> {
-  const responseData = (error as { response?: { data?: unknown } })?.response?.data;
-  if (responseData instanceof Blob) {
-    try {
-      const text = await responseData.text();
-      const parsed = JSON.parse(text) as { message?: string; detail?: string };
-      return parsed.message || parsed.detail || text || fallback;
-    } catch {
-      return fallback;
-    }
-  }
-  if (error instanceof Error && error.message) return error.message;
-  return fallback;
-}
 
 function CompositeThumbnailRail({
   position,
@@ -935,10 +850,8 @@ function CompositeSlotGrid({
       && tab.composite_layout.direction === 'column',
   );
   const [currentPage, setCurrentPage] = useState<number | null>(null);
-  const [exporting, setExporting] = useState(false);
-  const [exportError, setExportError] = useState<string | null>(null);
+  const [reorderError, setReorderError] = useState<string | null>(null);
   const [reordering, setReordering] = useState(false);
-  const [exportChoiceOpen, setExportChoiceOpen] = useState(false);
 
   useEffect(() => {
     if (!paged) return;
@@ -953,8 +866,6 @@ function CompositeSlotGrid({
     if (paged) onFocusSortOrder?.(currentPage ?? undefined);
   }, [paged, currentPage, onFocusSortOrder]);
 
-  const canExportHtml = session.workflow_id === 'ppt-workflow'
-    || tab.slots.some((slot) => slot.id === 'preview_html');
   const activePage = currentPage ?? rows[0];
   const reorderableCompositeSlotIds = tab.slots
     .filter((slot) => slot.cardinality === 'list' && slot.ordered)
@@ -976,7 +887,7 @@ function CompositeSlotGrid({
     // visual sort_order. Reorder all such slots together so page identity stays
     // aligned for text, images, HTML previews, notes, and future widget types.
     setReordering(true);
-    setExportError(null);
+    setReorderError(null);
     try {
       for (const slotId of reorderableCompositeSlotIds) {
         const revisions = getTabSlotRevisions(session, tab, slotId)
@@ -1004,47 +915,11 @@ function CompositeSlotGrid({
       setCurrentPage(nextFocusedPage);
       onFocusSortOrder?.(nextFocusedPage);
     } catch (error) {
-      setExportError(error instanceof Error ? error.message : t('chat.workflowPageReorderFailed'));
+      setReorderError(error instanceof Error ? error.message : t('chat.workflowPageReorderFailed'));
     } finally {
       setReordering(false);
     }
   }, [activePage, canReorderPages, onFocusSortOrder, onRefresh, reorderSlotItems, reordering, reorderableCompositeSlotIds, rows, session, tab, t]);
-
-  const runExport = useCallback(async (mode: 'editable' | 'raster' | 'pdf') => {
-    if (exporting) return;
-    setExporting(true);
-    setExportError(null);
-    try {
-      const pages = await collectPptPages(tab, session, rows);
-      if (!pages.length) throw new Error(t('chat.workflowExportNoHtml'));
-      const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      const filename = `ppt_deck_${stamp}.${mode === 'pdf' ? 'pdf' : 'pptx'}`;
-      const slideInputs = pages.map((page, index) => ({ ...page, pageNo: index + 1 }));
-      if (mode === 'pdf') {
-        await exportHtmlSlidesAsRasterPdf(slideInputs, filename, { sessionId: session.session_id });
-      } else if (mode === 'raster') {
-        await exportHtmlSlidesAsRasterPptx(slideInputs, filename, { sessionId: session.session_id });
-      } else {
-        const capabilities = await axiosInstance.get(`${BASE_URL}/api/core/workflows/ppt:capabilities`);
-        const payload = (capabilities.data as { data?: { editable_pptx?: boolean } })?.data
-          ?? capabilities.data as { editable_pptx?: boolean };
-        if (!payload.editable_pptx) {
-          window.dispatchEvent(new Event(CHAT_EDITABLE_PPT_DEPENDENCY_MISSING_EVENT));
-          throw new Error(t('chat.editablePptRequiredDesc'));
-        }
-        const response = await axiosInstance.post(
-          `${BASE_URL}/api/core/workflows/ppt:export`,
-          { pages, filename },
-          { responseType: 'blob', timeout: 20 * 60 * 1000 },
-        );
-        downloadPptBlob(response.data as Blob, filename);
-      }
-    } catch (error) {
-      setExportError(await resolvePptExportError(error, t('chat.workflowExportFailed')));
-    } finally {
-      setExporting(false);
-    }
-  }, [exporting, rows, session, tab, t]);
 
   if (rows.length === 0) {
     return (
@@ -1208,48 +1083,12 @@ function CompositeSlotGrid({
       <div className={`composite-with-pagebar composite-with-pagebar--${pageBarPosition}`}>
         {(pageBarPosition === 'top' || pageBarPosition === 'left') && rail}
         <div className='composite-main'>
-          {canExportHtml && (
-            <div className='composite-toolbar'>
-              <button
-                type='button'
-                className='composite-toolbar__export'
-                disabled={exporting}
-                onClick={() => setExportChoiceOpen(true)}
-              >
-                {exporting ? t('chat.workflowExportingPptx') : t('chat.workflowExportPptx')}
-              </button>
-              {exportError && <span className='composite-toolbar__error'>{exportError}</span>}
-            </div>
-          )}
+          <WorkflowTabActions actions={tab.actions} tab={tab} session={session} rows={rows} />
+          {reorderError && <span className='composite-toolbar__error'>{reorderError}</span>}
           <div className='composite-grid composite-grid--paged'>{renderRow(activePage)}</div>
         </div>
         {(pageBarPosition === 'bottom' || pageBarPosition === 'right') && rail}
       </div>
-      <Modal
-        open={exportChoiceOpen}
-        onCancel={() => setExportChoiceOpen(false)}
-        footer={null}
-        title={t('chat.workflowExportSelectModeTitle')}
-      >
-        <div className='composite-toolbar__export-mode'>
-          <p>{t('chat.workflowExportSelectModeDesc')}</p>
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
-            {(['raster', 'pdf', 'editable'] as const).map((mode) => (
-              <button
-                key={mode}
-                type='button'
-                className={`workflow-panel__action-btn workflow-panel__action-btn--${mode === 'editable' ? 'primary' : 'secondary'}`}
-                onClick={() => {
-                  setExportChoiceOpen(false);
-                  void runExport(mode);
-                }}
-              >
-                {t(`chat.workflowExportMode${mode[0].toUpperCase()}${mode.slice(1)}`)}
-              </button>
-            ))}
-          </div>
-        </div>
-      </Modal>
     </div>
   );
 }

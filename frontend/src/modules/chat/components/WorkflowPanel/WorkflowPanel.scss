@@ -2192,6 +2192,21 @@
     &--tree {
       flex: 1;
       min-height: 0;
+
+      // A nested composite assigns both width and height to every material.
+      // Let HTML slides consume that exact frame, then SlotHtmlSlide performs a
+      // 16:9 contain-fit inside it. This keeps the full page visible when a
+      // user makes the HTML pane narrower or shorter in the UI editor.
+      .composite-grid__cell > .slot-html-slide {
+        flex: 1;
+        min-height: 0;
+      }
+
+      .composite-grid__cell > .slot-html-slide > .slot-html-slide__viewport {
+        height: 100%;
+        min-height: 0;
+        aspect-ratio: auto;
+      }
     }
   }
 

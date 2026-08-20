@@ -37,9 +37,22 @@ async function loadArtifactText(raw: unknown): Promise<string> {
   return '';
 }
 
-function scaleFromWidth(containerW: number): number {
-  if (!containerW || containerW < 1) return 0.5;
-  return Math.max(0.15, Math.min(containerW / 1600, 1));
+interface FittedFrame {
+  scale: number;
+  left: number;
+  top: number;
+}
+
+/** Fit the fixed 1600×900 slide into any composite material frame. */
+export function fitSlideFrame(containerW: number, containerH: number): FittedFrame {
+  if (!containerW || containerW < 1) return { scale: 0.5, left: 0, top: 0 };
+  const availableH = containerH > 0 ? containerH : containerW * 9 / 16;
+  const scale = Math.max(0.02, Math.min(containerW / 1600, availableH / 900, 1));
+  return {
+    scale,
+    left: Math.max(0, (containerW - 1600 * scale) / 2),
+    top: Math.max(0, (availableH - 900 * scale) / 2),
+  };
 }
 
 function scaleFromViewport(): number {
@@ -79,11 +92,12 @@ export function SlotHtmlSlide({
   onRefresh?: () => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
   const frameCleanupRef = useRef(new Map<HTMLIFrameElement, () => void>());
   const selectedNodeRef = useRef<HTMLElement | null>(null);
   const [html, setHtml] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [scale, setScale] = useState<number | null>(null);
+  const [fittedFrame, setFittedFrame] = useState<FittedFrame | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [expandedScale, setExpandedScale] = useState(scaleFromViewport);
@@ -156,16 +170,23 @@ export function SlotHtmlSlide({
   }, [clearSelectedNode, slot.artifact_value, slot.revision, slot.slot_id]);
 
   useEffect(() => {
-    const host = hostRef.current;
-    if (!host) return undefined;
-    const update = () => setScale(scaleFromWidth(Math.max(0, host.getBoundingClientRect().width)));
+    const viewport = viewportRef.current;
+    if (!viewport) return undefined;
+    const update = () => {
+      const rect = viewport.getBoundingClientRect();
+      setFittedFrame(fitSlideFrame(Math.max(0, rect.width), Math.max(0, rect.height)));
+    };
     update();
     const observer = new ResizeObserver(update);
-    observer.observe(host);
+    observer.observe(viewport);
     return () => observer.disconnect();
   }, [compact]);
 
-  const selectElement = useCallback((frame: HTMLIFrameElement, target: HTMLElement) => {
+  const selectElement = useCallback((
+    frame: HTMLIFrameElement,
+    target: HTMLElement,
+    clicked: HTMLElement = target,
+  ) => {
     clearSelectedNode();
     target.classList.add('lazymind-ppt-edit-selected');
     selectedNodeRef.current = target;
@@ -193,7 +214,17 @@ export function SlotHtmlSlide({
           font_weight: computed.fontWeight,
         },
       } : {}),
-      selectedText: (target.innerText || target.textContent || '').trim(),
+      // The stable data-el can live on an outer visual block while the user
+      // actually clicked a nested heading/span. Preserve that exact visible
+      // text so the Workflow action changes the intended leaf instead of
+      // trying to replace every label inside the outer container.
+      selectedText: (
+        clicked.innerText
+        || clicked.textContent
+        || target.innerText
+        || target.textContent
+        || ''
+      ).trim(),
       anchor: {
         left,
         top: below ? bottomEdge : topEdge,
@@ -233,7 +264,11 @@ export function SlotHtmlSlide({
       if (target) {
         event.preventDefault();
         event.stopPropagation();
-        selectElement(frame, target);
+        selectElement(
+          frame,
+          target,
+          event.target instanceof HTMLElement ? event.target : target,
+        );
       }
     };
     const onMouseEnter = () => setHovered(true);
@@ -301,10 +336,10 @@ export function SlotHtmlSlide({
   }, [applying, editPreview, persistPreview]);
 
   if (error) return <div className='slot-html-slide slot-html-slide--error'>{error}</div>;
-  if (!html || scale == null) {
+  if (!html || fittedFrame == null) {
     return (
       <div ref={hostRef} className={`slot-html-slide${compact ? ' slot-html-slide--compact' : ''}`}>
-        <div className='slot-html-slide__viewport slot-html-slide__viewport--placeholder'>
+        <div ref={viewportRef} className='slot-html-slide__viewport slot-html-slide__viewport--placeholder'>
           <div className='slot-html-slide slot-html-slide--loading'>Loading slide…</div>
         </div>
       </div>
@@ -318,11 +353,14 @@ export function SlotHtmlSlide({
       sandbox='allow-scripts allow-same-origin'
       srcDoc={srcDoc}
       onLoad={(event) => attachFrameInteractions(event.currentTarget)}
-      aria-label={editable ? '点击幻灯片元素进行局部编辑' : '点击放大幻灯片'}
+      aria-label={editable ? '点击幻灯片元素进行修改' : '点击放大幻灯片'}
       style={{
+        position: 'absolute',
+        left: zoomed ? 0 : fittedFrame.left,
+        top: zoomed ? 0 : fittedFrame.top,
         width: 1600,
         height: 900,
-        transform: `scale(${zoomed ? expandedScale : scale})`,
+        transform: `scale(${zoomed ? expandedScale : fittedFrame.scale})`,
         transformOrigin: 'top left',
       }}
     />
@@ -340,10 +378,10 @@ export function SlotHtmlSlide({
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      <div className='slot-html-slide__viewport slot-html-slide__viewport--interactive'>
+      <div ref={viewportRef} className='slot-html-slide__viewport slot-html-slide__viewport--interactive'>
         {renderFrame(false)}
         {editable && !editPreview && (
-          <div className='slot-html-slide__edit-hint'>点击元素进行 AI 局部编辑</div>
+          <div className='slot-html-slide__edit-hint'>点击元素进行 AI 修改</div>
         )}
         <button
           type='button'
@@ -381,6 +419,7 @@ export function SlotHtmlSlide({
           listIndex={listIndex}
           baseRevision={slot.revision}
           selection={selection}
+          terminology='edit'
           onClose={() => setSelection(null)}
           onApplied={() => undefined}
           onPreviewReady={(preview) => {

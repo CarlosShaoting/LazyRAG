@@ -351,8 +351,8 @@ def save_artifacts(artifacts: List[ArtifactSaveItem]) -> Dict[str, Any]:
 
     Correct example::
 
-        {"artifacts": [{"key": "preview_html", "value": "<html>...</html>",
-                        "content_type": "text", "caption": "第一页"}]}
+        {"artifacts": [{"key": "result", "value": "Final output",
+                        "content_type": "text", "caption": "Result"}]}
     """
     if not isinstance(artifacts, list) or not artifacts:
         return tool_error('save_artifacts', 'artifacts must be a non-empty list.')

@@ -244,6 +244,7 @@ export type RewriteSelection =
     page: number;
     el: string;
     group?: string;
+    selected_text?: string;
     computed_style?: {
       font_size?: string;
       width?: string;

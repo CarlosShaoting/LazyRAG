@@ -200,6 +200,12 @@ def test_startup_clarification_is_single_shot_and_default_trigger_merges_context
         'session_id': 'session-1', 'state_version': 1,
         'ready_steps': ['analyze_requirements'],
     }
+    toolkit.get_ready_steps.return_value = {
+        'session_id': 'session-1', 'state_version': 1,
+        'ready_steps': ['analyze_requirements'],
+        'retryable_steps': [], 'rewindable_steps': [],
+    }
+    toolkit.advance_step.return_value = {'status': 'succeeded'}
     with patch('lazymind.chat.workflow.workflow_manager._client') as client_factory, patch(
         'lazymind.chat.workflow.workflow_manager.HostWorkflowToolkit', return_value=toolkit,
     ):
@@ -233,12 +239,15 @@ def test_startup_clarification_is_single_shot_and_default_trigger_merges_context
         result = _tool(contribution, 'trigger_ppt_workflow')(
             request_context='面向哪类客户？: 公司负责人',
         )
+        _tool(contribution, 'advance_step')(['analyze_requirements'])
 
     assert '根据知识库生成两页企业招标准则 PPT' in result['request_context']
     assert '面向哪类客户？: 公司负责人' in result['request_context']
     toolkit.prepare_workflow.assert_called_once_with(
         'ppt-workflow', input_bindings={}, request_context=result['request_context'],
     )
+    command = toolkit.advance_step.call_args.args[2][0]
+    assert command.user_input == result['request_context']
 
 
 def test_completed_historical_clarification_does_not_block_a_new_workflow_request():

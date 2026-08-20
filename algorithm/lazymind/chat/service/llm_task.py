@@ -256,15 +256,7 @@ def _workflow_prompt(request: LLMTaskRequest) -> str:
             '"scripts":{"path":"content"},"remaining_warnings":["string"],'
             '"edits":[{"file":"workflow.yaml|scenario/state.yml|scenario/scenario.md|scripts/name.py",'
             '"old":"exact old text","new":"replacement text"}]}. '
-            'Prefer edits for small local repairs. Also include the final full content for every repaired core file. '
-            'When repairing a multi-page composite control, preserve page alignment explicitly: every '
-            'page material must be an ordered list slot, all participating list slots must publish matching '
-            'sort_order positions, ui.tabs[].layout must remain composite, composite_layout must reference '
-            'the participating slots, and composite_tab_position must be set when the UI needs page controls. '
-            'If one participating slot contains full-page HTML, preserve '
-            'ui.slots.<slot>.widgetType: html-slide so the composite can render HTML thumbnails; '
-            'non-HTML composites must retain the numbered thumbnail fallback. '
-            'Do not collapse multiple pages into one artifact or model pages as unrelated composite columns.'
+            'Prefer edits for small local repairs. Also include the final full content for every repaired core file.'
         ),
         'workflow.polish_info': (
             'Return schema: any subset of {"description":"string","when_to_use":"string",'

@@ -82,7 +82,10 @@ def _state(session_id: str) -> Dict[str, Any]:
         return {'error': {'code': exc.code, 'message': exc.message}}
 
 
-def _handoff_tool(session: Union[str, Callable[[], str]]) -> Any:
+def _handoff_tool(
+    session: Union[str, Callable[[], str]],
+    user_input: Optional[Union[str, Callable[[], str]]] = None,
+) -> Any:
     def advance_step_and_hand_off(step_id: str) -> str:
         """Execute one Ready Workflow step, then hand off for result approval."""
         selected_session_id = session() if callable(session) else session
@@ -118,8 +121,12 @@ def _handoff_tool(session: Union[str, Callable[[], str]]) -> Any:
                     focus_hints.append(
                         f'User is currently focused on artifact sort order {focused_sort_order}.'
                     )
+                bound_user_input = user_input() if callable(user_input) else user_input
                 current_user_input = str(
-                    cfg.get('workflow_current_query') or cfg.get('query') or ''
+                    bound_user_input
+                    or cfg.get('workflow_current_query')
+                    or cfg.get('query')
+                    or ''
                 ).strip()
                 response = client.advance(AdvanceRequest(
                     session_id=selected_session_id,
@@ -180,6 +187,7 @@ def _safe_session_tools(
     toolkit: HostWorkflowToolkit,
     session: Union[str, Callable[[], str]],
     initialize_session: Optional[Callable[[], Any]] = None,
+    user_input: Optional[Union[str, Callable[[], str]]] = None,
 ) -> List[Any]:
     """Model tools whose protocol and concurrency parameters are Host-injected."""
     def session_id() -> str:
@@ -247,8 +255,12 @@ def _safe_session_tools(
                     focus_hints.append(
                         f'User is currently focused on artifact sort order {focused_sort_order}.'
                     )
+                bound_user_input = user_input() if callable(user_input) else user_input
                 current_user_input = str(
-                    cfg.get('workflow_current_query') or cfg.get('query') or ''
+                    bound_user_input
+                    or cfg.get('workflow_current_query')
+                    or cfg.get('query')
+                    or ''
                 ).strip()
                 result = toolkit.advance_step(
                     selected_session_id, int(frontier.get('state_version') or 0),
@@ -803,6 +815,13 @@ def _workflow_trigger_tools(
                     if bound_clarification_answer
                     else str(request_context or '').strip() or bound_query
                 )
+                if session_holder is not None:
+                    # Keep the immutable launch brief available to the first
+                    # Ready steps in this same Chat turn. In particular, an Ask
+                    # answer is supplemental context; it must not become the
+                    # step's answer-only ``user_input`` and erase the original
+                    # topic, page count, or other supplied constraints.
+                    session_holder['request_context'] = effective_context
                 existing_session_id = str(
                     (session_holder or {}).get('session_id') or '',
                 ).strip()
@@ -1095,13 +1114,18 @@ def resolve_workflow_injection(
         initialize_selected_session = (
             (lambda: trigger_tools[0]()) if len(trigger_tools) == 1 else None
         )
-        handoff = _handoff_tool(lambda: session_holder.get('session_id', ''))
+        launch_user_input = lambda: session_holder.get('request_context', '')
+        handoff = _handoff_tool(
+            lambda: session_holder.get('session_id', ''),
+            user_input=launch_user_input,
+        )
         tools = [
             *[tool for tool in tools if _is_bound_workflow_trigger(tool.__name__)],
             *_safe_session_tools(
                 toolkit,
                 lambda: session_holder.get('session_id', ''),
                 initialize_session=initialize_selected_session,
+                user_input=launch_user_input,
             ),
             handoff,
         ]
@@ -1123,8 +1147,15 @@ def resolve_workflow_injection(
             # for trigger -> advance execution in that same turn.
             tools = [
                 *trigger_entry_tools,
-                *_safe_session_tools(toolkit, lambda: session_holder.get('session_id', '')),
-                _handoff_tool(lambda: session_holder.get('session_id', '')),
+                *_safe_session_tools(
+                    toolkit,
+                    lambda: session_holder.get('session_id', ''),
+                    user_input=lambda: session_holder.get('request_context', ''),
+                ),
+                _handoff_tool(
+                    lambda: session_holder.get('session_id', ''),
+                    user_input=lambda: session_holder.get('request_context', ''),
+                ),
                 authoring_group,
             ]
         else:

@@ -187,6 +187,18 @@ ui:
       label: Slides
       layout: composite
       composite_tab_position: left
+      actions:
+        - id: export_presentation
+          type: export
+          provider: html-presentation
+          inputs:
+            pages: preview_html
+            notes: preview_notes
+          formats:
+            - raster-pptx
+            - pdf
+            - editable-pptx
+          alignment: sort_order
       slots:
         - id: preview_html
         - id: preview_notes

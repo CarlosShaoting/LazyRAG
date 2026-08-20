@@ -10,7 +10,6 @@ import type { ChatFileList, ChatInputImperativeProps, SendMessageParams } from "
 import { RoleTypes } from "@/modules/chat/constants/common";
 import {
   CHAT_AUTO_ADVANCE_EVENT,
-  CHAT_EDITABLE_PPT_DEPENDENCY_MISSING_EVENT,
   CHAT_FFMPEG_DEPENDENCY_MISSING_EVENT,
   CHAT_RESUME_CONVERSATION_KEY,
   type ChatAutoAdvanceDetail,
@@ -96,7 +95,6 @@ export function useChatConversation({
   const conversationMessagesCache = useRef<Map<string, any[]>>(new Map());
   const ffmpegErrorBufferRef = useRef("");
   const ffmpegPromptOpenRef = useRef(false);
-  const editablePptPromptOpenRef = useRef(false);
   const runtimeWaitAbortRef = useRef<AbortController | null>(null);
   const runtimeWaitInProgressRef = useRef(false);
 
@@ -133,41 +131,16 @@ export function useChatConversation({
     });
   }
 
-  function showEditablePptDependencyPrompt() {
-    if (editablePptPromptOpenRef.current) {
-      return;
-    }
-    editablePptPromptOpenRef.current = true;
-    Modal.confirm({
-      title: t("chat.editablePptRequiredTitle"),
-      content: t("chat.editablePptRequiredDesc"),
-      okText: t("chat.configureEditablePpt"),
-      cancelText: t("common.close"),
-      onOk: () => navigate("/model-providers/tools#editable-ppt-dependency"),
-      afterClose: () => {
-        editablePptPromptOpenRef.current = false;
-      },
-    });
-  }
-
   useEffect(() => {
     window.addEventListener(
       CHAT_FFMPEG_DEPENDENCY_MISSING_EVENT,
       showFFmpegDependencyPrompt,
-    );
-    window.addEventListener(
-      CHAT_EDITABLE_PPT_DEPENDENCY_MISSING_EVENT,
-      showEditablePptDependencyPrompt,
     );
     return () => {
       runtimeWaitAbortRef.current?.abort();
       window.removeEventListener(
         CHAT_FFMPEG_DEPENDENCY_MISSING_EVENT,
         showFFmpegDependencyPrompt,
-      );
-      window.removeEventListener(
-        CHAT_EDITABLE_PPT_DEPENDENCY_MISSING_EVENT,
-        showEditablePptDependencyPrompt,
       );
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);

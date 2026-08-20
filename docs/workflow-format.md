@@ -421,6 +421,34 @@ ui:
 
 旧格式（数组 `[{slot, weight}]` 或 `[[{slot, weight}]]`）在解析时自动迁移为格式 C，无需手动转换。
 
+**声明式 HTML 页面与导出 action**
+
+通用渲染器不会根据 slot id 或素材内容猜测控件类型。完整 HTML 页面必须声明
+`ui.slots.<slot>.widgetType: html-slide`。导出能力声明在对应 tab 上：
+
+```yaml
+ui:
+  slots:
+    deck_pages:
+      widgetType: html-slide
+  tabs:
+    - id: deck
+      layout: composite
+      composite_tab_position: left
+      slots: [{id: deck_pages}, {id: speaker_notes}]
+      actions:
+        - id: export_deck
+          type: export
+          provider: html-presentation
+          inputs: {pages: deck_pages, notes: speaker_notes}
+          formats: [raster-pptx, pdf, editable-pptx]
+          alignment: sort_order
+```
+
+`alignment: sort_order` 表示所有映射的素材必须是 `ordered: true` 的 list slot，
+并按相同 `sort_order` 对齐。通用 composite 只负责布局、分页和联动重排；格式选择、
+依赖检测、文件命名和转换由 exporter provider 负责。
+
 
 ```yaml
 slots:                    # 在 workflow.yaml 中定义

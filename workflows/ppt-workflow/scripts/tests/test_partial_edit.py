@@ -35,6 +35,13 @@ LEGACY_CARD_HTML = """<!doctype html>
 </div></main></body></html>
 """
 
+NESTED_TITLE_HTML = """<!doctype html>
+<html><head><title>Game report</title></head><body>
+<main class="slide"><section data-el="title">
+  <span>2025 年度报告</span><h1>2025游戏行业趋势</h1><p>全球市场洞察</p>
+</section></main></body></html>
+"""
+
 
 def make_deck(root: Path) -> tuple[Path, Path]:
     deck = root / 'deck'
@@ -119,6 +126,58 @@ class PartialEditTests(unittest.TestCase):
         self.assertIn('<title>A &lt; B &amp; C</title>', edited)
         self.assertNotIn('<h1 data-el="title">A < B & C</h1>', edited)
         self.assertIn('Old title', removed)
+
+    def test_clicked_nested_text_scopes_replacement_inside_outer_data_el(self):
+        selection = {
+            'type': 'ppt_html',
+            'page': 1,
+            'el': 'title',
+            'selected_text': '2025游戏行业趋势',
+        }
+        with mock.patch.object(TOOLS, '_agent_llm_call') as llm:
+            ops, old_text, new_text = TOOLS._selection_edit_ops(
+                '修改为赛博朋克2077介绍', selection, TOOLS._HtmlTree(NESTED_TITLE_HTML),
+            )
+        self.assertEqual(ops, [{
+            'op': 'replace_text',
+            'el': 'title',
+            'value': '赛博朋克2077介绍',
+            'match': '2025游戏行业趋势',
+        }])
+        self.assertEqual(old_text, '2025游戏行业趋势')
+        self.assertEqual(new_text, '赛博朋克2077介绍')
+        llm.assert_not_called()
+
+        edited, _applied, _notes, _removed = TOOLS._apply_html_ops(
+            NESTED_TITLE_HTML, ops,
+        )
+        self.assertIn('<h1>赛博朋克2077介绍</h1>', edited)
+        self.assertIn('<span>2025 年度报告</span>', edited)
+        self.assertIn('<p>全球市场洞察</p>', edited)
+
+    def test_llm_expansion_uses_final_json_and_keeps_clicked_text_scope(self):
+        selection = {
+            'type': 'ppt_html',
+            'page': 1,
+            'el': 'title',
+            'selected_text': '2025游戏行业趋势',
+        }
+        model_output = (
+            '{"op":"replace_text","value":"初稿"}\n'
+            '{"op":"replace_text","value":"赛博朋克2077游戏行业趋势与未来展望"}'
+        )
+        with mock.patch.object(TOOLS, '_agent_llm_call', return_value=model_output):
+            ops, old_text, new_text = TOOLS._selection_edit_ops(
+                '扩写这一句', selection, TOOLS._HtmlTree(NESTED_TITLE_HTML),
+            )
+        self.assertEqual(ops, [{
+            'op': 'replace_text',
+            'el': 'title',
+            'value': '赛博朋克2077游戏行业趋势与未来展望',
+            'match': '2025游戏行业趋势',
+        }])
+        self.assertEqual(old_text, '2025游戏行业趋势')
+        self.assertEqual(new_text, '赛博朋克2077游戏行业趋势与未来展望')
 
     def test_nested_ambiguous_match_is_rejected(self):
         with self.assertRaisesRegex(ValueError, 'contains 2 visible matches'):

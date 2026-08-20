@@ -7,8 +7,6 @@ export const CHAT_SELECT_CONVERSATION_EVENT = "lazymind:chat-select-conversation
 export const CHAT_AUTO_ADVANCE_EVENT = "lazymind:chat-auto-advance";
 export const CHAT_FFMPEG_DEPENDENCY_MISSING_EVENT =
   "lazymind:chat-ffmpeg-dependency-missing";
-export const CHAT_EDITABLE_PPT_DEPENDENCY_MISSING_EVENT =
-  "lazymind:chat-editable-ppt-dependency-missing";
 export const CHAT_CONVERSATION_ACTIVITY_EVENT =
   "lazymind:chat-conversation-activity";
 export const WORKFLOW_PANEL_EXPANDED_EVENT = "lazymind:workflow-panel-expanded";

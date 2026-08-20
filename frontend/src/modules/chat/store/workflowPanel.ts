@@ -303,6 +303,19 @@ export interface InnerTabsNode {
   tabs: CompositeLayoutNode[];
 }
 
+/** Declarative action rendered for a workflow tab. */
+export interface WorkflowTabAction {
+  id: string;
+  type: 'export';
+  provider: string;
+  label?: string;
+  /** Provider input names mapped to declared slot ids. */
+  inputs: Record<string, string>;
+  formats?: string[];
+  /** Align mapped list slots by their shared sort_order. */
+  alignment?: 'sort_order';
+}
+
 export interface TabDef {
   id: string;
   /** Optional workflow step id represented by this tab. Falls back to id when omitted. */
@@ -319,6 +332,8 @@ export interface TabDef {
    * WorkflowPanel must not special-case workflow IDs; it only executes these rules.
    */
   composite_behavior?: CompositeBehavior;
+  /** Actions are rendered through provider modules; the composite stays domain-neutral. */
+  actions?: WorkflowTabAction[];
 }
 
 /** Mutually exclusive column group: keep the first preferred slot that has data. */

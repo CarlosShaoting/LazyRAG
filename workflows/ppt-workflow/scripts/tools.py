@@ -3994,13 +3994,21 @@ def _validated_action_source(artifact_html: str) -> tuple[Path, Path, str]:
 
 def _extract_json_plan(text: str) -> dict[str, Any]:
     cleaned = (text or '').strip()
-    start, end = cleaned.find('{'), cleaned.rfind('}')
-    if start < 0 or end <= start:
-        raise ValueError('AI edit planner did not return JSON')
-    data = json.loads(cleaned[start:end + 1])
-    if not isinstance(data, dict):
-        raise ValueError('AI edit planner returned an invalid operation')
-    return data
+    decoder = json.JSONDecoder()
+    candidates: list[dict[str, Any]] = []
+    for match in re.finditer(r'\{', cleaned):
+        try:
+            data, _ = decoder.raw_decode(cleaned[match.start():])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict) and _coerce_str(data.get('op')):
+            candidates.append(data)
+    if not candidates:
+        raise ValueError('AI edit planner did not return a valid JSON operation')
+    # Some models emit a draft object followed by a corrected final object even
+    # when instructed to return JSON only. The final complete operation is the
+    # authoritative one; explanatory prose or nested style objects are ignored.
+    return candidates[-1]
 
 
 _CSS_SIZE_CONTEXTS = {
@@ -4153,7 +4161,18 @@ def _selection_edit_ops(
         raise ValueError("PPT HTML selection requires a data-el target")
     target = _resolve_el(tree, el, {})[0]
     node = tree.nodes[target]
-    old_text = tree.node_text(target).strip()
+    selected_text = _coerce_str(selection.get('selected_text')).strip()
+    if selected_text:
+        selected_hits = [
+            offset for offset in _text_occurrences(tree, selected_text)
+            if node['open_end'] <= offset < node['end']
+        ]
+        # Browser innerText may normalize whitespace across several nested
+        # nodes. Only trust it as a precise edit anchor when it maps to visible
+        # source text inside the declared data-el container.
+        if not selected_hits:
+            selected_text = ''
+    old_text = selected_text or tree.node_text(target).strip()
     group = _coerce_str(selection.get('group'))
     command = _coerce_str(instruction)
     if not command:
@@ -4215,7 +4234,11 @@ def _selection_edit_ops(
         value = _coerce_str(planned.get('value'))
         if not value:
             raise ValueError('AI edit planner returned empty replacement text')
-        return [{'op': name, 'el': el, 'value': value}], old_text, value
+        op = {'op': name, 'el': el, 'value': value}
+        inner = tree.html[node['open_end']:node['end']]
+        if '<' in inner[:inner.rfind('</') if '</' in inner else len(inner)].strip() and old_text:
+            op['match'] = old_text
+        return [op], old_text, value
     if name == 'delete_node':
         delete_target = tree.find_repeated_item(target)
         return [

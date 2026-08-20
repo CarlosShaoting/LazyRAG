@@ -3,7 +3,7 @@ import { Button } from 'antd';
 import { ExpandOutlined, CompressOutlined, CloseOutlined, FileTextOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import type { WorkflowModel, WorkflowUiTab, WidgetConfig, CompositePanelNode, WidgetType } from '../core/workflowModel';
-import { SLOT_DEFAULT_WIDGET } from '../core/workflowModel';
+import { collectCompositeSlotIds, SLOT_DEFAULT_WIDGET } from '../core/workflowModel';
 import type { GraphModel } from '../core/model';
 import ArtifactPanel from '../ArtifactPanel';
 import UiWysiwygPreview from './UiWysiwygPreview';
@@ -106,7 +106,10 @@ export default function UiEditorPanel({
 
   const handleCompositeLayoutChange = (value: CompositePanelNode) => {
     if (!effectiveActiveTabId) return;
-    updateTabs(tabs.map((t) => t.id === effectiveActiveTabId ? { ...t, composite_layout: value } : t));
+    const layoutSlots = collectCompositeSlotIds(value).map((id) => ({ id }));
+    updateTabs(tabs.map((t) => t.id === effectiveActiveTabId
+      ? { ...t, slots: layoutSlots, composite_layout: value }
+      : t));
   };
 
   const handleCompositeTabPositionChange = (pos: WorkflowUiTab['composite_tab_position']) => {
