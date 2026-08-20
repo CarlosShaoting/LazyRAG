@@ -5,6 +5,7 @@ pieces needed by LazyMind — not a full OpenClaw skill.
 
 The vendored SenseNova portions are distributed under the MIT License; see
 [`LICENSE.sensenova`](./LICENSE.sensenova).
+Upstream project: [OpenSenseNova/SenseNova-Skills](https://github.com/OpenSenseNova/SenseNova-Skills).
 
 Kept:
 - `scripts/run_stage.py` — preflight / style / outline / asset-plan / page-html / refine
