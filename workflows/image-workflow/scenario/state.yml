@@ -334,7 +334,26 @@ steps:
          Include style modifiers, lighting, composition, and quality keywords.
       3. For FIND_AND_EDIT or EDIT_UPLOAD (when raw_source_image is available):
          Write a concise English **edit instruction** for image_editor (not a generation prompt).
-         Focus on what to change while keeping the rest of the photo realistic and unchanged.
+         The original user request is the source of truth. Follow it literally and do not add
+         aesthetic improvements, corrections, or creative changes that the user did not request.
+         Use the smallest possible edit scope:
+         - Identify the exact target object/region and the exact requested operation.
+         - For a local edit, modify only that target region. Preserve all content outside it as
+           closely as the model supports, including subject identity and facial features, body
+           shape and pose, background, framing, crop, perspective, lighting, shadows, colors,
+           textures, existing text/logos, and image resolution unless the user explicitly asks
+           to change one of them.
+         - For a global edit such as an explicitly requested color grade or art style, change
+           only the requested global attribute; preserve scene content, object count, geometry,
+           layout, identity, pose, and camera viewpoint.
+         - Never add, remove, replace, beautify, retouch, restyle, reframe, or rewrite anything
+           beyond the explicit request. When the request is ambiguous, choose the narrower edit
+           instead of inventing extra changes.
+         Format prompt_used as one executable instruction with these four explicit clauses:
+           Requested edit: <the user's requested change>.
+           Edit scope: <the exact target region/object or requested global attribute>.
+           Preserve: <all important unrequested content that must remain unchanged>.
+           Do not: <specific likely collateral changes that are forbidden>.
       4. For CREATE_ANIMATED or ANIMATE_UPLOAD:
          Write an English **video motion prompt** for video_generator (40–120 words).
          Describe subject, sticker/emoji aesthetic, short looping-friendly motion, and camera.
@@ -409,7 +428,9 @@ steps:
     acceptance_criteria: |
       prompt_used artifact must be saved in English.
       For generation workflows: at least 30 words, suitable for image_generator.
-      For edit workflows (FIND_AND_EDIT / EDIT_UPLOAD): a clear edit instruction for image_editor.
+      For edit workflows (FIND_AND_EDIT / EDIT_UPLOAD): a clear image_editor instruction containing
+      Requested edit, Edit scope, Preserve, and Do not clauses. It must faithfully reflect the user
+      request, select the smallest sufficient edit scope, and forbid unrequested collateral changes.
       For animated workflows (CREATE_ANIMATED / ANIMATE_UPLOAD): a clear motion prompt for video_generator.
       For CREATE_STATIC_MEME / CREATE_ANIMATED_MEME / CREATE_MEME_PACK, meme_generation_plan
       must be saved with schema_version, mode, delivery, count, and exactly count distinct items.
@@ -580,11 +601,35 @@ steps:
          - Else use find_user_attachment for user uploads.
          - If validation is uncertain, call validate_image_ref first.
       2. Call validate_image_ref if not already validated. Proceed only when status is ok.
-      3. Call image_editor (NOT image_generator) with:
-           prompt=<edit instruction from prompt_used and user_input>
+      3. Treat the original user request as authoritative and prompt_used as its normalized edit
+         instruction. If they conflict, follow the user's explicit request. Do not infer that the
+         user wants general enhancement, beautification, cleanup, restyling, reframing, or any
+         other change that was not requested.
+      4. Build the final image_editor prompt with the narrowest sufficient edit scope:
+         - State exactly which object or region may change and exactly how it may change.
+         - For a local edit, explicitly require everything outside the target region to remain
+           unchanged as closely as the model supports.
+         - Preserve all unrequested subject identity/facial details, anatomy, pose, clothing,
+           objects, object count, background, composition, crop, viewpoint, perspective,
+           lighting, shadows, color outside the target, texture, sharpness, existing text/logos,
+           and resolution.
+         - For an explicitly requested global edit, alter only that requested attribute while
+           preserving scene content and geometry.
+         - Explicitly forbid adding, removing, replacing, retouching, redesigning, or correcting
+           unrelated content. Never regenerate or reinterpret the entire image for a local edit.
+         - If any detail is ambiguous, preserve the original rather than guessing.
+         Use this prompt shape:
+           Requested edit: <faithful requested change>.
+           Edit scope: <only the permitted target region/object or global attribute>.
+           Preserve: <all unrequested content and properties>.
+           Do not: <all likely unintended changes>.
+      5. Call image_editor (NOT image_generator) exactly once with:
+           prompt=<the scoped four-clause instruction above>
            urls=[<url from validate_image_ref or validated artifact>]
-      4. Take `local_path` (preferred) or `image_url` from the tool result.
-      5. Save the **edited** image ONLY here:
+         Pass exactly one resolved source image URL. Do not pass unrelated reference images that
+         could cause the editor to blend identities, styles, objects, or backgrounds.
+      6. Take `local_path` (preferred) or `image_url` from the tool result.
+      7. Save the **edited** image ONLY here:
            save_artifacts(artifacts=[{
              'key': 'enhanced_image_output', 'content_type': 'image',
              'value': <local_path or image_url>, 'source_tool': 'image_editor'
@@ -592,8 +637,8 @@ steps:
          Do NOT save an entry with key='raw_source_image' in this step — that slot
          must keep the original raw photo from collect_materials.
          For partial retry, pass sort_order=N per the "Partial retry instruction" block.
-      6. Final text image links MUST start with `/static-files/` if present.
-      7. Stop after saving.
+      8. Final text image links MUST start with `/static-files/` if present.
+      9. Stop after saving.
     tools:
       - find_user_attachment
       - image_editor
@@ -610,3 +655,6 @@ steps:
       - material: enhanced_image_output
     acceptance_criteria: |
       enhanced_image_output artifact must be saved with a valid local path or http(s) URL.
+      The image_editor prompt must contain Requested edit, Edit scope, Preserve, and Do not
+      clauses, use the smallest sufficient edit scope, and explicitly protect all unrequested
+      regions and properties from collateral changes.

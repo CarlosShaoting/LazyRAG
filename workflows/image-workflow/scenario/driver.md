@@ -78,6 +78,10 @@ describing what was produced and whether it meets the criteria below.
 ### enhance_image
 - Acceptable when `enhanced_image_output` is saved with a valid local path or http(s) URL.
 - The source image should have been validated before editing when validation was still uncertain.
+- The `image_editor` prompt must faithfully follow the user's explicit request, name the
+  smallest sufficient edit scope, and explicitly preserve all unrequested regions and properties.
+- Local edits must not regenerate, beautify, reframe, restyle, add, remove, or correct unrelated
+  image content. Ambiguous details must remain unchanged rather than be guessed.
 - Not acceptable when the edited image artifact is missing or the URL/path is invalid.
 - After 2+ consecutive failures, state that the step should not be retried again.
 
