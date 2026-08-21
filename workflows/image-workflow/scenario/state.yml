@@ -21,7 +21,7 @@ transitions:
     - to: enhance_image
       when: 用户希望编辑已有图片
     - to: generate_image
-      when: 用户希望生成一张新图片或动态表情包
+      when: 用户希望生成新图片、静态/动态表情包或表情包套装
 
   generate_image:
     - to: __end__
@@ -56,19 +56,31 @@ steps:
            - FIND_AND_EDIT — user asks to find/search an existing photo online, then edit it.
            - EDIT_UPLOAD — user uploaded the source image for THIS still-image edit request and
              wants to edit that upload directly (not search the web for a new photo).
-           - CREATE_ANIMATED — user wants an animated GIF / 动态表情包 / 动图.
-             Includes: pure text description, OR "先联网找一张图再做成动态表情包".
+           - CREATE_ANIMATED — legacy generic animated GIF / 动图 that is not a meme,
+             reaction image, or chat sticker.
+             Includes pure text animation or finding a first frame for a generic GIF.
              Always ends at generate_image (video_generator → video_to_gif), NEVER enhance_image.
              If the user asks to find/search a photo first, collect will save it as image_output
              (first frame); generate_image then passes it via urls.
-           - ANIMATE_UPLOAD — user uploaded an image and wants it turned into an animated GIF /
-             动态表情包 (image-to-video first frame + motion, then GIF).
-         Prefer CREATE_ANIMATED / ANIMATE_UPLOAD when the user says 动态表情包, 动图, GIF,
-         animated sticker, or clearly wants motion — even if they also say "找一张" / "搜一张" /
-         "画" / "生成". Do NOT classify animated requests as FIND_AND_EDIT.
+           - ANIMATE_UPLOAD — legacy generic image-to-video/GIF route for an uploaded image
+             whose final deliverable is not a meme, reaction image, or chat sticker.
+           - CREATE_STATIC_MEME — the final deliverable is one static meme, reaction image, or
+             chat sticker. This wins over CREATE_NEW even when the input is only text.
+           - CREATE_ANIMATED_MEME — the final deliverable is one animated meme, reaction GIF,
+             or animated chat sticker. This wins over CREATE_ANIMATED / ANIMATE_UPLOAD.
+           - CREATE_MEME_PACK — the final deliverable is multiple distinct meme/reaction/sticker
+             states ("一套", "整套", "系列", "多个不同状态", or an explicit count > 1).
+             The pack may be static or animated; optimize_prompt records its delivery mode.
+         Final-deliverable priority:
+           1. Explicit multi-item meme/reaction/sticker pack → CREATE_MEME_PACK.
+           2. One explicit animated meme/reaction/chat sticker → CREATE_ANIMATED_MEME.
+           3. One explicit static meme/reaction/chat sticker → CREATE_STATIC_MEME.
+           4. Generic non-meme animation keeps CREATE_ANIMATED / ANIMATE_UPLOAD.
+         Do NOT classify a meme request as FIND_AND_EDIT merely because it first searches for
+         or uploads a character image.
       6. If the runtime instruction mentions a selected knowledge base, filters.kb_id is set,
          or the user explicitly references 知识库 / knowledge base style, prefer WORKFLOW: KB_STYLE
-         (unless the request is clearly animated — then CREATE_ANIMATED / ANIMATE_UPLOAD wins).
+         (unless the final deliverable is a meme or animation; those routes win).
       7. Save a **user-facing** analysis (shown in the Analysis tab):
            save_artifacts(artifacts=[
              {'key': 'subject_analysis', 'content_type': 'text', 'value': <analysis text>}
@@ -84,11 +96,12 @@ steps:
              {'key': 'workflow_routing', 'content_type': 'text', 'value': <routing block>}
            ])
          Use exactly this format (3 lines):
-           WORKFLOW: <CREATE_NEW|KB_STYLE|REFERENCE_GENERATE|FIND_AND_EDIT|EDIT_UPLOAD|CREATE_ANIMATED|ANIMATE_UPLOAD>
+           WORKFLOW: <CREATE_NEW|KB_STYLE|REFERENCE_GENERATE|FIND_AND_EDIT|EDIT_UPLOAD|CREATE_ANIMATED|ANIMATE_UPLOAD|CREATE_STATIC_MEME|CREATE_ANIMATED_MEME|CREATE_MEME_PACK>
            NEXT_STEPS: <comma-separated step ids>
            SKIP_STEPS: <comma-separated step ids or none>
          Routing table:
-           KB_STYLE / CREATE_NEW / REFERENCE_GENERATE / CREATE_ANIMATED / ANIMATE_UPLOAD
+           KB_STYLE / CREATE_NEW / REFERENCE_GENERATE / CREATE_ANIMATED / ANIMATE_UPLOAD /
+           CREATE_STATIC_MEME / CREATE_ANIMATED_MEME / CREATE_MEME_PACK
              → NEXT_STEPS: collect_materials,optimize_prompt,generate_image
                SKIP_STEPS: enhance_image
            FIND_AND_EDIT / EDIT_UPLOAD → NEXT_STEPS: collect_materials,optimize_prompt,enhance_image
@@ -144,8 +157,12 @@ steps:
            wikipedia, image_search_tool, or validate_image_ref, and do NOT append
            any newly searched image to material_images.
          - For EDIT_UPLOAD / FIND_AND_EDIT, also save the first upload as raw_source_image.
-         - For ANIMATE_UPLOAD / CREATE_ANIMATED, also save the first upload as
-           image_output with sort_order=1.
+         - For ANIMATE_UPLOAD / CREATE_ANIMATED / CREATE_ANIMATED_MEME, also save
+           the first upload as image_output with sort_order=1.
+         - For CREATE_MEME_PACK, save uploads as material_images. Also save the first
+           upload as image_output only when the user explicitly requests an animated pack.
+         - For CREATE_STATIC_MEME, material_images are the character/style references;
+           do not turn them into raw_source_image.
          - Then write material_summary describing the uploaded materials and stop.
            This override applies even if workflow_routing was classified imprecisely.
       1. When there is no uploaded image, do not require or call find_user_attachment. Read
@@ -171,6 +188,12 @@ steps:
                skip heavy search if the text description is already clear.
          - ANIMATE_UPLOAD: confirm the uploaded source image as both material_images and
            image_output with sort_order=1 (first frame; generate will reuse it if N>1).
+         - CREATE_STATIC_MEME: collect 0–3 optional character/style references. Do not search
+           when the text request already defines the character and expression clearly.
+         - CREATE_ANIMATED_MEME: collect 0–3 optional character/style references. If an upload
+           or searched character image exists, also save the first one as image_output.
+         - CREATE_MEME_PACK: collect at most 3 character/style references shared by the pack.
+           Do not collect one web image per requested state. The states are planned later.
       - This is the ONLY step for external information/material collection.
       - You may use kb_search and web_search in this step only when the selected route needs them.
       - For KB_STYLE (or when filters.kb_id is set), run kb_search first to collect style references.
@@ -206,9 +229,9 @@ steps:
       - If WORKFLOW is FIND_AND_EDIT, after validating and saving the best subject photo
         as material_images, also save the same validated URL as raw_source_image.
         Do NOT save prompt_used here — optimize_prompt will write the edit instruction.
-      - If WORKFLOW is CREATE_ANIMATED and the user asked to find a photo first, after
-        validating the best subject photo as material_images, also save that same URL as
-        image_output (first frame). Do NOT save prompt_used here.
+      - If WORKFLOW is CREATE_ANIMATED or CREATE_ANIMATED_MEME and the user asked to find a photo first, after
+         validating the best subject photo as material_images, also save that same URL as
+         image_output (first frame). Do NOT save prompt_used here.
       - Before stopping, write a concise Chinese summary (80–200 words) of what you collected:
           - for uploaded materials: which uploads were saved (do not claim a search was performed)
           - for KB_STYLE: record the useful KB style findings, including palette, brushwork,
@@ -265,6 +288,11 @@ steps:
       (same path/URL).
       For ANIMATE_UPLOAD: both material_images and image_output must be saved from the user upload
       (same path/URL, image_output sort_order=1).
+      For CREATE_STATIC_MEME: material_images are optional character/style references (0–3).
+      For CREATE_ANIMATED_MEME: material_images are optional; an uploaded or searched character
+      reference must also be saved as image_output.
+      For CREATE_MEME_PACK: save at most 3 shared character/style references; do not search for
+      a separate source image for every state.
       material_summary should be saved with a concise description of search results and image selection.
       optimize_prompt writes prompt_used in the next step.
 
@@ -272,7 +300,8 @@ steps:
     label: Optimize Prompt
     route: choice
     prompt: |
-      You are a professional prompt engineer for still images, image editing, and short videos.
+      You are a professional prompt engineer for still images, image editing, short videos,
+      and meme/reaction/sticker production.
 
       Subject analysis:
       {{subject_analysis}}
@@ -313,10 +342,47 @@ steps:
          When image_output is present (upload OR web-found first frame): keep that subject
          recognizable and describe how it should move.
          Do NOT write a still-image-only prompt or an image_editor edit instruction.
-      5. For KB_STYLE, faithfully translate the KB findings in material_summary into visual prompt
+      5. For CREATE_STATIC_MEME, CREATE_ANIMATED_MEME, or CREATE_MEME_PACK, create a structured
+         meme_generation_plan in addition to prompt_used.
+         - CREATE_STATIC_MEME: mode=static_meme, delivery=static, count=1.
+         - CREATE_ANIMATED_MEME: mode=animated_meme, delivery=animated, count=1.
+         - CREATE_MEME_PACK: mode=meme_pack. Parse the requested count; default to 3 when omitted.
+           delivery=animated only when the user explicitly asks for a dynamic/GIF pack; otherwise
+           delivery=static. Cap static packs at 12 items and animated packs at 5 items.
+         - Each item must have: index (1-based), caption, communication_task, image_prompt,
+           and motion_prompt. image_prompt and motion_prompt must be English. caption preserves
+           the user's requested display text and may be Chinese.
+         - Items in a pack must express different communication states; do not create cosmetic
+           variants of the same state. If the user did not specify states, use broadly useful
+           chat states such as acknowledgement, thanks, encouragement, apology, laughter,
+           celebration, waiting, and good night, truncated to count.
+         - image_prompt describes one readable hero frame with a recognizable character,
+           strong facial/body performance, minimal sufficient props/environment response,
+           square sticker composition, and a clean area reserved for later caption placement.
+           It must explicitly say not to render letters, captions, logos, or watermarks.
+         - motion_prompt describes one short, looping-friendly causal performance for the same
+           item and character; it must not invent a different state, prop, or scene.
+         - prompt_used is the English shared character/style prompt used by all items.
+         Save both artifacts in ONE save_artifacts call:
+             save_artifacts(artifacts=[
+               {'key': 'prompt_used', 'content_type': 'text', 'value': <shared prompt>},
+               {'key': 'meme_generation_plan', 'content_type': 'json', 'value': {
+                 'schema_version': '1.0',
+                 'mode': <static_meme|animated_meme|meme_pack>,
+                 'delivery': <static|animated>,
+                 'count': <integer>,
+                 'items': [
+                   {'index': 1, 'caption': <text>, 'communication_task': <text>,
+                    'image_prompt': <English prompt>, 'motion_prompt': <English prompt>}
+                 ]
+               }}
+             ])
+         The items length must equal count. Stop after this save; do not execute the generic
+         prompt-only save below.
+      6. For KB_STYLE, faithfully translate the KB findings in material_summary into visual prompt
          language, including the described color palette, brushwork, composition, medium, mood,
          and other style traits. Do not require material_images when the KB text is sufficient.
-      6. Save the result:
+      7. For non-meme workflows, save the result:
            save_artifacts(artifacts=[
              {'key': 'prompt_used', 'content_type': 'text',
               'value': <prompt or edit instruction>}
@@ -338,20 +404,28 @@ steps:
         required: false
     outputs:
       - material: prompt_used
+      - material: meme_generation_plan
+        required: false
     acceptance_criteria: |
       prompt_used artifact must be saved in English.
       For generation workflows: at least 30 words, suitable for image_generator.
       For edit workflows (FIND_AND_EDIT / EDIT_UPLOAD): a clear edit instruction for image_editor.
       For animated workflows (CREATE_ANIMATED / ANIMATE_UPLOAD): a clear motion prompt for video_generator.
+      For CREATE_STATIC_MEME / CREATE_ANIMATED_MEME / CREATE_MEME_PACK, meme_generation_plan
+      must be saved with schema_version, mode, delivery, count, and exactly count distinct items.
+      Every item must contain caption, communication_task, image_prompt, and motion_prompt.
 
   generate_image:
     label: Generate Image
     route: choice
     prompt: |
-      You are an image / animated-sticker generation agent.
+      You are an image, meme, and animated-sticker generation agent.
 
       Optimized prompt:
       {{prompt_used}}
+
+      Structured meme plan (present only for meme routes):
+      {{meme_generation_plan}}
 
       Workflow routing (internal):
       {{workflow_routing}}
@@ -359,14 +433,18 @@ steps:
       Optional first-frame image (upload or web-found):
       {{image_output}}
 
+      Optional character/style references:
+      {{material_images}}
+
       Original user request:
       {{user_input}}
 
       {{runtime_instruction}}
 
-      Decide the path from WORKFLOW + user_input (animated intent wins over still-image wording):
+      Read WORKFLOW from workflow_routing and execute exactly ONE matching generation mode.
+      Never silently turn a static request into video or a single meme into a pack.
 
-      === Still image (CREATE_NEW / KB_STYLE / REFERENCE_GENERATE) ===
+      === Mode 0: ordinary still image (CREATE_NEW / KB_STYLE / REFERENCE_GENERATE) ===
       Only when the user wants a still image (NOT 动态表情包 / 动图 / GIF / animated sticker).
       1. Call image_generator exactly ONCE with:
            prompt=<prompt_used>, image_size='1024x1024', batch_size=1.
@@ -381,74 +459,72 @@ steps:
       5. Final text image links MUST start with `/static-files/` if present.
       6. Stop after saving. Do NOT save gif_output or image_output.
 
-      === Animated sticker / 动态表情包 (CREATE_ANIMATED / ANIMATE_UPLOAD, or user asks for GIF) ===
-      Pipeline: parallel video_generator → parallel video_to_gif → **sequential** save_artifacts.
-      Do NOT call image_generator. Do NOT use any *_batch tools.
-      Do NOT overwrite origins with GIFs — origins stay in image_output; GIFs go to gif_output.
+      === Mode 1: one static meme (CREATE_STATIC_MEME) ===
+      1. Require meme_generation_plan.mode=static_meme, delivery=static, count=1 and use
+         items[0].image_prompt. Do not substitute prompt_used for the item prompt.
+      2. When a character/reference image exists, call image_editor exactly once with
+         prompt=<items[0].image_prompt>, urls=[<best reference>], image_size='1024x1024',
+         batch_size=1. Otherwise call image_generator once with the same prompt and size.
+      3. The generated raster must contain no model-rendered letters; keep the requested
+         caption as artifact metadata for deterministic caption rendering in a later revision.
+      4. Take local_path (preferred) or image_url and save it to meme_static_output with
+         caption=<items[0].caption>. On the first run omit sort_order; on a partial retry use 1.
+      5. Stop after saving. Do not save generated_image_output, gif_output, or image_output.
 
-      Count N (how many stickers):
-        - Parse from user_input: 三个/3个/three → 3, 两个 → 2, etc. Default N=1. Cap at 5.
-      Origin sources (first-frame images):
-        - If material_images has multiple validated photos and user asked for different
-          subjects/variants, use up to N distinct origins (one per sticker).
-        - Else if image_output / a single material / upload exists, reuse THAT same origin
-          for all N stickers.
-        - Else text-only (no urls) for all N.
-      Origins are owned by collect_materials (image_output). Do NOT re-save image_output
-      here — the graph allows only one producer per material.
+      === Mode 2: one animated meme (CREATE_ANIMATED_MEME) ===
+      Require meme_generation_plan.mode=animated_meme, delivery=animated, count=1.
+      Use items[0].motion_prompt and items[0].caption, then run the shared animated pipeline
+      below with N=1. Use image_output or the best material image as the optional first frame.
 
-      Step A — parallel video generation (ONE assistant turn, N tool_calls):
-        Emit N separate `video_generator` calls in a single response (not sequential turns).
-        Seedance concurrency is capped at 3 inside the tool.
-        Each call MUST mark its index in the prompt, e.g. prepend "Sticker i of N: "
-        (i is 1-based). Optionally add a short motion variation when N>1.
-        Args per call: prompt=<marked prompt_used>, urls=[origin_i] when origin exists,
-        resolution='480p', duration=5, ratio='1:1'.
-        Do NOT save_artifacts in this turn.
+      === Mode 3: meme pack (CREATE_MEME_PACK) ===
+      Require meme_generation_plan.mode=meme_pack and verify items length equals count.
+      - delivery=static: for every item use its own image_prompt. Emit up to count separate
+        image_generator/image_editor calls; calls may be parallel, but keep a stable item
+        index → result mapping. Save successful files sequentially to meme_static_output in
+        item-index order with caption=<item.caption>. Omit sort_order on a first full run;
+        use sort_order=k only when replacing item k. Static count must be 1–12.
+      - delivery=animated: use every item's own motion_prompt and caption, then run the shared
+        animated pipeline below with N=count. Animated count must be 1–5.
+      Items must not share an identical prompt. If the plan is malformed or exceeds its cap,
+      stop before calling a paid media tool.
 
-      Step B — parallel GIF conversion (NEXT assistant turn, N tool_calls):
-        Emit N separate `video_to_gif` calls in ONE turn.
-        Map each video result to the same sticker index used in Step A
-        (match by tool-call order / "Sticker i of N" mark — keep a stable i→video path table).
-        Each: url=<video local_path for sticker i>, fps=24, width=360.
-        Do NOT save_artifacts in this turn.
+      === Shared animated pipeline ===
+      Applies to CREATE_ANIMATED_MEME, animated CREATE_MEME_PACK, and legacy
+      CREATE_ANIMATED / ANIMATE_UPLOAD routes. For legacy routes, parse N from user_input
+      (default 1, maximum 5) and use prompt_used with an index marker.
+      Pipeline: parallel video_generator → parallel video_to_gif → sequential save_artifacts.
+      Do NOT call image_generator in this pipeline and never put a GIF into image_output.
 
-      Step C — sequential saves (AFTER all GIFs return; NEVER parallel save_artifacts):
-        Walk i = 1..N in ascending order. For each successful sticker i, call save_artifacts
-        with that sticker's entries **one sticker at a time** (wait for each confirmation
-        before the next).
-        First full generation of this step (list empty / regenerating all):
-          **omit sort_order** so each list slot appends in the same order 1..N.
-        Partial retry only (user asked to redo sticker k while others already exist):
-          pass sort_order=k to overwrite that row only.
-        Per sticker i (caption MUST include the index, e.g. caption='Sticker i'):
-          Include the video_output entry only when the video file should also be published.
-          save_artifacts(artifacts=[
-            {'key': 'video_output', 'content_type': 'file',
-             'value': <video path>, 'source_tool': 'video_generator',
-             'caption': 'Sticker i'},
-            {'key': 'gif_output', 'content_type': 'image',
-             'value': <gif path>, 'source_tool': 'video_to_gif',
-             'caption': 'Sticker i'}
-          ])
-        If GIF conversion failed but video generation succeeded, save that sticker's
-        video_output entry alone so the user still receives the generated video.
-        Do NOT save image_output (origins already saved by collect_materials).
-        Never put GIF into image_output.
-        Saving gif_output in the same i-order keeps composite rows aligned with
-        existing image_output rows from collect.
-        If some generate/gif calls fail, save only successful stickers in index order
-        (partial saves OK) and STOP with a concise note.
-      Prefer quoting image_markdown from tool results verbatim.
-      Stop after sequential saves finish for all successful stickers.
+      A. Emit N video_generator calls in one assistant turn. For planned meme routes use
+         items[i-1].motion_prompt; for legacy routes use "Sticker i of N: <prompt_used>".
+         Pass urls=[origin_i] when an origin exists, resolution='480p', duration=5, ratio='1:1'.
+         Reuse one origin for all items unless distinct origins were explicitly requested.
+      B. In the next assistant turn emit N video_to_gif calls, one per successful video,
+         with fps=24 and width=360. Preserve the same index mapping.
+      C. After all conversions return, walk items in index order and save one item at a time:
+           save_artifacts(artifacts=[
+             {'key': 'video_output', 'content_type': 'file',
+              'value': <video path>, 'source_tool': 'video_generator',
+              'caption': <planned caption or 'Sticker i'>},
+             {'key': 'gif_output', 'content_type': 'image',
+              'value': <gif path>, 'source_tool': 'video_to_gif',
+              'caption': <planned caption or 'Sticker i'>}
+           ])
+         Omit sort_order on a first full run. Use sort_order=k only for a partial retry.
+         If GIF conversion fails, save video_output alone. Save only successful items and
+         report partial failures concisely. Do not re-save origins owned by collect_materials.
+      Stop after all successful outputs have been saved.
     tools:
       - image_generator
+      - image_editor
       - video_generator
       - video_to_gif
     inputs:
       - material: prompt_used
         required: true
       - material: workflow_routing
+        required: false
+      - material: meme_generation_plan
         required: false
       - material: image_output
         required: false
@@ -457,20 +533,26 @@ steps:
     outputs:
       - material: generated_image_output
         required: false
+      - material: meme_static_output
+        required: false
       - material: gif_output
         required: false
       - material: video_output
         required: false
     acceptance_criteria: |
       Still workflows: generated_image_output must be saved (sort_order=1 only for overwrite / still path).
-      Animated workflows: gif_output must exist for each successful sticker after
+      CREATE_STATIC_MEME: exactly one meme_static_output should be saved from the one-item plan.
+      Static CREATE_MEME_PACK: meme_static_output items must follow plan index order and preserve captions.
+      CREATE_ANIMATED_MEME / animated CREATE_MEME_PACK / legacy animated workflows:
+      gif_output must exist for each successful sticker after
       video_generator → video_to_gif → sequential append saves (omit sort_order on first full run).
       If GIF conversion fails after video generation, save video_output as the fallback;
       gif_output is not required for that run.
       Origins stay in image_output from collect_materials — do NOT re-save image_output here.
       Never put GIF into image_output.
       Use sort_order=N only when overwriting an existing list row on partial retry.
-      N is taken from the user request (default 1).
+      Planned meme routes take N and per-item prompts from meme_generation_plan; legacy animated
+      routes take N from the user request (default 1).
 
   enhance_image:
     label: Enhance Image
