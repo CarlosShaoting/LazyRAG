@@ -67,7 +67,7 @@
   LangString LMFullInstall ${LANG_ENGLISH} "Full installation"
   LangString LMFullInstall ${LANG_SIMPCHINESE} "完整安装"
   LangString LMFullInstallHelp ${LANG_ENGLISH} "Expand Python files and warm up all local services before setup finishes, as in previous versions."
-  LangString LMFullInstallHelp ${LANG_SIMPCHINESE} "与以前版本相同：安装时展开 Python 文件，并在安装结束前预热全部本地服务。"
+  LangString LMFullInstallHelp ${LANG_SIMPCHINESE} "安装时展开 Python 文件，并在安装结束前预热全部本地服务。"
 
   !ifndef BUILD_UNINSTALLER
   Function LMInstallTypePageCreate
