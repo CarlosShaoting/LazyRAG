@@ -4,9 +4,11 @@ description: >
   Generate, find, or edit images from natural language descriptions, and create
   static memes, animated GIF stickers, and multi-item meme packs inside the
   existing generate_image step. Animated delivery uses video generation then
-  GIF conversion.
-  The workflow is dynamic: ChatAgent routes through analyze_subject,
-  collect_materials, optimize_prompt, then generate_image or enhance_image
+  GIF conversion. Meme media is generated without text, then a deterministic
+  local postprocessor fits and centers the caption inside a normalized box.
+  The workflow is dynamic: after analyze_subject, ChatAgent either skips directly
+  to optimize_prompt for self-contained requests or runs collect_materials when
+  external/uploaded/KB/reference material is genuinely needed, then routes to generate_image or enhance_image
   based on user intent (CREATE_NEW, FIND_AND_EDIT, EDIT_UPLOAD, CREATE_ANIMATED,
   ANIMATE_UPLOAD, CREATE_STATIC_MEME, CREATE_ANIMATED_MEME,
   CREATE_MEME_PACK, etc.).
@@ -24,11 +26,18 @@ when_to_use: >
   "先搜几张赛博朋克参考图再画一张类似的", "找哈兰德照片然后加上王老吉字样",
   "做一张收到的静态表情包", "给我生成一个动态表情包", "给我做一套聊天表情包",
   "给我生成三个动态表情包", "把这张图做成动态表情包", "做成动图 GIF",
+  "生成白色小猫，底部居中加蓝色‘妈妈’字幕",
   "启动绘图插件", "打开图片生成插件".
+  HIGHEST-PRIORITY TEXT-OVERLAY RULE: ALWAYS trigger this workflow when a request to
+  generate a new image requires exact literal display text, a caption/subtitle/label,
+  or text layout attributes such as position, font color, outline/stroke, or size.
+  This rule applies even when the request is otherwise a simple one-shot still and even
+  when the user never says meme/表情包. Exact display text requires the deterministic
+  meme_add_caption pipeline; do not use built-in image_generator/image_editor directly.
   Do NOT trigger for SIMPLE one-shot still-image requests. If the user uses casual
   short phrasing such as "直接", "给我", "随便画", "画个猫", "帮我生成一张图"
-  without KB/search/edit/animated/complex constraints, prefer the built-in
-  image_generator / image_editor tools instead of this workflow.
+  without KB/search/edit/animated/complex constraints AND without exact display text or
+  text-layout requirements, prefer the built-in image_generator / image_editor tools.
   Do NOT call video_generator / video_to_gif directly for 动态表情包 — use this
   workflow so analyze → optimize → generate_image (video→GIF) runs end-to-end.
   Do NOT trigger if image generation is merely one sub-step within a larger
@@ -40,6 +49,7 @@ tool_scripts:
     functions:
       - image_search_tool
       - validate_image_ref
+      - meme_add_caption
 
 steps:
   - id: analyze_subject

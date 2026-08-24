@@ -9,9 +9,12 @@ describing what was produced and whether it meets the criteria below.
 - `subject_analysis` must NOT contain WORKFLOW:/NEXT_STEPS:/SKIP_STEPS: lines or step-id routing lists.
 - `workflow_routing` must be saved with WORKFLOW, NEXT_STEPS, and SKIP_STEPS on separate lines.
 - Analyze step is text-only planning. Do NOT call kb_search/web_search/image_search_tool here.
-- For CREATE_NEW / KB_STYLE / REFERENCE_GENERATE / CREATE_ANIMATED / ANIMATE_UPLOAD /
-  CREATE_STATIC_MEME / CREATE_ANIMATED_MEME / CREATE_MEME_PACK, next step is always `collect_materials`.
-- For REFERENCE_GENERATE, missing material_images at this step is expected; next step is `collect_materials`.
+- The next step is selected dynamically from semantic material dependency, not a fixed workflow-name list.
+- When the request is self-contained and external material would not materially change correctness,
+  `workflow_routing` must skip `collect_materials` and continue directly to `optimize_prompt`.
+- When the request depends on an upload, KB, explicit search/reference, or externally identifiable
+  subject/style, `workflow_routing` must include `collect_materials` before `optimize_prompt`.
+- For REFERENCE_GENERATE, missing material_images at this step is expected; collect should be selected next.
 - For FIND_AND_EDIT, EDIT_UPLOAD, or ANIMATE_UPLOAD, missing raw source image or edit/motion prompt is expected; next step is `collect_materials`.
 - Not acceptable when `material_images`, `raw_source_image`, `image_output`, or `prompt_used` were saved here (they belong in later steps).
 - Not acceptable when the artifact is missing, too short, or routing metadata is missing from `workflow_routing`.
@@ -19,7 +22,7 @@ describing what was produced and whether it meets the criteria below.
 - After 2+ consecutive failures for this step, state that the step should not be retried again.
 
 ### collect_materials
-- This step runs for ALL workflows and is the only material/info collection step.
+- This step runs only when analyze_subject selected it, and remains the only material/info collection step.
 - It may use kb_search and web_search (plus image_search_tool/validate_image_ref when needed).
 - For REFERENCE_GENERATE, 1–3 validated `material_images` must be saved (never more than 3); next step is `optimize_prompt`.
 - For FIND_AND_EDIT, 1–3 validated `material_images` must be saved (never more than 3); each URL must have passed `validate_image_ref`.
@@ -46,12 +49,17 @@ describing what was produced and whether it meets the criteria below.
 - For CREATE_ANIMATED / ANIMATE_UPLOAD: clear English **video motion** prompt; next step is `generate_image`.
 - For CREATE_STATIC_MEME: `meme_generation_plan` must use mode=static_meme, delivery=static,
   count=1 and contain exactly one complete item.
+- A newly generated still image with exact requested display text or text-layout attributes is
+  CREATE_STATIC_MEME even when the user never says meme/表情包; it must not fall back to CREATE_NEW.
 - For CREATE_ANIMATED_MEME: the plan must use mode=animated_meme, delivery=animated,
   count=1 and contain exactly one complete item.
 - For CREATE_MEME_PACK: the plan must use mode=meme_pack; item count must equal count,
   states must be distinct, static count must not exceed 12, and animated count must not exceed 5.
-- Every planned meme item needs caption, communication_task, English image_prompt, and
-  English motion_prompt. Prompts must preserve one character/style and reserve caption space.
+- Every planned meme item needs caption, caption_box, caption_style, communication_task, English
+  image_prompt, and English motion_prompt. caption_style must provide LLM-selected #RRGGBB
+  text_color/stroke_color plus stroke_width_ratio from 0.03 to 0.16. Meme media prompts must
+  prohibit model-rendered text; caption_box defaults to [0.15, 0.75, 0.85, 0.93] unless the user
+  explicitly requests another position.
 - Not acceptable when the artifact is missing, too short, or not in English.
 - After 2+ consecutive failures, state that the step should not be retried again.
 
@@ -66,11 +74,14 @@ describing what was produced and whether it meets the criteria below.
   when an origin exists append the same origin into `image_output` in the same order
   (never put GIF into image_output). Use caption='Sticker i' on saves.
 - N comes from the user request (e.g. 三个→3), default 1.
-- For CREATE_STATIC_MEME: save exactly one successful image to `meme_static_output`, preserving
-  the planned caption; do not put it in `generated_image_output`.
-- For static CREATE_MEME_PACK: save successful `meme_static_output` entries in plan item order.
+- For CREATE_STATIC_MEME: generate an uncaptioned base, call `meme_add_caption` with the planned
+  caption, box, text color, stroke color, and stroke ratio, then save exactly
+  that captioned image to `meme_static_output`; do not save the base or put it in `generated_image_output`.
+- For static CREATE_MEME_PACK: caption each successful base with `meme_add_caption`, then save
+  captioned `meme_static_output` entries in plan item order.
 - For CREATE_ANIMATED_MEME and animated CREATE_MEME_PACK: use each plan item's own motion_prompt
-  and caption, then save GIF/video outputs in the same item order.
+  to generate text-free media, caption each converted GIF with `meme_add_caption`, then save
+  GIF/video outputs in the same item order.
 - A malformed or over-limit meme plan must fail before any paid generation tool is called.
 - `video_output` is optional; when saved it may appear in the Result tab (empty columns are hidden).
 - Not acceptable when generation/tools failed, GIF was saved into `image_output`, or animated flow produced no `gif_output`.

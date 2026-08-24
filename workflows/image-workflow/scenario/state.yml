@@ -13,6 +13,9 @@ transitions:
 
   analyze_subject:
     - to: collect_materials
+      when: 当前请求确实依赖上传源图、知识库、联网事实或参考素材
+    - to: optimize_prompt
+      when: 当前文本信息足够，外部素材不会实质改变生成结果
 
   collect_materials:
     - to: optimize_prompt
@@ -32,6 +35,7 @@ transitions:
 steps:
   analyze_subject:
     label: Analyze Subject
+    route: choice
     prompt: |
       You are an expert art director and image analyst.
 
@@ -66,6 +70,9 @@ steps:
              whose final deliverable is not a meme, reaction image, or chat sticker.
            - CREATE_STATIC_MEME — the final deliverable is one static meme, reaction image, or
              chat sticker. This wins over CREATE_NEW even when the input is only text.
+             Also use CREATE_STATIC_MEME for any request to generate a new static image with
+             exact literal overlay text, captions/subtitles/labels, or requested text position,
+             color, outline/stroke, or size. The user does not need to say meme/表情包.
            - CREATE_ANIMATED_MEME — the final deliverable is one animated meme, reaction GIF,
              or animated chat sticker. This wins over CREATE_ANIMATED / ANIMATE_UPLOAD.
            - CREATE_MEME_PACK — the final deliverable is multiple distinct meme/reaction/sticker
@@ -74,14 +81,30 @@ steps:
          Final-deliverable priority:
            1. Explicit multi-item meme/reaction/sticker pack → CREATE_MEME_PACK.
            2. One explicit animated meme/reaction/chat sticker → CREATE_ANIMATED_MEME.
-           3. One explicit static meme/reaction/chat sticker → CREATE_STATIC_MEME.
+           3. One explicit static meme/reaction/chat sticker, or one newly generated static
+              image requiring exact display text/text layout → CREATE_STATIC_MEME.
            4. Generic non-meme animation keeps CREATE_ANIMATED / ANIMATE_UPLOAD.
+         Never classify a new-image request with exact display text as CREATE_NEW. Image models
+         are not responsible for rendering that text; CREATE_STATIC_MEME generates a text-free
+         base and meme_add_caption adds the exact text deterministically.
          Do NOT classify a meme request as FIND_AND_EDIT merely because it first searches for
          or uploads a character image.
       6. If the runtime instruction mentions a selected knowledge base, filters.kb_id is set,
          or the user explicitly references 知识库 / knowledge base style, prefer WORKFLOW: KB_STYLE
          (unless the final deliverable is a meme or animation; those routes win).
-      7. Save a **user-facing** analysis (shown in the Analysis tab):
+      7. Decide whether material collection is actually needed. Make this decision from the
+         request's semantic dependencies, not from a fixed subject/category keyword list.
+         - Choose COLLECT only when successful execution materially depends on information or
+           media outside the request: an uploaded source/reference, selected knowledge base,
+           explicit web/image search, a named real person/product/logo whose appearance matters,
+           or an explicitly requested reference style/image.
+         - Choose SKIP when the text already gives enough subject, action, style, composition,
+           and delivery constraints for the configured media model to create the result directly.
+           Generic quality might improve from random references is NOT a reason to collect.
+         - If uncertain, internally test whether the missing external identity/style is necessary
+           to satisfy the request. If not necessary, choose SKIP without asking the user. Never
+           search merely because the workflow has a collect_materials step.
+      8. Save a **user-facing** analysis (shown in the Analysis tab):
            save_artifacts(artifacts=[
              {'key': 'subject_analysis', 'content_type': 'text', 'value': <analysis text>}
            ])
@@ -91,7 +114,7 @@ steps:
           or "将先联网找一张底图，再生成短视频并转换成动态 GIF 表情包").
          Do NOT include machine routing lines such as WORKFLOW:, NEXT_STEPS:, SKIP_STEPS:,
          or comma-separated step ids — those belong in workflow_routing only.
-      8. Save **routing metadata** separately (for ChatAgent, not shown in the Analysis tab):
+      9. Save **routing metadata** separately (for ChatAgent, not shown in the Analysis tab):
            save_artifacts(artifacts=[
              {'key': 'workflow_routing', 'content_type': 'text', 'value': <routing block>}
            ])
@@ -99,15 +122,20 @@ steps:
            WORKFLOW: <CREATE_NEW|KB_STYLE|REFERENCE_GENERATE|FIND_AND_EDIT|EDIT_UPLOAD|CREATE_ANIMATED|ANIMATE_UPLOAD|CREATE_STATIC_MEME|CREATE_ANIMATED_MEME|CREATE_MEME_PACK>
            NEXT_STEPS: <comma-separated step ids>
            SKIP_STEPS: <comma-separated step ids or none>
-         Routing table:
-           KB_STYLE / CREATE_NEW / REFERENCE_GENERATE / CREATE_ANIMATED / ANIMATE_UPLOAD /
-           CREATE_STATIC_MEME / CREATE_ANIMATED_MEME / CREATE_MEME_PACK
-             → NEXT_STEPS: collect_materials,optimize_prompt,generate_image
-               SKIP_STEPS: enhance_image
-           FIND_AND_EDIT / EDIT_UPLOAD → NEXT_STEPS: collect_materials,optimize_prompt,enhance_image
-                                        SKIP_STEPS: generate_image
+         Build NEXT_STEPS from the material decision plus final branch:
+           - COLLECT + generation final branch:
+             NEXT_STEPS: collect_materials,optimize_prompt,generate_image
+             SKIP_STEPS: enhance_image
+           - SKIP + generation final branch:
+             NEXT_STEPS: optimize_prompt,generate_image
+             SKIP_STEPS: collect_materials,enhance_image
+           - COLLECT + edit final branch:
+             NEXT_STEPS: collect_materials,optimize_prompt,enhance_image
+             SKIP_STEPS: generate_image
+           - SKIP + edit final branch is valid only when the required source image is already
+             available as a workflow artifact; otherwise choose COLLECT.
          Do NOT save raw_source_image, image_output, prompt_used, material_images, or material_summary in this step.
-      9. For FIND_AND_EDIT / EDIT_UPLOAD, save the material route token:
+      10. For FIND_AND_EDIT / EDIT_UPLOAD, save the material route token:
            save_artifacts(artifacts=[
              {'key': 'edit_route', 'content_type': 'text', 'value': 'edit'}
            ])
@@ -125,6 +153,9 @@ steps:
       subject_analysis must be saved (50+ words), user-facing natural language only —
       no WORKFLOW:/NEXT_STEPS:/SKIP_STEPS: lines or step-id lists.
       workflow_routing must be saved with WORKFLOW, NEXT_STEPS, and SKIP_STEPS lines.
+      NEXT_STEPS must include collect_materials only when external/uploaded/KB/reference material
+      is genuinely required. A self-contained text-only request should skip collect_materials and
+      continue directly to optimize_prompt.
       Do NOT call kb_search/web_search/image_search_tool in this step.
       Do NOT save material_images, raw_source_image, image_output, prompt_used, or material_summary in this step.
 
@@ -328,6 +359,10 @@ steps:
 
       Your task:
       1. Read WORKFLOW from workflow_routing (not from subject_analysis).
+         material_summary and material_images may be empty because analyze_subject deliberately
+         skipped collect_materials for a self-contained request. This is expected; do not fail,
+         invent search findings, or ask to run material collection unless the requested result
+         truly depends on missing external information.
       2. For CREATE_NEW, KB_STYLE, or REFERENCE_GENERATE:
          Combine subject_analysis, material_summary, and any optional material images into a high-quality
          English image-generation prompt (50–200 words, rich in visual detail).
@@ -368,19 +403,33 @@ steps:
          - CREATE_MEME_PACK: mode=meme_pack. Parse the requested count; default to 3 when omitted.
            delivery=animated only when the user explicitly asks for a dynamic/GIF pack; otherwise
            delivery=static. Cap static packs at 12 items and animated packs at 5 items.
-         - Each item must have: index (1-based), caption, communication_task, image_prompt,
-           and motion_prompt. image_prompt and motion_prompt must be English. caption preserves
-           the user's requested display text and may be Chinese.
+         - Each item must have: index (1-based), caption, caption_box, caption_style,
+           communication_task, image_prompt, and motion_prompt. image_prompt and motion_prompt
+           must be English.
+           caption preserves the user's exact requested display text and may be Chinese. If the
+           user did not provide display text, generate one concise, useful caption for the
+           communication_task (normally 1–8 Chinese characters or 1–4 English words).
+         - caption_box is [left, top, right, bottom] in normalized 0..1 coordinates. Default to
+           [0.15, 0.75, 0.85, 0.93], a centered lower rectangle. Only change it when the user
+           explicitly requests another text position. This rectangle is not drawn in the result.
+         - caption_style is chosen by you for each item from the requested mood and the planned
+           base-image palette. It must contain text_color and stroke_color as exact #RRGGBB hex
+           colors plus stroke_width_ratio as a number from 0.03 to 0.16. Prefer a strongly
+           contrasting text/outline pair that remains legible over the planned background, such
+           as white text with black outline; honor explicit user color or outline instructions.
          - Items in a pack must express different communication states; do not create cosmetic
            variants of the same state. If the user did not specify states, use broadly useful
            chat states such as acknowledgement, thanks, encouragement, apology, laughter,
            celebration, waiting, and good night, truncated to count.
          - image_prompt describes one readable hero frame with a recognizable character,
            strong facial/body performance, minimal sufficient props/environment response,
-           square sticker composition, and a clean area reserved for later caption placement.
-           It must explicitly say not to render letters, captions, logos, or watermarks.
+           and a square sticker composition. It must explicitly prohibit rendered words,
+           letters, captions, logos, and watermarks. Do not ask the image model to reserve a
+           blank caption area; deterministic postprocessing overlays the caption afterward.
          - motion_prompt describes one short, looping-friendly causal performance for the same
-           item and character; it must not invent a different state, prop, or scene.
+           item and character; it must not invent a different state, prop, or scene. It must also
+           prohibit rendered words, letters, captions, logos, and watermarks. The caption is
+           added to the completed GIF by deterministic postprocessing, not by the video model.
          - prompt_used is the English shared character/style prompt used by all items.
          Save both artifacts in ONE save_artifacts call:
              save_artifacts(artifacts=[
@@ -391,7 +440,12 @@ steps:
                  'delivery': <static|animated>,
                  'count': <integer>,
                  'items': [
-                   {'index': 1, 'caption': <text>, 'communication_task': <text>,
+                   {'index': 1, 'caption': <text>,
+                    'caption_box': [0.15, 0.75, 0.85, 0.93],
+                    'caption_style': {'text_color': '#FFFFFF',
+                                      'stroke_color': '#000000',
+                                      'stroke_width_ratio': 0.08},
+                    'communication_task': <text>,
                     'image_prompt': <English prompt>, 'motion_prompt': <English prompt>}
                  ]
                }}
@@ -416,7 +470,7 @@ steps:
       - material: material_images
         required: false
       - material: material_summary
-        required: true
+        required: false
       - material: raw_source_image
         required: false
       - material: image_output
@@ -434,7 +488,11 @@ steps:
       For animated workflows (CREATE_ANIMATED / ANIMATE_UPLOAD): a clear motion prompt for video_generator.
       For CREATE_STATIC_MEME / CREATE_ANIMATED_MEME / CREATE_MEME_PACK, meme_generation_plan
       must be saved with schema_version, mode, delivery, count, and exactly count distinct items.
-      Every item must contain caption, communication_task, image_prompt, and motion_prompt.
+      Every item must contain caption, caption_box, caption_style, communication_task,
+      image_prompt, and motion_prompt. caption_style must contain valid text_color, stroke_color,
+      and stroke_width_ratio fields selected by the LLM. Meme media prompts must prohibit
+      model-rendered text; caption_box defaults to [0.15, 0.75, 0.85, 0.93] unless the user
+      requests another placement.
 
   generate_image:
     label: Generate Image
@@ -486,10 +544,18 @@ steps:
       2. When a character/reference image exists, call image_editor exactly once with
          prompt=<items[0].image_prompt>, urls=[<best reference>], image_size='1024x1024',
          batch_size=1. Otherwise call image_generator once with the same prompt and size.
-      3. The generated raster must contain no model-rendered letters; keep the requested
-         caption as artifact metadata for deterministic caption rendering in a later revision.
-      4. Take local_path (preferred) or image_url and save it to meme_static_output with
-         caption=<items[0].caption>. On the first run omit sort_order; on a partial retry use 1.
+      3. The generated base image must contain no words or letters. Take its local_path
+         (preferred) or image_url and call meme_add_caption exactly once with:
+           image_url=<base image path/url>, caption=<items[0].caption>,
+           caption_box=<items[0].caption_box>,
+           text_color=<items[0].caption_style.text_color>,
+           stroke_color=<items[0].caption_style.stroke_color>,
+           stroke_width_ratio=<items[0].caption_style.stroke_width_ratio>.
+         The caption tool calculates wrapping, maximum fitting font size, and horizontal/vertical
+         centering inside the rectangle. The rectangle itself is not drawn.
+      4. Save only meme_add_caption.local_path (preferred) or image_url to meme_static_output,
+         source_tool='meme_add_caption', caption=<items[0].caption>. On the first run omit
+         sort_order; on a partial retry use 1. Never save the uncaptioned base as the final meme.
       5. Stop after saving. Do not save generated_image_output, gif_output, or image_output.
 
       === Mode 2: one animated meme (CREATE_ANIMATED_MEME) ===
@@ -501,9 +567,12 @@ steps:
       Require meme_generation_plan.mode=meme_pack and verify items length equals count.
       - delivery=static: for every item use its own image_prompt. Emit up to count separate
         image_generator/image_editor calls; calls may be parallel, but keep a stable item
-        index → result mapping. Save successful files sequentially to meme_static_output in
-        item-index order with caption=<item.caption>. Omit sort_order on a first full run;
-        use sort_order=k only when replacing item k. Static count must be 1–12.
+        index → base-image mapping. After the base images return, emit one meme_add_caption call
+        per successful item using that item's caption, caption_box, and all caption_style fields;
+        these calls may be parallel.
+        Save only successful captioned files sequentially to meme_static_output in item-index
+        order with source_tool='meme_add_caption' and caption=<item.caption>. Omit sort_order on
+        a first full run; use sort_order=k only when replacing item k. Static count must be 1–12.
       - delivery=animated: use every item's own motion_prompt and caption, then run the shared
         animated pipeline below with N=count. Animated count must be 1–5.
       Items must not share an identical prompt. If the plan is malformed or exceeds its cap,
@@ -513,7 +582,8 @@ steps:
       Applies to CREATE_ANIMATED_MEME, animated CREATE_MEME_PACK, and legacy
       CREATE_ANIMATED / ANIMATE_UPLOAD routes. For legacy routes, parse N from user_input
       (default 1, maximum 5) and use prompt_used with an index marker.
-      Pipeline: parallel video_generator → parallel video_to_gif → sequential save_artifacts.
+      Planned meme pipeline: parallel video_generator → parallel video_to_gif → parallel
+      meme_add_caption → sequential save_artifacts. Legacy generic animation omits captioning.
       Do NOT call image_generator in this pipeline and never put a GIF into image_output.
 
       A. Emit N video_generator calls in one assistant turn. For planned meme routes use
@@ -522,13 +592,19 @@ steps:
          Reuse one origin for all items unless distinct origins were explicitly requested.
       B. In the next assistant turn emit N video_to_gif calls, one per successful video,
          with fps=24 and width=360. Preserve the same index mapping.
-      C. After all conversions return, walk items in index order and save one item at a time:
+      C. For CREATE_ANIMATED_MEME and animated CREATE_MEME_PACK only, after all GIF conversions
+         return emit one meme_add_caption call per successful GIF, using the matching item's exact
+         caption, caption_box, and all caption_style fields. Calls may be parallel. Preserve the
+         item index mapping and use only the captioned GIF as the final gif_output. For legacy CREATE_ANIMATED /
+         ANIMATE_UPLOAD, skip this caption step and keep the converted GIF.
+      D. Walk items in index order and save one item at a time:
            save_artifacts(artifacts=[
              {'key': 'video_output', 'content_type': 'file',
               'value': <video path>, 'source_tool': 'video_generator',
               'caption': <planned caption or 'Sticker i'>},
              {'key': 'gif_output', 'content_type': 'image',
-              'value': <gif path>, 'source_tool': 'video_to_gif',
+              'value': <captioned GIF path for meme routes; converted GIF for legacy routes>,
+              'source_tool': <'meme_add_caption' for meme routes; 'video_to_gif' for legacy>,
               'caption': <planned caption or 'Sticker i'>}
            ])
          Omit sort_order on a first full run. Use sort_order=k only for a partial retry.
@@ -540,6 +616,7 @@ steps:
       - image_editor
       - video_generator
       - video_to_gif
+      - meme_add_caption
     inputs:
       - material: prompt_used
         required: true
@@ -562,11 +639,13 @@ steps:
         required: false
     acceptance_criteria: |
       Still workflows: generated_image_output must be saved (sort_order=1 only for overwrite / still path).
-      CREATE_STATIC_MEME: exactly one meme_static_output should be saved from the one-item plan.
-      Static CREATE_MEME_PACK: meme_static_output items must follow plan index order and preserve captions.
-      CREATE_ANIMATED_MEME / animated CREATE_MEME_PACK / legacy animated workflows:
-      gif_output must exist for each successful sticker after
-      video_generator → video_to_gif → sequential append saves (omit sort_order on first full run).
+      CREATE_STATIC_MEME: exactly one meme_static_output produced by meme_add_caption should be saved.
+      Static CREATE_MEME_PACK: meme_static_output items must be captioned by meme_add_caption,
+      follow plan index order, and preserve captions.
+      CREATE_ANIMATED_MEME / animated CREATE_MEME_PACK: gif_output must be produced by
+      video_generator → video_to_gif → meme_add_caption, then saved sequentially in item order.
+      Legacy animated workflows omit meme_add_caption and keep video_generator → video_to_gif.
+      Omit sort_order on first full runs.
       If GIF conversion fails after video generation, save video_output as the fallback;
       gif_output is not required for that run.
       Origins stay in image_output from collect_materials — do NOT re-save image_output here.
