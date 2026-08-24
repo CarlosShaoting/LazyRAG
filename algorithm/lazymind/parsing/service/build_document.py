@@ -13,11 +13,10 @@ from lazyllm.tools.rag.readers import (
     PandasCSVReader,
     PandasExcelReader
 )
-from lazyllm.tools.rag.readers.ocrReader import DynamicPDFReader
 
 from lazymind.model_config import get_dynamic_role_slot_map
 from lazymind.config import EMBED_IMAGE, EMBED_INDEX_KWARGS, EMBED_KEYS, EMBED_MAIN, config as _cfg
-from lazymind.parsing.engine.readers import ImageEmbReader, VideoReader
+from lazymind.parsing.engine.readers import ImageEmbReader, LazyMindPDFReader, VideoReader
 from lazymind.parsing.engine.transform import GeneralParser, LineSplitter, NodeParser
 
 ALGO_ID = 'general_algo'
@@ -154,7 +153,7 @@ def _build_line_transform():
 
 
 def _build_pdf_reader():
-    return DynamicPDFReader(
+    return LazyMindPDFReader(
         image_cache_dir=_cfg['ocr_cache_dir'],
         post_func=NodeParser(),
         timeout=3600,

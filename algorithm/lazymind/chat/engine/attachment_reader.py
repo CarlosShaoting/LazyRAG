@@ -33,9 +33,9 @@ def _sanitize_for_prompt_template(text: str) -> str:
 def _get_document_reader():
     from lazymind.chat.runtime_loader import ensure_rag_runtime
     ensure_rag_runtime()
-    from lazyllm.tools.rag.readers.ocrReader import DynamicPDFReader
+    from lazymind.parsing.engine.readers import LazyMindPDFReader
 
-    return DynamicPDFReader(
+    return LazyMindPDFReader(
         image_cache_dir=_cfg['ocr_cache_dir'],
         timeout=3600,
     )

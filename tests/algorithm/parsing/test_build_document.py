@@ -56,16 +56,16 @@ def test_build_store_config_raises_for_missing_milvus_uri(monkeypatch):
 def test_build_pdf_reader_uses_dynamic_reader_without_static_ocr_route(monkeypatch):
     seen = {}
 
-    class FakeDynamicPDFReader:
+    class FakeLazyMindPDFReader:
         def __init__(self, **kwargs):
             seen.update(kwargs)
 
-    monkeypatch.setattr(build_document, 'DynamicPDFReader', FakeDynamicPDFReader)
+    monkeypatch.setattr(build_document, 'LazyMindPDFReader', FakeLazyMindPDFReader)
     monkeypatch.setitem(build_document._cfg._impl, 'ocr_cache_dir', '/app/uploads/.image_cache')
 
     reader = build_document._build_pdf_reader()
 
-    assert isinstance(reader, FakeDynamicPDFReader)
+    assert isinstance(reader, FakeLazyMindPDFReader)
     assert 'ocr_type' not in seen
     assert 'ocr_url' not in seen
     assert seen['timeout'] == 3600
