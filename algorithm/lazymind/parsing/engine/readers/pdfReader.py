@@ -1,8 +1,13 @@
 from pathlib import Path
 
 from lazyllm import LOG
-from lazyllm.tools.pdf_utils import normalize_long_pdf_inplace
 from lazyllm.tools.rag.readers.ocrReader import DynamicPDFReader
+
+
+def normalize_long_pdf_inplace(path: Path) -> bool:
+    # Keep imports compatible with LazyLLM releases that predate long-PDF normalization.
+    from lazyllm.tools.pdf_utils import normalize_long_pdf_inplace as normalize
+    return normalize(path)
 
 
 class LazyMindPDFReader(DynamicPDFReader):
