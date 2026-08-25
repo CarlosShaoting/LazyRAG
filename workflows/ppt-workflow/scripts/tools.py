@@ -43,11 +43,12 @@ from datetime import datetime, timedelta, timezone
 from html import escape as _html_escape
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any, List, Optional, Union
+from typing import Any, List, NoReturn, Optional, Union
 from urllib.parse import urlparse
 
 import requests
 from lazyllm import ThreadPoolExecutor
+from lazyllm.tools.agent import ToolExecutionError
 
 from lazymind.chat.engine.subagent.context import require_context
 from lazymind.chat.engine.subagent.tools import (
@@ -55,7 +56,6 @@ from lazymind.chat.engine.subagent.tools import (
     _save_artifact,
     _workflow_client,
 )
-from lazymind.chat.engine.tools.infra import tool_error, tool_success
 from lazymind.chat.engine.tools.multimodal import image_generator
 from lazymind.chat.service.utils.static_file_url import (
     _upload_root,
@@ -87,6 +87,43 @@ _PROMPT_PLACEHOLDER_RE = re.compile(r'\{(\w+)\}')
 _run_stage_mod: Any = None
 _model_client_mod: Any = None
 _LOG = logging.getLogger(__name__)
+
+
+def _tool_success(_tool_name: str, result: Any, meta: dict[str, Any] | None = None) -> Any:
+    """Return a successful tool value using the canonical LazyLLM contract.
+
+    ToolManager adds the outer ``{"ok": true, "value": ...}`` envelope.  Workflow
+    tools therefore return their business value directly instead of nesting the
+    removed legacy ``success/tool/result`` envelope.
+    """
+    if meta and isinstance(result, dict):
+        return {**result, 'meta': meta}
+    return result
+
+
+def _tool_error(
+    _tool_name: str,
+    reason: str,
+    *,
+    error_type: str | None = None,
+    detail: str | None = None,
+    log_message: str | None = None,
+    log_level: str = 'warning',
+    meta: dict[str, Any] | None = None,
+) -> NoReturn:
+    """Raise the typed error consumed by LazyLLM's canonical tool runner."""
+    if log_message:
+        logger = getattr(_LOG, log_level, _LOG.warning)
+        logger(log_message)
+
+    parts = [str(reason)]
+    if error_type:
+        parts.append(f'type={error_type}')
+    if detail and str(detail) != str(reason):
+        parts.append(f'detail={detail}')
+    if meta:
+        parts.append(f'meta={json.dumps(meta, ensure_ascii=False, default=str)}')
+    raise ToolExecutionError('; '.join(parts))
 
 
 def _coerce_str(value: Any, default: str = '') -> str:
@@ -2233,15 +2270,15 @@ def _stage_tool_result(stage_name: str, payload: dict) -> dict:
     status = payload.get('status')
     clean = {k: v for k, v in payload.items() if not str(k).startswith('_')}
     if status == 'ok':
-        return tool_success('ppt_run_stage', {'stage': stage_name, **clean})
+        return _tool_success('ppt_run_stage', {'stage': stage_name, **clean})
     if status == 'skipped':
-        return tool_success('ppt_run_stage', {
+        return _tool_success('ppt_run_stage', {
             'stage': stage_name,
             'status': 'skipped',
             'reason': payload.get('reason') or payload.get('error') or 'skipped',
             **{k: v for k, v in clean.items() if k != 'status'},
         })
-    return tool_error(
+    return _tool_error(
         'ppt_run_stage',
         payload.get('error') or f'{stage_name} failed',
         detail=json.dumps(payload, ensure_ascii=False)[:2000],
@@ -2506,7 +2543,7 @@ def ppt_search_web_images(query: str, count: Union[int, str, None] = 3) -> dict:
     """
     q = _coerce_str(query)
     if not q:
-        return tool_error('ppt_search_web_images', 'query is required')
+        return _tool_error('ppt_search_web_images', 'query is required')
     n = _coerce_int(count, 3, lo=1, hi=6)
     urls: list[str] = []
     seen: set[str] = set()
@@ -2514,7 +2551,7 @@ def ppt_search_web_images(query: str, count: Union[int, str, None] = 3) -> dict:
     try:
         from lazyllm.tools.tools.search import BochaSearch, TavilySearch
     except Exception as exc:
-        return tool_error('ppt_search_web_images', f'search backends unavailable: {exc}')
+        return _tool_error('ppt_search_web_images', f'search backends unavailable: {exc}')
 
     # Tavily with include_images
     try:
@@ -2559,12 +2596,12 @@ def ppt_search_web_images(query: str, count: Union[int, str, None] = 3) -> dict:
             pass
 
     if not urls:
-        return tool_error(
+        return _tool_error(
             'ppt_search_web_images',
             f'No image URLs for "{q}". Configure Tavily/Bocha, or pass KB '
             'local_path/image_url into ppt_register_material_images instead.',
         )
-    return tool_success('ppt_search_web_images', {
+    return _tool_success('ppt_search_web_images', {
         'query': q,
         'urls': urls[:n],
         'count': min(len(urls), n),
@@ -2605,9 +2642,9 @@ def ppt_register_material_images(
     try:
         items = _parse_images_payload(images_json)
     except ValueError as exc:
-        return tool_error('ppt_register_material_images', str(exc))
+        return _tool_error('ppt_register_material_images', str(exc))
     if not items:
-        return tool_error(
+        return _tool_error(
             'ppt_register_material_images',
             'images_json is empty — pass KB local_path/image_url or web image urls',
         )
@@ -2617,7 +2654,7 @@ def ppt_register_material_images(
     existing = [x for x in (manifest.get('images') or []) if isinstance(x, dict)]
     room = max(0, 12 - len(existing))
     if room <= 0:
-        return tool_error(
+        return _tool_error(
             'ppt_register_material_images',
             'already have 12 material images; call with replace=true to reset',
         )
@@ -2634,7 +2671,7 @@ def ppt_register_material_images(
             errors.append(f'item[{i}]: {exc}')
 
     if not registered:
-        return tool_error(
+        return _tool_error(
             'ppt_register_material_images',
             'failed to register any image: ' + '; '.join(errors[:3]),
         )
@@ -2681,7 +2718,7 @@ def ppt_register_material_images(
         except Exception as exc:
             ui_errors.append(f'item[{offset}]: {exc}')
 
-    return tool_success('ppt_register_material_images', {
+    return _tool_success('ppt_register_material_images', {
         'count': len(registered),
         'total': len(existing),
         'images': [
@@ -2731,9 +2768,9 @@ def ppt_generate_material_images(
     try:
         items = _parse_images_payload(prompts_json)
     except ValueError as exc:
-        return tool_error('ppt_generate_material_images', str(exc))
+        return _tool_error('ppt_generate_material_images', str(exc))
     if not items:
-        return tool_error(
+        return _tool_error(
             'ppt_generate_material_images',
             'prompts_json is empty — pass [{"prompt":"...","caption":"..."}, ...]',
         )
@@ -2783,14 +2820,14 @@ def ppt_generate_material_images(
         })
 
     if not generated:
-        return tool_error(
+        return _tool_error(
             'ppt_generate_material_images',
             'failed to generate any image: ' + '; '.join(errors[:3]),
         )
 
     reg = ppt_register_material_images(generated, replace=False)
     if _tool_failed(reg):
-        return tool_error(
+        return _tool_error(
             'ppt_generate_material_images',
             f'generated but register failed: {_tool_fail_reason(reg)}',
             detail=json.dumps({
@@ -2800,7 +2837,7 @@ def ppt_generate_material_images(
             }, ensure_ascii=False)[:2500],
         )
     payload = _tool_payload(reg)
-    return tool_success('ppt_generate_material_images', {
+    return _tool_success('ppt_generate_material_images', {
         **payload,
         'generated_count': len(generated),
         'generation_errors': errors or None,
@@ -2827,14 +2864,14 @@ def ppt_attach_material_images(deck_dir: str) -> dict:
     try:
         deck = _resolve_deck_dir(deck_dir)
     except FileNotFoundError as exc:
-        return tool_error('ppt_attach_material_images', str(exc))
+        return _tool_error('ppt_attach_material_images', str(exc))
     result = _attach_material_images_to_deck(deck)
     if result['attached'] <= 0:
-        return tool_error(
+        return _tool_error(
             'ppt_attach_material_images',
             'no material images registered — call ppt_register_material_images in collect_materials first',
         )
-    return tool_success('ppt_attach_material_images', {
+    return _tool_success('ppt_attach_material_images', {
         'deck_dir': str(deck.resolve()),
         'attached': result['attached'],
         'reference_image_count': len(result['reference_images']),
@@ -2885,14 +2922,14 @@ def ppt_init_deck(
         material_images_attached.
     """
     if not _RUN_STAGE.exists():
-        return tool_error(
+        return _tool_error(
             'ppt_init_deck',
             f'PPT runtime missing at {_RUNTIME}. Expected workflows/ppt-workflow/runtime '
             '(vendored SenseNova subset; see README.md).',
         )
     query = _coerce_str(user_query)
     if not query:
-        return tool_error('ppt_init_deck', 'user_query is required')
+        return _tool_error('ppt_init_deck', 'user_query is required')
 
     pages = _coerce_int(page_count, 4, lo=1, hi=12)
     mode = _coerce_str(ppt_mode, 'fast').lower()
@@ -2946,7 +2983,7 @@ def ppt_init_deck(
 
     attached = _attach_material_images_to_deck(deck_dir)
 
-    return tool_success('ppt_init_deck', {
+    return _tool_success('ppt_init_deck', {
         'deck_dir': str(deck_dir.resolve()),
         'deck_id': deck_id,
         'page_count': pages,
@@ -2976,7 +3013,7 @@ def ppt_find_deck() -> dict:
         reverse=True,
     ) if root.is_dir() else []
     if not candidates:
-        return tool_error(
+        return _tool_error(
             'ppt_find_deck',
             'No deck exists for this conversation yet; run full generation first.',
         )
@@ -2992,7 +3029,7 @@ def ppt_find_deck() -> dict:
         deck_id = str(pack.get('deck_id') or deck_id)
     except Exception:
         pass
-    return tool_success('ppt_find_deck', {
+    return _tool_success('ppt_find_deck', {
         'deck_dir': str(deck.resolve()),
         'deck_id': deck_id,
         'page_count': page_count,
@@ -3002,19 +3039,33 @@ def ppt_find_deck() -> dict:
 
 
 def _tool_failed(resp: Any) -> bool:
-    return not isinstance(resp, dict) or not resp.get('success')
+    if not isinstance(resp, dict):
+        return True
+    # Raw dictionaries are canonical successful tool values. Keep accepting
+    # envelopes here because internal mocks and rolling upgrades may still
+    # provide either the old LazyMind or current LazyLLM representation.
+    if resp.get('success') is False or resp.get('ok') is False:
+        return True
+    return False
 
 
 def _tool_payload(resp: Any) -> dict:
     if not isinstance(resp, dict):
         return {}
-    result = resp.get('result')
-    return result if isinstance(result, dict) else {}
+    if resp.get('success') is True:
+        result = resp.get('result')
+        return result if isinstance(result, dict) else {}
+    if resp.get('ok') is True:
+        value = resp.get('value')
+        return value if isinstance(value, dict) else {}
+    return resp
 
 
 def _tool_fail_reason(resp: Any) -> str:
     if not isinstance(resp, dict):
         return 'empty tool response'
+    if resp.get('ok') is False:
+        return str(resp.get('value') or resp.get('msg') or 'failed')
     err = resp.get('error')
     if isinstance(err, dict):
         return str(err.get('reason') or err.get('detail') or 'failed')
@@ -3069,7 +3120,7 @@ def ppt_build_outline(
         key_points_json=key_points_json,
     )
     if _tool_failed(init_res):
-        return tool_error(
+        return _tool_error(
             'ppt_build_outline',
             f'init failed: {_tool_fail_reason(init_res)}',
             detail=json.dumps(init_res, ensure_ascii=False)[:2000],
@@ -3077,7 +3128,7 @@ def ppt_build_outline(
     init_payload = _tool_payload(init_res)
     deck_dir = str(init_payload.get('deck_dir') or '')
     if not deck_dir:
-        return tool_error('ppt_build_outline', 'ppt_init_deck returned no deck_dir')
+        return _tool_error('ppt_build_outline', 'ppt_init_deck returned no deck_dir')
 
     stages: list[dict[str, Any]] = [
         {'step': 'init', 'ok': True, 'deck_id': init_payload.get('deck_id')},
@@ -3097,7 +3148,7 @@ def ppt_build_outline(
     for stage_name in ('preflight', 'style', 'outline'):
         stage_res = ppt_run_stage(deck_dir, stage=stage_name)
         if _tool_failed(stage_res):
-            return tool_error(
+            return _tool_error(
                 'ppt_build_outline',
                 f'{stage_name} failed: {_tool_fail_reason(stage_res)}',
                 detail=json.dumps({
@@ -3117,7 +3168,7 @@ def ppt_build_outline(
 
     pub_res = ppt_publish_outline(deck_dir)
     if _tool_failed(pub_res):
-        return tool_error(
+        return _tool_error(
             'ppt_build_outline',
             f'publish_outline failed: {_tool_fail_reason(pub_res)}',
             detail=json.dumps({
@@ -3134,7 +3185,7 @@ def ppt_build_outline(
         'published_count': pub_payload.get('published_count'),
     })
 
-    return tool_success('ppt_build_outline', {
+    return _tool_success('ppt_build_outline', {
         'deck_dir': deck_dir,
         'deck_id': init_payload.get('deck_id'),
         'page_count': init_payload.get('page_count'),
@@ -3175,7 +3226,7 @@ def ppt_generate_pages(
     if not resolved:
         found = ppt_find_deck()
         if _tool_failed(found):
-            return tool_error(
+            return _tool_error(
                 'ppt_generate_pages',
                 f'no deck_dir and ppt_find_deck failed: {_tool_fail_reason(found)}',
             )
@@ -3183,7 +3234,7 @@ def ppt_generate_pages(
     try:
         deck = _resolve_deck_dir(resolved)
     except FileNotFoundError as exc:
-        return tool_error('ppt_generate_pages', str(exc))
+        return _tool_error('ppt_generate_pages', str(exc))
     deck_dir_s = str(deck.resolve())
 
     conc = _coerce_int(concurrency, 4, lo=1, hi=8)
@@ -3191,7 +3242,7 @@ def ppt_generate_pages(
 
     plan_res = ppt_run_stage(deck_dir_s, stage='asset-plan')
     if _tool_failed(plan_res):
-        return tool_error(
+        return _tool_error(
             'ppt_generate_pages',
             f'asset-plan failed: {_tool_fail_reason(plan_res)}',
             detail=json.dumps(plan_res, ensure_ascii=False)[:2000],
@@ -3209,7 +3260,7 @@ def ppt_generate_pages(
         deck_dir_s, stage='batch-page-html', concurrency=conc,
     )
     if _tool_failed(html_res):
-        return tool_error(
+        return _tool_error(
             'ppt_generate_pages',
             f'batch-page-html failed: {_tool_fail_reason(html_res)}',
             detail=json.dumps({
@@ -3243,7 +3294,7 @@ def ppt_generate_pages(
             })
 
     status = html_payload.get('status', 'ok')
-    return tool_success('ppt_generate_pages', {
+    return _tool_success('ppt_generate_pages', {
         'deck_dir': deck_dir_s,
         'status': status,
         'concurrency': conc,
@@ -3294,23 +3345,23 @@ def ppt_run_stage(
     """
     stage_name = _coerce_str(stage).lower()
     if stage_name == 'export':
-        return tool_error(
+        return _tool_error(
             'ppt_run_stage',
             'Export is UI-only. Ask the user to click the Export button; '
             'do not run stage=export from the skill.',
         )
     if stage_name not in _VALID_STAGES:
-        return tool_error(
+        return _tool_error(
             'ppt_run_stage',
             f'Unknown stage {stage!r}. Valid: {", ".join(sorted(_VALID_STAGES))}',
         )
     if not _RUN_STAGE.exists():
-        return tool_error('ppt_run_stage', f'run_stage.py missing: {_RUN_STAGE}')
+        return _tool_error('ppt_run_stage', f'run_stage.py missing: {_RUN_STAGE}')
 
     try:
         deck = _resolve_deck_dir(deck_dir)
     except FileNotFoundError as exc:
-        return tool_error('ppt_run_stage', str(exc))
+        return _tool_error('ppt_run_stage', str(exc))
 
     page_no = _coerce_int(page, 0, lo=0)
     conc = _coerce_int(concurrency, 4, lo=1, hi=8)
@@ -3318,13 +3369,13 @@ def ppt_run_stage(
     ep = _coerce_int(end_page, 0, lo=0)
     if stage_name in _INPROCESS_STAGES:
         if stage_name in ('page-html', 'refine-page') and page_no < 1:
-            return tool_error('ppt_run_stage', f'{stage_name} requires page>=1')
+            return _tool_error('ppt_run_stage', f'{stage_name} requires page>=1')
         payload = _run_stage_inprocess(
             stage_name, deck, page=page_no, concurrency=conc, start_page=sp, end_page=ep,
         )
         return _stage_tool_result(stage_name, payload)
 
-    return tool_error('ppt_run_stage', f'Unhandled stage {stage_name}')
+    return _tool_error('ppt_run_stage', f'Unhandled stage {stage_name}')
 
 
 def ppt_list_pages(deck_dir: str) -> dict:
@@ -3339,7 +3390,7 @@ def ppt_list_pages(deck_dir: str) -> dict:
     try:
         deck = _resolve_deck_dir(deck_dir)
     except FileNotFoundError as exc:
-        return tool_error('ppt_list_pages', str(exc))
+        return _tool_error('ppt_list_pages', str(exc))
 
     items: list[dict[str, Any]] = []
     for path in sorted((deck / 'pages').glob('page_*.html')):
@@ -3362,7 +3413,7 @@ def ppt_list_pages(deck_dir: str) -> dict:
             'title_hint': title_hint,
             'bytes': path.stat().st_size,
         })
-    return tool_success('ppt_list_pages', {
+    return _tool_success('ppt_list_pages', {
         'deck_dir': str(deck),
         'count': len(items),
         'pages': items,
@@ -3393,16 +3444,16 @@ def ppt_delete_page(deck_dir: str, page: int) -> dict:
     try:
         deck = _resolve_deck_dir(deck_dir)
     except FileNotFoundError as exc:
-        return tool_error('ppt_delete_page', str(exc))
+        return _tool_error('ppt_delete_page', str(exc))
 
     page_no = _coerce_int(page, 0, lo=0)
     if page_no < 1:
-        return tool_error('ppt_delete_page', 'page must be >= 1')
+        return _tool_error('ppt_delete_page', 'page must be >= 1')
 
     try:
         outline = _load_outline(deck)
     except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
-        return tool_error('ppt_delete_page', str(exc))
+        return _tool_error('ppt_delete_page', str(exc))
 
     outline_nos: list[int] = []
     for entry in outline.get('pages') or []:
@@ -3415,14 +3466,14 @@ def ppt_delete_page(deck_dir: str, page: int) -> dict:
 
     if page_no not in outline_nos and page_no not in disk_nos:
         available = sorted(set(outline_nos) | set(disk_nos))
-        return tool_error(
+        return _tool_error(
             'ppt_delete_page',
             f'page {page_no} not found. Available: {available or "none"}',
         )
 
     remaining_before = len(outline_nos) if outline_nos else len(disk_nos)
     if remaining_before <= 1:
-        return tool_error(
+        return _tool_error(
             'ppt_delete_page',
             'Cannot delete the last remaining page. Keep at least one slide.',
         )
@@ -3434,7 +3485,7 @@ def ppt_delete_page(deck_dir: str, page: int) -> dict:
             outline_meta = _remove_outline_page(deck, page_no)
             removed_title = outline_meta.get('removed_title') or ''
         except KeyError as exc:
-            return tool_error('ppt_delete_page', str(exc))
+            return _tool_error('ppt_delete_page', str(exc))
     else:
         outline_meta = {'remaining': len(outline_nos), 'note': 'page absent from outline.json'}
 
@@ -3452,7 +3503,7 @@ def ppt_delete_page(deck_dir: str, page: int) -> dict:
     except Exception as exc:
         ui_deleted.append({'ok': False, 'skipped': True, 'reason': f'UI sync skipped: {exc}'})
 
-    return tool_success('ppt_delete_page', {
+    return _tool_success('ppt_delete_page', {
         'deck_dir': str(deck.resolve()),
         'deleted_page': page_no,
         'removed_title': removed_title or None,
@@ -3492,29 +3543,29 @@ def ppt_publish_outline(
     try:
         deck = _resolve_deck_dir(deck_dir)
     except FileNotFoundError as exc:
-        return tool_error('ppt_publish_outline', str(exc))
+        return _tool_error('ppt_publish_outline', str(exc))
     try:
         require_context()
     except Exception as exc:
-        return tool_error('ppt_publish_outline', f'SubAgent context required: {exc}')
+        return _tool_error('ppt_publish_outline', f'SubAgent context required: {exc}')
 
     try:
         page_list = _parse_page_list(pages)
     except ValueError as exc:
-        return tool_error('ppt_publish_outline', str(exc))
+        return _tool_error('ppt_publish_outline', str(exc))
 
     try:
         result = _publish_slide_outlines_from_disk(deck, page_list)
     except (FileNotFoundError, ValueError, KeyError, json.JSONDecodeError) as exc:
-        return tool_error('ppt_publish_outline', str(exc))
+        return _tool_error('ppt_publish_outline', str(exc))
 
     if result.get('published_count', 0) <= 0:
-        return tool_error(
+        return _tool_error(
             'ppt_publish_outline',
             'No outline pages published. Run ppt_run_stage(stage="outline") first.',
             detail=json.dumps(result, ensure_ascii=False)[:1500],
         )
-    return tool_success('ppt_publish_outline', result)
+    return _tool_success('ppt_publish_outline', result)
 
 
 def ppt_publish_pages(
@@ -3542,21 +3593,21 @@ def ppt_publish_pages(
     try:
         deck = _resolve_deck_dir(deck_dir)
     except FileNotFoundError as exc:
-        return tool_error('ppt_publish_pages', str(exc))
+        return _tool_error('ppt_publish_pages', str(exc))
     try:
         require_context()
     except Exception as exc:
-        return tool_error('ppt_publish_pages', f'SubAgent context required: {exc}')
+        return _tool_error('ppt_publish_pages', f'SubAgent context required: {exc}')
 
     page_list = _parse_page_list(pages)
     result = _publish_pages_from_disk(deck, page_list, with_notes=bool(with_notes))
     if result['published_count'] <= 0:
-        return tool_error(
+        return _tool_error(
             'ppt_publish_pages',
             'No pages published. Run batch-page-html / page-html first.',
             detail=json.dumps(result, ensure_ascii=False)[:1500],
         )
-    return tool_success('ppt_publish_pages', result)
+    return _tool_success('ppt_publish_pages', result)
 
 
 def ppt_read_page_html(deck_dir: str, page: int) -> dict:
@@ -3583,18 +3634,18 @@ def ppt_read_page_html(deck_dir: str, page: int) -> dict:
     try:
         deck = _resolve_deck_dir(deck_dir)
     except FileNotFoundError as exc:
-        return tool_error('ppt_read_page_html', str(exc))
+        return _tool_error('ppt_read_page_html', str(exc))
     page_no = _coerce_int(page, 0)
     if page_no < 1:
-        return tool_error('ppt_read_page_html', 'page must be >= 1')
+        return _tool_error('ppt_read_page_html', 'page must be >= 1')
 
     path = _page_html_path(deck, page_no)
     if not path.exists():
-        return tool_error('ppt_read_page_html', f'missing HTML: {path}')
+        return _tool_error('ppt_read_page_html', f'missing HTML: {path}')
 
     raw_html = path.read_text(encoding='utf-8')
     html = _sanitize_page_html(raw_html)
-    return tool_success('ppt_read_page_html', {
+    return _tool_success('ppt_read_page_html', {
         'page': page_no,
         'html_path': str(path.resolve()),
         # Hash the exact on-disk bytes used by ppt_edit_page_html, not the
@@ -3632,18 +3683,18 @@ def ppt_read_page_outline(deck_dir: str, page: int) -> dict:
     try:
         deck = _resolve_deck_dir(deck_dir)
     except FileNotFoundError as exc:
-        return tool_error('ppt_read_page_outline', str(exc))
+        return _tool_error('ppt_read_page_outline', str(exc))
     page_no = _coerce_int(page, 0, lo=0)
     if page_no < 1:
-        return tool_error('ppt_read_page_outline', 'page must be >= 1')
+        return _tool_error('ppt_read_page_outline', 'page must be >= 1')
 
     try:
         outline = _load_outline(deck)
         page_outline = _find_outline_page(outline, page_no)
     except (FileNotFoundError, ValueError, KeyError, json.JSONDecodeError) as exc:
-        return tool_error('ppt_read_page_outline', str(exc))
+        return _tool_error('ppt_read_page_outline', str(exc))
 
-    return tool_success('ppt_read_page_outline', {
+    return _tool_success('ppt_read_page_outline', {
         'deck_dir': str(deck),
         **_outline_page_view(page_outline),
     })
@@ -3698,35 +3749,35 @@ def ppt_patch_page_outline(
     try:
         deck = _resolve_deck_dir(deck_dir)
     except FileNotFoundError as exc:
-        return tool_error('ppt_patch_page_outline', str(exc))
+        return _tool_error('ppt_patch_page_outline', str(exc))
     page_no = _coerce_int(page, 0, lo=0)
     if page_no < 1:
-        return tool_error('ppt_patch_page_outline', 'page must be >= 1')
+        return _tool_error('ppt_patch_page_outline', 'page must be >= 1')
 
     try:
         ops = _parse_ops_payload(ops_json)
     except (ValueError, json.JSONDecodeError) as exc:
-        return tool_error('ppt_patch_page_outline', f'invalid ops_json: {exc}')
+        return _tool_error('ppt_patch_page_outline', f'invalid ops_json: {exc}')
 
     try:
         outline = _load_outline(deck)
         page_outline = _find_outline_page(outline, page_no)
     except (FileNotFoundError, ValueError, KeyError, json.JSONDecodeError) as exc:
-        return tool_error('ppt_patch_page_outline', str(exc))
+        return _tool_error('ppt_patch_page_outline', str(exc))
 
     outline_before = json.loads(json.dumps(outline, ensure_ascii=False))
     bullets_before = len(page_outline.get('bullets') or [])
     try:
         applied = _apply_outline_ops(page_outline, ops)
     except ValueError as exc:
-        return tool_error(
+        return _tool_error(
             'ppt_patch_page_outline',
             f'op rejected, outline unchanged: {exc}',
         )
 
     bullets_after = len(page_outline.get('bullets') or [])
     if bullets_after == 0:
-        return tool_error(
+        return _tool_error(
             'ppt_patch_page_outline',
             'refusing to leave the page with zero bullets; keep at least one or '
             'set narrative-driven content explicitly via set_bullets.',
@@ -3735,7 +3786,7 @@ def ppt_patch_page_outline(
     try:
         _write_outline(deck, outline)
     except OSError as exc:
-        return tool_error('ppt_patch_page_outline', f'writing outline.json failed: {exc}')
+        return _tool_error('ppt_patch_page_outline', f'writing outline.json failed: {exc}')
 
     outline_pub = None
     try:
@@ -3747,11 +3798,11 @@ def ppt_patch_page_outline(
         try:
             _write_outline(deck, outline_before)
         except OSError as exc:
-            return tool_error(
+            return _tool_error(
                 'ppt_patch_page_outline',
                 f'outline publish failed and restoring outline.json also failed: {exc}',
             )
-        return tool_error(
+        return _tool_error(
             'ppt_patch_page_outline',
             'patched outline was not published, so outline.json was restored. '
             f'Publish error: {outline_pub.get("error") or "unknown"}',
@@ -3767,7 +3818,7 @@ def ppt_patch_page_outline(
             f'page now has {bullets_after} bullets; above 6 the slide may overflow.',
         )
 
-    return tool_success('ppt_patch_page_outline', {
+    return _tool_success('ppt_patch_page_outline', {
         'deck_dir': str(deck),
         'applied': applied,
         'warnings': warnings or None,
@@ -3844,39 +3895,39 @@ def ppt_edit_page_html(
     try:
         deck = _resolve_deck_dir(deck_dir)
     except FileNotFoundError as exc:
-        return tool_error('ppt_edit_page_html', str(exc))
+        return _tool_error('ppt_edit_page_html', str(exc))
     page_no = _coerce_int(page, 0, lo=0)
     if page_no < 1:
-        return tool_error('ppt_edit_page_html', 'page must be >= 1')
+        return _tool_error('ppt_edit_page_html', 'page must be >= 1')
     path = _page_html_path(deck, page_no)
     if not path.exists():
-        return tool_error(
+        return _tool_error(
             'ppt_edit_page_html',
             f'missing {path.name}; run ppt_run_stage(stage="page-html", page={page_no}) first.',
         )
     try:
         ops = _parse_ops_payload(ops_json, _HTML_EDIT_OPS_HELP)
     except (ValueError, json.JSONDecodeError) as exc:
-        return tool_error('ppt_edit_page_html', f'invalid ops_json: {exc}')
+        return _tool_error('ppt_edit_page_html', f'invalid ops_json: {exc}')
 
     original = path.read_text(encoding='utf-8')
     original_sha256 = _html_sha256(original)
     expected = _coerce_str(expected_sha256).removeprefix('sha256:').lower()
     if not expected:
-        return tool_error(
+        return _tool_error(
             'ppt_edit_page_html',
             'expected_sha256 is required; no edit was applied. Call '
             'ppt_read_page_html immediately before editing and pass its '
             'html_sha256 value.',
         )
     if not re.fullmatch(r'[0-9a-f]{64}', expected):
-        return tool_error(
+        return _tool_error(
             'ppt_edit_page_html',
             'expected_sha256 must be the 64-character html_sha256 returned by '
             'ppt_read_page_html; no edit was applied.',
         )
     if expected != original_sha256:
-        return tool_error(
+        return _tool_error(
             'ppt_edit_page_html',
             'page changed after ppt_read_page_html; no edit was applied. '
             f'expected sha256={expected}, current sha256={original_sha256}. '
@@ -3886,14 +3937,14 @@ def ppt_edit_page_html(
         edited, applied, notes, removed_texts = _apply_html_ops(original, ops)
         _validate_local_html_edit(original, edited)
     except ValueError as exc:
-        return tool_error('ppt_edit_page_html', f'op rejected, page unchanged: {exc}')
+        return _tool_error('ppt_edit_page_html', f'op rejected, page unchanged: {exc}')
 
     tmp = path.with_name(path.name + '.tmp')
     try:
         tmp.write_text(edited, encoding='utf-8')
         os.replace(tmp, path)
     except OSError as exc:
-        return tool_error('ppt_edit_page_html', f'writing {path.name} failed: {exc}')
+        return _tool_error('ppt_edit_page_html', f'writing {path.name} failed: {exc}')
 
     warnings = []
     stale = _outline_still_has(deck, page_no, removed_texts)
@@ -3915,20 +3966,20 @@ def ppt_edit_page_html(
             # original once more so disk and UI converge on the same revision.
             rollback_publish = _publish_pages_from_disk(deck, [page_no], with_notes=True)
         except OSError as exc:
-            return tool_error(
+            return _tool_error(
                 'ppt_edit_page_html',
                 f'publish failed and restoring {path.name} also failed: {exc}',
             )
         rollback_error = (
             rollback_publish.get('failed') if rollback_publish else 'not run'
         )
-        return tool_error(
+        return _tool_error(
             'ppt_edit_page_html',
             'edited page was not published completely, so the file was restored '
             f'to sha256={original_sha256}. Publish error: {published.get("failed")}. '
             f'Rollback publish: {rollback_error}',
         )
-    return tool_success('ppt_edit_page_html', {
+    return _tool_success('ppt_edit_page_html', {
         'deck_dir': str(deck),
         'page': page_no,
         'applied': applied,

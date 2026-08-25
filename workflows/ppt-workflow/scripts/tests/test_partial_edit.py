@@ -5,6 +5,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from lazyllm.tools.agent import ToolExecutionError
+
 
 TOOLS_PATH = Path(__file__).resolve().parents[1] / 'tools.py'
 SPEC = importlib.util.spec_from_file_location('ppt_workflow_tools_partial_edit_test', TOOLS_PATH)
@@ -365,26 +367,25 @@ class PartialEditTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             deck, page = make_deck(Path(tmp))
             read = TOOLS.ppt_read_page_html(str(deck), 1)
-            current_hash = read['result']['html_sha256']
+            current_hash = read['html_sha256']
             self.assertEqual(current_hash, TOOLS._html_sha256(PAGE_HTML))
 
-            result = TOOLS.ppt_edit_page_html(
-                str(deck), 1,
-                [{'op': 'replace_text', 'el': 'title', 'value': 'new'}],
-                expected_sha256='0' * 64,
-            )
-            self.assertFalse(result['success'])
+            with self.assertRaisesRegex(ToolExecutionError, 'page changed after'):
+                TOOLS.ppt_edit_page_html(
+                    str(deck), 1,
+                    [{'op': 'replace_text', 'el': 'title', 'value': 'new'}],
+                    expected_sha256='0' * 64,
+                )
             self.assertEqual(page.read_text(encoding='utf-8'), PAGE_HTML)
 
     def test_edit_requires_hash_from_immediately_preceding_read(self):
         with tempfile.TemporaryDirectory() as tmp:
             deck, page = make_deck(Path(tmp))
-            result = TOOLS.ppt_edit_page_html(
-                str(deck), 1,
-                [{'op': 'replace_text', 'el': 'title', 'value': 'new'}],
-            )
-            self.assertFalse(result['success'])
-            self.assertIn('expected_sha256 is required', result['error']['reason'])
+            with self.assertRaisesRegex(ToolExecutionError, 'expected_sha256 is required'):
+                TOOLS.ppt_edit_page_html(
+                    str(deck), 1,
+                    [{'op': 'replace_text', 'el': 'title', 'value': 'new'}],
+                )
             self.assertEqual(page.read_text(encoding='utf-8'), PAGE_HTML)
 
     def test_failed_publish_rolls_the_page_back(self):
@@ -397,12 +398,12 @@ class PartialEditTests(unittest.TestCase):
             with mock.patch.object(
                 TOOLS, '_publish_pages_from_disk', return_value=failed_publish,
             ) as publish:
-                result = TOOLS.ppt_edit_page_html(
-                    str(deck), 1,
-                    [{'op': 'replace_text', 'el': 'title', 'value': 'new'}],
-                    expected_sha256=TOOLS._html_sha256(PAGE_HTML),
-                )
-            self.assertFalse(result['success'])
+                with self.assertRaisesRegex(ToolExecutionError, 'edited page was not published'):
+                    TOOLS.ppt_edit_page_html(
+                        str(deck), 1,
+                        [{'op': 'replace_text', 'el': 'title', 'value': 'new'}],
+                        expected_sha256=TOOLS._html_sha256(PAGE_HTML),
+                    )
             self.assertEqual(page.read_text(encoding='utf-8'), PAGE_HTML)
             self.assertEqual(publish.call_count, 2)
 
