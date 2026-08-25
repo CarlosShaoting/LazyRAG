@@ -67,6 +67,8 @@ interface ArtifactRewriteDialogProps {
   onApplied: (revision?: number) => void;
   onPreviewReady?: (preview: RewriteSelectionPreview) => void;
   terminology?: 'polish' | 'edit';
+  /** Optional layer override for selections opened inside a full-screen modal. */
+  portalZIndex?: number;
 }
 
 type FormPhase = 'form' | 'previewing';
@@ -118,6 +120,7 @@ export function ArtifactRewriteDialog({
   onClose,
   onPreviewReady,
   terminology = 'polish',
+  portalZIndex,
 }: ArtifactRewriteDialogProps) {
   const { t } = useTranslation();
   const translationPrefix = terminology === 'edit'
@@ -276,7 +279,7 @@ export function ArtifactRewriteDialog({
     <div
       ref={formRef}
       className={`artifact-rewrite-form artifact-rewrite-form--${formPlacement}`}
-      style={formStyle}
+      style={portalZIndex === undefined ? formStyle : { ...formStyle, zIndex: portalZIndex }}
       onKeyDown={handleKeyDown}
     >
       <div className='artifact-rewrite-form__input-shell'>
