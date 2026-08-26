@@ -80,6 +80,23 @@ def make_deck(root: Path) -> tuple[Path, Path]:
     return deck, page
 
 
+class DeckInitializationTests(unittest.TestCase):
+    def test_page_count_is_not_capped_at_twelve(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with mock.patch.object(TOOLS, '_conversation_root', return_value=root):
+                result = TOOLS.ppt_init_deck(
+                    user_query='生成一份季度汇报',
+                    page_count=25,
+                )
+
+            self.assertEqual(result['page_count'], 25)
+            task_pack = json.loads(
+                (Path(result['deck_dir']) / 'task_pack.json').read_text(encoding='utf-8'),
+            )
+            self.assertEqual(task_pack['params']['page_count'], 25)
+
+
 class PartialEditTests(unittest.TestCase):
     def test_agent_llm_call_propagates_default_and_explicit_timeout(self):
         model = mock.Mock()
