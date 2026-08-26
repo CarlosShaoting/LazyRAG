@@ -491,6 +491,7 @@ const zhCN = {
         llm: "大模型",
         vlm: "VLM",
         embed_main: "向量",
+        image_generator: "文生图",
       },
     },
     noModelSelectedForShare: "请先选择模型后再设置分享",

@@ -516,6 +516,7 @@ const enUS = {
         llm: "LLM",
         vlm: "VLM",
         embed_main: "embedding",
+        image_generator: "text-to-image",
       },
     },
     noModelSelectedForShare: "Please select a model before enabling sharing",

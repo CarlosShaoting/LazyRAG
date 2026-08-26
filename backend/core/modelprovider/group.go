@@ -43,13 +43,14 @@ type autoModelSelection struct {
 	Missing      []string            `json:"missing"`
 }
 
-var firstProviderModelSlots = []struct {
+var autoModelSlots = []struct {
 	ModelKey    string
 	CatalogType string
 }{
 	{ModelKey: "llm", CatalogType: "llm"},
 	{ModelKey: "vlm", CatalogType: "vlm"},
 	{ModelKey: "embed_main", CatalogType: "embed"},
+	{ModelKey: "image_generator", CatalogType: "text2image"},
 }
 
 type groupListItem struct {
@@ -261,10 +262,6 @@ func CreateGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	var autoSelection *autoModelSelection
 	err = db.WithContext(r.Context()).Transaction(func(tx *gorm.DB) error {
-		isFirstProvider, err := isFirstModelProviderGroup(tx, userID, parent.Category)
-		if err != nil {
-			return err
-		}
 		if err := tx.Create(&row).Error; err != nil {
 			return err
 		}
@@ -272,8 +269,10 @@ func CreateGroup(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		if isFirstProvider {
-			autoSelection, err = autoSelectFirstProviderModels(tx, userID, userName, parent.Name, seededModels, now)
+		if strings.EqualFold(strings.TrimSpace(parent.Category), defaultProviderCategory) {
+			autoSelection, err = autoSelectUnconfiguredProviderModels(
+				tx, userID, userName, parent.Name, seededModels, now,
+			)
 			if err != nil {
 				return err
 			}
@@ -294,20 +293,7 @@ func CreateGroup(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func isFirstModelProviderGroup(tx *gorm.DB, userID, category string) (bool, error) {
-	if !strings.EqualFold(strings.TrimSpace(category), defaultProviderCategory) {
-		return false, nil
-	}
-	var count int64
-	err := tx.Model(&orm.UserModelProviderGroup{}).
-		Joins("JOIN user_model_providers p ON p.id = user_model_provider_groups.user_model_provider_id AND p.deleted_at IS NULL").
-		Where("user_model_provider_groups.create_user_id = ? AND user_model_provider_groups.deleted_at IS NULL", userID).
-		Where("p.category = ?", defaultProviderCategory).
-		Count(&count).Error
-	return count == 0, err
-}
-
-func autoSelectFirstProviderModels(
+func autoSelectUnconfiguredProviderModels(
 	tx *gorm.DB,
 	userID, userName, providerName string,
 	models []orm.UserModelProviderGroupModel,
@@ -315,11 +301,11 @@ func autoSelectFirstProviderModels(
 ) (*autoModelSelection, error) {
 	result := &autoModelSelection{
 		ProviderName: providerName,
-		Configured:   make([]autoSelectedModel, 0, len(firstProviderModelSlots)),
-		Missing:      make([]string, 0, len(firstProviderModelSlots)),
+		Configured:   make([]autoSelectedModel, 0, len(autoModelSlots)),
+		Missing:      make([]string, 0, len(autoModelSlots)),
 	}
 
-	firstByType := make(map[string]orm.UserModelProviderGroupModel, len(firstProviderModelSlots))
+	firstByType := make(map[string]orm.UserModelProviderGroupModel, len(autoModelSlots))
 	for _, model := range models {
 		modelType := strings.TrimSpace(model.ModelType)
 		if _, exists := firstByType[modelType]; !exists {
@@ -327,36 +313,30 @@ func autoSelectFirstProviderModels(
 		}
 	}
 
-	for _, slot := range firstProviderModelSlots {
+	for _, slot := range autoModelSlots {
+		var selected orm.UserSelectedModel
+		err := tx.Where("user_id = ? AND model_type = ?", userID, slot.ModelKey).Take(&selected).Error
+		if err == nil {
+			continue
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
 		model, ok := firstByType[slot.CatalogType]
 		if !ok {
 			result.Missing = append(result.Missing, slot.ModelKey)
 			continue
 		}
-		var selected orm.UserSelectedModel
-		err := tx.Where("user_id = ? AND model_type = ?", userID, slot.ModelKey).Take(&selected).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			selected = orm.UserSelectedModel{
-				UserID:                        userID,
-				UserName:                      userName,
-				ModelKey:                      slot.ModelKey,
-				UserModelProviderGroupModelID: model.ID,
-				CreatedAt:                     now,
-				UpdatedAt:                     now,
-			}
-			if err := tx.Create(&selected).Error; err != nil {
-				return nil, err
-			}
-		} else if err != nil {
+		selected = orm.UserSelectedModel{
+			UserID:                        userID,
+			UserName:                      userName,
+			ModelKey:                      slot.ModelKey,
+			UserModelProviderGroupModelID: model.ID,
+			CreatedAt:                     now,
+			UpdatedAt:                     now,
+		}
+		if err := tx.Create(&selected).Error; err != nil {
 			return nil, err
-		} else {
-			if err := tx.Model(&selected).Updates(map[string]any{
-				"user_model_provider_group_model_id": model.ID,
-				"user_name":                          userName,
-				"updated_at":                         now,
-			}).Error; err != nil {
-				return nil, err
-			}
 		}
 		result.Configured = append(result.Configured, autoSelectedModel{ModelKey: slot.ModelKey, Name: model.Name})
 	}

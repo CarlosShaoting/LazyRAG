@@ -743,7 +743,14 @@ export default function ModelProviderPage({ onConfigurationChanged }: ModelProvi
       message.success(apiKey
         ? t("modelProvider.message.groupVerifiedAndSaved", { name: nextGroup.name })
         : t("modelProvider.message.groupSaved", { name: nextGroup.name }));
-      if (!activeConfigModal.group && savedGroup.auto_selection) {
+      if (
+        !activeConfigModal.group
+        && savedGroup.auto_selection
+        && (
+          savedGroup.auto_selection.configured.length > 0
+          || savedGroup.auto_selection.missing.length > 0
+        )
+      ) {
         const autoSelection = savedGroup.auto_selection;
         const missingLabels = autoSelection.missing.map((modelKey) =>
           t(`modelProvider.autoSelection.modelType.${modelKey}`)

@@ -11,8 +11,8 @@ import (
 	"lazymind/core/common/orm"
 )
 
-func TestAutoSelectFirstProviderModelsUsesFirstCatalogModelAndReportsMissing(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:auto_select_first_provider?mode=memory&cache=shared"), &gorm.Config{})
+func TestAutoSelectUnconfiguredProviderModelsSkipsExistingAndReportsMissing(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:auto_select_unconfigured_provider?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
@@ -21,19 +21,26 @@ func TestAutoSelectFirstProviderModelsUsesFirstCatalogModelAndReportsMissing(t *
 	}
 
 	now := time.Now().UTC()
+	if err := db.Create(&orm.UserSelectedModel{
+		UserID: "user-1", UserName: "User One", ModelKey: "llm",
+		UserModelProviderGroupModelID: "existing-llm", CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("create existing selection: %v", err)
+	}
 	models := []orm.UserModelProviderGroupModel{
 		{ID: "llm-first", Name: "llm-catalog-first", ModelType: "llm"},
 		{ID: "llm-second", Name: "llm-catalog-second", ModelType: "llm"},
 		{ID: "vlm-first", Name: "vlm-catalog-first", ModelType: "vlm"},
+		{ID: "image-first", Name: "image-catalog-first", ModelType: "text2image"},
 	}
-	result, err := autoSelectFirstProviderModels(db, "user-1", "User One", "Example", models, now)
+	result, err := autoSelectUnconfiguredProviderModels(db, "user-1", "User One", "Example", models, now)
 	if err != nil {
 		t.Fatalf("auto select: %v", err)
 	}
 
 	wantConfigured := []autoSelectedModel{
-		{ModelKey: "llm", Name: "llm-catalog-first"},
 		{ModelKey: "vlm", Name: "vlm-catalog-first"},
+		{ModelKey: "image_generator", Name: "image-catalog-first"},
 	}
 	if !reflect.DeepEqual(result.Configured, wantConfigured) {
 		t.Fatalf("configured = %#v, want %#v", result.Configured, wantConfigured)
@@ -46,47 +53,47 @@ func TestAutoSelectFirstProviderModelsUsesFirstCatalogModelAndReportsMissing(t *
 	if err := db.Order("model_type ASC").Find(&selections).Error; err != nil {
 		t.Fatalf("load selections: %v", err)
 	}
-	if len(selections) != 2 {
-		t.Fatalf("selection count = %d, want 2", len(selections))
+	if len(selections) != 3 {
+		t.Fatalf("selection count = %d, want 3", len(selections))
 	}
 	selectedIDs := map[string]string{}
 	for _, selection := range selections {
 		selectedIDs[selection.ModelKey] = selection.UserModelProviderGroupModelID
 	}
-	if selectedIDs["llm"] != "llm-first" || selectedIDs["vlm"] != "vlm-first" {
+	if selectedIDs["llm"] != "existing-llm" ||
+		selectedIDs["vlm"] != "vlm-first" ||
+		selectedIDs["image_generator"] != "image-first" {
 		t.Fatalf("selected model ids = %#v", selectedIDs)
 	}
 }
 
-func TestIsFirstModelProviderGroupOnlyCountsModelCategory(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:first_model_provider_group?mode=memory&cache=shared"), &gorm.Config{})
+func TestAutoSelectUnconfiguredProviderModelsDoesNothingWhenAllRolesExist(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:auto_select_all_configured?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err := db.AutoMigrate(&orm.UserModelProvider{}, &orm.UserModelProviderGroup{}); err != nil {
+	if err := db.AutoMigrate(&orm.UserSelectedModel{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 
 	now := time.Now().UTC()
-	externalProvider := orm.UserModelProvider{
-		ID: "external-provider", Name: "Search", Category: "search",
-		BaseModel: orm.BaseModel{CreateUserID: "user-1", CreatedAt: now, UpdatedAt: now},
-	}
-	if err := db.Create(&externalProvider).Error; err != nil {
-		t.Fatalf("create external provider: %v", err)
-	}
-	if err := db.Create(&orm.UserModelProviderGroup{
-		ID: "external-group", UserModelProviderID: externalProvider.ID, Name: "Search", BaseURL: "https://example.com",
-		BaseModel: orm.BaseModel{CreateUserID: "user-1", CreatedAt: now, UpdatedAt: now},
-	}).Error; err != nil {
-		t.Fatalf("create external group: %v", err)
+	for _, slot := range autoModelSlots {
+		if err := db.Create(&orm.UserSelectedModel{
+			UserID: "user-1", UserName: "User One", ModelKey: slot.ModelKey,
+			UserModelProviderGroupModelID: "existing-" + slot.ModelKey,
+			CreatedAt:                     now, UpdatedAt: now,
+		}).Error; err != nil {
+			t.Fatalf("create %s selection: %v", slot.ModelKey, err)
+		}
 	}
 
-	first, err := isFirstModelProviderGroup(db, "user-1", defaultProviderCategory)
+	result, err := autoSelectUnconfiguredProviderModels(
+		db, "user-1", "User One", "Another Provider", nil, now,
+	)
 	if err != nil {
-		t.Fatalf("check first provider: %v", err)
+		t.Fatalf("auto select: %v", err)
 	}
-	if !first {
-		t.Fatal("external-service groups must not prevent first model-provider auto selection")
+	if len(result.Configured) != 0 || len(result.Missing) != 0 {
+		t.Fatalf("unexpected result when all roles exist: %#v", result)
 	}
 }
