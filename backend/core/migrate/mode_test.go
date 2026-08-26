@@ -114,7 +114,7 @@ func TestRepositoryStructuredMigrationCatalogLoads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read v0_3 aggregate up: %v", err)
 	}
-	for _, token := range []string{"workflow_preparations", "workflow_outbox", "workflow_input_resources", "driver_content", "chat_executor", "thinking_depth VARCHAR(16)", "conversation_policy_snapshot_backups", "conversation.enable_plugin IS NULL", "external_chat_run_events", "external_chat_hosts", "external_agent_bindings", "conversation_archive_folders", "lease_token", "sub_agent_tasks", "sources", "plugin_step_intents", "run_id", "run_status", "run_terminal", "schedules_enabled", "quick_question_defaults", "new_task_defaults", "skill_distribution_artifacts"} {
+	for _, token := range []string{"workflow_preparations", "workflow_outbox", "workflow_input_resources", "driver_content", "chat_executor", "thinking_depth VARCHAR(16)", "conversation_policy_snapshot_backups", "conversation.enable_plugin IS NULL", "external_chat_run_events", "external_chat_hosts", "external_agent_bindings", "conversation_archive_folders", "lease_token", "sub_agent_tasks", "sources", "plugin_step_intents", "run_id", "run_status", "run_terminal", "schedules_enabled", "quick_question_defaults", "new_task_defaults", "skill_distribution_artifacts", "free_auto_select_priority", "free_auto_select_base_urls"} {
 		if !strings.Contains(string(v03Up), token) {
 			t.Fatalf("v0_3 aggregate up is missing %s", token)
 		}
@@ -123,7 +123,7 @@ func TestRepositoryStructuredMigrationCatalogLoads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read v0_3 aggregate down: %v", err)
 	}
-	for _, token := range []string{"enable_plugin_was_null", "DROP TABLE IF EXISTS conversation_policy_snapshot_backups"} {
+	for _, token := range []string{"enable_plugin_was_null", "DROP TABLE IF EXISTS conversation_policy_snapshot_backups", "DROP COLUMN IF EXISTS free_auto_select_priority", "DROP COLUMN IF EXISTS free_auto_select_base_urls"} {
 		if !strings.Contains(string(v03Down), token) {
 			t.Fatalf("v0_3 aggregate down is missing %s", token)
 		}
