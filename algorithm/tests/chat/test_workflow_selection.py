@@ -842,6 +842,37 @@ def test_existing_session_tools_inject_protocol_and_concurrency_fields():
     assert args[2][0].task_id == ''
 
 
+def test_one_user_retry_turn_submits_at_most_one_recovery_attempt():
+    lazyllm.globals['agentic_config']['user_authorized_workflow_retry'] = True
+    toolkit = MagicMock()
+    toolkit.get_ready_steps.return_value = {
+        'state_version': 7, 'ready_steps': [],
+        'retryable_steps': ['write_novel'], 'rewindable_steps': [],
+    }
+    toolkit.advance_step.return_value = {
+        'status': 'failed', 'retryable_steps': ['write_novel'],
+    }
+    with patch('lazymind.chat.workflow.workflow_manager.HostWorkflowToolkit',
+               return_value=toolkit), patch(
+        'lazymind.chat.workflow.workflow_manager._client',
+    ) as client_factory:
+        client_factory.return_value.get_state.return_value = {
+            'status': 'failed', 'state_version': 7,
+        }
+        contribution = resolve_workflow_injection(
+            {'session_id': 'session-1', 'workflow_id': 'novel-workflow'},
+            conversation_id='conversation-1',
+        )
+
+    advance = _tool(contribution, 'advance_step')
+    first = advance(['write_novel'])
+    second = advance(['write_novel'])
+
+    assert first['status'] == 'failed'
+    assert second['outcome'] == 'workflow_retry_already_submitted'
+    assert toolkit.advance_step.call_count == 1
+
+
 def test_advance_step_refreshes_state_version_once_on_conflict():
     toolkit = MagicMock()
     toolkit.get_ready_steps.side_effect = [

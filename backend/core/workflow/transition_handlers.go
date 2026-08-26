@@ -320,7 +320,7 @@ func StartWorkflowSession(w http.ResponseWriter, r *http.Request) {
 		req.TaskID = uuid.NewString()
 	}
 	handOff := req.HandOff
-	params := WorkflowStepParams{WorkflowID: req.WorkflowID, WorkflowRef: req.WorkflowRef, RevisionID: req.WorkflowRevisionID, RevisionNo: req.WorkflowRevisionNo, TreeHash: req.WorkflowTreeHash, RemoteRoot: req.WorkflowRemoteRoot, StepID: req.TargetStepID, UserInput: req.UserInput, IsColdStart: true, HandOff: &handOff, PreflightID: req.PreflightID, ChatSessionID: req.ChatSessionID, TraceID: req.TraceID, ParentSpanID: req.ParentSpanID, WorkflowMode: req.WorkflowMode, UserID: req.UserID, HistoryFilesPerTurn: req.HistoryFilesPerTurn, Filters: req.Filters, ParentAgenticConfig: req.ParentAgenticConfig, RequiredOutputs: graph.Nodes[req.TargetStepID].RequiredOutputs, LegacyTools: graph.Nodes[req.TargetStepID].LegacyTools, TerminalTools: graph.Nodes[req.TargetStepID].TerminalTools, ToolsOnly: graph.Nodes[req.TargetStepID].ToolsOnly, StreamHeartbeat: graph.Nodes[req.TargetStepID].StreamHeartbeat, Runtime: graph.Runtime}
+	params := WorkflowStepParams{WorkflowID: req.WorkflowID, WorkflowRef: req.WorkflowRef, RevisionID: req.WorkflowRevisionID, RevisionNo: req.WorkflowRevisionNo, TreeHash: req.WorkflowTreeHash, RemoteRoot: req.WorkflowRemoteRoot, StepID: req.TargetStepID, UserInput: req.UserInput, IsColdStart: true, HandOff: &handOff, PreflightID: req.PreflightID, ChatSessionID: req.ChatSessionID, TraceID: req.TraceID, ParentSpanID: req.ParentSpanID, WorkflowMode: req.WorkflowMode, Operation: req.Operation, UserID: req.UserID, HistoryFilesPerTurn: req.HistoryFilesPerTurn, Filters: req.Filters, ParentAgenticConfig: req.ParentAgenticConfig, RequiredOutputs: graph.Nodes[req.TargetStepID].RequiredOutputs, LegacyTools: graph.Nodes[req.TargetStepID].LegacyTools, TerminalTools: graph.Nodes[req.TargetStepID].TerminalTools, ToolsOnly: graph.Nodes[req.TargetStepID].ToolsOnly, StreamHeartbeat: graph.Nodes[req.TargetStepID].StreamHeartbeat, Runtime: graph.Runtime}
 	nodeDef := graph.Nodes[req.TargetStepID]
 	inputKeys := graphengine.Materials(nodeDef.Input)
 	for _, optional := range nodeDef.OptionalInputs {
@@ -521,9 +521,11 @@ func TransitionWorkflowSession(w http.ResponseWriter, r *http.Request) {
 	taskIDs := make([]string, 0, len(targets))
 	var response transitionCommandResponse
 	var rejection *transitionRejection
+	var resumeCheckpoint *executor.ResumeCheckpoint
 	err := common.TransactionWithSQLiteBusyRetry(r.Context(), store.DB(), func(tx *gorm.DB) error {
 		taskIDs = taskIDs[:0]
 		rejection = nil
+		resumeCheckpoint = nil
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND dismissed = false", common.PathVar(r, "session_id")).First(&session).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return &transitionRejection{status: http.StatusNotFound, response: transitionCommandResponse{Accepted: false, CommandID: req.CommandID, Error: &transitionError{Code: "SESSION_NOT_FOUND", Message: "plugin session not found"}}}
@@ -588,6 +590,13 @@ func TransitionWorkflowSession(w http.ResponseWriter, r *http.Request) {
 						"max_automatic_attempts": workflowstore.MaxAutomaticWorkflowStepAttempts,
 						"user_retry_available":   true})
 			}
+			checkpoint, checkpointErr := loadWorkflowResumeCheckpoint(
+				r.Context(), tx, session.ID, latest.StepID, latest,
+			)
+			if checkpointErr != nil {
+				return checkpointErr
+			}
+			resumeCheckpoint = checkpoint
 		}
 		completedContinue := session.Status == SessionStatusCompleted && len(targets) == 1 &&
 			req.Operation == "execute" && declaredCompletedContinueStep(graph, targets[0].TargetStepID) &&
@@ -615,16 +624,18 @@ func TransitionWorkflowSession(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			node := projection.Nodes[target.TargetStepID]
-			if node.Reachability != "reachable" && !(completedContinue && declaredCompletedContinueStep(graph, target.TargetStepID)) {
+			retryResume := req.Operation == "retry" && resumeCheckpoint != nil &&
+				resumeCheckpoint.FromAttemptID != "" && target.TargetStepID == targets[0].TargetStepID
+			if node.Reachability != "reachable" && !retryResume && !(completedContinue && declaredCompletedContinueStep(graph, target.TargetStepID)) {
 				invalidTargets = append(invalidTargets, map[string]any{"step_id": target.TargetStepID, "code": "STEP_NOT_REACHABLE"})
 				continue
 			}
-			if node.Readiness != "ready" && !completedContinue {
+			if node.Readiness != "ready" && !completedContinue && !retryResume {
 				invalidTargets = append(invalidTargets, map[string]any{"step_id": target.TargetStepID, "code": "STEP_NOT_READY", "missing_groups": node.Evaluation.MissingGroups})
 				continue
 			}
 			evaluation := node.Evaluation
-			if completedContinue {
+			if completedContinue || retryResume {
 				evaluation = graphengine.Evaluate(nodeDef.Input, snapshot.Materials)
 				if !evaluation.Satisfied {
 					invalidTargets = append(invalidTargets, map[string]any{"step_id": target.TargetStepID, "code": "STEP_NOT_READY", "missing_groups": evaluation.MissingGroups})
@@ -673,7 +684,7 @@ func TransitionWorkflowSession(w http.ResponseWriter, r *http.Request) {
 			nodeDef := graph.Nodes[target.TargetStepID]
 			taskID := target.TaskID
 			if session.ControllerHost == "external-agent" {
-				if err := queueHostAttempt(r.Context(), tx, session, target, nodeDef, now); err != nil {
+				if err := queueHostAttempt(r.Context(), tx, session, target, nodeDef, req.Operation, resumeCheckpoint, now); err != nil {
 					return err
 				}
 			} else {
@@ -681,7 +692,7 @@ func TransitionWorkflowSession(w http.ResponseWriter, r *http.Request) {
 				for _, optional := range nodeDef.OptionalInputs {
 					inputKeys = append(inputKeys, optional.Material)
 				}
-				params := WorkflowStepParams{WorkflowID: session.WorkflowID, WorkflowRef: session.WorkflowRef, RevisionID: session.WorkflowRevisionID, RevisionNo: session.WorkflowRevisionNo, TreeHash: session.WorkflowTreeHash, RemoteRoot: session.WorkflowRemoteRoot, StepID: target.TargetStepID, SessionID: session.ID, UserInput: target.UserInput, HandOff: &handOff, ChatSessionID: req.ChatSessionID, TraceID: req.TraceID, ParentSpanID: req.ParentSpanID, WorkflowMode: req.WorkflowMode, RetryHint: target.RuntimeInstruction, PartialIndices: target.PartialIndices, HistoryFilesPerTurn: req.HistoryFilesPerTurn, Filters: req.Filters, ParentAgenticConfig: req.ParentAgenticConfig, UserID: session.CreateUserID, RequiredOutputs: nodeDef.RequiredOutputs, LegacyTools: nodeDef.LegacyTools, TerminalTools: nodeDef.TerminalTools, ToolsOnly: nodeDef.ToolsOnly, StreamHeartbeat: nodeDef.StreamHeartbeat, Runtime: graph.Runtime}
+				params := WorkflowStepParams{WorkflowID: session.WorkflowID, WorkflowRef: session.WorkflowRef, RevisionID: session.WorkflowRevisionID, RevisionNo: session.WorkflowRevisionNo, TreeHash: session.WorkflowTreeHash, RemoteRoot: session.WorkflowRemoteRoot, StepID: target.TargetStepID, SessionID: session.ID, UserInput: target.UserInput, HandOff: &handOff, ChatSessionID: req.ChatSessionID, TraceID: req.TraceID, ParentSpanID: req.ParentSpanID, WorkflowMode: req.WorkflowMode, RetryHint: target.RuntimeInstruction, Operation: req.Operation, Resume: resumeCheckpoint, PartialIndices: target.PartialIndices, HistoryFilesPerTurn: req.HistoryFilesPerTurn, Filters: req.Filters, ParentAgenticConfig: req.ParentAgenticConfig, UserID: session.CreateUserID, RequiredOutputs: nodeDef.RequiredOutputs, LegacyTools: nodeDef.LegacyTools, TerminalTools: nodeDef.TerminalTools, ToolsOnly: nodeDef.ToolsOnly, StreamHeartbeat: nodeDef.StreamHeartbeat, Runtime: graph.Runtime}
 				var launchErr error
 				stepObjective := workflowStepObjective(nodeDef.Prompt, target.Objective, target.UserInput)
 				_, taskID, _, launchErr = launchWorkflowAttempt(r.Context(), tx, store.State(), session.ConversationID, session.TriggerHistoryID, session.CreateUserID, target.TaskID, session.WorkflowID+":"+target.TargetStepID, stepObjective, params, inputKeys, nodeDef.Outputs, req.LLMConfig, req.ToolConfig, false, false)
@@ -741,8 +752,46 @@ func sessionIntentText(value string) string {
 	return ""
 }
 
+func loadWorkflowResumeCheckpoint(
+	ctx context.Context,
+	db *gorm.DB,
+	sessionID, stepID string,
+	source orm.WorkflowSessionStep,
+) (*executor.ResumeCheckpoint, error) {
+	var revisions []orm.WorkflowSlotRevision
+	if err := db.WithContext(ctx).
+		Where("session_id = ? AND step_id = ? AND validity = ? AND selected = ?",
+			sessionID, stepID, "effective", true).
+		Order("slot_id ASC, list_index ASC, revision ASC").
+		Find(&revisions).Error; err != nil {
+		return nil, err
+	}
+	checkpoint := &executor.ResumeCheckpoint{
+		FromAttemptID:    source.ID,
+		FromTaskID:       source.TaskID,
+		CompletedOutputs: map[string]executor.OutputCheckpoint{},
+	}
+	seenListIndex := map[string]map[int]bool{}
+	for _, revision := range revisions {
+		output := checkpoint.CompletedOutputs[revision.SlotID]
+		if revision.ListIndex == nil {
+			output.Scalar = true
+		} else {
+			if seenListIndex[revision.SlotID] == nil {
+				seenListIndex[revision.SlotID] = map[int]bool{}
+			}
+			if !seenListIndex[revision.SlotID][*revision.ListIndex] {
+				output.ListIndices = append(output.ListIndices, *revision.ListIndex)
+				seenListIndex[revision.SlotID][*revision.ListIndex] = true
+			}
+		}
+		checkpoint.CompletedOutputs[revision.SlotID] = output
+	}
+	return checkpoint, nil
+}
+
 func queueHostAttempt(ctx context.Context, tx *gorm.DB, session orm.WorkflowSession, target transitionTarget,
-	node graphengine.CompiledNode, now time.Time) error {
+	node graphengine.CompiledNode, operation string, resume *executor.ResumeCheckpoint, now time.Time) error {
 	objective := workflowStepObjective(node.Prompt, target.Objective, target.UserInput)
 	refOrID := session.WorkflowRef
 	if refOrID == "" {
@@ -754,12 +803,12 @@ func queueHostAttempt(ctx context.Context, tx *gorm.DB, session orm.WorkflowSess
 		return err
 	}
 	value := executor.AttemptContext{ContractVersion: attempt.ContractVersion, SessionID: session.ID,
-		AttemptID: target.TaskID, StepID: target.TargetStepID, AttemptNo: int(count) + 1, Operation: "execute",
+		AttemptID: target.TaskID, StepID: target.TargetStepID, AttemptNo: int(count) + 1, Operation: operation,
 		Objective: objective, Prompt: node.Prompt, Acceptance: node.Acceptance,
 		Instruction: target.RuntimeInstruction, PartialSelector: target.PartialIndices,
 		WorkflowRevision: session.WorkflowRevisionID, DeclaredOutputs: node.Outputs, DeclaredOutputTypes: outputTypes, RequiredOutputs: node.RequiredOutputs,
 		Capabilities: node.Capabilities, LegacyTools: node.LegacyTools, TerminalTools: node.TerminalTools,
-		ToolsOnly: node.ToolsOnly}
+		ToolsOnly: node.ToolsOnly, Resume: resume}
 	payload, err := json.Marshal(value)
 	if err != nil {
 		return err
@@ -843,6 +892,7 @@ func invalidateForOperation(ctx context.Context, tx *gorm.DB, session *orm.Workf
 		return rejectTransition(commandID, session, graphengine.Projection{}, http.StatusConflict, "INVALID_REWIND", "only succeeded attempts can be rewound", false, nil)
 	}
 	queue := []orm.WorkflowSessionStep{attempt}
+	resumeAttemptID := attempt.ID
 	seen := map[string]bool{}
 	for len(queue) > 0 {
 		current := queue[0]
@@ -859,8 +909,15 @@ func invalidateForOperation(ctx context.Context, tx *gorm.DB, session *orm.Workf
 			return err
 		}
 		for _, output := range outputs {
-			if err := tx.Model(&orm.WorkflowSlotRevision{}).Where("id = ?", output.ID).Updates(map[string]any{"validity": "stale", "selected": false}).Error; err != nil {
-				return err
+			// Failed attempts may still have produced useful, durable checkpoints
+			// (for example a prefix of a list output). Keep those revisions effective
+			// during retry so the next attempt can resume from the first missing output.
+			// A rewind of a succeeded step still invalidates all of
+			// its outputs because it explicitly requests downstream regeneration.
+			if operation != "retry" || current.ID != resumeAttemptID {
+				if err := tx.Model(&orm.WorkflowSlotRevision{}).Where("id = ?", output.ID).Updates(map[string]any{"validity": "stale", "selected": false}).Error; err != nil {
+					return err
+				}
 			}
 			var bindings []orm.WorkflowAttemptInputBinding
 			if err := tx.Where("material_revision_id = ?", output.ID).Find(&bindings).Error; err != nil {

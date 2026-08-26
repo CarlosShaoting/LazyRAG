@@ -20,6 +20,11 @@ const (
 	CodeNotFound          = "ATTEMPT_NOT_FOUND"
 	CodeNotClaimable      = "ATTEMPT_NOT_CLAIMABLE"
 	CodeSchemaUnavailable = "WORKFLOW_ATTEMPT_SCHEMA_UNAVAILABLE"
+
+	// DefaultLeaseDuration tolerates short Core/container restarts without
+	// reclaiming a still-running remote model call. Heartbeats normally renew
+	// every ten seconds; five minutes is only the crash-recovery grace window.
+	DefaultLeaseDuration = 5 * time.Minute
 )
 
 var (
@@ -40,7 +45,7 @@ type Config struct {
 
 func (c Config) leaseDuration() time.Duration {
 	if c.LeaseDuration <= 0 {
-		return 30 * time.Second
+		return DefaultLeaseDuration
 	}
 	return c.LeaseDuration
 }

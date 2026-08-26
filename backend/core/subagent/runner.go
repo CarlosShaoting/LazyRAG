@@ -74,8 +74,9 @@ type TaskEvent struct {
 	// Text / think streaming content.
 	Text  string `json:"text,omitempty"`
 	Think string `json:"think,omitempty"`
-	// Attempt-scoped Markdown Draft preview fields. These events remain
-	// ephemeral and are never persisted as artifacts or steps.
+	// Attempt-scoped artifact preview fields. The executor checkpoints their
+	// content in the Workflow workspace; Core does not turn them into committed
+	// artifacts or DB steps until the producer finishes normally.
 	StreamID   string `json:"stream_id,omitempty"`
 	ChunkIndex int64  `json:"chunk_index,omitempty"`
 	Delta      string `json:"delta,omitempty"`
@@ -231,8 +232,8 @@ func routeEventWithWorkflowHooks(ctx context.Context, db *gorm.DB, stateStore st
 			routeWorkflowStepStatus(ctx, db, stateStore, ev.TaskID, status, ev.Message)
 		}
 	case "artifact_stream_start", "artifact_stream", "artifact_stream_end", "artifact_stream_abort":
-		// Draft preview events are intentionally ephemeral: append to the Task
-		// stream below, without creating DB steps, artifacts, or workflow revisions.
+		// The executor owns the resumable workspace checkpoint. Core appends the
+		// live preview below without creating DB steps, artifacts, or revisions.
 	}
 	if isArtifactStreamEvent(ev.Type) || ev.Type == "progress" ||
 		ev.Type == "done" || ev.Type == "error" {

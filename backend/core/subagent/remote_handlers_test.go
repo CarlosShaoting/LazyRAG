@@ -181,6 +181,43 @@ func TestRemoteExecutionSpecReturnsTaskParamsAndDurableSteps(t *testing.T) {
 	}
 }
 
+func TestRemoteExecutionSpecRestoresStepsFromWorkflowResumeSource(t *testing.T) {
+	db := remoteSubagentFixture(t)
+	now := time.Now().UTC()
+	if err := db.Create(&orm.SubAgentTask{
+		ID: "task-source", ConversationID: "conversation-1", AgentType: "workflow_step",
+		Title: "source", Objective: "run", Mode: "auto", Status: StatusFailed,
+		WorkspacePath: "/core/path/must-not-be-used", InputSlots: json.RawMessage(`[]`),
+		OutputSlots: json.RawMessage(`[]`), CreateUserID: "user-1", LastHeartbeat: now,
+		CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := AppendRemoteStep(context.Background(), db.DB, "task-source", "text",
+		json.RawMessage(`{"content":"durable checkpoint"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&orm.SubAgentTask{}).Where("id = ?", "task-remote").Update(
+		"params", json.RawMessage(`{"resume_from_task_id":"task-source"}`),
+	).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/internal/subagent/tasks/task-remote/execution-spec", nil)
+	req = mux.SetURLVars(req, map[string]string{"task_id": "task-remote"})
+	req.Header.Set("Authorization", "Bearer executor-secret")
+	req.Header.Set("X-Workflow-Lease-Token", "lease-live")
+	rec := httptest.NewRecorder()
+	InternalGetExecutionSpec(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	steps := getData(rec.Body.Bytes())["steps"].([]any)
+	if len(steps) != 1 {
+		t.Fatalf("steps=%#v", steps)
+	}
+}
+
 func TestRemoteExecutionSpecLoadsOnlyDeclaredAcademicSearchConfig(t *testing.T) {
 	db := remoteSubagentFixture(t)
 	seedRemoteSearchProvider(t, db)

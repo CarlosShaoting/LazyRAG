@@ -31,7 +31,25 @@ type AttemptContext struct {
 	LegacyTools         []string          `json:"legacy_tools,omitempty"`
 	TerminalTools       []string          `json:"terminal_tools,omitempty"`
 	ToolsOnly           bool              `json:"tools_only,omitempty"`
+	Resume              *ResumeCheckpoint `json:"resume,omitempty"`
 	Metadata            map[string]string `json:"metadata,omitempty"`
+}
+
+// ResumeCheckpoint is a Host-neutral description of durable work produced by
+// an earlier failed attempt. Every Workflow executor receives the same shape;
+// workflow packages do not implement their own retry bookkeeping.
+type ResumeCheckpoint struct {
+	FromAttemptID    string                      `json:"from_attempt_id"`
+	FromTaskID       string                      `json:"from_task_id,omitempty"`
+	CompletedOutputs map[string]OutputCheckpoint `json:"completed_outputs,omitempty"`
+}
+
+// OutputCheckpoint describes which positions of an output slot are already
+// effective. Scalar is true for a single-cardinality value; ListIndices uses
+// the Workflow Runtime's stable zero-based list_index values.
+type OutputCheckpoint struct {
+	Scalar      bool  `json:"scalar,omitempty"`
+	ListIndices []int `json:"list_indices,omitempty"`
 }
 
 type Artifact struct {

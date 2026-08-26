@@ -281,6 +281,13 @@ func ValidateRequiredOutputs(ctx context.Context, db *gorm.DB, attempt AttemptCo
 	for _, row := range rows {
 		seen[row.SlotID] = true
 	}
+	if attempt.Resume != nil {
+		for slot, checkpoint := range attempt.Resume.CompletedOutputs {
+			if checkpoint.Scalar || len(checkpoint.ListIndices) > 0 {
+				seen[slot] = true
+			}
+		}
+	}
 	for _, slot := range attempt.RequiredOutputs {
 		if !seen[slot] {
 			return errors.New("required output missing: " + slot)

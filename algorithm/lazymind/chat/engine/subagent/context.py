@@ -4,6 +4,8 @@ import hashlib
 import json
 import os
 import shutil
+import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -37,12 +39,146 @@ class SubAgentContext:
     # artifact seq counters and local cache (Go persists to DB; this serves intra-task reads).
     _artifact_counts: Dict[str, int] = field(default_factory=dict)
     _local_artifacts: List[Dict[str, Any]] = field(default_factory=list)
+    _resume_streams: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    _active_streams: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    _stream_lock: Any = field(default_factory=threading.RLock, repr=False)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.params, dict) and self.params.get('workflow_resume'):
+            self._resume_streams = self._load_stream_checkpoints()
 
     def __getstate__(self) -> Dict[str, Any]:
         state = dict(self.__dict__)
         state['db'] = None
         state['emit'] = None
+        state['_stream_lock'] = None
         return state
+
+    def __setstate__(self, state: Dict[str, Any]) -> None:
+        self.__dict__.update(state)
+        self._stream_lock = threading.RLock()
+
+    # ------------------------------------------------------------------
+    # Workflow stream checkpoints
+    # Every artifact_stream producer uses this runtime-owned persistence.
+    # Workflow packages never need to invent page/document-specific retry state.
+    # ------------------------------------------------------------------
+
+    def _stream_checkpoint_dir(self) -> str:
+        return os.path.join(self.workspace_path, '.workflow-runtime', 'streams')
+
+    def _stream_checkpoint_path(self, slot: str) -> str:
+        safe_slot = self._validate_draft_key(slot)
+        return os.path.join(self._stream_checkpoint_dir(), f'{safe_slot}.json')
+
+    def _load_stream_checkpoints(self) -> Dict[str, Dict[str, Any]]:
+        directory = self._stream_checkpoint_dir()
+        if not os.path.isdir(directory):
+            return {}
+        recovered: Dict[str, Dict[str, Any]] = {}
+        for name in os.listdir(directory):
+            if not name.endswith('.json'):
+                continue
+            try:
+                with open(os.path.join(directory, name), 'r', encoding='utf-8') as stream:
+                    value = json.load(stream)
+                slot = self._validate_draft_key(str(value.get('slot') or ''))
+                if str(value.get('content') or ''):
+                    recovered[slot] = value
+            except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                continue
+        return recovered
+
+    def _persist_stream_checkpoint(self, slot: str, state: Dict[str, Any]) -> None:
+        directory = self._stream_checkpoint_dir()
+        os.makedirs(directory, exist_ok=True)
+        path = self._stream_checkpoint_path(slot)
+        temporary = f'{path}.{os.getpid()}.{threading.get_ident()}.tmp'
+        with open(temporary, 'w', encoding='utf-8') as stream:
+            json.dump(state, stream, ensure_ascii=False)
+        os.replace(temporary, path)
+        state['_persisted_chars'] = len(str(state.get('content') or ''))
+        state['_persisted_at'] = time.monotonic()
+
+    def checkpoint_stream_event(self, event: Dict[str, Any]) -> None:
+        """Apply an artifact_stream event to the durable runtime checkpoint."""
+        event_type = str(event.get('type') or '')
+        if event_type not in {
+            'artifact_stream_start', 'artifact_stream',
+            'artifact_stream_end', 'artifact_stream_abort',
+        }:
+            return
+        slot = self._validate_draft_key(str(event.get('slot') or ''))
+        stream_id = str(event.get('stream_id') or '')
+        with self._stream_lock:
+            if event_type == 'artifact_stream_start':
+                state = {
+                    'slot': slot,
+                    'content_type': str(event.get('content_type') or 'text'),
+                    'stream_id': stream_id,
+                    'chunk_index': int(event.get('chunk_index') or 0),
+                    'content': '',
+                    'state': 'streaming',
+                    '_persisted_chars': 0,
+                    '_persisted_at': 0.0,
+                }
+                self._active_streams[slot] = state
+                self._persist_stream_checkpoint(slot, state)
+                return
+            state = self._active_streams.get(slot)
+            if state is None or (stream_id and state.get('stream_id') != stream_id):
+                state = {
+                    'slot': slot,
+                    'content_type': str(event.get('content_type') or 'text'),
+                    'stream_id': stream_id,
+                    'chunk_index': 0,
+                    'content': '',
+                    'state': 'streaming',
+                    '_persisted_chars': 0,
+                    '_persisted_at': 0.0,
+                }
+                self._active_streams[slot] = state
+            state['chunk_index'] = max(
+                int(state.get('chunk_index') or 0), int(event.get('chunk_index') or 0),
+            )
+            if event_type == 'artifact_stream':
+                state['content'] = str(state.get('content') or '') + str(event.get('delta') or '')
+            elif event_type == 'artifact_stream_end':
+                state['state'] = 'completed'
+            else:
+                state['state'] = 'aborted'
+                state['message'] = str(event.get('message') or '')
+            dirty_chars = len(str(state.get('content') or '')) - int(
+                state.get('_persisted_chars') or 0,
+            )
+            elapsed = time.monotonic() - float(state.get('_persisted_at') or 0.0)
+            if event_type != 'artifact_stream' or dirty_chars >= 256 or elapsed >= 1.0:
+                self._persist_stream_checkpoint(slot, state)
+
+    def flush_stream_checkpoints(self) -> None:
+        with self._stream_lock:
+            for slot, state in self._active_streams.items():
+                if len(str(state.get('content') or '')) != int(state.get('_persisted_chars') or 0):
+                    self._persist_stream_checkpoint(slot, state)
+
+    def resume_streams(self) -> Dict[str, Dict[str, Any]]:
+        return {
+            slot: {key: value for key, value in state.items() if not key.startswith('_')}
+            for slot, state in self._resume_streams.items()
+        }
+
+    def resume_stream_text(self, slot: str) -> str:
+        state = self._resume_streams.get(str(slot or '').strip()) or {}
+        return str(state.get('content') or '')
+
+    def active_resume_stream_text(self) -> str:
+        """Return the recovered prefix for the stream currently being produced."""
+        with self._stream_lock:
+            for slot in reversed(list(self._active_streams)):
+                content = self.resume_stream_text(slot)
+                if content:
+                    return content
+        return ''
 
     def next_artifact_seq(self, key: str) -> int:
         if key not in self._artifact_counts:

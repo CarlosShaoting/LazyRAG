@@ -48,7 +48,8 @@ func InternalGetExecutionSpec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var runtimeParams struct {
-		LegacyTools []string `json:"legacy_tools"`
+		LegacyTools      []string `json:"legacy_tools"`
+		ResumeFromTaskID string   `json:"resume_from_task_id"`
 	}
 	if len(task.Params) > 0 {
 		if err := json.Unmarshal(task.Params, &runtimeParams); err != nil {
@@ -67,6 +68,18 @@ func InternalGetExecutionSpec(w http.ResponseWriter, r *http.Request) {
 		toolConfig = map[string]any{}
 	}
 	steps, _ := LoadSteps(r.Context(), store.DB(), taskID)
+	if len(steps) == 0 && strings.TrimSpace(runtimeParams.ResumeFromTaskID) != "" {
+		var source orm.SubAgentTask
+		if err := store.DB().WithContext(r.Context()).
+			Select("id").
+			Where("id = ? AND conversation_id = ? AND create_user_id = ? AND agent_type = ?",
+				runtimeParams.ResumeFromTaskID, task.ConversationID, task.CreateUserID, task.AgentType).
+			First(&source).Error; err != nil {
+			common.ReplyErr(w, "resume checkpoint unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		steps, _ = LoadSteps(r.Context(), store.DB(), source.ID)
+	}
 	stepDTOs := make([]stepDTO, 0, len(steps))
 	for i := range steps {
 		stepDTOs = append(stepDTOs, toStepDTO(&steps[i]))

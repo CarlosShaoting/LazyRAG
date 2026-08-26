@@ -73,6 +73,44 @@ func TestCanonicalQueueContainsNeutralContext(t *testing.T) {
 	}
 }
 
+func TestCanonicalQueueCarriesGenericResumeCheckpoint(t *testing.T) {
+	db := dispatchDB(t, true)
+	seedDispatchStep(t, db, "resume")
+	params := json.RawMessage(`{
+		"required_output_artifact_keys":["report"],
+		"workflow_resume":{
+			"from_attempt_id":"attempt-old",
+			"from_task_id":"task-old",
+			"completed_outputs":{"report":{"scalar":true}}
+		}
+	}`)
+	if err := db.Model(&orm.SubAgentTask{}).Where("id = ?", "task-resume").
+		Update("params", params).Error; err != nil {
+		t.Fatal(err)
+	}
+	request := requestFor("resume")
+	request.Params["operation"] = "retry"
+	if err := enqueueWorkflowAttemptRunner(context.Background(), db, request); err != nil {
+		t.Fatal(err)
+	}
+	var row orm.WorkflowOutbox
+	if err := db.First(&row, "attempt_id = ?", "resume").Error; err != nil {
+		t.Fatal(err)
+	}
+	var value executor.AttemptContext
+	if err := json.Unmarshal(row.PayloadJSON, &value); err != nil {
+		t.Fatal(err)
+	}
+	if value.Operation != "retry" || value.Resume == nil ||
+		value.Resume.FromTaskID != "task-old" ||
+		!value.Resume.CompletedOutputs["report"].Scalar {
+		t.Fatalf("context=%#v", value)
+	}
+	if len(value.RequiredOutputs) != 1 || value.RequiredOutputs[0] != "report" {
+		t.Fatalf("required=%v", value.RequiredOutputs)
+	}
+}
+
 func TestAlgorithmOutageLeavesQueuedAndRestartCanClaim(t *testing.T) {
 	db := dispatchDB(t, true)
 	seedDispatchStep(t, db, "a2")

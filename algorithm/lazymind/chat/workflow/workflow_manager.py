@@ -260,6 +260,8 @@ def _safe_session_tools(
     user_input: Optional[Union[str, Callable[[], str]]] = None,
 ) -> List[Any]:
     """Model tools whose protocol and concurrency parameters are Host-injected."""
+    submitted_user_retries: set[str] = set()
+
     def session_id() -> str:
         value = session() if callable(session) else session
         selected = str(value or '').strip()
@@ -315,6 +317,21 @@ def _safe_session_tools(
                     'WORKFLOW_RECOVERY_MUST_BE_SINGULAR',
                     'Retryable and rewindable targets must be submitted one at a time.',
                 )
+            user_retry = bool(_agentic_config().get('user_authorized_workflow_retry'))
+            repeated = [
+                value for value in requested
+                if value in recovery and value in submitted_user_retries
+            ]
+            if user_retry and repeated:
+                return {
+                    'status': 'waiting',
+                    'outcome': 'workflow_retry_already_submitted',
+                    'retryable_steps': sorted(recovery),
+                    'user_notice': (
+                        '本轮用户请求已经提交过一次 Workflow 重试，且该次执行仍然失败。'
+                        '系统没有自动创建更多 Attempt；请检查错误后由用户再次重试。'
+                    ),
+                }
             try:
                 cfg = _agentic_config()
                 focus_hints = []
@@ -348,6 +365,10 @@ def _safe_session_tools(
                         else 'automatic'
                     ),
                 )
+                if user_retry:
+                    submitted_user_retries.update(
+                        value for value in requested if value in recovery
+                    )
                 if state_refreshed:
                     result = {**result, **_state_refresh_notice()}
                 return _compact_transition_result(_with_terminal_agent_control(result))

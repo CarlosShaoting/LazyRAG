@@ -26,6 +26,15 @@ func testService(t *testing.T) (*Service, *gorm.DB) {
 	return service, db
 }
 
+func TestDefaultLeaseDurationToleratesShortRuntimeRestart(t *testing.T) {
+	if got := (Config{}).leaseDuration(); got != DefaultLeaseDuration {
+		t.Fatalf("default lease duration=%v want=%v", got, DefaultLeaseDuration)
+	}
+	if DefaultLeaseDuration < time.Minute {
+		t.Fatalf("default lease duration is too short for a runtime restart: %v", DefaultLeaseDuration)
+	}
+}
+
 func queue(t *testing.T, service *Service, id, session, step string) {
 	t.Helper()
 	if _, err := service.Queue(context.Background(), QueueRequest{AttemptID: id,

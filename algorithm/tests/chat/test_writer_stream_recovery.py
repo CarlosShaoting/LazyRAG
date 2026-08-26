@@ -154,3 +154,62 @@ def test_heading_validation_failure_is_recovered_and_checkpointed(monkeypatch, t
     assert first == second
     assert first[0].startswith('## 研究方法')
     assert '### 数据来源' in first[0]
+
+
+def test_markdown_stream_consumes_generic_runtime_prefix(monkeypatch, tmp_path):
+    writer = _load_writer_tools()
+    calls = []
+
+    class FakeInstruction:
+        @classmethod
+        def model_validate(cls, value):
+            return SimpleNamespace(section_title=value['section_title'])
+
+    class FakeStream:
+        def __init__(self, continuation_prefix=''):
+            self.markdown = f'## 研究方法\n\n{continuation_prefix}继续完成。\n'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def __iter__(self):
+            yield self.markdown
+
+        def result(self):
+            artifact = tmp_path / 'completed-section.md'
+            artifact.write_text(self.markdown, encoding='utf-8')
+            return {'artifact_path': str(artifact)}
+
+    class FakeDrafting:
+        def __init__(self, **kwargs):
+            pass
+
+        def stream_draft_section(self, **kwargs):
+            calls.append(kwargs)
+            return FakeStream(kwargs.get('continuation_prefix', ''))
+
+    monkeypatch.setattr(writer, 'SectionInstruction', FakeInstruction)
+    monkeypatch.setattr(writer, 'WriterDraftingTools', FakeDrafting)
+    monkeypatch.setattr(writer, '_temp_root', lambda: tmp_path / 'temporary')
+    monkeypatch.setattr(writer, '_write_input_artifact', lambda *args, **kwargs: '/input.json')
+    monkeypatch.setattr(
+        writer, '_active_runtime_stream_prefix',
+        lambda: '# 文档\n\n## 研究方法\n\n已经生成很多文字，',
+    )
+    (tmp_path / 'temporary').mkdir()
+
+    result = json.loads(writer.WriterToolkitBase().stream_draft_blocks_markdown(
+        writing_task_json='{}',
+        section_instructions_json=json.dumps({
+            'instructions': [{'section_title': '研究方法'}],
+        }),
+        writing_context_json='{}',
+        on_delta=lambda value: None,
+        checkpoint_dir=str(tmp_path / 'checkpoints'),
+    ))
+
+    assert calls[0]['continuation_prefix'] == '已经生成很多文字，'
+    assert result == ['## 研究方法\n\n已经生成很多文字，继续完成。']

@@ -61,10 +61,14 @@ func enqueueCanonicalAttempt(ctx context.Context, db *gorm.DB, request subagent.
 		AttemptID: step.ID, StepID: step.StepID, AttemptNo: step.Attempt, Operation: operation, Objective: task.Objective}
 	_ = json.Unmarshal(task.OutputSlots, &value.DeclaredOutputs)
 	var taskParams struct {
-		OutputTypes map[string]string `json:"output_slot_types"`
+		OutputTypes     map[string]string          `json:"output_slot_types"`
+		RequiredOutputs []string                   `json:"required_output_artifact_keys"`
+		Resume          *executor.ResumeCheckpoint `json:"workflow_resume"`
 	}
 	_ = json.Unmarshal(task.Params, &taskParams)
 	value.DeclaredOutputTypes = taskParams.OutputTypes
+	value.RequiredOutputs = taskParams.RequiredOutputs
+	value.Resume = taskParams.Resume
 	if required, ok := request.Params["required_output_artifact_keys"].([]string); ok {
 		value.RequiredOutputs = required
 	}

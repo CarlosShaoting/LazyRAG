@@ -1,6 +1,9 @@
 import base64
 
-from lazymind.chat.engine.subagent.runner import _materialize_workflow_package
+from lazymind.chat.engine.subagent.runner import (
+    _declared_workflow_script_paths,
+    _materialize_workflow_package,
+)
 
 
 def test_materialize_workflow_package_preserves_sibling_runtime(monkeypatch, tmp_path):
@@ -31,3 +34,18 @@ def test_materialize_workflow_package_rejects_path_traversal(monkeypatch, tmp_pa
         assert 'unsafe Workflow package path' in str(exc)
     else:
         raise AssertionError('path traversal must be rejected')
+
+
+def test_declared_workflow_scripts_exclude_tests_and_helpers(tmp_path):
+    (tmp_path / 'workflow.yaml').write_text(
+        'tool_scripts:\n'
+        '  - path: scripts/tools.py\n'
+        '    functions: [generate_novel]\n'
+        '  - path: scripts/other.py\n'
+        '    functions: [other_tool]\n',
+        encoding='utf-8',
+    )
+
+    assert _declared_workflow_script_paths(tmp_path, ['generate_novel']) == [
+        'scripts/tools.py',
+    ]

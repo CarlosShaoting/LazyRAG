@@ -67,6 +67,18 @@ _MARKDOWN_FENCE_RE = re.compile(r'^ {0,3}(?P<marks>`{3,}|~{3,})')
 _MARKDOWN_DRAFT_ROOT_ERROR = 'Markdown draft section must contain exactly one H2 root heading.'
 
 
+def _active_runtime_stream_prefix() -> str:
+    """Read the generic Workflow Runtime prefix for the currently active stream."""
+    try:
+        from lazymind.chat.engine.subagent.context import get_context
+        ctx = get_context()
+        if ctx is not None:
+            return ctx.active_resume_stream_text()
+    except Exception as exc:  # noqa: BLE001 - resume is best effort outside Workflow Runtime.
+        LOG.warning('[Writer] failed to read Workflow stream checkpoint: %s', exc)
+    return ''
+
+
 def _extract_length_constraints(query: str) -> dict[str, int]:
     match = _CHINESE_CHAR_LIMIT_RE.search(query)
     if match is None:
@@ -1278,6 +1290,28 @@ class WriterToolkitBase:
         if not isinstance(instructions, list):
             raise TypeError('section_instructions_json must contain instructions.')
         _bind_document_cross_reference_targets(instructions)
+        runtime_resume_markdown = (
+            _active_runtime_stream_prefix() if representation == 'markdown' else ''
+        )
+
+        def runtime_section_continuation(instruction: SectionInstruction) -> str:
+            if not runtime_resume_markdown:
+                return ''
+            lines = runtime_resume_markdown.splitlines()
+            rows = _markdown_heading_rows(lines)
+            title_key = _markdown_heading_key(instruction.section_title)
+            start = next((
+                index for index, level, heading_title in rows
+                if level == 2 and _markdown_heading_key(heading_title) == title_key
+            ), -1)
+            if start < 0:
+                return ''
+            end = next((
+                index for index, level, _heading_title in rows
+                if index > start and level <= 2
+            ), len(lines))
+            continuation = '\n'.join(lines[start + 1:end]).strip()
+            return continuation if continuation else ''
 
         def forward_delta(delta: str) -> None:
             try:
@@ -1458,6 +1492,7 @@ class WriterToolkitBase:
                         events.put(('done', cached))
                         mark_completed(index, cached=True)
                     return
+                continuation_prefix = runtime_section_continuation(instruction)
                 for attempt in range(1, max_attempts + 1):
                     buffered: list[str] = []
                     section_deltas: list[str] = []
@@ -1487,6 +1522,8 @@ class WriterToolkitBase:
                             'section_instruction': instruction,
                             'context': context_path,
                         }
+                        if representation == 'markdown' and continuation_prefix:
+                            stream_kwargs['continuation_prefix'] = continuation_prefix
                         if visual_plan_path is not None:
                             stream_kwargs['visual_plan'] = visual_plan_path
                         if media_assets_path is not None:

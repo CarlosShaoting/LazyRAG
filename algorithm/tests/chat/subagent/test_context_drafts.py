@@ -1,6 +1,10 @@
 import json
 
 from lazymind.chat.engine.subagent.context import SubAgentContext
+from lazymind.chat.engine.subagent.runner import (
+    _build_workflow_resume_section,
+    _resume_completed_output_keys,
+)
 
 
 def _context(workspace_path: str) -> SubAgentContext:
@@ -68,3 +72,59 @@ def test_artifact_sequence_continues_from_persisted_revisions(tmp_path):
     ctx.db = FakeDB()  # type: ignore[assignment]
     assert ctx.next_artifact_seq('result') == 4
     assert ctx.next_artifact_seq('result') == 5
+
+
+def test_workflow_stream_checkpoint_is_recovered_by_next_attempt(tmp_path):
+    first = _context(str(tmp_path))
+    first.checkpoint_stream_event({
+        'type': 'artifact_stream_start', 'slot': 'report',
+        'content_type': 'text/markdown', 'stream_id': 'stream-1', 'chunk_index': 1,
+    })
+    first.checkpoint_stream_event({
+        'type': 'artifact_stream', 'slot': 'report', 'stream_id': 'stream-1',
+        'chunk_index': 2, 'delta': '已经生成很多文字，',
+    })
+    first.checkpoint_stream_event({
+        'type': 'artifact_stream_abort', 'slot': 'report', 'stream_id': 'stream-1',
+        'chunk_index': 3, 'message': 'provider disconnected',
+    })
+
+    resumed = SubAgentContext(
+        task_id='task-2', conversation_id='conversation-1', agent_type='workflow_step',
+        objective='resume', params={'workflow_resume': {'from_task_id': 'task-1'}},
+        workspace_path=str(tmp_path), input_slots=[], output_slots=['report'],
+        db=None, emit=lambda _event: None,
+    )
+
+    assert resumed.resume_stream_text('report') == '已经生成很多文字，'
+    assert resumed.resume_streams()['report']['state'] == 'aborted'
+
+    resumed.checkpoint_stream_event({
+        'type': 'artifact_stream_start', 'slot': 'report',
+        'content_type': 'text/markdown', 'stream_id': 'stream-2', 'chunk_index': 1,
+    })
+    assert resumed.active_resume_stream_text() == '已经生成很多文字，'
+
+
+def test_workflow_resume_contract_is_slot_generic(tmp_path):
+    params = {
+        'workflow_resume': {
+            'from_attempt_id': 'attempt-1',
+            'completed_outputs': {
+                'pages': {'list_indices': [0, 1, 2, 3]},
+                'title': {'scalar': True},
+            },
+        },
+    }
+    ctx = SubAgentContext(
+        task_id='task-2', conversation_id='conversation-1', agent_type='workflow_step',
+        objective='resume', params=params, workspace_path=str(tmp_path),
+        input_slots=[], output_slots=['pages', 'title'], db=None,
+        emit=lambda _event: None,
+    )
+
+    section = _build_workflow_resume_section(ctx)
+
+    assert _resume_completed_output_keys(params) == {'pages', 'title'}
+    assert 'completed list positions 1, 2, 3, 4' in section
+    assert 'title: scalar output already completed' in section

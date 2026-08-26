@@ -426,6 +426,58 @@ async def test_lease_loss_cancels_subagent_and_suppresses_stale_terminal(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_transient_heartbeat_failure_does_not_cancel_or_duplicate_attempt(
+    monkeypatch, tmp_path,
+):
+    from lazymind.chat.engine.subagent import runner
+
+    worker = RemoteWorkflowExecutor()
+    worker.heartbeat_seconds = 0.01
+    heartbeat_recovered = threading.Event()
+    cancelled = threading.Event()
+
+    class Runtime:
+        heartbeat_calls = 0
+        completed = False
+
+        async def context(self, *_):
+            return {'metadata': {'task_id': 'task-1'}, 'inputs': {}}
+
+        async def execution_spec(self, *_):
+            return {'task': {'input_slots': [], 'output_slots': []},
+                    'workspace_path': str(tmp_path / 'task-1'), 'params': {}, 'steps': []}
+
+        def heartbeat_sync(self, *_):
+            self.heartbeat_calls += 1
+            if self.heartbeat_calls == 1:
+                raise httpx.ConnectError('Core restarting')
+            heartbeat_recovered.set()
+
+        async def complete(self, *_):
+            self.completed = True
+
+        async def fail(self, *_):
+            pytest.fail('a transient heartbeat must not fail the attempt')
+
+        async def task_event(self, *_):
+            return None
+
+    async def stream(**_kwargs):
+        assert heartbeat_recovered.wait(timeout=1)
+        yield 'data: {"type":"done","status":"succeeded","summary":"done"}\n\n'
+
+    runtime = Runtime()
+    worker.runtime = runtime
+    monkeypatch.setattr(runner, 'run_subagent_stream', stream)
+    monkeypatch.setattr(worker, '_cancel_subagent', lambda _task: cancelled.set())
+    await worker._run_claim(object(), {'attempt_id': 'attempt-1', 'lease_token': 'lease-1'})
+
+    assert runtime.heartbeat_calls >= 2
+    assert runtime.completed is True
+    assert not cancelled.is_set()
+
+
+@pytest.mark.asyncio
 async def test_worker_claim_loop_runs_up_to_configured_concurrency(monkeypatch):
     import asyncio
 

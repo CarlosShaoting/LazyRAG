@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import lazyllm
+import yaml
 from lazyllm import LOG, AutoModel
 from lazyllm.tools.agent.base import (
     TOOL_OBSERVATION_KEY,
@@ -177,6 +178,45 @@ def _materialize_workflow_package(
     return root
 
 
+def _declared_workflow_script_paths(package_root: Path, names: List[str]) -> List[str]:
+    """Return only manifest-declared Python modules that can provide ``names``.
+
+    Published packages may contain tests and build helpers below ``scripts/``.
+    Importing every Python file executes non-runtime code and can introduce
+    development-only dependencies. ``workflow.yaml.tool_scripts`` is the
+    authoritative executable allow-list.
+    """
+    manifest_path = package_root / 'workflow.yaml'
+    try:
+        manifest = yaml.safe_load(manifest_path.read_text(encoding='utf-8')) or {}
+    except (OSError, UnicodeError, yaml.YAMLError) as exc:
+        raise RuntimeError(f'cannot read Workflow tool_scripts manifest: {exc}') from exc
+    declarations = manifest.get('tool_scripts') if isinstance(manifest, dict) else []
+    wanted = {str(name).strip() for name in names if str(name).strip()}
+    paths: List[str] = []
+    for declaration in declarations if isinstance(declarations, list) else []:
+        if not isinstance(declaration, dict):
+            continue
+        path = str(declaration.get('path') or '').strip().replace('\\', '/')
+        functions = {
+            str(name).strip()
+            for name in (declaration.get('functions') or [])
+            if str(name).strip()
+        }
+        relative = Path(path)
+        if (
+            not path.startswith('scripts/')
+            or not path.endswith('.py')
+            or relative.is_absolute()
+            or '..' in relative.parts
+            or not wanted.intersection(functions)
+        ):
+            continue
+        if path not in paths:
+            paths.append(path)
+    return paths
+
+
 def load_workflow_tools(params: Dict[str, Any], names: List[str]) -> Dict[str, Any]:
     """Load declared callables from the exact published Workflow revision.
 
@@ -211,8 +251,12 @@ def load_workflow_tools(params: Dict[str, Any], names: List[str]) -> Dict[str, A
         )
         remaining = set(names)
         resolved: Dict[str, Any] = {}
-        for path in sorted(files):
-            if not path.startswith('scripts/') or not path.endswith('.py'):
+        for path in _declared_workflow_script_paths(package_root, names):
+            if path not in files:
+                LOG.warning(
+                    '[SubAgent] Workflow revision %s declares missing script %s',
+                    revision_id, path,
+                )
                 continue
             script_path = package_root / path
             raw_source = script_path.read_bytes()
@@ -370,6 +414,57 @@ def _build_intent_context_section(params: Dict[str, Any]) -> List[str]:
     return ['', '## Effective Execution Intent', instruction]
 
 
+def _resume_completed_output_keys(params: Dict[str, Any]) -> set[str]:
+    checkpoint = params.get('workflow_resume') or {}
+    completed = checkpoint.get('completed_outputs') if isinstance(checkpoint, dict) else {}
+    if not isinstance(completed, dict):
+        return set()
+    return {
+        str(slot) for slot, value in completed.items()
+        if isinstance(value, dict) and (
+            bool(value.get('scalar')) or bool(value.get('list_indices'))
+        )
+    }
+
+
+def _build_workflow_resume_section(ctx: SubAgentContext) -> str:
+    checkpoint = (ctx.params or {}).get('workflow_resume') or {}
+    if not isinstance(checkpoint, dict):
+        return ''
+    lines = [
+        'This is a retry from a durable Workflow Runtime checkpoint.',
+        'Keep every completed output below. Do not regenerate or overwrite it; continue only '
+        'the unfinished output positions and unfinished stream suffixes.',
+    ]
+    completed = checkpoint.get('completed_outputs') or {}
+    if isinstance(completed, dict):
+        for slot, raw in sorted(completed.items()):
+            value = raw if isinstance(raw, dict) else {}
+            if value.get('scalar'):
+                lines.append(f'- {slot}: scalar output already completed')
+            indices = [int(index) for index in value.get('list_indices') or []]
+            if indices:
+                display = ', '.join(str(index + 1) for index in indices)
+                lines.append(
+                    f'- {slot}: completed list positions {display} '
+                    f'(stable zero-based list_index={indices})'
+                )
+    for slot, stream in sorted(ctx.resume_streams().items()):
+        content = str(stream.get('content') or '')
+        if not content:
+            continue
+        shown = content if len(content) <= 12000 else content[-12000:]
+        suffix_note = '' if shown == content else f' (showing final 12000 of {len(content)} chars)'
+        lines.extend([
+            f'- {slot}: in-progress {stream.get("content_type") or "text"} stream, '
+            f'state={stream.get("state") or "unknown"}, chars={len(content)}{suffix_note}',
+            f'<workflow-checkpoint slot="{slot}">',
+            shown,
+            '</workflow-checkpoint>',
+        ])
+    return '\n'.join(lines)
+
+
 _STRUCTURED_PARAM_KEYS = {
     # These values are rendered by dedicated sections below. Excluding only these
     # avoids duplicating large/internal representations while preserving arbitrary
@@ -381,6 +476,9 @@ _STRUCTURED_PARAM_KEYS = {
     'remote_input_value_slots',
     'partial_indices',
     'required_output_artifact_keys',
+    'workflow_resume',
+    'resume_from_task_id',
+    'operation',
     # Framework-owned Workflow routing/concurrency metadata. The effective
     # objective and dedicated artifact sections already contain everything the
     # SubAgent should act on; showing these fields invites it to re-interpret or
@@ -554,6 +652,12 @@ def _build_subagent_plan(
         builder.runtime(
             'subagent_workflow_materials', 'Workflow Material Bindings', workflow_materials,
             'workflow.inputs', priority=25, authoritative=True, content_kind='instruction',
+        )
+    resume_section = _build_workflow_resume_section(ctx)
+    if resume_section:
+        builder.runtime(
+            'subagent_workflow_resume', 'Workflow Resume Checkpoint', resume_section,
+            'workflow.resume', priority=55, authoritative=True, content_kind='instruction',
         )
     # Inject intent/constraints from the workflow session so SubAgent respects user preferences.
     if db:
@@ -888,6 +992,7 @@ async def run_subagent_stream(
     emitted: List[Dict[str, Any]] = []
     stream_events: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
     loop = asyncio.get_running_loop()
+    runtime_ctx: Optional[SubAgentContext] = None
     clear_cancel_queue = True
     source_state: Dict[str, Any] = {}
     reset_citation_state(source_state)
@@ -904,6 +1009,11 @@ async def run_subagent_stream(
 
     def _emit(ev: Dict[str, Any]) -> None:
         if ev.get('type') in DRAFT_STREAM_EVENT_TYPES:
+            if runtime_ctx is not None and str(ev.get('type') or '').startswith('artifact_stream'):
+                try:
+                    runtime_ctx.checkpoint_stream_event(ev)
+                except Exception as exc:
+                    LOG.warning('[SubAgent] failed to persist stream checkpoint: %s', exc)
             try:
                 loop.call_soon_threadsafe(stream_events.put_nowait, dict(ev))
             except RuntimeError as exc:
@@ -970,6 +1080,7 @@ async def run_subagent_stream(
             db=db,
             emit=_emit,
         )
+        runtime_ctx = ctx
         ctx.ensure_workspace()
 
         # For workflow_step tasks: remove {{slot}} placeholders from the objective
@@ -1040,7 +1151,8 @@ async def run_subagent_stream(
         )
 
         step_seq = db.max_step_seq(task_id) + 1 if resume else 0
-        resume_history = _rebuild_history_from_steps(db, task_id) if resume else None
+        resume_task_id = str(params.get('resume_from_task_id') or task_id)
+        resume_history = _rebuild_history_from_steps(db, resume_task_id) if resume else None
         if resume:
             objective_message = (
                 PromptBuilder.for_role(AgentRole.SUBAGENT)
@@ -1192,7 +1304,7 @@ async def run_subagent_stream(
             _auto_flush_drafts(ctx, db)
 
         # Completeness check: every required output key must have at least one artifact.
-        saved = set(ctx.saved_keys())
+        saved = set(ctx.saved_keys()) | _resume_completed_output_keys(ctx.params)
         if _commit_prompt_only_text_output(
             ctx, required_output_keys, saved, final_result,
         ):
@@ -1200,7 +1312,7 @@ async def run_subagent_stream(
                 ev = emitted.pop(0)
                 ev['task_id'] = task_id
                 yield _sse(ev)
-            saved = set(ctx.saved_keys())
+            saved = set(ctx.saved_keys()) | _resume_completed_output_keys(ctx.params)
         missing = [k for k in required_output_keys if k not in saved]
         if missing:
             if effective_agent_type == 'workflow_step':
@@ -1252,6 +1364,11 @@ async def run_subagent_stream(
         yield 'data: [DONE]\n\n'
     except Exception as exc:  # noqa: BLE001
         LOG.exception('[SubAgent] run failed')
+        if runtime_ctx is not None:
+            try:
+                runtime_ctx.flush_stream_checkpoints()
+            except Exception:
+                LOG.exception('[SubAgent] failed to flush stream checkpoints')
         source_event = _sources_event()
         if source_event is not None:
             yield _sse(source_event)
@@ -1267,6 +1384,11 @@ async def run_subagent_stream(
                     'summary': exc_summary, 'message': exc_summary})
         yield 'data: [DONE]\n\n'
     finally:
+        if runtime_ctx is not None:
+            try:
+                runtime_ctx.flush_stream_checkpoints()
+            except Exception:
+                LOG.exception('[SubAgent] failed to flush stream checkpoints')
         if clear_cancel_queue:
             try:
                 from lazyllm.common.queue import FileSystemQueue
@@ -1537,4 +1659,10 @@ def _rebuild_history_from_steps(db: SubAgentDB, task_id: str) -> List[Dict[str, 
                     tool_msg[TOOL_OBSERVATION_KEY] = observation
                 history.append(tool_msg)
             pending_ids = set()
+    if pending_ids and history and history[-1].get('role') == 'assistant':
+        # The process failed while a tool call was still running. Replaying an
+        # assistant tool_call without its matching tool result is invalid; the
+        # durable Workflow checkpoint above tells the model what that call
+        # completed before it failed, so resume from the preceding clean turn.
+        history.pop()
     return history

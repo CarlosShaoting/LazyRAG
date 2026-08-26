@@ -320,4 +320,21 @@ func TestDBArtifactSinkAppendsListSlotsAndReplacesOnlyExplicitIndex(t *testing.T
 	}
 }
 
+func TestValidateRequiredOutputsAcceptsRuntimeResumeCheckpoint(t *testing.T) {
+	db := executorComponentDB(t, &orm.WorkflowSlotRevision{})
+	attempt := AttemptContext{
+		AttemptID: "attempt-new", RequiredOutputs: []string{"report"},
+		Resume: &ResumeCheckpoint{CompletedOutputs: map[string]OutputCheckpoint{
+			"report": {Scalar: true},
+		}},
+	}
+	if err := ValidateRequiredOutputs(context.Background(), db, attempt); err != nil {
+		t.Fatalf("resume checkpoint rejected: %v", err)
+	}
+	attempt.Resume = nil
+	if err := ValidateRequiredOutputs(context.Background(), db, attempt); err == nil {
+		t.Fatal("missing output unexpectedly accepted without resume checkpoint")
+	}
+}
+
 func ptr(value string) *string { return &value }

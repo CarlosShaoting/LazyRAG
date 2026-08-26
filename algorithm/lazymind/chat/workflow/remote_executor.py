@@ -38,6 +38,20 @@ class RemoteWorkflowExecutor:
         self.concurrency = max(1, int(os.getenv('LAZYMIND_WORKFLOW_EXECUTOR_CONCURRENCY', '4')))
         self.runtime = RemoteExecutorClient(self.base_url, self.executor_id, 'lazymind', self.token)
 
+    @staticmethod
+    def _heartbeat_proves_lease_loss(exc: Exception) -> bool:
+        """Return true only when Runtime definitively rejected this owner.
+
+        Connect/read failures and 5xx responses are transport outages. Treating
+        either as immediate lease loss used to abandon a live worker while its
+        blocking model call continued, allowing the same Attempt to be claimed
+        and executed a second time.
+        """
+        return (
+            isinstance(exc, httpx.HTTPStatusError)
+            and exc.response.status_code in {401, 409}
+        )
+
     async def run_forever(self) -> None:
         semaphore = asyncio.Semaphore(self.concurrency)
         running: set[asyncio.Task[Any]] = set()
@@ -112,10 +126,20 @@ class RemoteWorkflowExecutor:
                 while not stopped.wait(self.heartbeat_seconds):
                     try:
                         self.runtime.heartbeat_sync(heartbeat_client, attempt_id, lease)
-                    except Exception:
-                        lease_lost.set()
-                        self._cancel_subagent(task_id)
-                        return
+                    except Exception as exc:
+                        if self._heartbeat_proves_lease_loss(exc):
+                            lease_lost.set()
+                            self._cancel_subagent(task_id)
+                            return
+                        # A temporary Core/proxy outage does not prove that the
+                        # fencing token changed. Keep the current execution and
+                        # retry on the next heartbeat; the longer Runtime lease
+                        # prevents a short restart from reclaiming this Attempt.
+                        LOG.warning(
+                            'transient Workflow heartbeat failure attempt=%s: %s',
+                            attempt_id, exc,
+                        )
+                        continue
 
         heartbeat_thread = threading.Thread(
             target=heartbeat, name=f'workflow-heartbeat-{attempt_id}', daemon=True)
@@ -149,7 +173,7 @@ class RemoteWorkflowExecutor:
             initial_steps = list(spec.get('steps') or [])
             async for frame in run_subagent_stream(
                 task_id=task_id,
-                resume=bool(initial_steps),
+                resume=bool(initial_steps or params.get('workflow_resume')),
                 model_config=spec.get('llm_config'),
                 tool_config=spec.get('tool_config'),
                 agent_type='workflow_step',

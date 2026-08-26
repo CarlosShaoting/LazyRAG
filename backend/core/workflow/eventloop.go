@@ -23,6 +23,7 @@ import (
 	"lazymind/core/store"
 	"lazymind/core/subagent"
 	"lazymind/core/taskcenter"
+	"lazymind/core/workflow/executor"
 	"lazymind/core/workflow/graphengine"
 )
 
@@ -61,6 +62,11 @@ type WorkflowStepParams struct {
 	// It is appended to the step objective before the SubAgent runs, and is NOT persisted
 	// back to state.yml — it only affects the current execution.
 	RetryHint string `json:"retry_hint,omitempty"`
+	Operation string `json:"operation,omitempty"`
+
+	// Resume is produced by Workflow Runtime for retries. It identifies the
+	// previous attempt and every output position that remains effective.
+	Resume *executor.ResumeCheckpoint `json:"workflow_resume,omitempty"`
 
 	// PartialIndices maps slot → list of list_index values that should be
 	// overwritten (not appended) when the SubAgent saves those artifacts.
@@ -130,6 +136,15 @@ func (p WorkflowStepParams) asMap() map[string]any {
 	}
 	if p.RetryHint != "" {
 		m["retry_hint"] = p.RetryHint
+	}
+	if p.Operation != "" {
+		m["operation"] = p.Operation
+	}
+	if p.Resume != nil {
+		m["workflow_resume"] = p.Resume
+		if p.Resume.FromTaskID != "" {
+			m["resume_from_task_id"] = p.Resume.FromTaskID
+		}
 	}
 	if len(p.PartialIndices) > 0 {
 		m["partial_indices"] = p.PartialIndices
@@ -593,6 +608,15 @@ func launchWorkflowAttempt(
 	if params.RetryHint != "" {
 		rawParamsMap["retry_hint"] = params.RetryHint
 	}
+	if params.Operation != "" {
+		rawParamsMap["operation"] = params.Operation
+	}
+	if params.Resume != nil {
+		rawParamsMap["workflow_resume"] = params.Resume
+		if params.Resume.FromTaskID != "" {
+			rawParamsMap["resume_from_task_id"] = params.Resume.FromTaskID
+		}
+	}
 	if len(params.PartialIndices) > 0 {
 		rawParamsMap["partial_indices"] = params.PartialIndices
 	}
@@ -624,6 +648,20 @@ func launchWorkflowAttempt(
 	rawParams, _ := json.Marshal(rawParamsMap)
 	inputJSON, _ := json.Marshal(inputKeys)
 	outputJSON, _ := json.Marshal(outputKeys)
+	workspacePath := subagent.WorkspacePath(userID, taskID)
+	if params.Resume != nil && params.Resume.FromTaskID != "" {
+		var source orm.SubAgentTask
+		if sourceErr := db.WithContext(ctx).
+			Select("workspace_path").
+			Where("id = ? AND conversation_id = ? AND create_user_id = ? AND agent_type = ?",
+				params.Resume.FromTaskID, convID, userID, "workflow_step").
+			First(&source).Error; sourceErr != nil {
+			return sessionID, taskID, false, fmt.Errorf("plugin: load resume workspace: %w", sourceErr)
+		}
+		if strings.TrimSpace(source.WorkspacePath) != "" {
+			workspacePath = source.WorkspacePath
+		}
+	}
 	task, cErr := subagent.CreateTask(ctx, db, subagent.CreateTaskInput{
 		TaskID:           taskID,
 		ConversationID:   convID,
@@ -635,7 +673,7 @@ func launchWorkflowAttempt(
 		Params:           rawParams,
 		InputSlots:       inputJSON,
 		OutputSlots:      outputJSON,
-		WorkspacePath:    subagent.WorkspacePath(userID, taskID),
+		WorkspacePath:    workspacePath,
 		CreateUserID:     userID,
 	})
 	if cErr != nil {
@@ -660,6 +698,15 @@ func launchWorkflowAttempt(
 		"step_id":     stepID,
 		"session_id":  sessionID,
 	}
+	if params.Operation != "" {
+		runParams["operation"] = params.Operation
+	}
+	if params.Resume != nil {
+		runParams["workflow_resume"] = params.Resume
+		if params.Resume.FromTaskID != "" {
+			runParams["resume_from_task_id"] = params.Resume.FromTaskID
+		}
+	}
 	if params.TraceID != "" && params.ParentSpanID != "" {
 		runParams["trace_id"] = params.TraceID
 		runParams["parent_span_id"] = params.ParentSpanID
@@ -672,7 +719,7 @@ func launchWorkflowAttempt(
 	}
 	runRequest := subagent.RunRequest{
 		TaskID: task.ID, AgentType: "workflow_step", WorkspacePath: task.WorkspacePath,
-		Params: runParams, DBDSN: subagent.DBDSN(), Resume: false,
+		Params: runParams, DBDSN: subagent.DBDSN(), Resume: params.Resume != nil,
 		LLMConfig: llmConfig, ToolConfig: toolConfig,
 	}
 	if enqueueErr := enqueueWorkflowAttemptRunner(ctx, db, runRequest); enqueueErr != nil {
