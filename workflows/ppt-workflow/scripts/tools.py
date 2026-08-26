@@ -2489,11 +2489,24 @@ def _agent_llm_call(
 
     instruction = _sanitize_prompt(system_prompt or '')
     prompt_input = user_prompt or ''
+    effective_timeout = float(
+        timeout
+        if timeout is not None
+        else os.environ.get('LAZYMIND_PPT_LLM_TIMEOUT', '300')
+    )
     llm = AutoModel(model='llm').share(
         prompt=ChatPrompter(instruction=instruction),
         stream=False,
     )
-    out = llm(prompt_input)
+    # model_client deliberately forwards its per-request timeout to this
+    # adapter. The adapter previously discarded it, so AutoModel fell back to
+    # the provider configuration's 120-second timeout. Page HTML commonly
+    # needs longer than that; pass the effective timeout into the actual call.
+    out = llm(
+        prompt_input,
+        timeout=effective_timeout,
+        max_retries=max(1, int(retries) + 1),
+    )
     text = str(out).strip() if out is not None else ''
     if not text:
         raise RuntimeError(f'AutoModel llm returned empty text [{request_name}]')
