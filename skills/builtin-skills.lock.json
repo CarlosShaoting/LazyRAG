@@ -117,6 +117,21 @@
       "package_file": "packages/bsk_01L0D6G4R4M8V2K7Q9C5X3H0EP.zip"
     },
     {
+      "key": "user_1a7e2e57/cangjie-distill",
+      "uid": "bsk_85D8CC6C1D0107F230363950DC79",
+      "source_url": "https://skillhub.cn/skills/user_1a7e2e57/cangjie-distill",
+      "resolved_url": "https://api.skillhub.cn/api/v1/download?slug=%40user_1a7e2e57%2Fcangjie-distill",
+      "version": "1.0.0",
+      "name": "cangjie-skill",
+      "description": "Distill a book into a coherent set of executable skills. Use when the user asks to \"拆书\" / \"蒸馏一本书\" / \"把 XX 书做成 skill\" / \"turn a book into skills\" — i.e. wants a book's frameworks, principles, and methodologies extracted into atomic, reusable Claude skills that an agent can invoke in real-world situations. NOT for simple summarization, book reviews, or role-playing as the author (that is nuwa-skill's job).",
+      "category": "external",
+      "market_visible": false,
+      "archive_sha256": "fc308c32156358cfa05decc3eaa82d8a6f2aeeed3b3b3f5140a9f9acf69657d4",
+      "tree_sha256": "24b003a9ad6ee712bf4759c59f9a6f0b420f23e68b852523476c7fde337fd7ce",
+      "archive_size": 30557,
+      "package_file": "packages/bsk_85D8CC6C1D0107F230363950DC79.zip"
+    },
+    {
       "key": "user_7c4df347/gaokao-volunteer-advisor",
       "uid": "bsk_C8C501AEDCEC9283F2C9F9F59AD8",
       "source_url": "https://skillhub.cn/skills/user_7c4df347/gaokao-volunteer-advisor",
@@ -237,6 +252,36 @@
       "tree_sha256": "b22857ba8156de0ad833c26d7e71ed74401e12c4c28f08562fe556ab72ec916b",
       "archive_size": 12568,
       "package_file": "packages/bsk_1E1AE354017CAB635F423BC76790.zip"
+    },
+    {
+      "key": "user_865e3592/poster",
+      "uid": "bsk_0A4FA4EEC9DC0A7987E7A285CD70",
+      "source_url": "https://skillhub.cn/skills/user_865e3592/poster",
+      "resolved_url": "https://api.skillhub.cn/api/v1/download?slug=%40user_865e3592%2Fposter",
+      "version": "0.0.0+6e8ecaa3c33f",
+      "name": "algorithmic-poster-philosophy",
+      "description": "当用户提到海报、视觉设计、品牌视觉、排版系统、极简风格、设计哲学、美学方案，或说\"帮我做张海报\"时，必须触发此技能。该技能先构建一套设计哲学（Algorithmic Philosophy），再基于该哲学用 show_widget 生成可渲染的 SVG 海报 artifact。即使用户没有明确提到\"哲学\"或\"系统\"，只要涉及视觉设计或海报生成，都应触发。适用于品牌视觉、作品集封面、极简主义海报、AI 生成艺术、任何需要系统性美学表达的场景。",
+      "category": "external",
+      "market_visible": false,
+      "archive_sha256": "27e6d9ae55e0cc20953b2aea1ad7dc0c734f0e7890866f913b07d8074a7bd42c",
+      "tree_sha256": "6e8ecaa3c33fb40ada4b04231c6f4ead4560e6ee4e6e4528683826e382e57a3b",
+      "archive_size": 3365,
+      "package_file": "packages/bsk_0A4FA4EEC9DC0A7987E7A285CD70.zip"
+    },
+    {
+      "key": "user_5b28ea14/smart-charts",
+      "uid": "bsk_FFB9D957F2E7E6045A01B28AA5D1",
+      "source_url": "https://skillhub.cn/skills/user_5b28ea14/smart-charts",
+      "resolved_url": "https://api.skillhub.cn/api/v1/download?slug=%40user_5b28ea14%2Fsmart-charts",
+      "version": "6.2.1",
+      "name": "smart-charts",
+      "description": "Intelligent chart generation and data analysis skill. Reads user-supplied data files (CSV/Excel/JSON), analyzes data characteristics with LLM assistance, auto-recommends and generates interactive ECharts visualizations. Use when the user asks to analyze data, generate charts, create visualizations, or work with tabular data files.",
+      "category": "external",
+      "market_visible": false,
+      "archive_sha256": "8b0a8082021633dd12c298b7878cbfb579f956858d812deb5bd41253660d8d24",
+      "tree_sha256": "3e11d139172c812f178c8b0e1f9de6ad906d5293ca83d127095ce2db03e8a937",
+      "archive_size": 401375,
+      "package_file": "packages/bsk_FFB9D957F2E7E6045A01B28AA5D1.zip"
     },
     {
       "key": "skill",
