@@ -2307,7 +2307,7 @@ def _outline_page_numbers(
 def _batch_page_html_publish_progressive(
     deck: Path,
     *,
-    concurrency: int = 4,
+    concurrency: int = 2,
     start_page: int = 0,
     end_page: int = 0,
 ) -> dict:
@@ -2324,7 +2324,7 @@ def _batch_page_html_publish_progressive(
 
     briefs = _load_slide_outline_briefs(page_nos)
     mc.set_llm_impl(_agent_llm_call)
-    workers = max(1, min(int(concurrency or 4), 8))
+    workers = max(1, min(int(concurrency or 2), 8))
     results: dict[int, dict[str, Any]] = {}
     published: list[dict[str, Any]] = []
     retry_history: list[dict[str, Any]] = []
@@ -3581,7 +3581,7 @@ def ppt_build_outline(
 
 def ppt_generate_pages(
     deck_dir: Optional[str] = None,
-    concurrency: Union[int, str, None] = 4,
+    concurrency: Union[int, str, None] = 2,
 ) -> dict:
     """Generate all slide HTML pages from published slide_outline in one call.
 
@@ -3595,7 +3595,7 @@ def ppt_generate_pages(
 
     Args:
         deck_dir (str): Absolute deck directory. Omit to use ppt_find_deck().
-        concurrency (int): Parallel page-html workers (default 4, clamped 1-8).
+        concurrency (int): Parallel page-html workers (default 2, clamped 1-8).
 
     Returns:
         deck_dir, stages summary, page-html ok/failed counts, publish counts.
@@ -3615,7 +3615,7 @@ def ppt_generate_pages(
         return _tool_error('ppt_generate_pages', str(exc))
     deck_dir_s = str(deck.resolve())
 
-    conc = _coerce_int(concurrency, 4, lo=1, hi=8)
+    conc = _coerce_int(concurrency, 2, lo=1, hi=8)
     stages: list[dict[str, Any]] = []
 
     plan_res = ppt_run_stage(deck_dir_s, stage='asset-plan')
@@ -3698,7 +3698,7 @@ def ppt_run_stage(
     deck_dir: str,
     stage: str,
     page: int = 0,
-    concurrency: int = 4,
+    concurrency: Union[int, str, None] = None,
     start_page: int = 0,
     end_page: int = 0,
 ) -> dict:
@@ -3717,7 +3717,8 @@ def ppt_run_stage(
             batch-page-html|refine-page|batch-refine-page.
             Export is UI-only — do not pass stage=export.
         page (int): Required for page-html / refine-page (1-based).
-        concurrency (int): For batch stages (default 4, clamped to 1-8).
+        concurrency (int): For batch stages, clamped to 1-8. Defaults to 2 for
+            batch-page-html and 4 for batch-refine-page.
         start_page (int): Optional batch-page-html start.
         end_page (int): Optional batch-page-html end.
 
@@ -3745,7 +3746,8 @@ def ppt_run_stage(
         return _tool_error('ppt_run_stage', str(exc))
 
     page_no = _coerce_int(page, 0, lo=0)
-    conc = _coerce_int(concurrency, 4, lo=1, hi=8)
+    default_concurrency = 2 if stage_name == 'batch-page-html' else 4
+    conc = _coerce_int(concurrency, default_concurrency, lo=1, hi=8)
     sp = _coerce_int(start_page, 0, lo=0)
     ep = _coerce_int(end_page, 0, lo=0)
     if stage_name in _INPROCESS_STAGES:

@@ -37,7 +37,7 @@ runtime:
       label: 页数
       question: 希望生成多少页？
       type: single
-      choice_policy: fixed
+      choice_policy: seed
       choices:
         - 3 页
         - 5 页
