@@ -80,13 +80,13 @@ func TestAutoSelectUnconfiguredProviderModelsPrefersVerifiedFreeModels(t *testin
 
 	models := []orm.UserModelProviderGroupModel{
 		{ID: "paid-llm", Name: "deepseek-ai/DeepSeek-V4-Flash", ModelType: "llm"},
-		{ID: "free-llm", Name: "THUDM/GLM-Z1-9B-0414", ModelType: "llm"},
+		{ID: "free-llm", Name: "THUDM/GLM-Z1-9B-0414", ModelType: "llm", FreeAutoSelectPriority: 1},
 		{ID: "paid-vlm", Name: "Pro/moonshotai/Kimi-K2.6", ModelType: "vlm"},
-		{ID: "free-vlm", Name: "Qwen/Qwen3.5-4B", ModelType: "vlm"},
+		{ID: "free-vlm", Name: "Qwen/Qwen3.5-4B", ModelType: "vlm", FreeAutoSelectPriority: 1},
 		{ID: "paid-embed", Name: "Qwen/Qwen3-Embedding-8B", ModelType: "embed"},
-		{ID: "free-embed", Name: "BAAI/bge-m3", ModelType: "embed"},
+		{ID: "free-embed", Name: "BAAI/bge-m3", ModelType: "embed", FreeAutoSelectPriority: 1},
 		{ID: "paid-image", Name: "Qwen/Qwen-Image", ModelType: "text2image"},
-		{ID: "free-image", Name: "Kwai-Kolors/Kolors", ModelType: "image_editing"},
+		{ID: "free-image", Name: "Kwai-Kolors/Kolors", ModelType: "image_editing", FreeAutoSelectPriority: 1},
 	}
 	result, err := autoSelectUnconfiguredProviderModels(
 		db, "user-1", "User One", "SiliconFlow", "https://api.siliconflow.cn/v1/", models, time.Now().UTC(),
@@ -123,16 +123,20 @@ func TestAutoSelectUnconfiguredProviderModelsPrefersVerifiedFreeModels(t *testin
 func TestPreferredAutoModelScopesSenseNovaPreferencesToTokenPlan(t *testing.T) {
 	models := []orm.UserModelProviderGroupModel{
 		{ID: "classic-first", Name: "DeepSeek V4 Flash", ModelType: "llm"},
-		{ID: "token-plan", Name: "sensenova-6.7-flash-lite", ModelType: "llm"},
+		{
+			ID: "token-plan", Name: "sensenova-6.7-flash-lite", ModelType: "llm",
+			FreeAutoSelectPriority: 1,
+			FreeAutoSelectBaseURLs: `["https://token.sensenova.cn/v1/chat/completions"]`,
+		},
 	}
 	classic, ok := preferredAutoModel(
-		"SenseNova", "https://api.sensenova.cn/compatible-mode/v1/", "llm", []string{"llm"}, models,
+		"https://api.sensenova.cn/compatible-mode/v1/", []string{"llm"}, models,
 	)
 	if !ok || classic.ID != "classic-first" {
 		t.Fatalf("classic selection = %#v, want catalog-order fallback", classic)
 	}
 	tokenPlan, ok := preferredAutoModel(
-		"SenseNova", sensenovaNewPlatformBaseURL, "llm", []string{"llm"}, models,
+		sensenovaNewPlatformBaseURL, []string{"llm"}, models,
 	)
 	if !ok || tokenPlan.ID != "token-plan" {
 		t.Fatalf("Token Plan selection = %#v, want free Token Plan model", tokenPlan)

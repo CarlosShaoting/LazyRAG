@@ -309,7 +309,7 @@ func autoSelectUnconfiguredProviderModels(
 			return nil, err
 		}
 		model, ok := preferredAutoModel(
-			providerName, baseURL, slot.ModelKey, slot.CatalogTypes, models,
+			baseURL, slot.CatalogTypes, models,
 		)
 		if !ok {
 			result.Missing = append(result.Missing, slot.ModelKey)
@@ -731,6 +731,8 @@ func seedGroupModelsFromDefaults(
 			Name:                     d.Name,
 			ModelType:                d.ModelType,
 			MaxInputTokens:           d.MaxInputTokens,
+			FreeAutoSelectPriority:   d.FreeAutoSelectPriority,
+			FreeAutoSelectBaseURLs:   d.FreeAutoSelectBaseURLs,
 			IsDefault:                true,
 			BaseModel: orm.BaseModel{
 				CreateUserID:   userID,
