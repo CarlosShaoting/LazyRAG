@@ -109,8 +109,8 @@ func TestListUserProvidersReturnsCatalogDescriptionForRequestedLanguage(t *testi
 	if err := db.Model(&orm.DefaultModelProvider{}).Count(&providerCount).Error; err != nil {
 		t.Fatalf("count default providers: %v", err)
 	}
-	if providerCount != 18 {
-		t.Fatalf("expected 18 catalog providers, got %d", providerCount)
+	if providerCount != 19 {
+		t.Fatalf("expected 19 catalog providers, got %d", providerCount)
 	}
 
 	var defaultProvider orm.DefaultModelProvider

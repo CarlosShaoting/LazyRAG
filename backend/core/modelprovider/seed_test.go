@@ -1,9 +1,35 @@
 package modelprovider
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
+
+func TestModelCatalogIncludesOpenRouter(t *testing.T) {
+	yamlBytes, err := os.ReadFile("../config/model_catalog.yaml")
+	if err != nil {
+		t.Fatalf("read model catalog: %v", err)
+	}
+	catalog, err := loadModelCatalog(yamlBytes)
+	if err != nil {
+		t.Fatalf("load model catalog: %v", err)
+	}
+
+	for _, supplier := range catalog["model_providers"].Suppliers {
+		if supplier.Name != "OpenRouter" {
+			continue
+		}
+		if supplier.BaseURL != "https://openrouter.ai/api/v1/" {
+			t.Fatalf("unexpected OpenRouter base URL: %q", supplier.BaseURL)
+		}
+		if len(supplier.Models) != 2 || supplier.Models[0].Name != "openrouter/free" || supplier.Models[1].Name != "openrouter/auto" {
+			t.Fatalf("unexpected OpenRouter models: %+v", supplier.Models)
+		}
+		return
+	}
+	t.Fatal("OpenRouter provider is missing from model catalog")
+}
 
 // --- normalizeBaseURL ---
 

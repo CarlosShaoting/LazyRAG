@@ -401,6 +401,8 @@ const enUS = {
         "MiniMax general-purpose models with strong chat, human-like speech synthesis, and image generation capabilities.\n\nGet API Key:\nhttps://platform.minimaxi.com/\n\nSetup guide:\n\n1. Open the MiniMax platform and sign in or register a developer account.\n\n2. Go to Account Management -> API Keys, or the Token Plan area if applicable.\n\n3. Create a new API Key and copy it for API calls. Pay-as-you-go keys and Token Plan keys may not be interchangeable.",
       openai:
         "OpenAI's frontier model ecosystem for advanced coding, professional workflows, multimodal tasks, embeddings, speech, and agent development.\n\nGet API Key:\nhttps://platform.openai.com/api-keys\n\nSetup guide:\n\n1. Open OpenAI Platform and sign up with an email or Google account.\n\n2. After billing is configured, open API keys from the dashboard.\n\n3. Click Create new secret key, set the desired permissions, and copy the key immediately because it is shown only once.",
+      openrouter:
+        "OpenRouter provides one OpenAI-compatible API for models from multiple providers, allowing model selection with a single API key.\n\nGet API Key:\nhttps://openrouter.ai/settings/keys",
       qwen:
         "Alibaba Cloud's Qwen model family, covering text, vision, speech, embeddings, rerank, image generation, and image editing with strong China-region ecosystem support.\n\nGet API Key:\nhttps://bailian.console.aliyun.com/?apiKey=1#/api-key\n\nSetup guide:\n\n1. Open Alibaba Cloud Bailian console and sign in with an Alibaba Cloud account.\n\n2. Click your avatar and open API-KEY management.\n\n3. Click Create API-KEY and copy the generated key.",
       sensenova:

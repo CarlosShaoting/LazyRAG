@@ -379,6 +379,7 @@ const zhCN = {
       kimi: "Moonshot AI 的 Kimi 模型擅长长上下文推理、智能体编码和中英文处理。\n\n获取 API Key：\nhttps://platform.moonshot.cn/console/api-keys",
       minimax: "MiniMax 通用模型支持对话、语音合成和图像生成。\n\n获取 API Key：\nhttps://platform.minimaxi.com/",
       openai: "OpenAI 前沿模型生态适用于编码、专业工作流、多模态、向量、语音和智能体开发。\n\n获取 API Key：\nhttps://platform.openai.com/api-keys",
+      openrouter: "OpenRouter 通过统一的 OpenAI 兼容接口接入多家模型供应商，可使用同一个 API Key 切换模型。\n\n获取 API Key：\nhttps://openrouter.ai/settings/keys",
       qwen: "阿里云通义千问模型覆盖文本、视觉、语音、向量、重排和图像生成等能力。\n\n获取 API Key：\nhttps://bailian.console.aliyun.com/?apiKey=1#/api-key",
       sensenova: "商汤日日新模型适用于推理、多模态理解和通用 AI 任务。\n\n获取 API Key：\nhttps://platform.sensenova.cn/",
       siliconflow: "硅基流动提供高并发、广泛模型接入的模型 API 聚合与加速服务。\n\n获取 API Key：\nhttps://cloud.siliconflow.cn/account/ak",
