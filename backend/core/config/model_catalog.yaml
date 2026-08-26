@@ -1065,6 +1065,8 @@ model_providers:
         - name: deepseek-ai/DeepSeek-V4-Flash
           type: llm
           max_input_tokens: "1M"
+        - name: THUDM/GLM-Z1-9B-0414
+          type: llm
         - name: Pro/moonshotai/Kimi-K2.6
           type: vlm
           max_input_tokens: "256K"
