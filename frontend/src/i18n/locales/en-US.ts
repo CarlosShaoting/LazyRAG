@@ -517,6 +517,7 @@ const enUS = {
     },
     autoSelection: {
       title: "Automatic model configuration",
+      freeModelWarning: "Free models have limited performance and may not work as expected for most features. Configure a high-performance model manually.",
       configured: "Models configured for you: {{models}}",
       missing: "No {{types}} model for {{provider}} was found in the database. See the {{provider}} documentation.",
       modelType: {

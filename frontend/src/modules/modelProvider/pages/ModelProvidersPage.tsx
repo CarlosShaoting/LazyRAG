@@ -811,6 +811,9 @@ export default function ModelProviderPage({ onConfigurationChanged }: ModelProvi
           title: t("modelProvider.autoSelection.title"),
           content: (
             <div className="model-provider-auto-selection-result">
+              <p className="model-provider-auto-selection-warning">
+                {t("modelProvider.autoSelection.freeModelWarning")}
+              </p>
               {autoSelection.configured.length > 0 ? (
                 <p>{t("modelProvider.autoSelection.configured", {
                   models: autoSelection.configured.map((model) => model.name).join("、"),

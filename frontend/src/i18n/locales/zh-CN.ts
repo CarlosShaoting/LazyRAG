@@ -491,6 +491,7 @@ const zhCN = {
     },
     autoSelection: {
       title: "模型自动配置结果",
+      freeModelWarning: "免费模型性能较低，会导致大部分功能不符合预期，请手动配置高性能模型。",
       configured: "已帮您配置模型 {{models}}",
       missing: "数据库中未发现供应商 {{provider}} 的 {{types}} 模型，请去 {{provider}} 官网查看文档",
       modelType: {
