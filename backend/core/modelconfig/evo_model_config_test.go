@@ -25,14 +25,24 @@ func TestBuildLLMConfigAddsOpenCodeDescriptor(t *testing.T) {
 	}
 }
 
-func TestBuildLLMConfigNormalizesProviderForLazyLLM(t *testing.T) {
-	config := BuildLLMConfig([]SelectedRuntimeModel{{
-		ModelType: "llm", ProviderName: "Open-Router!!", ModelName: "openrouter/auto",
-		BaseURL: "https://openrouter.ai/api/v1/", APIKey: "secret",
-	}})
-	role, ok := config["llm"].(map[string]any)
-	if !ok || role["source"] != "openrouter" {
-		t.Fatalf("expected canonical LazyLLM source, got %#v", config)
+func TestBuildLLMConfigNormalizesOnlyOpenAIBaseURLForLazyLLM(t *testing.T) {
+	config := BuildLLMConfig([]SelectedRuntimeModel{
+		{
+			ModelType: "llm", ProviderName: "OpenAI", ModelName: "private-model",
+			BaseURL: "http://127.0.0.1:8000/chat/completions", APIKey: "secret",
+		},
+		{
+			ModelType: "vlm", ProviderName: "Qwen", ModelName: "qwen-vl",
+			BaseURL: "https://models.example.com/custom/path", APIKey: "secret",
+		},
+	})
+	llm := config["llm"].(map[string]any)
+	if llm["base_url"] != "http://127.0.0.1:8000/v1/" {
+		t.Fatalf("OpenAI base_url = %q", llm["base_url"])
+	}
+	vlm := config["vlm"].(map[string]any)
+	if vlm["base_url"] != "https://models.example.com/custom/path" {
+		t.Fatalf("non-OpenAI base_url changed: %q", vlm["base_url"])
 	}
 }
 

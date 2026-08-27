@@ -189,6 +189,11 @@ function isSensenovaProvider(provider?: Pick<ProviderOption, "source" | "name"> 
   return provider.source === "sensenova" || provider.name?.toLowerCase() === "sensenova";
 }
 
+export function isOpenAIProvider(provider?: Pick<ProviderOption, "source" | "name"> | null): boolean {
+  if (!provider) return false;
+  return normalizeProviderKey(provider.source || provider.name) === "openai";
+}
+
 function isSensenovaNewBaseUrl(url?: string): boolean {
   return normalizeBaseUrlForCompare(url) === normalizeBaseUrlForCompare(SENSENOVA_NEW_BASE_URL);
 }
@@ -491,6 +496,22 @@ function isDefaultProviderBaseUrl(provider: Pick<ProviderOption, "baseUrl">, bas
   return normalizeBaseUrlForCompare(baseUrl) === normalizeBaseUrlForCompare(provider.baseUrl);
 }
 
+export function shouldRedirectCustomBaseUrlToOpenAI(
+  provider: Pick<ProviderOption, "source" | "name" | "baseUrl">,
+  previousBaseUrl: string | undefined,
+  nextBaseUrl: string | undefined
+) {
+  if (
+    isOpenAIProvider(provider) ||
+    normalizeBaseUrlForCompare(previousBaseUrl) === normalizeBaseUrlForCompare(nextBaseUrl) ||
+    isDefaultProviderBaseUrl(provider, nextBaseUrl)
+  ) {
+    return false;
+  }
+  // SenseNova's Token Plan endpoint is an official preset, not a private deployment.
+  return !isSensenovaProvider(provider) || !isSensenovaNewBaseUrl(nextBaseUrl);
+}
+
 interface ModelProviderPageProps {
   onConfigurationChanged?: () => void | Promise<void>;
 }
@@ -630,13 +651,17 @@ export default function ModelProviderPage({ onConfigurationChanged }: ModelProvi
 
   const visibleProviders = [...providerOptions].sort((a, b) => b.name.localeCompare(a.name));
 
-  const openProviderConfig = (provider: AddedProvider | ProviderOption, group?: ProviderConnectionGroup) => {
+  const openProviderConfig = (
+    provider: AddedProvider | ProviderOption,
+    group?: ProviderConnectionGroup,
+    baseUrlOverride?: string
+  ) => {
     const configuredProvider = addedProviderList.find((item) => item.id === provider.id);
     const providerDraft = configuredProvider || provider;
     const groupDraft = group || createConnectionGroup(providerDraft);
 
     setConfigModal({ provider: providerDraft, group });
-    const currentBaseUrl = groupDraft.baseUrl || providerDraft.baseUrl;
+    const currentBaseUrl = normalizeFormText(baseUrlOverride) || groupDraft.baseUrl || providerDraft.baseUrl;
     providerConfigForm.setFieldsValue({
       name: groupDraft.name,
       apiKey: "",
@@ -682,6 +707,30 @@ export default function ModelProviderPage({ onConfigurationChanged }: ModelProvi
     const existingGroup = activeConfigModal.group
       ? existingProvider?.groups.find((group) => group.id === activeConfigModal.group?.id)
       : undefined;
+
+    const previousBaseUrl = existingGroup?.baseUrl || configProvider.baseUrl;
+    if (shouldRedirectCustomBaseUrlToOpenAI(configProvider, previousBaseUrl, baseUrl)) {
+      Modal.confirm({
+        centered: true,
+        title: t("modelProvider.privateDeploymentRedirectTitle"),
+        content: t("modelProvider.privateDeploymentRedirectContent"),
+        okText: t("modelProvider.goToOpenAI"),
+        cancelText: t("modelProvider.stayHere"),
+        onOk: async () => {
+          let openAIProvider = [...addedProviderList, ...providerOptions].find(isOpenAIProvider);
+          if (!openAIProvider) {
+            const providers = await fetchProviderOptions("OpenAI");
+            openAIProvider = providers.find(isOpenAIProvider);
+          }
+          if (!openAIProvider) {
+            message.error(t("modelProvider.openAINotFound"));
+            return Promise.reject(new Error("OpenAI provider not found"));
+          }
+          openProviderConfig(openAIProvider, undefined, baseUrl);
+        },
+      });
+      return;
+    }
 
     if (!isCustomBaseUrl && !apiKey && !existingGroup?.apiKeyConfigured) {
       providerConfigForm.setFields([{ name: "apiKey", errors: [t("modelProvider.validation.apiKeyRequired")] }]);

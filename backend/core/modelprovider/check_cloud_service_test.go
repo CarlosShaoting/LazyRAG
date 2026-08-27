@@ -312,7 +312,7 @@ func TestDoProviderGroupCheckRoutesDoubaoThroughAlgorithmModelCheck(t *testing.T
 	if result == nil || !result.Success {
 		t.Fatalf("expected success, got %+v", result)
 	}
-	if received.Source != "doubao" {
+	if received.Source != "Doubao" {
 		t.Fatalf("unexpected source: %q", received.Source)
 	}
 	if received.URL != "https://ark.cn-beijing.volces.com/api/v3/" {

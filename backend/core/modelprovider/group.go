@@ -169,6 +169,7 @@ func CreateGroup(w http.ResponseWriter, r *http.Request) {
 		common.ReplyErr(w, "query model provider failed", http.StatusInternalServerError)
 		return
 	}
+	baseURL = LazyLLMBaseURL(parent.Name, baseURL)
 
 	// Capability: single-group providers only allow one group per user.
 	if !parent.HasCapability("multi_group") {
@@ -384,6 +385,7 @@ func UpdateGroup(w http.ResponseWriter, r *http.Request) {
 		common.ReplyErr(w, "query model provider failed", http.StatusInternalServerError)
 		return
 	}
+	baseURL = LazyLLMBaseURL(parent.Name, baseURL)
 
 	var row orm.UserModelProviderGroup
 	err = db.WithContext(r.Context()).
