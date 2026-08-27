@@ -72,8 +72,6 @@ export LAZYMIND_MODEL_CONFIG_PATH=online
 
 If the config references multiple providers, export all the corresponding keys at once. `docker-compose.yml` already passes through common LLM API key variables (`LAZYLLM_OPENAI_API_KEY`, `LAZYLLM_DEEPSEEK_API_KEY`, `LAZYLLM_SILICONFLOW_API_KEY`, etc.).
 
-For frontend-managed OpenRouter configuration, see the [OpenRouter configuration guide](openrouter.md), especially the distinction between `openrouter/free` and the potentially paid `openrouter/auto` router.
-
 For on-premises models:
 
 ```bash
