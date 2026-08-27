@@ -25,6 +25,17 @@ func TestBuildLLMConfigAddsOpenCodeDescriptor(t *testing.T) {
 	}
 }
 
+func TestBuildLLMConfigNormalizesProviderForLazyLLM(t *testing.T) {
+	config := BuildLLMConfig([]SelectedRuntimeModel{{
+		ModelType: "llm", ProviderName: "Open-Router!!", ModelName: "openrouter/auto",
+		BaseURL: "https://openrouter.ai/api/v1/", APIKey: "secret",
+	}})
+	role, ok := config["llm"].(map[string]any)
+	if !ok || role["source"] != "openrouter" {
+		t.Fatalf("expected canonical LazyLLM source, got %#v", config)
+	}
+}
+
 func TestBuildLLMConfigDropsIneligibleEvoModel(t *testing.T) {
 	config := BuildLLMConfig([]SelectedRuntimeModel{{
 		ModelType: "evo_llm", TechnicalModelType: "vlm",

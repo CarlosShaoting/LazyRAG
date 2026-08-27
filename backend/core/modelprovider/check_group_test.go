@@ -18,10 +18,12 @@ import (
 
 func TestCheckGroupRequiresRequestAPIKey(t *testing.T) {
 	tests := []struct {
-		name        string
-		requestBody string
-		wantStatus  int
-		wantAPIKey  string
+		name         string
+		providerName string
+		requestBody  string
+		wantStatus   int
+		wantAPIKey   string
+		wantSource   string
 	}{
 		{
 			name:        "omitted key is rejected",
@@ -55,6 +57,14 @@ func TestCheckGroupRequiresRequestAPIKey(t *testing.T) {
 			wantStatus:  http.StatusOK,
 			wantAPIKey:  "custom-request-key",
 		},
+		{
+			name:         "request provider fragment is replaced by canonical parent",
+			providerName: "OpenRouter",
+			requestBody:  `{"provider_name":"port!!!garbage","base_url":"https://openrouter.ai/api/v1/","api_key":"fragment-key","dry_run":false}`,
+			wantStatus:   http.StatusOK,
+			wantAPIKey:   "fragment-key",
+			wantSource:   "openrouter",
+		},
 	}
 
 	for _, tc := range tests {
@@ -75,9 +85,13 @@ func TestCheckGroupRequiresRequestAPIKey(t *testing.T) {
 			}
 
 			now := time.Now()
+			providerName := tc.providerName
+			if providerName == "" {
+				providerName = "Qwen"
+			}
 			defaultProvider := orm.DefaultModelProvider{
 				ID:          "default-qwen",
-				Name:        "Qwen",
+				Name:        providerName,
 				Description: "Qwen provider",
 				BaseURL:     "https://dashscope.aliyuncs.com/",
 				Category:    defaultProviderCategory,
@@ -161,6 +175,13 @@ func TestCheckGroupRequiresRequestAPIKey(t *testing.T) {
 			}
 			if received.APIKey != tc.wantAPIKey {
 				t.Fatalf("upstream api key = %q, want %q", received.APIKey, tc.wantAPIKey)
+			}
+			wantSource := tc.wantSource
+			if wantSource == "" {
+				wantSource = "qwen"
+			}
+			if received.Source != wantSource {
+				t.Fatalf("upstream source = %q, want canonical parent source %q", received.Source, wantSource)
 			}
 			var stored orm.UserModelProviderGroup
 			if err := db.Take(&stored, "id = ?", group.ID).Error; err != nil {

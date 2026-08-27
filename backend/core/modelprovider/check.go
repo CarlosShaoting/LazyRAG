@@ -104,7 +104,7 @@ func doCheck(ctx context.Context, category, providerName, baseURL, apiKey, model
 	upstream := common.JoinURL(common.ChatServiceEndpoint(), checkEndpoint)
 	body := algoModelCheckBody{
 		Model:  model,
-		Source: providerName,
+		Source: LazyLLMSource(providerName),
 		URL:    baseURL,
 		APIKey: apiKey,
 	}
@@ -578,12 +578,11 @@ func CheckGroup(w http.ResponseWriter, r *http.Request) {
 		common.ReplyErr(w, "invalid body", http.StatusBadRequest)
 		return
 	}
-	source := strings.TrimSpace(req.ProviderName)
 	urlStr := strings.TrimSpace(req.BaseURL)
 	apiKey := strings.TrimSpace(req.APIKey)
 	model := strings.TrimSpace(req.Model)
-	if source == "" || urlStr == "" {
-		common.ReplyErr(w, "provider_name and base_url are required", http.StatusBadRequest)
+	if urlStr == "" {
+		common.ReplyErr(w, "base_url is required", http.StatusBadRequest)
 		return
 	}
 
@@ -612,6 +611,9 @@ func CheckGroup(w http.ResponseWriter, r *http.Request) {
 		common.ReplyErr(w, "model provider not found", http.StatusNotFound)
 		return
 	}
+	// The provider row is authoritative. Never forward a user-supplied display
+	// name or fragment to LazyLLM as its registry source.
+	source := parent.Name
 	var group orm.UserModelProviderGroup
 	if err := db.WithContext(r.Context()).
 		Where("id = ? AND user_model_provider_id = ? AND create_user_id = ? AND deleted_at IS NULL", groupID, parentID, userID).
