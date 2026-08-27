@@ -604,13 +604,10 @@ model_providers:
           Use the complete OpenRouter model ID (for example, openrouter/auto or openrouter/free). Other models from the OpenRouter catalog can be added to the connection group.
       base_url: "https://openrouter.ai/api/v1/"
       models:
-        - name: z-ai/glm-5.3-flash
-          type: llm
-          max_input_tokens: "1310720"
-          free_auto_select_priority: 1
         - name: openrouter/free
           type: llm
           max_input_tokens: "200K"
+          free_auto_select_priority: 1
         - name: openrouter/auto
           type: vlm
           max_input_tokens: "2M"
