@@ -594,23 +594,33 @@ model_providers:
           获取 API Key：
           https://openrouter.ai/settings/keys
 
-          模型名称使用 OpenRouter 的完整模型 ID（例如 openrouter/auto 或 openrouter/free）。也可以在连接分组中添加 OpenRouter 模型目录里的其他模型。
+          模型名称使用 OpenRouter 的完整模型 ID。openrouter/free 只路由到免费模型并支持按请求筛选视觉能力；openrouter/auto 可能选择收费模型。也可以在连接分组中添加 OpenRouter 模型目录里的其他模型。
         en-US: |
           OpenRouter provides one OpenAI-compatible API for models from multiple providers, allowing model and router selection with a single API key.
 
           Get an API key:
           https://openrouter.ai/settings/keys
 
-          Use the complete OpenRouter model ID (for example, openrouter/auto or openrouter/free). Other models from the OpenRouter catalog can be added to the connection group.
+          Use the complete OpenRouter model ID. openrouter/free routes only to free models and filters for vision support when needed; openrouter/auto may select paid models. Other models from the OpenRouter catalog can be added to the connection group.
       base_url: "https://openrouter.ai/api/v1/"
       models:
-        - name: openrouter/free
+        - name: z-ai/glm-5.3-flash
           type: llm
+          max_input_tokens: "1310720"
+          free_auto_select_priority: 1
+        - name: openrouter/free
+          type: vlm
           max_input_tokens: "200K"
           free_auto_select_priority: 1
         - name: openrouter/auto
           type: vlm
           max_input_tokens: "2M"
+        - name: liquid/lfm-2.5-embedding-350m:free
+          type: embed
+          max_input_tokens: "512"
+          free_auto_select_priority: 1
+        - name: bytedance-seed/seedream-4.5
+          type: text2image
 
     - name: Qwen
       description:

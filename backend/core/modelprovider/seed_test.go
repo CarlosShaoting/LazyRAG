@@ -23,12 +23,22 @@ func TestModelCatalogIncludesOpenRouter(t *testing.T) {
 		if supplier.BaseURL != "https://openrouter.ai/api/v1/" {
 			t.Fatalf("unexpected OpenRouter base URL: %q", supplier.BaseURL)
 		}
-		if len(supplier.Models) != 2 || supplier.Models[0].Name != "openrouter/free" || supplier.Models[1].Name != "openrouter/auto" {
+		if len(supplier.Models) != 5 || supplier.Models[0].Name != "z-ai/glm-5.3-flash" || supplier.Models[1].Name != "openrouter/free" || supplier.Models[2].Name != "openrouter/auto" || supplier.Models[3].Name != "liquid/lfm-2.5-embedding-350m:free" || supplier.Models[4].Name != "bytedance-seed/seedream-4.5" {
 			t.Fatalf("unexpected OpenRouter models: %+v", supplier.Models)
 		}
 		freeModel := supplier.Models[0]
-		if freeModel.Type != "llm" || freeModel.MaxInputTokens == nil || *freeModel.MaxInputTokens != "200K" || freeModel.FreeAutoSelectPriority != 1 {
+		if freeModel.Type != "llm" || freeModel.MaxInputTokens == nil || *freeModel.MaxInputTokens != "1310720" || freeModel.FreeAutoSelectPriority != 1 {
 			t.Fatalf("unexpected free OpenRouter model config: %+v", freeModel)
+		}
+		freeVLM := supplier.Models[1]
+		if freeVLM.Type != "vlm" || freeVLM.MaxInputTokens == nil || *freeVLM.MaxInputTokens != "200K" || freeVLM.FreeAutoSelectPriority != 1 {
+			t.Fatalf("unexpected free OpenRouter VLM config: %+v", freeVLM)
+		}
+		if supplier.Models[3].Type != "embed" || supplier.Models[4].Type != "text2image" {
+			t.Fatalf("unexpected OpenRouter embedding/image model types: %+v", supplier.Models[3:])
+		}
+		if supplier.Models[3].FreeAutoSelectPriority != 1 {
+			t.Fatalf("unexpected free OpenRouter embedding config: %+v", supplier.Models[3])
 		}
 		return
 	}

@@ -72,6 +72,8 @@ export LAZYMIND_MODEL_CONFIG_PATH=online
 
 如果配置文件引用了多个服务商，需要同时导出所有对应的 Key。`docker-compose.yml` 已透传常见的 LLM API Key 变量（`LAZYLLM_OPENAI_API_KEY`、`LAZYLLM_DEEPSEEK_API_KEY`、`LAZYLLM_SILICONFLOW_API_KEY` 等）。
 
+通过前端动态配置 OpenRouter 时，请参阅 [OpenRouter 配置指南](openrouter.CN.md)，尤其注意 `openrouter/free` 与可能产生费用的 `openrouter/auto` 的区别。
+
 使用内网模型时：
 
 ```bash

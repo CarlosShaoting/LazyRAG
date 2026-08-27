@@ -151,7 +151,7 @@ After startup:
 
 After login, open **Settings** in the frontend:
 
-- Add provider credentials and API keys under **Model Providers**, then select the default LLM, embedding, and reranker under **System Defaults**. Multimodal embedding, VLM, speech, image, video, and evolution models are optional.
+- Add provider credentials and API keys under **Model Providers**, then select the default LLM, embedding, and reranker under **System Defaults**. Multimodal embedding, VLM, speech, image, video, and evolution models are optional. For OpenRouter, see the [OpenRouter configuration guide](docs/openrouter.md).
 - Configure service credentials under **Tools** when needed, including MinerU or PaddleOCR for document parsing, web and academic search engines, and other integrations. No environment variable is required for a hosted MinerU API key.
 
 <table>

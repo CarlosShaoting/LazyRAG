@@ -2,7 +2,7 @@ package modelprovider
 
 import "testing"
 
-func TestLazyLLMBaseURLOnlyNormalizesOpenAI(t *testing.T) {
+func TestLazyLLMBaseURLNormalizesOpenAIAndOfficialOpenRouter(t *testing.T) {
 	tests := []struct {
 		name, provider, input, want string
 	}{
@@ -11,6 +11,9 @@ func TestLazyLLMBaseURLOnlyNormalizesOpenAI(t *testing.T) {
 		{"prefixed v1 is preserved", "OpenAI", "https://model.test/api/v1/models?debug=1#result", "https://model.test/api/v1/"},
 		{"unknown suffix is replaced", "OpenAI", "https://model.test/random/input", "https://model.test/v1/"},
 		{"official endpoint stays canonical", "OpenAI", "https://api.openai.com/v1/", "https://api.openai.com/v1/"},
+		{"official openrouter suffix is cropped", "OpenRouter", "https://openrouter.ai/api/v1/invalid_suffix", "https://openrouter.ai/api/v1/"},
+		{"official openrouter query is cropped", "OpenRouter", "https://openrouter.ai/api/v1/?debug=1#result", "https://openrouter.ai/api/v1/"},
+		{"openrouter proxy path is preserved", "OpenRouter", "https://proxy.example.com/openrouter/v1/", "https://proxy.example.com/openrouter/v1/"},
 		{"other provider is untouched", "Qwen", "https://model.test/random/input?debug=1", "https://model.test/random/input?debug=1"},
 		{"invalid input is left for validation", "OpenAI", "not a url", "not a url"},
 	}

@@ -16,15 +16,19 @@ import (
 	"lazymind/core/store"
 )
 
-func TestCheckGroupRequiresRequestAPIKey(t *testing.T) {
+func TestCheckGroupRequiresAPIKeyOnlyForDefaultBaseURL(t *testing.T) {
 	tests := []struct {
-		name         string
-		providerName string
-		requestBody  string
-		wantStatus   int
-		wantAPIKey   string
-		wantSource   string
-		wantURL      string
+		name           string
+		providerName   string
+		defaultBaseURL string
+		storedBaseURL  string
+		requestBody    string
+		wantStatus     int
+		wantAPIKey     string
+		wantSource     string
+		wantURL        string
+		wantStoredURL  string
+		wantSkipAuth   bool
 	}{
 		{
 			name:        "omitted key is rejected",
@@ -37,14 +41,22 @@ func TestCheckGroupRequiresRequestAPIKey(t *testing.T) {
 			wantStatus:  http.StatusBadRequest,
 		},
 		{
-			name:        "omitted key is rejected for custom base url",
-			requestBody: `{"provider_name":"Qwen","base_url":"https://models.example.com/v1","dry_run":false}`,
-			wantStatus:  http.StatusBadRequest,
+			name:          "omitted key is accepted for custom base url",
+			storedBaseURL: "https://models.example.com/v1",
+			requestBody:   `{"provider_name":"Qwen","base_url":"https://models.example.com/v1","dry_run":false}`,
+			wantStatus:    http.StatusOK,
+			wantSource:    "qwen",
+			wantURL:       "https://models.example.com/v1",
+			wantSkipAuth:  true,
 		},
 		{
-			name:        "empty key is rejected for custom base url",
-			requestBody: `{"provider_name":"Qwen","base_url":"https://models.example.com/v1","api_key":"","dry_run":false}`,
-			wantStatus:  http.StatusBadRequest,
+			name:          "empty key is accepted for custom base url",
+			storedBaseURL: "http://172.24.176.1:43435/v1/",
+			requestBody:   `{"provider_name":"Qwen","base_url":"http://172.24.176.1:43435/v1/","api_key":"","dry_run":false}`,
+			wantStatus:    http.StatusOK,
+			wantSource:    "qwen",
+			wantURL:       "http://172.24.176.1:43435/v1/",
+			wantSkipAuth:  true,
 		},
 		{
 			name:        "provided key takes precedence",
@@ -72,6 +84,18 @@ func TestCheckGroupRequiresRequestAPIKey(t *testing.T) {
 			wantSource:   "openrouter",
 			wantURL:      "https://proxy.example.com/v1/",
 		},
+		{
+			name:           "official openrouter suffix is removed after verification",
+			providerName:   "OpenRouter",
+			defaultBaseURL: "https://openrouter.ai/api/v1/",
+			storedBaseURL:  "https://openrouter.ai/api/v1/invalid_suffix",
+			requestBody:    `{"provider_name":"OpenRouter","base_url":"https://openrouter.ai/api/v1/invalid_suffix","api_key":"openrouter-key","dry_run":false}`,
+			wantStatus:     http.StatusOK,
+			wantAPIKey:     "openrouter-key",
+			wantSource:     "openrouter",
+			wantURL:        "https://openrouter.ai/api/v1/",
+			wantStoredURL:  "https://openrouter.ai/api/v1/",
+		},
 	}
 
 	for _, tc := range tests {
@@ -96,11 +120,15 @@ func TestCheckGroupRequiresRequestAPIKey(t *testing.T) {
 			if providerName == "" {
 				providerName = "Qwen"
 			}
+			defaultBaseURL := tc.defaultBaseURL
+			if defaultBaseURL == "" {
+				defaultBaseURL = "https://dashscope.aliyuncs.com/"
+			}
 			defaultProvider := orm.DefaultModelProvider{
 				ID:          "default-qwen",
 				Name:        providerName,
 				Description: "Qwen provider",
-				BaseURL:     "https://dashscope.aliyuncs.com/",
+				BaseURL:     defaultBaseURL,
 				Category:    defaultProviderCategory,
 				CreatedAt:   now,
 				UpdatedAt:   now,
@@ -123,11 +151,15 @@ func TestCheckGroupRequiresRequestAPIKey(t *testing.T) {
 			if err != nil {
 				t.Fatalf("encrypt stored key: %v", err)
 			}
+			storedBaseURL := tc.storedBaseURL
+			if storedBaseURL == "" {
+				storedBaseURL = defaultProvider.BaseURL
+			}
 			group := orm.UserModelProviderGroup{
 				ID:                  "qwen-group",
 				UserModelProviderID: userProvider.ID,
 				Name:                "Qwen",
-				BaseURL:             defaultProvider.BaseURL,
+				BaseURL:             storedBaseURL,
 				APIKeyCiphertext:    ciphertext,
 				CredentialVersion:   modelProviderCredentialVersion,
 				BaseModel: orm.BaseModel{
@@ -189,12 +221,18 @@ func TestCheckGroupRequiresRequestAPIKey(t *testing.T) {
 			if received.URL != tc.wantURL {
 				t.Fatalf("upstream URL = %q, want proxy URL %q", received.URL, tc.wantURL)
 			}
+			if received.SkipAuth != tc.wantSkipAuth {
+				t.Fatalf("upstream skip_auth = %t, want %t", received.SkipAuth, tc.wantSkipAuth)
+			}
 			var stored orm.UserModelProviderGroup
 			if err := db.Take(&stored, "id = ?", group.ID).Error; err != nil {
 				t.Fatalf("reload group: %v", err)
 			}
 			if !stored.IsVerified {
 				t.Fatal("expected group to be marked verified")
+			}
+			if tc.wantStoredURL != "" && stored.BaseURL != tc.wantStoredURL {
+				t.Fatalf("stored base URL = %q, want %q", stored.BaseURL, tc.wantStoredURL)
 			}
 		})
 	}

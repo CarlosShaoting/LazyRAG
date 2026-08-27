@@ -550,6 +550,9 @@ export default function ModelProviderPage({ onConfigurationChanged }: ModelProvi
     ? `${verifyGroupModal.provider.id}:${verifyGroupModal.group.id}`
     : "";
   const verifyGroupBusy = activeVerifyKey ? Boolean(verifyingGroupIds[activeVerifyKey]) : false;
+  const verifyApiKeyRequired = verifyGroupModal
+    ? isDefaultProviderBaseUrl(verifyGroupModal.provider, verifyGroupModal.group.baseUrl)
+    : true;
   const baseUrlChanged = configProvider
     ? !isDefaultProviderBaseUrl(
         configProvider,
@@ -819,9 +822,19 @@ export default function ModelProviderPage({ onConfigurationChanged }: ModelProvi
                 {t("modelProvider.autoSelection.freeModelWarning")}
               </p>
               {autoSelection.configured.length > 0 ? (
-                <p>{t("modelProvider.autoSelection.configured", {
-                  models: autoSelection.configured.map((model) => model.name).join("、"),
-                })}</p>
+                <div className="model-provider-auto-selection-configured">
+                  <p>{t("modelProvider.autoSelection.configured")}</p>
+                  <ul>
+                    {autoSelection.configured.map((model) => (
+                      <li key={`${model.model_key}:${model.name}`}>
+                        <span>{t(`modelProvider.autoSelection.modelType.${model.model_key}`, {
+                          defaultValue: model.model_key,
+                        })}{t("modelProvider.autoSelection.modelTypeSeparator")}</span>
+                        <span>{model.name}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               ) : null}
               {missingLabels.length > 0 ? (
                 <p>{t("modelProvider.autoSelection.missing", {
@@ -860,7 +873,8 @@ export default function ModelProviderPage({ onConfigurationChanged }: ModelProvi
     }
 
     const requestApiKey = normalizeFormText(apiKey) || normalizeFormText(verifyApiKeyInputRef.current?.input?.value);
-    if (!requestApiKey) {
+    const apiKeyRequiredForGroup = isDefaultProviderBaseUrl(provider, group.baseUrl);
+    if (apiKeyRequiredForGroup && !requestApiKey) {
       message.warning(t("modelProvider.message.fillApiKeyBeforeVerify"));
       return;
     }
@@ -911,6 +925,7 @@ export default function ModelProviderPage({ onConfigurationChanged }: ModelProvi
         )
       );
       if (isVerified) {
+        await loadModelProviders();
         message.success(t("modelProvider.message.groupVerified"));
         void onConfigurationChanged?.();
         return;
@@ -1558,14 +1573,16 @@ export default function ModelProviderPage({ onConfigurationChanged }: ModelProvi
             </div>
           ) : null}
           <Form.Item
-            extra={t("modelProvider.verifyApiKeyExtra")}
+            extra={verifyApiKeyRequired
+              ? t("modelProvider.verifyApiKeyExtra")
+              : t("modelProvider.verifyApiKeyOptionalExtra")}
             label="API Key"
             name="apiKey"
             normalize={(value: string | undefined) => value?.trim()}
-            required
+            required={verifyApiKeyRequired}
             rules={[
               {
-                required: true,
+                required: verifyApiKeyRequired,
                 message: t("modelProvider.validation.apiKeyRequired"),
               },
               { max: 512, message: t("modelProvider.validation.apiKeyMax") },
@@ -1580,7 +1597,9 @@ export default function ModelProviderPage({ onConfigurationChanged }: ModelProvi
             <Input.Password
               autoComplete="off"
               maxLength={512}
-              placeholder={t("modelProvider.verifyApiKeyPlaceholder")}
+              placeholder={verifyApiKeyRequired
+                ? t("modelProvider.verifyApiKeyPlaceholder")
+                : t("modelProvider.apiKeyOptionalPlaceholder")}
               ref={verifyApiKeyInputRef}
               visibilityToggle={false}
             />
