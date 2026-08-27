@@ -23,8 +23,12 @@ func TestModelCatalogIncludesOpenRouter(t *testing.T) {
 		if supplier.BaseURL != "https://openrouter.ai/api/v1/" {
 			t.Fatalf("unexpected OpenRouter base URL: %q", supplier.BaseURL)
 		}
-		if len(supplier.Models) != 2 || supplier.Models[0].Name != "openrouter/free" || supplier.Models[1].Name != "openrouter/auto" {
+		if len(supplier.Models) != 3 || supplier.Models[0].Name != "z-ai/glm-5.3-flash" || supplier.Models[1].Name != "openrouter/free" || supplier.Models[2].Name != "openrouter/auto" {
 			t.Fatalf("unexpected OpenRouter models: %+v", supplier.Models)
+		}
+		freeModel := supplier.Models[0]
+		if freeModel.Type != "llm" || freeModel.MaxInputTokens == nil || *freeModel.MaxInputTokens != "1310720" || freeModel.FreeAutoSelectPriority != 1 {
+			t.Fatalf("unexpected free OpenRouter model config: %+v", freeModel)
 		}
 		return
 	}
