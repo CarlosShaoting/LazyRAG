@@ -122,7 +122,7 @@ func TestAutoSelectUnconfiguredProviderModelsPrefersVerifiedFreeModels(t *testin
 
 func TestPreferredAutoModelScopesSenseNovaPreferencesToTokenPlan(t *testing.T) {
 	models := []orm.UserModelProviderGroupModel{
-		{ID: "classic-first", Name: "DeepSeek V4 Flash", ModelType: "llm"},
+		{ID: "classic-first", Name: "SenseChat-5", ModelType: "llm"},
 		{
 			ID: "token-plan", Name: "sensenova-6.7-flash-lite", ModelType: "llm",
 			FreeAutoSelectPriority: 1,
