@@ -97,6 +97,9 @@ ATTACHED_FILES_TOOL_POLICY_APPENDIX: SystemPromptAppendix = {
     'tool_policy': (
         '# Attached file rules\n'
         'Attachments are listed for reference only — do NOT parse or read them automatically.\n'
+        '- Typed Workflow material values, Workflow material paths, and paths returned by tools '
+        'are not attachments. Pass scalar values as values and paths only to file/path arguments; '
+        'never pass them to attachment tools.\n'
         '- Only call an attachment tool for an exact filename listed in the User Attachments '
         'section. If that section says no attachments are available, do not call attachment tools, '
         'guess common filenames, or retry with invented names.\n'
@@ -108,15 +111,14 @@ ATTACHED_FILES_TOOL_POLICY_APPENDIX: SystemPromptAppendix = {
         '- `find_user_attachment(filename, turn=N)`: get path/url to pass to image tools, '
         '`vision_extractor`, or a Host attachment importer. Prefer this for images when the task is '
         'visual (edit, generate, workflow) or you only need the file location.\n'
-        '- `read_user_attachment(filename, turn=N)`: extract TEXT — direct read for plain-text files, '
-        'local structured extraction for docx (with OCR fallback), OCR for pdf/doc/pptx, or a '
-        'text description via vision for images. Use only when you need document text or a textual '
-        'answer about image content (e.g. "what does this document say", "describe this diagram").\n'
+        '- `read_user_attachment(filename, turn=N)`: transitional compatibility reader. '
+        'Prefer `grep(target, pattern)` and `read_file(target, offset, limit)` for document text; '
+        'image descriptions remain available through this compatibility tool.\n'
         'Supported uploads: images, pdf/doc/docx/pptx, and common plain-text/code/config files.\n'
         '- Default to the current turn (marked 当前轮次) when the user says '
         '"this image / 这张图 / 这个文件" without naming a turn.\n'
-        '- For knowledge-base questions about indexed documents, you may also use '
-        '`kb_tmp_search` or other `kb_*` tools when appropriate.',
+        '- For uploaded whitelist documents, prefer `kb_tmp_search` then `read_file`. '
+        'For knowledge-base questions about indexed documents, use `kb_*` tools.',
     ),
 }
 ATTACHMENT_EDIT_TOOL_POLICY_APPENDIX: SystemPromptAppendix = {
@@ -212,7 +214,8 @@ URL_FETCH_TOOL_POLICY_APPENDIX: SystemPromptAppendix = {
         'pages, issue multiple url_fetch calls in the same tool-call turn so they can execute concurrently. '
         'Listed links are navigation candidates, not read or citable sources. '
         'When `content_truncated=true`, treat the page text as incomplete and do not conclude that omitted content '
-        'is absent.',
+        'is absent. When the URL is a PDF, url_fetch ingests it as a file resource and returns file_id; '
+        'read the document with grep then read_file(offset, limit), never from url_fetch page text.',
     ),
     'output_contract': RETRIEVAL_CITATION_OUTPUT_APPENDIX['output_contract'],
 }
@@ -468,11 +471,13 @@ DEFAULT_TOOLS: list[ToolConfig] = [
         description='基于统一 Writer IR 从资料画像和大纲构建章节草稿与最终成稿',
         tool=WriterCreateToolkit(), module='content', label_en='AI Writing',
         description_en='Create structured long-form writing with the unified Writer IR.',
+        capability_id='writer.create',
     ),
     ToolConfig(
         name='writer_revision', label='AI 修订', description='基于 Writer IR 结构化定位、规划和修改已有文档',
         tool=WriterRevisionToolkit(), module='content', label_en='AI Revision',
         description_en='Revise WriterDocument artifacts through a validated patch workflow.',
+        capability_id='writer.revise',
     ),
     ToolConfig(
         name='calculator',

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
 import os
@@ -14,6 +15,10 @@ from typing import Any, Dict, List, Optional
 
 import lazyllm
 from lazyllm import LOG, AutoModel
+from lazyllm.tools.agent.base import (
+    TOOL_OBSERVATION_KEY,
+    attachable_tool_observation,
+)
 from lazyllm.tools.tool_config_inject import inject_tool_config
 
 from lazymind.chat.engine.agent_runtime import (
@@ -27,6 +32,7 @@ from lazymind.chat.engine.agent_runtime import (
     make_cancel_stop_condition,
 )
 from lazymind.chat.engine.prompts import add_standard_system_sections
+from lazymind.chat.engine.tools.local_file.workspace import grep, read_file
 from lazymind.chat.service.component.event_translator import AgentEventFrameTranslator
 from lazymind.chat.service.component.tool_registry import (
     ATTACHMENT_EDIT_TOOL_CONFIG,
@@ -41,6 +47,7 @@ from lazymind.chat.service.utils import (
     register_existing_sources,
     reset_citation_state,
 )
+from lazymind.chat.workflow.artifacts import build_artifact_context_section
 from lazymind.config import config as _cfg
 from lazymind.model_config import inject_model_config
 
@@ -54,6 +61,7 @@ DRAFT_STREAM_EVENT_TYPES = frozenset({
     'artifact_stream',
     'artifact_stream_end',
     'artifact_stream_abort',
+    'progress',
 })
 
 
@@ -119,45 +127,6 @@ async def merge_agent_and_stream_events(
         for pending in (agent_task, stream_task):
             if pending is not None and not pending.done():
                 pending.cancel()
-
-
-def _build_artifact_context_section(
-    ctx: 'SubAgentContext', db: 'SubAgentDB'
-) -> List[str]:
-    """Build a multi-line artifact summary block to inject into the objective prompt.
-
-    Returns an empty list when there are no input artifacts.
-
-    Workflow scenario (params contains session_id):
-      Reads the public Artifact projection supplied by the Workflow runtime.
-
-    Ordinary SubAgents receive their attachment context through params and do not
-    participate in Workflow resource resolution.
-    """
-    params = ctx.params
-    session_id: str = params.get('session_id', '')
-
-    if session_id:
-        try:
-            import httpx
-            from lazymind.config import config
-            from lazymind.workflow_sdk import WorkflowClient
-            response = WorkflowClient(
-                str(config['core_api_url']).rstrip('/'),
-                str(params.get('user_id') or ''), host='lazymind', transport=httpx,
-            ).list_artifacts(session_id).result
-            artifacts = response.get('artifacts') if isinstance(response, dict) else []
-            if not artifacts:
-                return []
-            return [
-                '## Workflow inputs and artifacts [AUTHORITATIVE public runtime]',
-                json.dumps(artifacts, ensure_ascii=False, default=str),
-            ]
-        except Exception as exc:
-            LOG.warning('[SubAgent] public Workflow Artifact read failed: %s', exc)
-            return []
-
-    return []
 
 
 def _resolve_workflow_step_tools(params: Dict[str, Any]) -> Optional[List[str]]:
@@ -320,6 +289,7 @@ def _build_subagent_tools(
     extra_tools: Optional[List[Any]],
     attachment_configs: Optional[List[Any]] = None,
     *,
+    tools_only: bool = False,
     include_artifact_writes: bool = True,
 ) -> List[Any]:
     """Combine mandatory SubAgent infra tools with optional domain tools.
@@ -330,10 +300,15 @@ def _build_subagent_tools(
     Attachment tools are included as one group when the parent task carries attachment
     context, so the runtime tool list and its system prompt stay consistent.
     """
+    if tools_only:
+        return list(extra_tools or [])
+
     base = [
         subagent_tools.get_artifact,
         subagent_tools.list_artifacts,
         subagent_tools.list_knowledge_bases,
+        grep,
+        read_file,
         subagent_tools.find_artifact,
     ]
     if include_artifact_writes:
@@ -347,6 +322,19 @@ def _build_subagent_tools(
     if extra_tools:
         base.extend(extra_tools)
     return base
+
+
+def _resolve_attachment_configs(
+    agentic_config: Dict[str, Any], agent_type: str, params: Dict[str, Any],
+) -> List[Any]:
+    configs = [*USER_ATTACHMENT_TOOL_CONFIGS, ATTACHMENT_EDIT_TOOL_CONFIG]
+    if agent_type == 'workflow_step':
+        declared = params.get('legacy_tools') or params.get('tools') or []
+        declared_names = {str(name).strip() for name in declared}
+        return [config for config in configs if config.name in declared_names]
+    if agentic_config.get('files') or agentic_config.get('history_files_per_turn'):
+        return configs
+    return []
 
 
 def _tool_configs_for_runtime_tools(runtime_tools: List[Any]) -> list:
@@ -389,6 +377,9 @@ _STRUCTURED_PARAM_KEYS = {
     # task parameters supplied by workflow and ordinary SubAgent callers.
     'history_files_per_turn',
     SUBAGENT_ATTACHMENT_CONTEXT_KEY,
+    'remote_inputs',
+    'remote_input_types',
+    'remote_input_value_slots',
     'partial_indices',
     'required_output_artifact_keys',
     # Framework-owned Workflow routing/concurrency metadata. The effective
@@ -410,6 +401,32 @@ def _attachment_context(params: Dict[str, Any]) -> Dict[str, Any]:
 def _history_files_per_turn(params: Dict[str, Any]) -> Dict[str, List[str]]:
     context = _attachment_context(params)
     return context.get('history_files_per_turn') or params.get('history_files_per_turn') or {}
+
+
+def _workflow_material_bindings_section(params: Dict[str, Any]) -> str:
+    """Describe typed Workflow bindings without presenting them as user uploads."""
+    remote_inputs = params.get('remote_inputs')
+    if not isinstance(remote_inputs, dict) or not remote_inputs:
+        return ''
+    input_types = params.get('remote_input_types') or {}
+    value_slots = set(params.get('remote_input_value_slots') or [])
+    bindings: Dict[str, Any] = {}
+    for slot, value in remote_inputs.items():
+        kind = 'value' if slot in value_slots else 'path'
+        bindings[str(slot)] = {
+            'type': str(input_types.get(str(slot)) or ''),
+            'kind': kind,
+            kind: value,
+        }
+    return '\n'.join((
+        'These are typed Workflow material bindings, not user-uploaded attachments.',
+        'For kind=value, pass the exact value to scalar tool arguments. For kind=path, '
+        'pass the exact path only to file/path arguments or package tools that consume '
+        'Workflow artifacts. Never substitute a path for a scalar value.',
+        'Never call read_user_attachment, find_user_attachment, or attachment editing tools '
+        'for these bindings or for paths returned by another tool.',
+        json.dumps(bindings, ensure_ascii=False, default=str),
+    ))
 
 
 def _build_agentic_config(
@@ -456,6 +473,8 @@ def _build_agentic_config(
             'workflow_id': params.get('workflow_id', ''),
             'workflow_session_id': params.get('session_id', ''),
             'workflow_step': params.get('step_id', ''),
+            # Trusted execution-spec boundary used only by read-only local file tools.
+            'workflow_workspace_path': str(task.get('workspace_path') or '').strip(),
         })
     # Prefer the launched workflow session id whenever present so artifact tools work
     # even if parent_agentic_config carried a stale empty workflow_session_id.
@@ -472,6 +491,7 @@ def _build_subagent_plan(
     tools: List[Any],
     tool_prompt_appendices: Dict[str, List[str]],
     resume: bool = False,
+    llm_config: Optional[Dict[str, Any]] = None,
 ) -> AgentRunPlan:
     builder = PromptBuilder.for_role(AgentRole.SUBAGENT)
     add_standard_system_sections(
@@ -481,6 +501,7 @@ def _build_subagent_plan(
         current_query=ctx.objective,
         show_tool_status=False,
         tool_prompt_appendices=tool_prompt_appendices,
+        include_editable_writing=False,
     )
     builder.system(
         'subagent_role', 'SubAgent Role', (
@@ -493,7 +514,10 @@ def _build_subagent_plan(
             'Use the selected user-visible language for progress and the final summary. '
             'Artifact content must follow the language required by the task objective or '
             'the output slot contract; do not translate an artifact when its required '
-            'format specifies another language.'
+            'format specifies another language. '
+            'Never emit a fenced Markdown block with the language `editable`; that is a '
+            'main Chat Agent presentation protocol. Return normal summary text and persist '
+            'requested deliverables through the declared artifact tools.'
         ),
         'platform.subagent',
         priority=20,
@@ -513,7 +537,7 @@ def _build_subagent_plan(
     # ordinary SubAgent reads from sub_agent_artifacts of prior succeeded steps.
     session_id: str = ctx.params.get('session_id', '')
     if session_id or ctx.input_slots:
-        artifact_section = _build_artifact_context_section(ctx, db) if db else []
+        artifact_section = build_artifact_context_section(ctx.params) if db else []
         if artifact_section:
             builder.runtime(
                 'subagent_artifacts', 'Existing Artifacts', '\n'.join(artifact_section),
@@ -528,6 +552,12 @@ def _build_subagent_plan(
                 priority=20,
                 content_kind='reference',
             )
+    workflow_materials = _workflow_material_bindings_section(ctx.params)
+    if workflow_materials:
+        builder.runtime(
+            'subagent_workflow_materials', 'Workflow Material Bindings', workflow_materials,
+            'workflow.inputs', priority=25, authoritative=True, content_kind='instruction',
+        )
     # Inject intent/constraints from the workflow session so SubAgent respects user preferences.
     if db:
         intent_lines = _build_intent_context_section(ctx.params)
@@ -544,7 +574,32 @@ def _build_subagent_plan(
     attachment_section = render_attachment_content(
         normalize_attachments(history_files_per_turn),
         role=AgentRole.SUBAGENT,
+        skip_pdf=True,
     )
+    file_catalog = ''
+    attachment_context = _attachment_context(ctx.params)
+    conversation_id = str(
+        getattr(ctx, 'conversation_id', '')
+        or ctx.params.get('conversation_id')
+        or attachment_context.get('conversation_id')
+        or ''
+    ).strip()
+    user_id = str(attachment_context.get('user_id') or '').strip()
+    if conversation_id:
+        try:
+            from lazymind.chat.engine.tools.local_file.store import (
+                FileResourceStore,
+                render_file_resource_catalog,
+            )
+            from lazymind.chat.engine.tools.local_file.workspace import chat_agent_workspace
+            store = FileResourceStore(chat_agent_workspace(user_id or '0', conversation_id))
+            file_catalog = render_file_resource_catalog(store)
+        except Exception:
+            file_catalog = ''
+    if file_catalog:
+        attachment_section = (
+            f'{file_catalog}\n\n{attachment_section}' if attachment_section else file_catalog
+        )
     builder.runtime(
         'subagent_attachments', 'User Attachments', attachment_section,
         'request.attachments', priority=40, content_kind='reference',
@@ -639,15 +694,21 @@ def _build_subagent_plan(
         source='task.objective',
     )
     history = []
+    terminal_tool_names = set(_coerce_str_list(ctx.params.get('terminal_tools')))
+    available_tool_names = {
+        str(getattr(tool, '__name__', '') or '') for tool in tools
+    }
     return AgentRunPlan(
         role=AgentRole.SUBAGENT,
         prompt=builder.build(),
         history=history,
         tools=tools,
+        stop_tools=sorted(terminal_tool_names & available_tool_names),
         force_summarize_context=ctx.objective,
         execution_options=AgentExecutionOptions(
             extra_stop_condition=make_cancel_stop_condition(),
             max_retries=max(1, int(_cfg['agentic_expanded_max_rounds']) - 1),
+            llm_config=llm_config or {},
         ),
     )
 
@@ -746,6 +807,73 @@ def _persist_step(ctx: SubAgentContext, seq: int, event: Dict[str, Any]) -> None
         ctx.db.append_step(ctx.task_id, seq, 'tool', {'tool_results': results})
 
 
+def _workflow_control_from_tool_results(
+    event: Dict[str, Any], declared_tool_names: set[str],
+) -> Dict[str, str]:
+    """Extract a control envelope returned by a declared Workflow tool."""
+    if event.get('tag') != 'tool_results':
+        return {}
+    selected: Dict[str, str] = {}
+    for result in event.get('tool_results') or []:
+        if not isinstance(result, dict):
+            continue
+        if str(result.get('name') or '') not in declared_tool_names:
+            continue
+        payload = result.get('result', result.get('content'))
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                try:
+                    payload = ast.literal_eval(payload)
+                except (SyntaxError, ValueError):
+                    continue
+        if isinstance(payload, dict) and payload.get('ok') is True:
+            payload = payload.get('value')
+        if not isinstance(payload, dict) or not isinstance(payload.get('control'), dict):
+            continue
+        next_step = str(payload['control'].get('next_step') or '').strip()
+        if not next_step:
+            continue
+        if selected and selected.get('next_step') != next_step:
+            raise ValueError('Workflow tools returned conflicting control.next_step values.')
+        selected = {'next_step': next_step}
+    return selected
+
+
+def _terminal_tool_failure(event: Dict[str, Any], terminal_tool_names: set[str]) -> str:
+    """Return an error when a terminal tool lacks a structured success result."""
+    if event.get('tag') != 'tool_results' or not terminal_tool_names:
+        return ''
+    for result in event.get('tool_results') or []:
+        if not isinstance(result, dict):
+            continue
+        name = str(result.get('name') or '')
+        if name not in terminal_tool_names:
+            continue
+        payload = result.get('result', result.get('content'))
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return f'{name} failed: {payload}'
+        if not isinstance(payload, dict):
+            return f'{name} failed without a structured result: {payload!r}'
+    return ''
+
+
+def _signal_task_cancel(task_id: str) -> bool:
+    """Signal the sid-scoped worker Agent without masking the original failure."""
+    try:
+        from lazyllm.common.queue import FileSystemQueue
+        lazyllm.globals._init_sid(sid=task_id)
+        FileSystemQueue(klass='cancel').enqueue(json.dumps({'tag': 'cancel'}))
+        return True
+    except Exception:
+        LOG.exception('failed to stop terminal workflow tool task %s', task_id)
+        return False
+
+
 async def run_subagent_stream(
     task_id: str,
     db_dsn: str = '',
@@ -768,6 +896,7 @@ async def run_subagent_stream(
     emitted: List[Dict[str, Any]] = []
     stream_events: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
     loop = asyncio.get_running_loop()
+    clear_cancel_queue = True
     source_state: Dict[str, Any] = {}
     reset_citation_state(source_state)
     last_sources_snapshot = '[]'
@@ -877,7 +1006,8 @@ async def run_subagent_stream(
                     'Pipeline': False, 'Diverter': False,
                 },
                 'by_name': {
-                    '_build_history': False, '_post_action': False, '_safe_call': False,
+                    '_build_history': False, '_post_action': False,
+                    '_safe_call': False, '_indexed_call': False,
                 },
             }
         })
@@ -896,20 +1026,13 @@ async def run_subagent_stream(
 
         llm = AutoModel(model='llm')
         runtime_tools = _resolve_runtime_tools(tools, params)
-        # Workflow steps often need find_user_attachment even when the current synthetic
-        # chat turn has no files; keep the tools available and let the tool report empty.
-        attachment_configs = (
-            [*USER_ATTACHMENT_TOOL_CONFIGS, ATTACHMENT_EDIT_TOOL_CONFIG]
-            if (
-                agentic_config.get('files')
-                or agentic_config.get('history_files_per_turn')
-                or effective_agent_type == 'workflow_step'
-            )
-            else []
+        attachment_configs = _resolve_attachment_configs(
+            agentic_config, effective_agent_type, params,
         )
         subagent_tools_all = _build_subagent_tools(
             runtime_tools,
             attachment_configs,
+            tools_only=bool(ctx.params.get('tools_only')),
             include_artifact_writes=not _publisher_owns_outputs(ctx),
         )
         runtime_configs = _tool_configs_for_runtime_tools(runtime_tools)
@@ -921,6 +1044,7 @@ async def run_subagent_stream(
                 runtime_configs + attachment_configs,
             ),
             resume=resume,
+            llm_config=model_config,
         )
 
         step_seq = db.max_step_seq(task_id) + 1 if resume else 0
@@ -940,6 +1064,9 @@ async def run_subagent_stream(
         # translator unifies text/think output with ChatAgent frame semantics.
         translator = AgentEventFrameTranslator(query=ctx.objective)
         final_result: Any = None
+        workflow_control: Dict[str, str] = {}
+        declared_workflow_tools = set(_coerce_str_list(ctx.params.get('legacy_tools')))
+        terminal_workflow_tools = set(_coerce_str_list(ctx.params.get('terminal_tools')))
         # Accumulate streaming text/think chunks; flush to DB when a tool step follows or at end.
         _pending_text: str = ''
         _pending_think: str = ''
@@ -952,6 +1079,9 @@ async def run_subagent_stream(
             if source == 'stream':
                 stream_event = dict(merged_payload)
                 stream_event['task_id'] = task_id
+                if stream_event.get('type') == 'progress':
+                    progress = max(progress, int(stream_event.get('progress') or 0))
+                    stream_event['progress'] = progress
                 yield _sse(stream_event)
                 continue
 
@@ -972,6 +1102,25 @@ async def run_subagent_stream(
                         _pending_text = ''
                     _persist_step(ctx, step_seq, item)
                     step_seq += 1
+                    if effective_agent_type == 'workflow_step' and tag == 'tool_results':
+                        terminal_error = _terminal_tool_failure(
+                            item, terminal_workflow_tools,
+                        )
+                        if terminal_error:
+                            # Agent execution runs in a worker thread. Cancelling this
+                            # async iterator alone does not stop subsequent React rounds.
+                            if _signal_task_cancel(task_id):
+                                clear_cancel_queue = False
+                            raise RuntimeError(terminal_error)
+                        candidate_control = _workflow_control_from_tool_results(
+                            item, declared_workflow_tools,
+                        )
+                        if candidate_control:
+                            if workflow_control and workflow_control != candidate_control:
+                                raise ValueError(
+                                    'Workflow attempt returned conflicting route decisions.'
+                                )
+                            workflow_control = candidate_control
                     # Forward tool steps as SSE events so the frontend can render them.
                     if tag == 'tool_calls':
                         calls = [
@@ -1103,8 +1252,11 @@ async def run_subagent_stream(
             ev = emitted.pop(0)
             ev['task_id'] = task_id
             yield _sse(ev)
-        yield _sse({'type': 'done', 'task_id': task_id, 'status': 'succeeded',
-                    'summary': summary, 'cost': cost})
+        yield _sse({
+            'type': 'done', 'task_id': task_id, 'status': 'succeeded',
+            'summary': summary, 'cost': cost,
+            **({'control': workflow_control} if workflow_control else {}),
+        })
         yield 'data: [DONE]\n\n'
     except Exception as exc:  # noqa: BLE001
         LOG.exception('[SubAgent] run failed')
@@ -1123,11 +1275,12 @@ async def run_subagent_stream(
                     'summary': exc_summary, 'message': exc_summary})
         yield 'data: [DONE]\n\n'
     finally:
-        try:
-            from lazyllm.common.queue import FileSystemQueue
-            FileSystemQueue(klass='cancel').clear()
-        except Exception:
-            pass
+        if clear_cancel_queue:
+            try:
+                from lazyllm.common.queue import FileSystemQueue
+                FileSystemQueue(klass='cancel').clear()
+            except Exception:
+                pass
         if db is not None:
             db.dispose()
 
@@ -1380,11 +1533,16 @@ def _rebuild_history_from_steps(db: SubAgentDB, task_id: str) -> List[Dict[str, 
                     history.pop()
                 break
             for r in valid:
-                history.append({
+                result = r.get('result', '')
+                tool_msg = {
                     'role': 'tool',
                     'tool_call_id': r.get('tool_call_id'),
                     'name': r.get('name', ''),
-                    'content': str(r.get('result', '')),
-                })
+                    'content': str(result),
+                }
+                observation = attachable_tool_observation(result)
+                if observation is not None:
+                    tool_msg[TOOL_OBSERVATION_KEY] = observation
+                history.append(tool_msg)
             pending_ids = set()
     return history

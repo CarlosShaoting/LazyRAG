@@ -3,6 +3,8 @@ backend/auth-service/api_permissions.json
 backend/core/core
 .env
 docker-compose.override.yml
+# Machine-local model overlay; copy from runtime_models.inner.yaml.
+algorithm/lazymind/common/runtime_models.local.yaml
 
 .flake8-python.path
 __pycache__
@@ -93,6 +95,7 @@ local/.bin/
 local/runtime/
 desktop/build/
 desktop/cache/
+skills/.runtime/
 local/bin/process-compose
 .conda
 

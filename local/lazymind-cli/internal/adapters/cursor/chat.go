@@ -10,17 +10,28 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
+	"lazymind/agentconnector/internal/agentcatalog"
 	"lazymind/agentconnector/internal/agentexec"
 	"lazymind/agentconnector/internal/chatagent"
 )
 
 const maxEventBytes = 4 << 20
 
+const (
+	statusTimeout = 5 * time.Second
+	loginTimeout  = 2 * time.Minute
+)
+
 type ChatRunner struct {
 	binary string
 	self   string
 	home   string
+}
+
+func (r *ChatRunner) Sessions(ctx context.Context) ([]chatagent.NativeSession, error) {
+	return agentcatalog.CursorSessions(ctx)
 }
 
 func NewChatRunner(binary string) (*ChatRunner, error) {
@@ -58,22 +69,58 @@ func findBinary(configured string) (string, error) {
 	return resolved, nil
 }
 
+func Login(ctx context.Context, binary string) error {
+	resolved, err := findBinary(binary)
+	if err != nil {
+		return err
+	}
+	loginCtx, cancel := context.WithTimeout(ctx, loginTimeout)
+	defer cancel()
+	_, err = agentexec.Run(loginCtx, resolved, "login")
+	return err
+}
+
+func (r *ChatRunner) Availability() (bool, string) {
+	ctx, cancel := context.WithTimeout(context.Background(), statusTimeout)
+	defer cancel()
+	status, err := agentexec.Run(ctx, r.binary, "status")
+	if err != nil || strings.Contains(strings.ToLower(status), "not logged in") ||
+		strings.Contains(strings.ToLower(status), "not authenticated") {
+		return false, "Cursor Agent CLI is not signed in; run `cursor-agent login`"
+	}
+	return true, ""
+}
+
 func (r *ChatRunner) Run(ctx context.Context, run chatagent.Run, emit func(chatagent.Event) error) error {
 	if r == nil || strings.TrimSpace(r.binary) == "" {
 		return errors.New("Cursor Agent CLI is unavailable")
 	}
-	workspace, err := agentexec.EnsureConversationWorkspace(run.ConversationID)
-	if err != nil {
-		return err
-	}
-	if err := r.writeInvocationMCPConfig(workspace, run); err != nil {
-		return err
+	resume := (run.Action == "resume" || run.Action == "regenerate") && strings.TrimSpace(run.ProviderThreadID) != ""
+	workspace := ""
+	var err error
+	if resume {
+		var found bool
+		workspace, found, err = agentcatalog.Workspace(ctx, "cursor", run.ProviderThreadID)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return errors.New("Cursor CLI session workspace is unavailable")
+		}
+	} else {
+		workspace, err = agentexec.EnsureConversationWorkspace(run.ConversationID)
+		if err != nil {
+			return err
+		}
+		if err := r.writeInvocationMCPConfig(workspace, run); err != nil {
+			return err
+		}
 	}
 	arguments := []string{
 		"-p", "--output-format", "stream-json", "--stream-partial-output",
 		"--approve-mcps", "--trust", "--auto-review", "--sandbox", "enabled", "--workspace", workspace,
 	}
-	if run.Action == "resume" && strings.TrimSpace(run.ProviderThreadID) != "" {
+	if resume {
 		arguments = append(arguments, "--resume", run.ProviderThreadID)
 	}
 	arguments = append(arguments, run.Prompt)

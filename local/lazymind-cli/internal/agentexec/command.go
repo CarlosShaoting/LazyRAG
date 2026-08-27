@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -122,9 +124,19 @@ func SafeEnvironment(additional ...string) []string {
 		"CODEBUDDY_API_KEY": true, "CODEBUDDY_BASE_URL": true,
 		"ANTHROPIC_API_KEY": true, "ANTHROPIC_BASE_URL": true,
 	}
+	if runtime.GOOS == "windows" {
+		normalized := make(map[string]bool, len(allowed))
+		for name := range allowed {
+			normalized[strings.ToUpper(name)] = true
+		}
+		allowed = normalized
+	}
 	environment := make([]string, 0, len(allowed)+len(additional))
 	for _, entry := range os.Environ() {
 		name, _, _ := strings.Cut(entry, "=")
+		if runtime.GOOS == "windows" {
+			name = strings.ToUpper(name)
+		}
 		if allowed[name] || strings.HasPrefix(name, "LC_") {
 			environment = append(environment, entry)
 		}
@@ -133,21 +145,27 @@ func SafeEnvironment(additional ...string) []string {
 }
 
 func Find(configured, environment string, names, candidates []string) (string, error) {
+	resolved, err := FindExecutable(configured, environment, names, candidates)
+	if err != nil {
+		return "", err
+	}
+	return ResolveRunnable(resolved)
+}
+
+func FindExecutable(configured, environment string, names, candidates []string) (string, error) {
 	if strings.TrimSpace(configured) == "" && environment != "" {
 		configured = strings.TrimSpace(os.Getenv(environment))
 	}
 	if strings.TrimSpace(configured) != "" {
-		return ResolveRunnable(configured)
+		return ResolveExecutable(configured)
 	}
 	for _, name := range names {
 		if resolved, err := exec.LookPath(name); err == nil {
-			if runnable, runnableErr := ResolveRunnable(resolved); runnableErr == nil {
-				return runnable, nil
-			}
+			return ResolveExecutable(resolved)
 		}
 	}
 	for _, candidate := range candidates {
-		if resolved, err := ResolveRunnable(candidate); err == nil {
+		if resolved, err := ResolveExecutable(candidate); err == nil {
 			return resolved, nil
 		}
 	}
@@ -241,6 +259,47 @@ func ConnectorRuntime() (string, string, error) {
 		return "", "", err
 	}
 	return self, home, nil
+}
+
+func LazyMindHome() (string, error) { return lazyMindHome() }
+
+func PersistentHostID() (string, error) {
+	home, err := lazyMindHome()
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(home, "connector-host-id")
+	if body, err := os.ReadFile(path); err == nil {
+		if value := strings.TrimSpace(string(body)); strings.HasPrefix(value, "host-") && len(value) == 37 {
+			return value, nil
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		return "", err
+	}
+	value := make([]byte, 16)
+	if _, err := rand.Read(value); err != nil {
+		return "", err
+	}
+	id := "host-" + hex.EncodeToString(value)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		body, readErr := os.ReadFile(path)
+		return strings.TrimSpace(string(body)), readErr
+	}
+	if err != nil {
+		return "", err
+	}
+	if _, err := file.WriteString(id + "\n"); err != nil {
+		_ = file.Close()
+		return "", err
+	}
+	if err := file.Close(); err != nil {
+		return "", err
+	}
+	return id, nil
 }
 
 func LazyMindMCPConfig(executable, home, externalRef, conversationID, leaseToken, hostID string) ([]byte, error) {

@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/gorilla/mux"
+
+	"lazymind/core/chat"
 )
 
 func TestOpenAPISpecCoversAllRegisteredRoutes(t *testing.T) {
@@ -89,6 +91,73 @@ func TestOpenAPISpecIncludesSkillMarketDelete(t *testing.T) {
 		if _, ok := openAPIParameterNamesForTest(t, op)["market_item_id"]; !ok {
 			t.Fatalf("DELETE %s missing market_item_id path parameter", path)
 		}
+	}
+}
+
+func TestOpenAPIConversationItemIncludesThinkingDepthEnum(t *testing.T) {
+	router := mux.NewRouter()
+	registerCoreRoutes(router)
+	specJSON, err := buildOpenAPISpecFromRouter(router)
+	if err != nil {
+		t.Fatalf("build openapi spec: %v", err)
+	}
+	var spec map[string]any
+	if err := json.Unmarshal(specJSON, &spec); err != nil {
+		t.Fatalf("decode openapi spec: %v", err)
+	}
+	schemas := spec["components"].(map[string]any)["schemas"].(map[string]any)
+	properties := schemaPropertiesForTest(t, schemas, "ConversationItem")
+	depth, ok := properties["thinking_depth"].(map[string]any)
+	if !ok {
+		t.Fatalf("ConversationItem thinking_depth schema missing: %#v", properties["thinking_depth"])
+	}
+	rawEnum, ok := depth["enum"].([]any)
+	if !ok || !reflect.DeepEqual(rawEnum, []any{"low", "medium", "high", "max"}) {
+		t.Fatalf("ConversationItem thinking_depth enum=%#v", depth["enum"])
+	}
+}
+
+func TestOpenAPIChatEntryDefaultsEnumsMatchValidation(t *testing.T) {
+	router := mux.NewRouter()
+	registerCoreRoutes(router)
+	specJSON, err := buildOpenAPISpecFromRouter(router)
+	if err != nil {
+		t.Fatalf("build openapi spec: %v", err)
+	}
+	var spec map[string]any
+	if err := json.Unmarshal(specJSON, &spec); err != nil {
+		t.Fatalf("decode openapi spec: %v", err)
+	}
+	schemas := spec["components"].(map[string]any)["schemas"].(map[string]any)
+	assertEnum := func(schemaName, propertyName string, want []any) {
+		t.Helper()
+		properties := schemaPropertiesForTest(t, schemas, schemaName)
+		property, ok := properties[propertyName].(map[string]any)
+		if !ok || !reflect.DeepEqual(property["enum"], want) {
+			t.Fatalf("%s.%s enum=%#v, want %#v", schemaName, propertyName, property["enum"], want)
+		}
+	}
+
+	thinkingDepths := []any{"low", "medium", "high", "max"}
+	workflowModes := []any{"auto", "dynamic"}
+	executors := []any{
+		chat.ChatExecutorLazyMind,
+		chat.ChatExecutorCodex,
+		chat.ChatExecutorCursor,
+		chat.ChatExecutorWorkBuddy,
+	}
+	for _, schemaName := range []string{
+		"chatEntryDefaultsOpenAPI",
+		"chatEntryDefaultsPatchOpenAPIRequest",
+	} {
+		assertEnum(schemaName, "thinking_depth", thinkingDepths)
+	}
+	for _, schemaName := range []string{
+		"chatConversationDefaultsOpenAPI",
+		"chatConversationDefaultsPatchOpenAPIRequest",
+	} {
+		assertEnum(schemaName, "workflow_mode", workflowModes)
+		assertEnum(schemaName, "chat_executor", executors)
 	}
 }
 
@@ -690,6 +759,32 @@ func TestOpenAPISpecIncludesAgentEvoContracts(t *testing.T) {
 	}
 }
 
+func TestOpenAPISpecUsesGatewaySafeExternalChatProviderRoutes(t *testing.T) {
+	r := mux.NewRouter()
+	registerCoreRoutes(r)
+
+	specJSON, err := buildOpenAPISpecFromRouter(r)
+	if err != nil {
+		t.Fatalf("build openapi spec: %v", err)
+	}
+	var spec map[string]any
+	if err := json.Unmarshal(specJSON, &spec); err != nil {
+		t.Fatalf("decode openapi spec: %v", err)
+	}
+	for _, route := range []struct {
+		method string
+		path   string
+	}{
+		{"get", "/api/core/external-chat/hosts/{provider}/status"},
+		{"post", "/api/core/external-chat/hosts/{provider}/claim"},
+		{"get", "/api/core/external-chat/providers/{provider}/sessions"},
+		{"post", "/api/core/external-chat/providers/{provider}/sessions/{thread_id}/binding"},
+		{"post", "/api/core/external-chat/providers/{provider}/sessions:sync"},
+	} {
+		openAPIOperationForTest(t, spec, route.method, route.path)
+	}
+}
+
 func TestOpenAPISpecDocumentsFeedbackCancellation(t *testing.T) {
 	r := mux.NewRouter()
 	registerCoreRoutes(r)
@@ -914,6 +1009,8 @@ func TestOpenAPISpecCoversEvolutionSkillMemoryPreferenceOperations(t *testing.T)
 		{"delete", "/api/core/model_providers/{model_provider_id}/groups/{group_id}/models/{model_id}", false, true, true},
 		{"get", "/api/core/personalization-setting", false, false, true},
 		{"put", "/api/core/personalization-setting", true, false, true},
+		{"get", "/api/core/user/chat-settings", false, false, true},
+		{"patch", "/api/core/user/chat-settings", true, false, true},
 		{"get", "/api/core/user/ui-preferences", false, false, true},
 		{"patch", "/api/core/user/ui-preferences", true, false, true},
 		{"get", "/api/core/skill-review:summary", false, false, false},
@@ -1086,13 +1183,43 @@ func TestOpenAPISpecMarksUIPreferencesPatchFieldsOptional(t *testing.T) {
 	if !ok {
 		t.Fatalf("userUIPreferencesPatchOpenAPIRequest properties missing")
 	}
-	for _, name := range []string{"chat_preference_notice_dismissed", "developer_mode_active", "skills_enabled", "workflows_enabled"} {
+	for _, name := range []string{"chat_preference_notice_dismissed", "developer_mode_active", "schedules_enabled", "skills_enabled", "workflows_enabled"} {
 		if _, ok := properties[name]; !ok {
 			t.Fatalf("userUIPreferencesPatchOpenAPIRequest expected property %q", name)
 		}
 	}
 	if required, ok := schema["required"].([]any); ok && len(required) > 0 {
 		t.Fatalf("userUIPreferencesPatchOpenAPIRequest fields should all be optional, got required=%v", required)
+	}
+
+	chatPatch, ok := schemas["userChatSettingsPatchOpenAPIRequest"].(map[string]any)
+	if !ok {
+		t.Fatal("userChatSettingsPatchOpenAPIRequest missing")
+	}
+	chatPatchProperties, ok := chatPatch["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("userChatSettingsPatchOpenAPIRequest properties missing")
+	}
+	for _, name := range []string{"enable_workflow", "workflow_mode", "enable_subagent", "quick_question", "new_task"} {
+		if _, ok := chatPatchProperties[name]; !ok {
+			t.Fatalf("userChatSettingsPatchOpenAPIRequest expected property %q", name)
+		}
+	}
+	if required, ok := chatPatch["required"].([]any); ok && len(required) > 0 {
+		t.Fatalf("userChatSettingsPatchOpenAPIRequest fields should all be optional, got required=%v", required)
+	}
+	chatResponse, ok := schemas["userChatSettingsOpenAPIResponse"].(map[string]any)
+	if !ok {
+		t.Fatal("userChatSettingsOpenAPIResponse missing")
+	}
+	chatResponseProperties, ok := chatResponse["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("userChatSettingsOpenAPIResponse properties missing")
+	}
+	for _, name := range []string{"quick_question", "new_task"} {
+		if _, ok := chatResponseProperties[name]; !ok {
+			t.Fatalf("userChatSettingsOpenAPIResponse expected property %q", name)
+		}
 	}
 }
 
@@ -1533,6 +1660,62 @@ func TestOpenAPISpecIncludesLocaleHeaderForLocalizedCatalogs(t *testing.T) {
 		}
 		if !found {
 			t.Fatalf("Accept-Language header missing for %s", path)
+		}
+	}
+}
+
+func TestOpenAPIShowcaseCaseIncludesSkillSourceURL(t *testing.T) {
+	schemas := generatedOpenAPISchemas(t)
+	schema := schemas["ShowcaseCase"].(map[string]any)
+	properties := schema["properties"].(map[string]any)
+	if sourceURL, ok := properties["source_url"].(map[string]any); !ok || sourceURL["type"] != "string" {
+		t.Fatalf("ShowcaseCase source_url = %#v, want required string", properties["source_url"])
+	}
+	if provider, ok := properties["provider"].(map[string]any); !ok || provider["type"] != "string" {
+		t.Fatalf("ShowcaseCase provider = %#v, want required string", properties["provider"])
+	}
+	required := schema["required"].([]any)
+	foundSourceURL := false
+	foundProvider := false
+	for _, field := range required {
+		switch field {
+		case "source_url":
+			foundSourceURL = true
+		case "provider":
+			foundProvider = true
+		}
+	}
+	if !foundSourceURL || !foundProvider {
+		t.Fatalf("ShowcaseCase required fields = %#v", required)
+	}
+}
+
+func generatedOpenAPISchemas(t *testing.T) map[string]any {
+	t.Helper()
+	r := mux.NewRouter()
+	registerAllRoutes(r)
+	specJSON, err := buildOpenAPISpecFromRouter(r)
+	if err != nil {
+		t.Fatalf("build openapi spec: %v", err)
+	}
+	var spec map[string]any
+	if err := json.Unmarshal(specJSON, &spec); err != nil {
+		t.Fatalf("decode openapi spec: %v", err)
+	}
+	return spec["components"].(map[string]any)["schemas"].(map[string]any)
+}
+
+func TestOpenAPIBuiltinSkillIncludesOptionalProvider(t *testing.T) {
+	schemas := generatedOpenAPISchemas(t)
+	schema := schemas["builtinSkillOpenAPIResponse"].(map[string]any)
+	properties := schema["properties"].(map[string]any)
+	provider, ok := properties["provider"].(map[string]any)
+	if !ok || provider["type"] != "string" {
+		t.Fatalf("builtin provider = %#v, want optional string", properties["provider"])
+	}
+	for _, name := range schema["required"].([]any) {
+		if name == "provider" {
+			t.Fatal("builtin provider must remain optional for old catalogs")
 		}
 	}
 }

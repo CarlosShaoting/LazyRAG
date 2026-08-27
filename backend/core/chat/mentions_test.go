@@ -204,6 +204,12 @@ func TestExplicitWorkflowMentionOverridesDisabledConversationToggle(t *testing.T
 	if err != nil || bound != "builtin:test-workflow" {
 		t.Fatalf("persisted binding=%q err=%v", bound, err)
 	}
+
+	refs, err = resolveConversationWorkflowBinding(context.Background(), db.DB, "conversation-1",
+		nil, nil, false, true)
+	if err != nil || len(refs) != 1 || refs[0] != "builtin:test-workflow" {
+		t.Fatalf("disabled follow-up must preserve explicit binding refs=%v err=%v", refs, err)
+	}
 }
 
 func TestConversationWorkflowBindingExplicitCancellationClearsSelection(t *testing.T) {
@@ -382,6 +388,25 @@ func TestMentionResourceContextMarksWorkflowAsExecutable(t *testing.T) {
 	if !strings.Contains(contextText, "semantics=executable_procedure_selected_for_this_turn") ||
 		!strings.Contains(contextText, "invoke its bound trigger") {
 		t.Fatalf("workflow mention remained ambiguous: %s", contextText)
+	}
+}
+
+func TestBuildLazyChatRequestPropagatesModelContext(t *testing.T) {
+	req := buildLazyChatRequest(map[string]any{
+		"model_context": map[string]any{
+			"summary_text":        "condensed history",
+			"covered_through_seq": float64(12),
+			"version":             float64(1),
+		},
+	})
+	if req.ModelContext == nil {
+		t.Fatal("ModelContext is nil")
+	}
+	if got := req.ModelContext["summary_text"]; got != "condensed history" {
+		t.Fatalf("summary_text = %#v, want condensed history", got)
+	}
+	if got := req.ModelContext["covered_through_seq"]; got != float64(12) {
+		t.Fatalf("covered_through_seq = %#v, want 12", got)
 	}
 }
 

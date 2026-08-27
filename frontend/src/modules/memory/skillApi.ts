@@ -16,6 +16,7 @@ import {
   type SkillCreateManagedOpenAPIRequest,
   type SkillDetailOpenAPIResponse,
   type SkillDraftStatusOpenAPIResponse,
+  type SkillDistributionUpgradePrepareOpenAPIResponse,
   type SkillFileOpenAPIResponse,
   type SkillListItemOpenAPIResponse,
   type SkillOrganizeOpenAPIResponse,
@@ -312,6 +313,31 @@ export interface SkillDraftStatusRecord {
   taskId: string;
 }
 
+export interface SkillDistributionConflictRecord {
+  path: string;
+  kind: string;
+}
+
+export interface SkillDistributionUpgradeStatusRecord {
+  managed: boolean;
+  updateAvailable: boolean;
+  pending: boolean;
+  currentVersion: string;
+  currentArchiveSha256: string;
+  pendingVersion: string;
+  pendingArchiveSha256: string;
+  latestVersion: string;
+  latestArchiveSha256: string;
+  conflicts: SkillDistributionConflictRecord[];
+}
+
+export interface SkillDistributionUpgradePrepareRecord {
+  draftVersion: number;
+  autoMerged: boolean;
+  conflicts: SkillDistributionConflictRecord[];
+  status: SkillDistributionUpgradeStatusRecord;
+}
+
 export const hasSkillDraftChanges = (status: SkillDraftStatusRecord): boolean =>
   status.hasUncommittedDraft || status.overlayCount > 0;
 
@@ -412,7 +438,6 @@ export interface CreateSkillPayload {
 }
 
 export interface PublishSkillToMarketPayload {
-  tags: string[];
   source:
     | { type: "uploaded_zip"; uploadId: string }
     | { type: "url"; url: string };
@@ -425,6 +450,7 @@ export interface MarketSkillRecord extends SkillAssetRecord {
   marketStatus?: string;
   installed?: boolean;
   installedSkillId?: string;
+  provider?: string;
 }
 
 export interface MarketSkillListResult {
@@ -440,6 +466,7 @@ interface BuiltinSkillListItem {
   description: string;
   category: string;
   content: string;
+  provider?: string;
   tags?: string[];
   installed?: boolean;
   installed_skill_id?: string;
@@ -1042,7 +1069,10 @@ export async function getSkillAssetDetail(
   return normalizeSkillItem(payload, content);
 }
 
-export async function createSkillAsset(payload: CreateSkillPayload): Promise<string> {
+export async function createSkillAsset(
+  payload: CreateSkillPayload,
+  options?: { silentError?: boolean },
+): Promise<string> {
   const request: SkillCreateManagedOpenAPIRequest = {
     name: payload.name,
     description: payload.description,
@@ -1056,9 +1086,10 @@ export async function createSkillAsset(payload: CreateSkillPayload): Promise<str
         : { type: "url", url: payload.source.url },
   };
 
-  const response = await skillsApi.apiCoreSkillsPost({
-    skillCreateManagedOpenAPIRequest: request,
-  });
+  const response = await skillsApi.apiCoreSkillsPost(
+    { skillCreateManagedOpenAPIRequest: request },
+    options?.silentError ? ({ silentError: true } as never) : undefined,
+  );
   const body = unwrapEnvelope<{ skill_id?: string }>(response.data);
   return body.skill_id || "";
 }
@@ -1299,6 +1330,67 @@ export async function getSkillDraftStatus(skillId: string): Promise<SkillDraftSt
   const response = await skillDraftsApi.apiCoreSkillsSkillIdDraftStatusGet({ skillId });
   const payload = unwrapEnvelope<SkillDraftStatusOpenAPIResponse>(response.data);
   return normalizeDraftStatus(payload);
+}
+
+const normalizeDistributionConflicts = (value: unknown): SkillDistributionConflictRecord[] =>
+  Array.isArray(value)
+    ? value
+        .map((item) => {
+          const raw = toRawObject(item);
+          return raw
+            ? {
+                path: toStringValue(raw.path),
+                kind: toStringValue(raw.kind),
+              }
+            : null;
+        })
+        .filter((item): item is SkillDistributionConflictRecord => Boolean(item?.path))
+    : [];
+
+const normalizeDistributionUpgradeStatus = (
+  value: unknown,
+): SkillDistributionUpgradeStatusRecord => {
+  const raw = toRawObject(value) || {};
+  return {
+    managed: Boolean(raw.managed),
+    updateAvailable: Boolean(raw.update_available ?? raw.updateAvailable),
+    pending: Boolean(raw.pending),
+    currentVersion: toStringValue(raw.current_version ?? raw.currentVersion),
+    currentArchiveSha256: toStringValue(
+      raw.current_archive_sha256 ?? raw.currentArchiveSha256,
+    ),
+    pendingVersion: toStringValue(raw.pending_version ?? raw.pendingVersion),
+    pendingArchiveSha256: toStringValue(
+      raw.pending_archive_sha256 ?? raw.pendingArchiveSha256,
+    ),
+    latestVersion: toStringValue(raw.latest_version ?? raw.latestVersion),
+    latestArchiveSha256: toStringValue(
+      raw.latest_archive_sha256 ?? raw.latestArchiveSha256,
+    ),
+    conflicts: normalizeDistributionConflicts(raw.conflicts),
+  };
+};
+
+export async function getSkillDistributionUpgradeStatus(
+  skillId: string,
+): Promise<SkillDistributionUpgradeStatusRecord> {
+  const response = await skillsApi.apiCoreSkillsSkillIdDistributionUpgradeGet({ skillId });
+  return normalizeDistributionUpgradeStatus(unwrapEnvelope(response.data));
+}
+
+export async function prepareSkillDistributionUpgrade(
+  skillId: string,
+): Promise<SkillDistributionUpgradePrepareRecord> {
+  const response = await skillsApi.apiCoreSkillsSkillIdDistributionUpgradePreparePost({ skillId });
+  const raw = toRawObject(
+    unwrapEnvelope<SkillDistributionUpgradePrepareOpenAPIResponse>(response.data),
+  ) || {};
+  return {
+    draftVersion: readRawNumber(raw, ["draft_version", "draftVersion"]),
+    autoMerged: Boolean(raw.auto_merged ?? raw.autoMerged),
+    conflicts: normalizeDistributionConflicts(raw.conflicts),
+    status: normalizeDistributionUpgradeStatus(raw.status),
+  };
 }
 
 export async function writeSkillDraftText(
@@ -1802,6 +1894,7 @@ export async function listBuiltinSkills(): Promise<MarketSkillRecord[]> {
     marketSource: "builtin",
     installed: Boolean(item.installed),
     installedSkillId: item.installed_skill_id || "",
+    provider: item.provider?.trim() || undefined,
   }));
 }
 
@@ -1824,7 +1917,6 @@ export async function publishSkillToMarket(
   const response = await skillMarketApi.apiCoreSkillMarketAdminItemsPost({
     marketPublishOpenAPIRequest: {
       name: "",
-      tags: payload.tags,
       source:
         payload.source.type === "uploaded_zip"
           ? { type: "uploaded_zip", upload_id: payload.source.uploadId }
