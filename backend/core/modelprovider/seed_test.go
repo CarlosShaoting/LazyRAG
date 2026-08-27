@@ -23,22 +23,51 @@ func TestModelCatalogIncludesOpenRouter(t *testing.T) {
 		if supplier.BaseURL != "https://openrouter.ai/api/v1/" {
 			t.Fatalf("unexpected OpenRouter base URL: %q", supplier.BaseURL)
 		}
-		if len(supplier.Models) != 5 || supplier.Models[0].Name != "z-ai/glm-5.3-flash" || supplier.Models[1].Name != "openrouter/free" || supplier.Models[2].Name != "openrouter/auto" || supplier.Models[3].Name != "liquid/lfm-2.5-embedding-350m:free" || supplier.Models[4].Name != "bytedance-seed/seedream-4.5" {
-			t.Fatalf("unexpected OpenRouter models: %+v", supplier.Models)
+		modelsByName := make(map[string]catalogModel, len(supplier.Models))
+		for _, model := range supplier.Models {
+			modelsByName[model.Name] = model
 		}
-		freeModel := supplier.Models[0]
+		expectedTypes := map[string]string{
+			"z-ai/glm-5.3-flash":                    "llm",
+			"z-ai/glm-5.3":                          "llm",
+			"deepseek/deepseek-v4-pro":              "llm",
+			"nvidia/nemotron-3.5-lightning:free":    "llm",
+			"z-ai/glm-5.2:free":                     "llm",
+			"openrouter/free":                       "vlm",
+			"openrouter/auto":                       "vlm",
+			"openai/gpt-5.6-sol":                    "vlm",
+			"anthropic/claude-sonnet-5":             "vlm",
+			"google/gemini-3.7-flash":               "vlm",
+			"x-ai/grok-4.6":                         "vlm",
+			"qwen/qwen3.8-max":                      "vlm",
+			"qwen/qwen3.8-flash":                    "vlm",
+			"moonshotai/kimi-k3":                    "vlm",
+			"minimax/minimax-m3":                    "vlm",
+			"minimax/minimax-m3:free":               "vlm",
+			"deepseek/deepseek-v4-flash-vision-exp": "vlm",
+			"thinkingmachines/inkling:free":         "vlm",
+			"liquid/lfm-2.5-embedding-350m:free":    "embed",
+			"bytedance-seed/seedream-4.5":           "text2image",
+		}
+		if len(modelsByName) != len(expectedTypes) {
+			t.Fatalf("unexpected OpenRouter model count: got %d, want %d", len(modelsByName), len(expectedTypes))
+		}
+		for name, modelType := range expectedTypes {
+			model, ok := modelsByName[name]
+			if !ok || model.Type != modelType {
+				t.Fatalf("unexpected OpenRouter model %q: %+v", name, model)
+			}
+		}
+		freeModel := modelsByName["z-ai/glm-5.3-flash"]
 		if freeModel.Type != "llm" || freeModel.MaxInputTokens == nil || *freeModel.MaxInputTokens != "1310720" || freeModel.FreeAutoSelectPriority != 1 {
 			t.Fatalf("unexpected free OpenRouter model config: %+v", freeModel)
 		}
-		freeVLM := supplier.Models[1]
+		freeVLM := modelsByName["openrouter/free"]
 		if freeVLM.Type != "vlm" || freeVLM.MaxInputTokens == nil || *freeVLM.MaxInputTokens != "200K" || freeVLM.FreeAutoSelectPriority != 1 {
 			t.Fatalf("unexpected free OpenRouter VLM config: %+v", freeVLM)
 		}
-		if supplier.Models[3].Type != "embed" || supplier.Models[4].Type != "text2image" {
-			t.Fatalf("unexpected OpenRouter embedding/image model types: %+v", supplier.Models[3:])
-		}
-		if supplier.Models[3].FreeAutoSelectPriority != 1 {
-			t.Fatalf("unexpected free OpenRouter embedding config: %+v", supplier.Models[3])
+		if modelsByName["liquid/lfm-2.5-embedding-350m:free"].FreeAutoSelectPriority != 1 {
+			t.Fatalf("unexpected free OpenRouter embedding config: %+v", modelsByName["liquid/lfm-2.5-embedding-350m:free"])
 		}
 		return
 	}

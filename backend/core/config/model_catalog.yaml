@@ -595,6 +595,8 @@ model_providers:
           https://openrouter.ai/settings/keys
 
           模型名称使用 OpenRouter 的完整模型 ID。openrouter/free 只路由到免费模型并支持按请求筛选视觉能力；openrouter/auto 可能选择收费模型。也可以在连接分组中添加 OpenRouter 模型目录里的其他模型。
+
+          内置清单覆盖 OpenAI、Anthropic、Google、DeepSeek、通义千问、智谱 GLM、Kimi、Grok、MiniMax 和 NVIDIA 等常用模型，并包含多款支持工具调用的免费模型。
         en-US: |
           OpenRouter provides one OpenAI-compatible API for models from multiple providers, allowing model and router selection with a single API key.
 
@@ -602,12 +604,26 @@ model_providers:
           https://openrouter.ai/settings/keys
 
           Use the complete OpenRouter model ID. openrouter/free routes only to free models and filters for vision support when needed; openrouter/auto may select paid models. Other models from the OpenRouter catalog can be added to the connection group.
+
+          The built-in catalog covers popular models from OpenAI, Anthropic, Google, DeepSeek, Qwen, Z.AI GLM, Kimi, Grok, MiniMax, and NVIDIA, including several free models with tool-calling support.
       base_url: "https://openrouter.ai/api/v1/"
       models:
         - name: z-ai/glm-5.3-flash
           type: llm
           max_input_tokens: "1310720"
           free_auto_select_priority: 1
+        - name: z-ai/glm-5.3
+          type: llm
+          max_input_tokens: "1048576"
+        - name: deepseek/deepseek-v4-pro
+          type: llm
+          max_input_tokens: "1048576"
+        - name: nvidia/nemotron-3.5-lightning:free
+          type: llm
+          max_input_tokens: "1000000"
+        - name: z-ai/glm-5.2:free
+          type: llm
+          max_input_tokens: "256000"
         - name: openrouter/free
           type: vlm
           max_input_tokens: "200K"
@@ -615,6 +631,39 @@ model_providers:
         - name: openrouter/auto
           type: vlm
           max_input_tokens: "2M"
+        - name: openai/gpt-5.6-sol
+          type: vlm
+          max_input_tokens: "1050000"
+        - name: anthropic/claude-sonnet-5
+          type: vlm
+          max_input_tokens: "1000000"
+        - name: google/gemini-3.7-flash
+          type: vlm
+          max_input_tokens: "1048576"
+        - name: x-ai/grok-4.6
+          type: vlm
+          max_input_tokens: "500000"
+        - name: qwen/qwen3.8-max
+          type: vlm
+          max_input_tokens: "1000000"
+        - name: qwen/qwen3.8-flash
+          type: vlm
+          max_input_tokens: "1000000"
+        - name: moonshotai/kimi-k3
+          type: vlm
+          max_input_tokens: "1048576"
+        - name: minimax/minimax-m3
+          type: vlm
+          max_input_tokens: "1048576"
+        - name: minimax/minimax-m3:free
+          type: vlm
+          max_input_tokens: "1048576"
+        - name: deepseek/deepseek-v4-flash-vision-exp
+          type: vlm
+          max_input_tokens: "1048576"
+        - name: thinkingmachines/inkling:free
+          type: vlm
+          max_input_tokens: "1048576"
         - name: liquid/lfm-2.5-embedding-350m:free
           type: embed
           max_input_tokens: "512"
