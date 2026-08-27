@@ -18,10 +18,13 @@ import (
 
 func TestCheckGroupRequiresRequestAPIKey(t *testing.T) {
 	tests := []struct {
-		name        string
-		requestBody string
-		wantStatus  int
-		wantAPIKey  string
+		name         string
+		providerName string
+		requestBody  string
+		wantStatus   int
+		wantAPIKey   string
+		wantSource   string
+		wantURL      string
 	}{
 		{
 			name:        "omitted key is rejected",
@@ -48,12 +51,26 @@ func TestCheckGroupRequiresRequestAPIKey(t *testing.T) {
 			requestBody: `{"provider_name":"Qwen","base_url":"https://dashscope.aliyuncs.com/","api_key":"request-key","dry_run":false}`,
 			wantStatus:  http.StatusOK,
 			wantAPIKey:  "request-key",
+			wantSource:  "qwen",
+			wantURL:     "https://dashscope.aliyuncs.com/",
 		},
 		{
-			name:        "provided key verifies a custom base url",
-			requestBody: `{"provider_name":"Qwen","base_url":"https://models.example.com/v1","api_key":"custom-request-key","dry_run":false}`,
-			wantStatus:  http.StatusOK,
-			wantAPIKey:  "custom-request-key",
+			name:         "official provider proxy keeps official source",
+			providerName: "Qwen",
+			requestBody:  `{"provider_name":"OpenAI","base_url":"http://12.34.56.78:8000/v1","api_key":"proxy-request-key","dry_run":false}`,
+			wantStatus:   http.StatusOK,
+			wantAPIKey:   "proxy-request-key",
+			wantSource:   "qwen",
+			wantURL:      "http://12.34.56.78:8000/v1",
+		},
+		{
+			name:         "request provider fragment is replaced by canonical parent",
+			providerName: "OpenRouter",
+			requestBody:  `{"provider_name":"port!!!garbage","base_url":"https://proxy.example.com/v1/","api_key":"fragment-key","dry_run":false}`,
+			wantStatus:   http.StatusOK,
+			wantAPIKey:   "fragment-key",
+			wantSource:   "openrouter",
+			wantURL:      "https://proxy.example.com/v1/",
 		},
 	}
 
@@ -75,9 +92,13 @@ func TestCheckGroupRequiresRequestAPIKey(t *testing.T) {
 			}
 
 			now := time.Now()
+			providerName := tc.providerName
+			if providerName == "" {
+				providerName = "Qwen"
+			}
 			defaultProvider := orm.DefaultModelProvider{
 				ID:          "default-qwen",
-				Name:        "Qwen",
+				Name:        providerName,
 				Description: "Qwen provider",
 				BaseURL:     "https://dashscope.aliyuncs.com/",
 				Category:    defaultProviderCategory,
@@ -161,6 +182,12 @@ func TestCheckGroupRequiresRequestAPIKey(t *testing.T) {
 			}
 			if received.APIKey != tc.wantAPIKey {
 				t.Fatalf("upstream api key = %q, want %q", received.APIKey, tc.wantAPIKey)
+			}
+			if received.Source != tc.wantSource {
+				t.Fatalf("upstream source = %q, want canonical provider source %q", received.Source, tc.wantSource)
+			}
+			if received.URL != tc.wantURL {
+				t.Fatalf("upstream URL = %q, want proxy URL %q", received.URL, tc.wantURL)
 			}
 			var stored orm.UserModelProviderGroup
 			if err := db.Take(&stored, "id = ?", group.ID).Error; err != nil {

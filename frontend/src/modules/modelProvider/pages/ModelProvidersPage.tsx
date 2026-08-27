@@ -692,7 +692,10 @@ export default function ModelProviderPage({ onConfigurationChanged }: ModelProvi
     setSensenovaBaseUrlPreset("");
   };
 
-  const saveProviderConfig = async (values: ProviderConfigFormValues) => {
+  const saveProviderConfig = async (
+    values: ProviderConfigFormValues,
+    skipCustomBaseUrlRedirect = false
+  ): Promise<void> => {
     const activeConfigModal = configModal;
 
     if (!configProvider || !activeConfigModal || providerConfigSaving) {
@@ -709,7 +712,7 @@ export default function ModelProviderPage({ onConfigurationChanged }: ModelProvi
       : undefined;
 
     const previousBaseUrl = existingGroup?.baseUrl || configProvider.baseUrl;
-    if (shouldRedirectCustomBaseUrlToOpenAI(configProvider, previousBaseUrl, baseUrl)) {
+    if (!skipCustomBaseUrlRedirect && shouldRedirectCustomBaseUrlToOpenAI(configProvider, previousBaseUrl, baseUrl)) {
       Modal.confirm({
         centered: true,
         title: t("modelProvider.privateDeploymentRedirectTitle"),
@@ -728,6 +731,7 @@ export default function ModelProviderPage({ onConfigurationChanged }: ModelProvi
           }
           openProviderConfig(openAIProvider, undefined, baseUrl);
         },
+        onCancel: () => saveProviderConfig(values, true),
       });
       return;
     }
