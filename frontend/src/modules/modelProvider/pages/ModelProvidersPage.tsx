@@ -68,6 +68,14 @@ interface AddedProvider extends ProviderOption {
   groups: ProviderConnectionGroup[];
 }
 
+interface AddedProviderSection {
+  key: string;
+  provider: AddedProvider;
+  displayName: string;
+  groups: ProviderConnectionGroup[];
+  defaultBaseUrl: string;
+}
+
 interface ProviderConfigModalState {
   provider: ProviderOption | AddedProvider;
   group?: ProviderConnectionGroup;
@@ -196,6 +204,80 @@ export function isOpenAIProvider(provider?: Pick<ProviderOption, "source" | "nam
 
 function isSensenovaNewBaseUrl(url?: string): boolean {
   return normalizeBaseUrlForCompare(url) === normalizeBaseUrlForCompare(SENSENOVA_NEW_BASE_URL);
+}
+
+function getAddedProviderSectionKey(
+  provider: Pick<AddedProvider, "id" | "source" | "name">,
+  baseUrl?: string
+): string {
+  if (!isSensenovaProvider(provider)) {
+    return provider.id;
+  }
+  if (isSensenovaNewBaseUrl(baseUrl)) {
+    return `${provider.id}:token-plan`;
+  }
+  if (normalizeBaseUrlForCompare(baseUrl) === normalizeBaseUrlForCompare(SENSENOVA_CLASSIC_BASE_URL)) {
+    return `${provider.id}:classic`;
+  }
+  return `${provider.id}:custom`;
+}
+
+function buildAddedProviderSections(
+  providers: AddedProvider[],
+  sensenovaClassicLabel: string,
+  sensenovaTokenPlanLabel: string
+): AddedProviderSection[] {
+  return providers.flatMap((provider) => {
+    if (!isSensenovaProvider(provider)) {
+      return [{
+        key: provider.id,
+        provider,
+        displayName: provider.name,
+        groups: provider.groups,
+        defaultBaseUrl: provider.baseUrl,
+      }];
+    }
+
+    const classicGroups = provider.groups.filter(
+      (group) => getAddedProviderSectionKey(provider, group.baseUrl) === `${provider.id}:classic`
+    );
+    const tokenPlanGroups = provider.groups.filter(
+      (group) => getAddedProviderSectionKey(provider, group.baseUrl) === `${provider.id}:token-plan`
+    );
+    const customGroups = provider.groups.filter(
+      (group) => getAddedProviderSectionKey(provider, group.baseUrl) === `${provider.id}:custom`
+    );
+    const sections: AddedProviderSection[] = [];
+
+    if (classicGroups.length) {
+      sections.push({
+        key: `${provider.id}:classic`,
+        provider,
+        displayName: `${provider.name} · ${sensenovaClassicLabel}`,
+        groups: classicGroups,
+        defaultBaseUrl: SENSENOVA_CLASSIC_BASE_URL,
+      });
+    }
+    if (tokenPlanGroups.length) {
+      sections.push({
+        key: `${provider.id}:token-plan`,
+        provider,
+        displayName: `${provider.name} · ${sensenovaTokenPlanLabel}`,
+        groups: tokenPlanGroups,
+        defaultBaseUrl: SENSENOVA_NEW_BASE_URL,
+      });
+    }
+    if (customGroups.length) {
+      sections.push({
+        key: `${provider.id}:custom`,
+        provider,
+        displayName: provider.name,
+        groups: customGroups,
+        defaultBaseUrl: customGroups[0].baseUrl,
+      });
+    }
+    return sections;
+  });
 }
 
 function createConnectionGroup(provider: ProviderOption, overrides: Partial<ProviderConnectionGroup> = {}): ProviderConnectionGroup {
@@ -615,15 +697,6 @@ export default function ModelProviderPage({ onConfigurationChanged }: ModelProvi
       );
 
       setAddedProviderList(addedProviders);
-      setExpandedProviderIds((current) => {
-        const next = { ...current };
-        addedProviders.forEach((provider, index) => {
-          if (next[provider.id] === undefined) {
-            next[provider.id] = index === 0;
-          }
-        });
-        return next;
-      });
     } catch (error) {
     } finally {
       initialProvidersLoadedRef.current = true;
@@ -650,6 +723,14 @@ export default function ModelProviderPage({ onConfigurationChanged }: ModelProvi
   const addedProviderIds = useMemo(
     () => new Set(addedProviderList.map((provider) => provider.id)),
     [addedProviderList]
+  );
+  const addedProviderSections = useMemo(
+    () => buildAddedProviderSections(
+      addedProviderList,
+      t("modelProvider.sensenovaClassicMode"),
+      t("modelProvider.sensenovaTokenPlanMode")
+    ),
+    [addedProviderList, t]
   );
 
   const visibleProviders = [...providerOptions].sort((a, b) => b.name.localeCompare(a.name));
@@ -797,7 +878,10 @@ export default function ModelProviderPage({ onConfigurationChanged }: ModelProvi
               },
             ]
       );
-      setExpandedProviderIds((current) => ({ ...current, [configProvider.id]: true }));
+      setExpandedProviderIds((current) => ({
+        ...current,
+        [getAddedProviderSectionKey(configProvider, nextGroup.baseUrl)]: true,
+      }));
       message.success(apiKey
         ? t("modelProvider.message.groupVerifiedAndSaved", { name: nextGroup.name })
         : t("modelProvider.message.groupSaved", { name: nextGroup.name }));
@@ -1004,30 +1088,38 @@ export default function ModelProviderPage({ onConfigurationChanged }: ModelProvi
     }
   };
 
-  const deleteProvider = async (provider: AddedProvider) => {
+  const deleteProviderSection = async (section: AddedProviderSection) => {
+    const { provider, groups, key } = section;
+    const groupIds = new Set(groups.map((group) => group.id));
     try {
       await Promise.all(
-        provider.groups.map((group) =>
+        groups.map((group) =>
           modelProvidersApi.apiCoreModelProvidersModelProviderIdGroupsGroupIdDelete({
             modelProviderId: provider.id,
             groupId: group.id,
           })
         )
       );
-      setAddedProviderList((current) => current.filter((item) => item.id !== provider.id));
+      setAddedProviderList((current) =>
+        current
+          .map((item) => item.id === provider.id
+            ? { ...item, groups: item.groups.filter((group) => !groupIds.has(group.id)) }
+            : item)
+          .filter((item) => item.groups.length > 0)
+      );
       setExpandedProviderIds((current) => {
         const next = { ...current };
-        delete next[provider.id];
+        delete next[key];
         return next;
       });
       setExpandedGroupIds((current) => {
         const next = { ...current };
-        provider.groups.forEach((group) => {
+        groups.forEach((group) => {
           delete next[`${provider.id}:${group.id}`];
         });
         return next;
       });
-      message.success(t("modelProvider.message.providerRemoved", { name: provider.name }));
+      message.success(t("modelProvider.message.providerRemoved", { name: section.displayName }));
       void onConfigurationChanged?.();
     } catch (error) {
     }
@@ -1197,23 +1289,24 @@ export default function ModelProviderPage({ onConfigurationChanged }: ModelProvi
             </div>
 
             <div className="model-provider-added-list">
-              {addedProviderList.length ? (
-                addedProviderList.map((provider) => {
-                  const isExpanded = !!expandedProviderIds[provider.id];
-                  const modelListId = `model-provider-${provider.id}-models`;
+              {addedProviderSections.length ? (
+                addedProviderSections.map((section, index) => {
+                  const { provider } = section;
+                  const isExpanded = expandedProviderIds[section.key] ?? index === 0;
+                  const modelListId = `model-provider-${normalizeProviderKey(section.key)}-models`;
 
                   return (
                     <article
                       className={`model-provider-added-card${isExpanded ? " is-expanded" : ""}`}
-                      key={provider.id}
+                      key={section.key}
                     >
                       <div className="model-provider-added-summary">
                         <div className="model-provider-added-brand">
                           <ProviderLogo provider={provider} />
                           <div>
-                            <strong>{provider.name}</strong>
+                            <strong>{section.displayName}</strong>
                             <span>
-                              {t("modelProvider.providerGroupCount", { source: provider.source, count: provider.groups.length })}
+                              {t("modelProvider.providerGroupCount", { source: provider.source, count: section.groups.length })}
                             </span>
                           </div>
                         </div>
@@ -1221,16 +1314,19 @@ export default function ModelProviderPage({ onConfigurationChanged }: ModelProvi
                         <div className="model-provider-added-actions">
                           <span className="model-provider-connection-badge">
                             <CheckCircleFilled />
-                            {t("modelProvider.availableGroupCount", { count: provider.groups.filter((group) => group.verified).length })}
+                            {t("modelProvider.availableGroupCount", { count: section.groups.filter((group) => group.verified).length })}
                           </span>
-                          <Button icon={<PlusCircleOutlined />} onClick={() => openProviderConfig(provider)}>
+                          <Button
+                            icon={<PlusCircleOutlined />}
+                            onClick={() => openProviderConfig(provider, undefined, section.defaultBaseUrl)}
+                          >
                             {t("modelProvider.addGroup")}
                           </Button>
                           <Button
                             aria-controls={modelListId}
                             aria-expanded={isExpanded}
                             className="model-provider-expand-button"
-                            onClick={() => void toggleProviderModels(provider.id)}
+                            onClick={() => void toggleProviderModels(section.key)}
                           >
                             {isExpanded ? t("modelProvider.collapseGroups") : t("modelProvider.expandGroups")}
                             {isExpanded ? <UpOutlined /> : <DownOutlined />}
@@ -1239,23 +1335,23 @@ export default function ModelProviderPage({ onConfigurationChanged }: ModelProvi
                             cancelText={t("common.cancel")}
                             okButtonProps={{ danger: true }}
                             okText={t("modelProvider.remove")}
-                            title={t("modelProvider.confirmRemoveProvider", { name: provider.name })}
+                            title={t("modelProvider.confirmRemoveProvider", { name: section.displayName })}
                             description={t("modelProvider.confirmRemoveProviderDesc")}
-                            onConfirm={() => deleteProvider(provider)}
+                            onConfirm={() => deleteProviderSection(section)}
                           >
-                            <Button aria-label={t("modelProvider.removeProviderAria", { name: provider.name })} danger icon={<DeleteOutlined />} />
+                            <Button aria-label={t("modelProvider.removeProviderAria", { name: section.displayName })} danger icon={<DeleteOutlined />} />
                           </Popconfirm>
                         </div>
                       </div>
 
                       {isExpanded ? (
                         <div
-                          aria-label={t("modelProvider.providerModelListAria", { name: provider.name })}
+                          aria-label={t("modelProvider.providerModelListAria", { name: section.displayName })}
                           className="model-provider-added-models"
                           id={modelListId}
                         >
-                          <div className="model-provider-group-rows" aria-label={t("modelProvider.providerGroupsAria", { name: provider.name })}>
-                            {provider.groups.map((group) => {
+                          <div className="model-provider-group-rows" aria-label={t("modelProvider.providerGroupsAria", { name: section.displayName })}>
+                            {section.groups.map((group) => {
                               const verifyKey = `${provider.id}:${group.id}`;
 
                               return (
