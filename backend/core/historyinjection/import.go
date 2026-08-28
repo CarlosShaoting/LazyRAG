@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -140,10 +141,43 @@ func Apply(ctx context.Context, db *gorm.DB, source BundleSource, owner TargetOw
 }
 
 func normalizeInjectedConversation(ctx context.Context, db *gorm.DB, manifest Manifest, owner TargetOwner) error {
-	result := db.WithContext(ctx).Exec(`
-        UPDATE conversations
-        SET display_name = ?, is_task_conv = FALSE
-        WHERE id = ? AND create_user_id = ?`, manifest.Title, manifest.ConversationID, owner.ID)
+	var extValue any
+	row := db.WithContext(ctx).Raw(
+		"SELECT ext FROM conversations WHERE id = ? AND create_user_id = ?",
+		manifest.ConversationID, owner.ID,
+	).Row()
+	if err := row.Scan(&extValue); err != nil {
+		return fmt.Errorf("read injected conversation %s metadata: %w", manifest.ConversationID, err)
+	}
+	ext, err := decodeConversationExt(extValue)
+	if err != nil {
+		return fmt.Errorf("decode injected conversation %s metadata: %w", manifest.ConversationID, err)
+	}
+	updates := map[string]any{
+		"display_name": manifest.Title,
+		"is_task_conv": false,
+	}
+	if !hasInjectionTimestamp(ext, manifest.BundleID) {
+		injectedAt := time.Now().UTC()
+		ext[historyInjectionMetadataKey] = map[string]any{
+			"bundle_id":   manifest.BundleID,
+			"injected_at": injectedAt.Format(time.RFC3339Nano),
+		}
+		encoded, err := json.Marshal(ext)
+		if err != nil {
+			return fmt.Errorf("encode injected conversation %s metadata: %w", manifest.ConversationID, err)
+		}
+		extStorage := any(string(encoded))
+		if db.Dialector.Name() == "sqlite" {
+			extStorage = encoded
+		}
+		updates["ext"] = extStorage
+		updates["created_at"] = injectedAt
+		updates["updated_at"] = injectedAt
+	}
+	result := db.WithContext(ctx).Table("conversations").
+		Where("id = ? AND create_user_id = ?", manifest.ConversationID, owner.ID).
+		Updates(updates)
 	if result.Error != nil {
 		return fmt.Errorf("normalize injected conversation %s: %w", manifest.ConversationID, result.Error)
 	}
@@ -152,6 +186,47 @@ func normalizeInjectedConversation(ctx context.Context, db *gorm.DB, manifest Ma
 			manifest.ConversationID, result.RowsAffected)
 	}
 	return nil
+}
+
+const historyInjectionMetadataKey = "_lazymind_history_injection"
+
+func decodeConversationExt(value any) (map[string]any, error) {
+	var body []byte
+	switch typed := value.(type) {
+	case nil:
+		return map[string]any{}, nil
+	case []byte:
+		body = typed
+	case string:
+		body = []byte(typed)
+	default:
+		body = []byte(fmt.Sprint(typed))
+	}
+	body = []byte(strings.TrimSpace(string(body)))
+	if len(body) == 0 || string(body) == "null" {
+		return map[string]any{}, nil
+	}
+	var ext map[string]any
+	if err := json.Unmarshal(body, &ext); err != nil {
+		return nil, err
+	}
+	if ext == nil {
+		ext = map[string]any{}
+	}
+	return ext, nil
+}
+
+func hasInjectionTimestamp(ext map[string]any, bundleID string) bool {
+	metadata, ok := ext[historyInjectionMetadataKey].(map[string]any)
+	if !ok || strings.TrimSpace(fmt.Sprint(metadata["bundle_id"])) != bundleID {
+		return false
+	}
+	injectedAt := strings.TrimSpace(fmt.Sprint(metadata["injected_at"]))
+	if injectedAt == "" || injectedAt == "<nil>" {
+		return false
+	}
+	_, err := time.Parse(time.RFC3339Nano, injectedAt)
+	return err == nil
 }
 
 func postgresBooleanColumns(ctx context.Context, db *gorm.DB) (map[string]map[string]bool, error) {
@@ -268,15 +343,15 @@ func ensureWorkflowRevision(ctx context.Context, db *gorm.DB, manifest Manifest,
 		return "", 0, fmt.Errorf("workflow %s is not installed", manifest.WorkflowRef)
 	}
 	type existingRevision struct {
-		PluginResourceID string `gorm:"column:plugin_resource_id"`
-		RevisionNo       int64  `gorm:"column:revision_no"`
+		WorkflowResourceID string `gorm:"column:plugin_resource_id"`
+		RevisionNo         int64  `gorm:"column:revision_no"`
 	}
 	var existing existingRevision
 	if err := db.WithContext(ctx).Raw("SELECT plugin_resource_id, revision_no FROM plugin_revisions WHERE id = ?", manifest.WorkflowRevision.ID).Scan(&existing).Error; err != nil {
 		return "", 0, err
 	}
-	if existing.PluginResourceID != "" {
-		if existing.PluginResourceID != resourceID {
+	if existing.WorkflowResourceID != "" {
+		if existing.WorkflowResourceID != resourceID {
 			return "", 0, fmt.Errorf("workflow revision %s belongs to a different workflow resource", manifest.WorkflowRevision.ID)
 		}
 		// SQLite's JSON columns are TEXT-affinity, but the workflow projection

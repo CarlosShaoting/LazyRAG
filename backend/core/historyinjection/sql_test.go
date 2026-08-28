@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -82,7 +83,7 @@ func TestApplyPortableBundleToSQLite(t *testing.T) {
 	for _, statement := range []string{
 		`CREATE TABLE plugins (id TEXT PRIMARY KEY, plugin_ref TEXT UNIQUE NOT NULL)`,
 		`CREATE TABLE plugin_revisions (id TEXT PRIMARY KEY, plugin_resource_id TEXT NOT NULL, parent_revision_id TEXT, revision_no INTEGER NOT NULL, tree_hash TEXT NOT NULL, message TEXT NOT NULL, created_by TEXT, created_at TEXT NOT NULL, compiled_graph TEXT, graph_hash TEXT NOT NULL, graph_schema_version TEXT NOT NULL, UNIQUE(plugin_resource_id, revision_no))`,
-		`CREATE TABLE conversations (id TEXT PRIMARY KEY, display_name TEXT, is_task_conv NUMERIC NOT NULL DEFAULT TRUE, create_user_id TEXT NOT NULL, create_user_name TEXT NOT NULL, ext JSON)`,
+		`CREATE TABLE conversations (id TEXT PRIMARY KEY, display_name TEXT, is_task_conv NUMERIC NOT NULL DEFAULT TRUE, create_user_id TEXT NOT NULL, create_user_name TEXT NOT NULL, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL, ext JSON)`,
 		`CREATE TABLE chat_histories (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, run_terminal TEXT)`,
 		`INSERT INTO plugins(id, plugin_ref) VALUES ('workflow-resource', 'builtin:ppt-workflow')`,
 	} {
@@ -114,14 +115,16 @@ func TestApplyPortableBundleToSQLite(t *testing.T) {
 		t.Fatal(err)
 	}
 	sqlText := `-- portable bundle
-INSERT INTO conversations (id, display_name, create_user_id, create_user_name, ext) VALUES ('conversation-1', 'demo', '{{OWNER_USER_ID}}', '{{OWNER_USER_NAME}}', '{"source":"bundle"}') ON CONFLICT DO NOTHING;
+INSERT INTO conversations (id, display_name, create_user_id, create_user_name, created_at, updated_at, ext) VALUES ('conversation-1', 'demo', '{{OWNER_USER_ID}}', '{{OWNER_USER_NAME}}', '2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z', '{"source":"bundle"}') ON CONFLICT DO NOTHING;
 INSERT INTO chat_histories (id, conversation_id, run_terminal) VALUES ('history-1', 'conversation-1', '{"status":"completed"}') ON CONFLICT DO NOTHING;`
 	if err := os.WriteFile(filepath.Join(bundle, "data.sql"), []byte(sqlText), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	uploads := t.TempDir()
+	injectionStarted := time.Now().UTC()
 	result, err := Apply(t.Context(), db, BundleSource{Path: bundle, Manifest: manifest},
 		TargetOwner{ID: "target-user", Username: "admin"}, RuntimeRoots{Uploads: uploads, Subagent: t.TempDir()})
+	injectionFinished := time.Now().UTC()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,6 +147,17 @@ INSERT INTO chat_histories (id, conversation_id, run_terminal) VALUES ('history-
 	}
 	if conversation.DisplayName != "demo" || conversation.IsTaskConv {
 		t.Fatalf("normalized conversation = %#v", conversation)
+	}
+	var timestamps struct {
+		CreatedAt time.Time `gorm:"column:created_at"`
+		UpdatedAt time.Time `gorm:"column:updated_at"`
+	}
+	if err := db.Raw("SELECT created_at, updated_at FROM conversations WHERE id = 'conversation-1'").Scan(&timestamps).Error; err != nil {
+		t.Fatal(err)
+	}
+	if timestamps.CreatedAt.Before(injectionStarted) || timestamps.CreatedAt.After(injectionFinished) ||
+		!timestamps.CreatedAt.Equal(timestamps.UpdatedAt) {
+		t.Fatalf("conversation timestamps = %#v, want injection window %s..%s", timestamps, injectionStarted, injectionFinished)
 	}
 	if body, err := os.ReadFile(filepath.Join(uploads, "workflow-artifacts", "demo.txt")); err != nil || string(body) != "demo" {
 		t.Fatalf("installed payload = %q, %v", body, err)
@@ -178,6 +192,19 @@ INSERT INTO chat_histories (id, conversation_id, run_terminal) VALUES ('history-
 	if string(history.RunTerminal) != `{"status":"completed"}` {
 		t.Fatalf("chat history run_terminal = %q", history.RunTerminal)
 	}
+	var extRow struct {
+		Ext json.RawMessage `gorm:"column:ext"`
+	}
+	if err := db.Raw("SELECT ext FROM conversations WHERE id = 'conversation-1'").Scan(&extRow).Error; err != nil {
+		t.Fatal(err)
+	}
+	var extObject map[string]any
+	if err := json.Unmarshal(extRow.Ext, &extObject); err != nil {
+		t.Fatal(err)
+	}
+	if !hasInjectionTimestamp(extObject, manifest.BundleID) {
+		t.Fatalf("injection timestamp metadata missing: %s", extRow.Ext)
+	}
 	if err := db.Exec("UPDATE conversations SET display_name = 'stale title', is_task_conv = TRUE WHERE id = 'conversation-1'").Error; err != nil {
 		t.Fatal(err)
 	}
@@ -194,6 +221,48 @@ INSERT INTO chat_histories (id, conversation_id, run_terminal) VALUES ('history-
 	}
 	if conversation.DisplayName != "demo" || conversation.IsTaskConv {
 		t.Fatalf("idempotent normalization = %#v", conversation)
+	}
+	var secondTimestamps struct {
+		CreatedAt time.Time `gorm:"column:created_at"`
+		UpdatedAt time.Time `gorm:"column:updated_at"`
+	}
+	if err := db.Raw("SELECT created_at, updated_at FROM conversations WHERE id = 'conversation-1'").Scan(&secondTimestamps).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !secondTimestamps.CreatedAt.Equal(timestamps.CreatedAt) || !secondTimestamps.UpdatedAt.Equal(timestamps.UpdatedAt) {
+		t.Fatalf("idempotent apply changed injection timestamps: first=%#v second=%#v", timestamps, secondTimestamps)
+	}
+
+	// Simulate a database populated by an older importer: the bundle dates are
+	// still present and there is no one-time injection timestamp marker.
+	legacyTime := time.Date(2026, time.January, 2, 0, 0, 0, 0, time.UTC)
+	if err := db.Exec(
+		"UPDATE conversations SET created_at = ?, updated_at = ?, ext = ? WHERE id = 'conversation-1'",
+		legacyTime, legacyTime, []byte(`{"source":"bundle"}`),
+	).Error; err != nil {
+		t.Fatal(err)
+	}
+	upgradeStarted := time.Now().UTC()
+	upgraded, err := Apply(t.Context(), db, BundleSource{Path: bundle, Manifest: manifest},
+		TargetOwner{ID: "target-user", Username: "admin"}, RuntimeRoots{Uploads: uploads, Subagent: t.TempDir()})
+	upgradeFinished := time.Now().UTC()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !upgraded.AlreadyPresent {
+		t.Fatalf("legacy upgrade was not recognized as already present: %#v", upgraded)
+	}
+	var upgradedTimestamps struct {
+		CreatedAt time.Time `gorm:"column:created_at"`
+		UpdatedAt time.Time `gorm:"column:updated_at"`
+	}
+	if err := db.Raw("SELECT created_at, updated_at FROM conversations WHERE id = 'conversation-1'").Scan(&upgradedTimestamps).Error; err != nil {
+		t.Fatal(err)
+	}
+	if upgradedTimestamps.CreatedAt.Before(upgradeStarted) || upgradedTimestamps.CreatedAt.After(upgradeFinished) ||
+		!upgradedTimestamps.CreatedAt.Equal(upgradedTimestamps.UpdatedAt) {
+		t.Fatalf("legacy timestamps were not upgraded to injection time: %#v, window %s..%s",
+			upgradedTimestamps, upgradeStarted, upgradeFinished)
 	}
 }
 

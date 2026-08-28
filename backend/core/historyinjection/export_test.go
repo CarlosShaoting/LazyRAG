@@ -51,11 +51,11 @@ func TestExportSQLLiteralNormalizesSQLiteBooleanValues(t *testing.T) {
 		{value: []byte("1"), want: "TRUE"},
 		{value: "false", want: "FALSE"},
 	} {
-		if got := exportSQLLiteral(test.value, "plugin_slot_revisions", "selected", "owner", "admin"); got != test.want {
+		if got := exportSQLLiteral(test.value, "plugin_slot_revisions", "selected", "owner", "admin"); got != test.want { // workflow-naming: persistence
 			t.Fatalf("exportSQLLiteral(%#v) = %q, want %q", test.value, got, test.want)
 		}
 	}
-	if got := exportSQLLiteral(int64(1), "plugin_slot_revisions", "revision", "owner", "admin"); got != "1" {
+	if got := exportSQLLiteral(int64(1), "plugin_slot_revisions", "revision", "owner", "admin"); got != "1" { // workflow-naming: persistence
 		t.Fatalf("non-boolean integer = %q, want 1", got)
 	}
 	if got := exportSQLLiteral(int64(0), "task_center_tasks", "has_late_inputs", "owner", "admin"); got != "FALSE" {

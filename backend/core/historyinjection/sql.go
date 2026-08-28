@@ -24,8 +24,8 @@ var portableBooleanColumns = map[string]map[string]bool{
 		"is_task_conv":    true,
 		"is_ephemeral":    true,
 	},
-	"plugin_sessions":       {"dismissed": true},
-	"plugin_slot_revisions": {"selected": true},
+	"plugin_sessions":       {"dismissed": true}, // workflow-naming: persistence
+	"plugin_slot_revisions": {"selected": true},  // workflow-naming: persistence
 	"sub_agent_artifacts":   {"hidden": true},
 	"task_center_tasks":     {"has_late_inputs": true},
 }

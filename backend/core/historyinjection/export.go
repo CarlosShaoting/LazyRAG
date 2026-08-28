@@ -182,16 +182,16 @@ func exportTables(conversationID string, sessions, taskIDs []string) []exportTab
 		// advance_mode existed in the PostgreSQL development schema used by the
 		// source session, but is not part of the current Desktop SQLite schema.
 		// It is legacy scheduler state and is not needed to render history.
-		{Name: "plugin_sessions", Where: "id IN ?", Args: []any{sessions}, OrderBy: "created_at, id", Omit: map[string]bool{"advance_mode": true}},
-		{Name: "plugin_session_steps", Where: sessionFilter, Args: []any{sessions}, OrderBy: "created_at, id"},
-		{Name: "plugin_human_artifacts", Where: sessionFilter, Args: []any{sessions}, OrderBy: "created_at, id"},
-		{Name: "plugin_slot_revisions", Where: sessionFilter, Args: []any{sessions}, OrderBy: "created_at, id"},
-		{Name: "plugin_attempt_input_bindings", Where: sessionFilter, Args: []any{sessions}, OrderBy: "created_at, id"},
-		{Name: "plugin_route_decisions", Where: sessionFilter, Args: []any{sessions}, OrderBy: "created_at, id"},
-		{Name: "plugin_transition_commands", Where: sessionFilter, Args: []any{sessions}, OrderBy: "created_at, command_id"},
-		{Name: "plugin_slot_order", Where: sessionFilter, Args: []any{sessions}, OrderBy: "session_id, slot_id"},
-		{Name: "plugin_step_intents", Where: sessionFilter, Args: []any{sessions}, OrderBy: "session_id, step_id"},
-		{Name: "plugin_run_outbox", Where: "task_id IN ?", Args: []any{taskIDs}, OrderBy: "created_at, task_id"},
+		{Name: "plugin_sessions", Where: "id IN ?", Args: []any{sessions}, OrderBy: "created_at, id", Omit: map[string]bool{"advance_mode": true}}, // workflow-naming: persistence
+		{Name: "plugin_session_steps", Where: sessionFilter, Args: []any{sessions}, OrderBy: "created_at, id"},                                     // workflow-naming: persistence
+		{Name: "plugin_human_artifacts", Where: sessionFilter, Args: []any{sessions}, OrderBy: "created_at, id"},                                   // workflow-naming: persistence
+		{Name: "plugin_slot_revisions", Where: sessionFilter, Args: []any{sessions}, OrderBy: "created_at, id"},                                    // workflow-naming: persistence
+		{Name: "plugin_attempt_input_bindings", Where: sessionFilter, Args: []any{sessions}, OrderBy: "created_at, id"},                            // workflow-naming: persistence
+		{Name: "plugin_route_decisions", Where: sessionFilter, Args: []any{sessions}, OrderBy: "created_at, id"},                                   // workflow-naming: persistence
+		{Name: "plugin_transition_commands", Where: sessionFilter, Args: []any{sessions}, OrderBy: "created_at, command_id"},                       // workflow-naming: persistence
+		{Name: "plugin_slot_order", Where: sessionFilter, Args: []any{sessions}, OrderBy: "session_id, slot_id"},                                   // workflow-naming: persistence
+		{Name: "plugin_step_intents", Where: sessionFilter, Args: []any{sessions}, OrderBy: "session_id, step_id"},                                 // workflow-naming: persistence
+		{Name: "plugin_run_outbox", Where: "task_id IN ?", Args: []any{taskIDs}, OrderBy: "created_at, task_id"},                                   // workflow-naming: persistence
 		{Name: "workflow_preparations", Where: sessionFilter, Args: []any{sessions}, OrderBy: "created_at, id"},
 		{Name: "workflow_commands", Where: sessionFilter, Args: []any{sessions}, OrderBy: "created_at, command_id"},
 		{Name: "workflow_outbox", Where: sessionFilter, Args: []any{sessions}, OrderBy: "created_at, id"},

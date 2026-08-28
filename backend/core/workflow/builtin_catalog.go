@@ -134,7 +134,7 @@ func seedBuiltinWorkflow(ctx context.Context, db *gorm.DB, root string) (string,
 		revisionID := uuid.NewString()
 		var maximumRevisionNo int64
 		if err := tx.Model(&orm.WorkflowRevision{}).
-			Where("plugin_resource_id = ?", resource.ID).
+			Where("plugin_resource_id = ?", resource.ID). // workflow-naming: persistence
 			Select("COALESCE(MAX(revision_no), 0)").Scan(&maximumRevisionNo).Error; err != nil {
 			return err
 		}
