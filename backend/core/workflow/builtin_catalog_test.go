@@ -83,6 +83,14 @@ func TestDisabledBuiltinWorkflowIDsIgnoresArchivedCatalogEntries(t *testing.T) {
 }
 
 func TestBuiltinPackageIgnoresPythonRuntimeCacheFiles(t *testing.T) {
+	for _, name := range []string{"__pycache__", "node_modules", ".cache"} {
+		if !ignoredBuiltinPackageDir(name) {
+			t.Fatalf("runtime dependency directory %q was not ignored", name)
+		}
+	}
+	if ignoredBuiltinPackageDir("scripts") {
+		t.Fatal("source directory scripts must remain in the immutable package")
+	}
 	for _, name := range []string{"tools.pyc", "tools.pyo", ".DS_Store"} {
 		if !ignoredBuiltinPackageFile(name) {
 			t.Fatalf("runtime cache file %q was not ignored", name)

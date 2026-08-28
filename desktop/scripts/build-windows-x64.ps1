@@ -235,6 +235,7 @@ function Copy-RuntimeApp {
     $appRoot = Join-Path $runtimeRoot 'app'
     New-Item -ItemType Directory -Force -Path $appRoot | Out-Null
     $excludedDirs = @(
+        'node_modules',
         (Join-Path $repoRoot '.git'),
         (Join-Path $repoRoot 'local\build'),
         (Join-Path $repoRoot 'local\runtime'),

@@ -144,6 +144,7 @@ test("macOS and Windows builds materialize offline assets before writing the run
   assert.match(windows, /robocopy\.exe \$repoRoot \$appRoot \/MIR/);
   assert.match(darwin, /--exclude "\/history-injection"/);
   assert.match(darwin, /--exclude "lazymind-history-injection\*\.zip"/);
+  assert.match(windows, /\$excludedDirs = @\(\s*'node_modules',/);
   assert.match(windows, /Join-Path \$repoRoot 'history-injection'/);
   assert.match(windows, /lazymind-history-injection\*\.zip/);
 });

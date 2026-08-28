@@ -68,10 +68,15 @@ func seedBuiltinWorkflow(ctx context.Context, db *gorm.DB, root string) (string,
 		if err != nil {
 			return err
 		}
-		if entry.IsDir() {
-			if entry.Name() == "__pycache__" || strings.HasPrefix(entry.Name(), ".") && path != root {
+		if path != root && ignoredBuiltinPackageDir(entry.Name()) {
+			if entry.IsDir() {
 				return filepath.SkipDir
 			}
+			// Windows directory junctions can be reported as non-directories by
+			// WalkDir. Ignore the entry before attempting to read it as a file.
+			return nil
+		}
+		if entry.IsDir() {
 			return nil
 		}
 		if ignoredBuiltinPackageFile(entry.Name()) {
@@ -196,6 +201,10 @@ func seedBuiltinWorkflow(ctx context.Context, db *gorm.DB, root string) (string,
 			"status": "active", "updated_at": now}).Error
 	})
 	return ref, err
+}
+
+func ignoredBuiltinPackageDir(name string) bool {
+	return name == "__pycache__" || name == "node_modules" || strings.HasPrefix(name, ".")
 }
 
 func ignoredBuiltinPackageFile(name string) bool {
