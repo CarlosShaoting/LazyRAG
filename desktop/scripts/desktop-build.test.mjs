@@ -151,6 +151,7 @@ test("macOS and Windows builds materialize offline assets before writing the run
 test("Docker prepares history samples at runtime without coupling the Core image build to ModelScope", () => {
   const dockerfile = readFileSync(coreDockerfile, "utf8");
   const compose = readFileSync(dockerCompose, "utf8");
+  const completedInitDependency = /history-injection-init:\r?\n\s+condition: service_completed_successfully/;
   assert.doesNotMatch(dockerfile, /history-injection-package/);
   assert.doesNotMatch(dockerfile, /COPY history-injection \/app\/history-injection/);
   assert.match(compose, /history-injection-init:/);
@@ -158,7 +159,8 @@ test("Docker prepares history samples at runtime without coupling the Core image
   assert.match(compose, /\.\/scripts\/prepare_history_injection\.py:.*:ro/);
   assert.match(compose, /\.\/desktop\/history-injection-package\.json:.*:ro/);
   assert.match(compose, /LAZYMIND_HISTORY_INJECTION_ROOT: \/var\/lib\/lazymind\/uploads\/\.history-injection\/bundles/);
-  assert.match(compose, /history-injection-init:\n\s+condition: service_completed_successfully/);
+  assert.match(compose, completedInitDependency);
+  assert.match(compose.replace(/\r?\n/g, "\r\n"), completedInitDependency);
 });
 
 test("generates a multi-resolution Windows ICO from the macOS icon", () => {
