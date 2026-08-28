@@ -87,7 +87,7 @@ const maxStartupLogEntries = 1200;
 const maxSidecarFailureBytes = 32 * 1024;
 const desktopShutdownTimeout = process.env.LAZYMIND_DESKTOP_SHUTDOWN_TIMEOUT || "20s";
 const forceExitDelayMs = 1500;
-const rendererReadyTimeoutMs = 30 * 1000;
+const rendererReadyTimeoutMs = 120 * 1000;
 const runtimeOwnershipHandoffTimeoutMs = 30 * 1000;
 const agentHostRestartMaxDelayMs = 30 * 1000;
 const agentHostStableAfterMs = 60 * 1000;
@@ -1785,7 +1785,9 @@ function createRendererReadyWait(window) {
   const timer = setTimeout(() => {
     if (settled) return;
     settled = true;
-    rejectPromise(new Error("LazyMind Chat did not render within 30 seconds"));
+    rejectPromise(
+      new Error(`LazyMind Chat did not render within ${rendererReadyTimeoutMs / 1000} seconds`),
+    );
   }, rendererReadyTimeoutMs);
   return {
     window,

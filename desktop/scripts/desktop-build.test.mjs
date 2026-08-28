@@ -538,6 +538,13 @@ test("Desktop startup shows real bundled Python progress and transient Windows l
   assert.doesNotMatch(source, /transition:\s*width/);
 });
 
+test("Desktop allows slow first-launch Chat rendering", () => {
+  const source = readFileSync(electronMainScript, "utf8");
+  assert.match(source, /const rendererReadyTimeoutMs = 120 \* 1000;/);
+  assert.match(source, /rendererReadyTimeoutMs \/ 1000/);
+  assert.doesNotMatch(source, /did not render within 30 seconds/);
+});
+
 test("Desktop warmup reports bundled history extraction before Core starts", () => {
   const source = readFileSync(electronMainScript, "utf8");
   assert.match(source, /history-injection-payload/);
