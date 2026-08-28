@@ -21,6 +21,28 @@ func TestSplitSQLStatementsPreservesQuotedSemicolons(t *testing.T) {
 	}
 }
 
+func TestRewritePostgresBooleanLiteralsOnlyChangesBooleanColumns(t *testing.T) {
+	statement := `INSERT INTO plugin_slot_revisions
+        (id, revision, selected, content_snapshot)
+        VALUES ('revision-1', 1, 1, '{"enabled":1,"values":[0,1],"label":"it''s, fine"}') ON CONFLICT DO NOTHING`
+	got := rewritePostgresBooleanLiterals(statement, portableBooleanColumns)
+	if !strings.Contains(got, `VALUES ('revision-1', 1, TRUE, '{"enabled":1,"values":[0,1],"label":"it''s, fine"}')`) {
+		t.Fatalf("rewritten statement = %s", got)
+	}
+	if strings.Contains(got, "'revision-1', TRUE, TRUE") {
+		t.Fatalf("non-boolean revision was rewritten: %s", got)
+	}
+}
+
+func TestRewritePostgresBooleanLiteralsSupportsSeveralConversationFlags(t *testing.T) {
+	statement := `INSERT INTO conversations (id, enable_plugin, enable_subagent, is_task_conv, is_ephemeral)
+        VALUES ('conversation-1', 1, 0, 1, 0) ON CONFLICT DO NOTHING`
+	want := `VALUES ('conversation-1', TRUE, FALSE, TRUE, FALSE)`
+	if got := rewritePostgresBooleanLiterals(statement, portableBooleanColumns); !strings.Contains(got, want) {
+		t.Fatalf("rewritten statement = %s, want fragment %s", got, want)
+	}
+}
+
 func TestDiscoverSkipsWorkflowPayloadManifests(t *testing.T) {
 	root := t.TempDir()
 	bundle := filepath.Join(root, "ppt", "demo-v1")
@@ -60,7 +82,7 @@ func TestApplyPortableBundleToSQLite(t *testing.T) {
 	for _, statement := range []string{
 		`CREATE TABLE plugins (id TEXT PRIMARY KEY, plugin_ref TEXT UNIQUE NOT NULL)`,
 		`CREATE TABLE plugin_revisions (id TEXT PRIMARY KEY, plugin_resource_id TEXT NOT NULL, parent_revision_id TEXT, revision_no INTEGER NOT NULL, tree_hash TEXT NOT NULL, message TEXT NOT NULL, created_by TEXT, created_at TEXT NOT NULL, compiled_graph TEXT, graph_hash TEXT NOT NULL, graph_schema_version TEXT NOT NULL, UNIQUE(plugin_resource_id, revision_no))`,
-		`CREATE TABLE conversations (id TEXT PRIMARY KEY, display_name TEXT, create_user_id TEXT NOT NULL, create_user_name TEXT NOT NULL, ext JSON)`,
+		`CREATE TABLE conversations (id TEXT PRIMARY KEY, display_name TEXT, is_task_conv NUMERIC NOT NULL DEFAULT TRUE, create_user_id TEXT NOT NULL, create_user_name TEXT NOT NULL, ext JSON)`,
 		`CREATE TABLE chat_histories (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, run_terminal TEXT)`,
 		`INSERT INTO plugins(id, plugin_ref) VALUES ('workflow-resource', 'builtin:ppt-workflow')`,
 	} {
@@ -113,6 +135,16 @@ INSERT INTO chat_histories (id, conversation_id, run_terminal) VALUES ('history-
 	if owner != "target-user" {
 		t.Fatalf("owner = %q", owner)
 	}
+	var conversation struct {
+		DisplayName string `gorm:"column:display_name"`
+		IsTaskConv  bool   `gorm:"column:is_task_conv"`
+	}
+	if err := db.Raw("SELECT display_name, is_task_conv FROM conversations WHERE id = 'conversation-1'").Scan(&conversation).Error; err != nil {
+		t.Fatal(err)
+	}
+	if conversation.DisplayName != "demo" || conversation.IsTaskConv {
+		t.Fatalf("normalized conversation = %#v", conversation)
+	}
 	if body, err := os.ReadFile(filepath.Join(uploads, "workflow-artifacts", "demo.txt")); err != nil || string(body) != "demo" {
 		t.Fatalf("installed payload = %q, %v", body, err)
 	}
@@ -146,6 +178,9 @@ INSERT INTO chat_histories (id, conversation_id, run_terminal) VALUES ('history-
 	if string(history.RunTerminal) != `{"status":"completed"}` {
 		t.Fatalf("chat history run_terminal = %q", history.RunTerminal)
 	}
+	if err := db.Exec("UPDATE conversations SET display_name = 'stale title', is_task_conv = TRUE WHERE id = 'conversation-1'").Error; err != nil {
+		t.Fatal(err)
+	}
 	second, err := Apply(t.Context(), db, BundleSource{Path: bundle, Manifest: manifest},
 		TargetOwner{ID: "target-user", Username: "admin"}, RuntimeRoots{Uploads: uploads, Subagent: t.TempDir()})
 	if err != nil {
@@ -153,6 +188,12 @@ INSERT INTO chat_histories (id, conversation_id, run_terminal) VALUES ('history-
 	}
 	if !second.AlreadyPresent || second.FilesCopied != 0 {
 		t.Fatalf("unexpected idempotent result: %#v", second)
+	}
+	if err := db.Raw("SELECT display_name, is_task_conv FROM conversations WHERE id = 'conversation-1'").Scan(&conversation).Error; err != nil {
+		t.Fatal(err)
+	}
+	if conversation.DisplayName != "demo" || conversation.IsTaskConv {
+		t.Fatalf("idempotent normalization = %#v", conversation)
 	}
 }
 

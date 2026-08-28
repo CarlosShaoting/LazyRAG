@@ -96,6 +96,9 @@ func Apply(ctx context.Context, db *gorm.DB, source BundleSource, owner TargetOw
 			if err != nil {
 				return err
 			}
+			if err := normalizeInjectedConversation(ctx, tx, manifest, owner); err != nil {
+				return err
+			}
 			return normalizeSQLiteJSONColumns(ctx, tx, statements)
 		})
 		return result, err
@@ -114,14 +117,67 @@ func Apply(ctx context.Context, db *gorm.DB, source BundleSource, owner TargetOw
 		if err != nil {
 			return err
 		}
+		if tx.Dialector.Name() == "postgres" {
+			booleanColumns, err := postgresBooleanColumns(ctx, tx)
+			if err != nil {
+				return err
+			}
+			for index, statement := range statements {
+				statements[index] = rewritePostgresBooleanLiterals(statement, booleanColumns)
+			}
+		}
 		for index, statement := range statements {
 			if err := tx.Exec(statement).Error; err != nil {
 				return fmt.Errorf("execute SQL statement %d: %w", index+1, err)
 			}
 		}
+		if err := normalizeInjectedConversation(ctx, tx, manifest, owner); err != nil {
+			return err
+		}
 		return normalizeSQLiteJSONColumns(ctx, tx, statements)
 	})
 	return result, err
+}
+
+func normalizeInjectedConversation(ctx context.Context, db *gorm.DB, manifest Manifest, owner TargetOwner) error {
+	result := db.WithContext(ctx).Exec(`
+        UPDATE conversations
+        SET display_name = ?, is_task_conv = FALSE
+        WHERE id = ? AND create_user_id = ?`, manifest.Title, manifest.ConversationID, owner.ID)
+	if result.Error != nil {
+		return fmt.Errorf("normalize injected conversation %s: %w", manifest.ConversationID, result.Error)
+	}
+	if result.RowsAffected != 1 {
+		return fmt.Errorf("normalize injected conversation %s: expected one owned row, updated %d",
+			manifest.ConversationID, result.RowsAffected)
+	}
+	return nil
+}
+
+func postgresBooleanColumns(ctx context.Context, db *gorm.DB) (map[string]map[string]bool, error) {
+	type booleanColumn struct {
+		TableName  string `gorm:"column:table_name"`
+		ColumnName string `gorm:"column:column_name"`
+	}
+	var rows []booleanColumn
+	err := db.WithContext(ctx).Raw(`
+        SELECT table_name, column_name
+        FROM information_schema.columns
+        WHERE table_schema = current_schema() AND data_type = 'boolean'`).Scan(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("inspect PostgreSQL boolean columns: %w", err)
+	}
+	columns := make(map[string]map[string]bool)
+	for _, row := range rows {
+		if !safeSQLIdentifier(row.TableName) || !safeSQLIdentifier(row.ColumnName) {
+			continue
+		}
+		if columns[row.TableName] == nil {
+			columns[row.TableName] = make(map[string]bool)
+		}
+		columns[row.TableName][row.ColumnName] = true
+	}
+	return columns, nil
 }
 
 func normalizeSQLiteJSONColumns(ctx context.Context, db *gorm.DB, statements []string) error {

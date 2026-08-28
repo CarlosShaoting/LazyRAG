@@ -434,6 +434,10 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+      # A first install may import several large portable history bundles
+      # before Core starts listening. Failures during this window are startup
+      # progress, not an unhealthy steady-state service.
+      start_period: 180s
     depends_on:
       db:
         condition: service_healthy

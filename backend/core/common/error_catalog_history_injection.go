@@ -22,6 +22,7 @@ func init() {
 		"auth login response has no access token",
 		"auth me response has no user_id",
 		"history injection sql contains an unterminated string literal",
+		"inspect postgresql boolean columns",
 	} {
 		registerAdditionalErrorAlias(alias, message, http.StatusInternalServerError, code)
 	}
@@ -48,6 +49,7 @@ func init() {
 		"apply history injection bundle %s",
 		"materialized bundle id changed from %q to %q",
 		"conversation %s already belongs to another user",
+		"normalize injected conversation %s",
 		"execute sql statement %d",
 		"workflow %s is not installed",
 		"workflow revision %s belongs to a different workflow resource",

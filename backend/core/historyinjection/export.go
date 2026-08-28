@@ -243,7 +243,7 @@ func writeTableSQL(ctx context.Context, db *gorm.DB, output io.Writer, table exp
 				literals = append(literals, workflowRevisionToken)
 				continue
 			}
-			literals = append(literals, exportSQLLiteral(values[index], column, sourceOwner, sourceUsername))
+			literals = append(literals, exportSQLLiteral(values[index], table.Name, column, sourceOwner, sourceUsername))
 		}
 		_, _ = fmt.Fprintf(output, "INSERT INTO %s (%s) VALUES (%s) ON CONFLICT DO NOTHING;\n",
 			table.Name, strings.Join(selectedColumns, ", "), strings.Join(literals, ", "))
@@ -254,9 +254,14 @@ func writeTableSQL(ctx context.Context, db *gorm.DB, output io.Writer, table exp
 	return rows.Err()
 }
 
-func exportSQLLiteral(value any, column, sourceOwner, sourceUsername string) string {
+func exportSQLLiteral(value any, table, column, sourceOwner, sourceUsername string) string {
 	if value == nil {
 		return "NULL"
+	}
+	if portableBooleanColumns[table][column] {
+		if literal, ok := portableBooleanLiteral(value); ok {
+			return literal
+		}
 	}
 	var text string
 	switch typed := value.(type) {
@@ -300,6 +305,65 @@ func exportSQLLiteral(value any, column, sourceOwner, sourceUsername string) str
 		text = ownerNameToken
 	}
 	return "'" + strings.ReplaceAll(text, "'", "''") + "'"
+}
+
+func portableBooleanLiteral(value any) (string, bool) {
+	switch typed := value.(type) {
+	case bool:
+		if typed {
+			return "TRUE", true
+		}
+		return "FALSE", true
+	case int:
+		return integerBooleanLiteral(int64(typed))
+	case int8:
+		return integerBooleanLiteral(int64(typed))
+	case int16:
+		return integerBooleanLiteral(int64(typed))
+	case int32:
+		return integerBooleanLiteral(int64(typed))
+	case int64:
+		return integerBooleanLiteral(typed)
+	case uint:
+		return unsignedBooleanLiteral(uint64(typed))
+	case uint64:
+		return unsignedBooleanLiteral(typed)
+	case []byte:
+		return textBooleanLiteral(string(typed))
+	case string:
+		return textBooleanLiteral(typed)
+	default:
+		return "", false
+	}
+}
+
+func integerBooleanLiteral(value int64) (string, bool) {
+	switch value {
+	case 0:
+		return "FALSE", true
+	case 1:
+		return "TRUE", true
+	default:
+		return "", false
+	}
+}
+
+func unsignedBooleanLiteral(value uint64) (string, bool) {
+	if value > 1 {
+		return "", false
+	}
+	return integerBooleanLiteral(int64(value))
+}
+
+func textBooleanLiteral(value string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "0", "false", "f", "no", "off":
+		return "FALSE", true
+	case "1", "true", "t", "yes", "on":
+		return "TRUE", true
+	default:
+		return "", false
+	}
 }
 
 func exportPayload(ctx context.Context, db *gorm.DB, staging string, options ExportOptions, sessions, taskIDs []string, sourceOwner string) ([]PayloadFile, error) {

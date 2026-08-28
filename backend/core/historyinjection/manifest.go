@@ -52,7 +52,7 @@ func (m Manifest) Validate() error {
 		return fmt.Errorf("history injection manifest schema_version %d is unsupported", m.SchemaVersion)
 	}
 	for name, value := range map[string]string{
-		"bundle_id": m.BundleID, "category": m.Category, "conversation_id": m.ConversationID,
+		"bundle_id": m.BundleID, "category": m.Category, "title": m.Title, "conversation_id": m.ConversationID,
 		"source_owner_id": m.SourceOwnerID, "workflow_ref": m.WorkflowRef,
 		"workflow_revision.id": m.WorkflowRevision.ID, "sql_file": m.SQLFile,
 	} {
