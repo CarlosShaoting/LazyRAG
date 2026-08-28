@@ -157,3 +157,65 @@ steps:
 		t.Fatalf("head=%#v", head)
 	}
 }
+
+func TestBuiltinSeedAllocatesAfterDetachedHistoryRevision(t *testing.T) {
+	db := newHandlerTestDB(t)
+	root := t.TempDir()
+	workflowYAML := `id: detached-history
+name: Detached History
+slots:
+  - {id: topic, type: text, external: true}
+  - {id: result, type: text}
+steps:
+  - {id: run, label: Run}
+`
+	stateYAML := `transitions:
+  __start__: [{to: run}]
+  run: [{to: __end__}]
+steps:
+  run:
+    inputs: [{material: topic, required: true}]
+    outputs: [result]
+`
+	if err := os.MkdirAll(filepath.Join(root, "scenario"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "workflow.yaml"), []byte(workflowYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "scenario", "state.yml"), []byte(stateYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := seedBuiltinWorkflow(context.Background(), db.DB, root); err != nil {
+		t.Fatal(err)
+	}
+	var resource orm.WorkflowResource
+	if err := db.DB.Where("plugin_ref = ?", "builtin:detached-history").First(&resource).Error; err != nil {
+		t.Fatal(err)
+	}
+	detached := orm.WorkflowRevision{
+		ID: "injected-history-revision", WorkflowResourceID: resource.ID,
+		RevisionNo: 5, TreeHash: "history-tree", CompiledGraph: []byte(`{}`),
+		GraphHash: "history-graph", GraphSchemaVersion: "3", Message: "history injection",
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := db.DB.Create(&detached).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "scripts.py"), []byte("# package changed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := seedBuiltinWorkflow(context.Background(), db.DB, root); err != nil {
+		t.Fatal(err)
+	}
+	var head orm.WorkflowRevision
+	if err := db.DB.Where("plugin_ref = ?", "builtin:detached-history").First(&resource).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DB.Where("id = ?", resource.HeadRevisionID).First(&head).Error; err != nil {
+		t.Fatal(err)
+	}
+	if head.RevisionNo != 6 || resource.Version != 6 {
+		t.Fatalf("head revision=%d resource version=%d, want 6", head.RevisionNo, resource.Version)
+	}
+}

@@ -427,6 +427,22 @@ function captureSidecarChunk(source, chunk) {
       if (["phase.completed", "phase.failed"].includes(event?.event) && event?.phase === "python-payload") {
         updateStartupState({ progress: null });
       }
+      if (event?.phase === "history-injection-payload" && event?.event === "phase.started") {
+        updateStartupState({
+          status: "starting",
+          phase: "Preparing sample conversations",
+          message: "Verifying and unpacking the bundled sample conversations...",
+          progress: null,
+        });
+      }
+      if (event?.phase === "history-injection-payload" && event?.event === "phase.completed") {
+        updateStartupState({
+          status: "starting",
+          phase: "Sample conversations ready",
+          message: "Starting the local services and importing sample conversations...",
+          progress: null,
+        });
+      }
       if (["phase.failed", "startup.failed"].includes(event?.event) && event?.error) {
         sidecarStructuredFailure = String(event.error);
       }

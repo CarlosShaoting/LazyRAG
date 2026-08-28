@@ -156,8 +156,14 @@ func seedBuiltinWorkflow(ctx context.Context, db *gorm.DB, root string) (string,
 				"contains_scripts": hasScriptPath(paths), "status": "active", "updated_at": now}).Error
 		}
 		revisionID := uuid.NewString()
+		var maximumRevisionNo int64
+		if err := tx.Model(&orm.WorkflowRevision{}).
+			Where("plugin_resource_id = ?", resource.ID).
+			Select("COALESCE(MAX(revision_no), 0)").Scan(&maximumRevisionNo).Error; err != nil {
+			return err
+		}
 		revision := orm.WorkflowRevision{ID: revisionID, WorkflowResourceID: resource.ID,
-			ParentRevisionID: resource.HeadRevisionID, RevisionNo: resource.Version + 1,
+			ParentRevisionID: resource.HeadRevisionID, RevisionNo: maximumRevisionNo + 1,
 			TreeHash: treeHash, CompiledGraph: compiled.Graph.JSON(), GraphHash: compiled.GraphHash,
 			GraphSchemaVersion: compiled.SchemaVersion, Message: "built-in package import",
 			CreatedBy: "system", CreatedAt: now}
