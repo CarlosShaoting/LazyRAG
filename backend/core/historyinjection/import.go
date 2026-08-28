@@ -74,7 +74,7 @@ func Apply(ctx context.Context, db *gorm.DB, source BundleSource, owner TargetOw
 	if existingOwner == owner.ID {
 		result.AlreadyPresent = true
 	}
-	filesCopied, err := installPayload(bundleRoot, manifest, roots)
+	filesCopied, err := installPayload(bundleRoot, manifest, roots, result.AlreadyPresent)
 	if err != nil {
 		return result, err
 	}
@@ -391,7 +391,7 @@ func ensureWorkflowRevision(ctx context.Context, db *gorm.DB, manifest Manifest,
 	return resourceID, revisionNo, nil
 }
 
-func installPayload(bundleRoot string, manifest Manifest, roots RuntimeRoots) (int, error) {
+func installPayload(bundleRoot string, manifest Manifest, roots RuntimeRoots, preserveExisting bool) (int, error) {
 	targetRoots := map[string]string{"uploads": roots.Uploads, "subagent": roots.Subagent}
 	copied := 0
 	for _, file := range manifest.Files {
@@ -408,6 +408,13 @@ func installPayload(bundleRoot string, manifest Manifest, roots RuntimeRoots) (i
 			return copied, fmt.Errorf("payload checksum mismatch for %s", file.Source)
 		}
 		target := filepath.Join(targetRoot, filepath.FromSlash(file.RelativePath))
+		if preserveExisting {
+			if _, err := os.Stat(target); err == nil {
+				continue
+			} else if !os.IsNotExist(err) {
+				return copied, err
+			}
+		}
 		if existingDigest, existingSize, err := fileDigest(target); err == nil && existingDigest == digest && existingSize == size {
 			continue
 		}

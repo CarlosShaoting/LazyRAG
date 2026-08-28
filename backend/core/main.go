@@ -87,9 +87,15 @@ func runHistoryInjections(ctx context.Context, db *gorm.DB) error {
 	if len(sources) == 0 {
 		return nil
 	}
-	owner, err := historyinjection.ResolveBootstrapOwner(ctx, 90*time.Second)
+	owner, imported, err := historyinjection.ResolveImportedOwner(ctx, db, sources)
 	if err != nil {
 		return err
+	}
+	if !imported {
+		owner, err = historyinjection.ResolveBootstrapOwner(ctx, 90*time.Second)
+		if err != nil {
+			return err
+		}
 	}
 	uploadRoot := strings.TrimSpace(os.Getenv("LAZYMIND_UPLOAD_ROOT"))
 	if uploadRoot == "" {

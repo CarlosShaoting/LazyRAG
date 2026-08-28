@@ -12,7 +12,47 @@ import (
 	"time"
 
 	"lazymind/core/common"
+
+	"gorm.io/gorm"
 )
+
+// ResolveImportedOwner returns the persisted owner when every discovered
+// sample conversation has already been imported. Startup can then perform the
+// idempotent repair pass without logging in with bootstrap credentials, which
+// may no longer match after the administrator changes their password.
+func ResolveImportedOwner(ctx context.Context, db *gorm.DB, sources []BundleSource) (TargetOwner, bool, error) {
+	if db == nil || len(sources) == 0 {
+		return TargetOwner{}, false, nil
+	}
+	var owner TargetOwner
+	for _, source := range sources {
+		var persisted struct {
+			ID       string `gorm:"column:create_user_id"`
+			Username string `gorm:"column:create_user_name"`
+		}
+		result := db.WithContext(ctx).Raw(
+			"SELECT create_user_id, create_user_name FROM conversations WHERE id = ?",
+			source.Manifest.ConversationID,
+		).Scan(&persisted)
+		if result.Error != nil {
+			return TargetOwner{}, false, result.Error
+		}
+		if result.RowsAffected != 1 || strings.TrimSpace(persisted.ID) == "" {
+			return TargetOwner{}, false, nil
+		}
+		if owner.ID == "" {
+			owner = TargetOwner{ID: persisted.ID, Username: persisted.Username}
+			continue
+		}
+		if owner.ID != persisted.ID {
+			return TargetOwner{}, false, nil
+		}
+		if owner.Username == "" {
+			owner.Username = persisted.Username
+		}
+	}
+	return owner, true, nil
+}
 
 func ResolveBootstrapOwner(ctx context.Context, timeout time.Duration) (TargetOwner, error) {
 	username := strings.TrimSpace(os.Getenv("LAZYMIND_BOOTSTRAP_ADMIN_USERNAME"))

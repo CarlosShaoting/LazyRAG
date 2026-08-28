@@ -208,6 +208,10 @@ INSERT INTO chat_histories (id, conversation_id, run_terminal) VALUES ('history-
 	if err := db.Exec("UPDATE conversations SET display_name = 'stale title', is_task_conv = TRUE WHERE id = 'conversation-1'").Error; err != nil {
 		t.Fatal(err)
 	}
+	installedPayload := filepath.Join(uploads, "workflow-artifacts", "demo.txt")
+	if err := os.WriteFile(installedPayload, []byte("user-edited"), 0o640); err != nil {
+		t.Fatal(err)
+	}
 	second, err := Apply(t.Context(), db, BundleSource{Path: bundle, Manifest: manifest},
 		TargetOwner{ID: "target-user", Username: "admin"}, RuntimeRoots{Uploads: uploads, Subagent: t.TempDir()})
 	if err != nil {
@@ -215,6 +219,9 @@ INSERT INTO chat_histories (id, conversation_id, run_terminal) VALUES ('history-
 	}
 	if !second.AlreadyPresent || second.FilesCopied != 0 {
 		t.Fatalf("unexpected idempotent result: %#v", second)
+	}
+	if body, err := os.ReadFile(installedPayload); err != nil || string(body) != "user-edited" {
+		t.Fatalf("idempotent apply overwrote user payload = %q, %v", body, err)
 	}
 	if err := db.Raw("SELECT display_name, is_task_conv FROM conversations WHERE id = 'conversation-1'").Scan(&conversation).Error; err != nil {
 		t.Fatal(err)
@@ -231,6 +238,20 @@ INSERT INTO chat_histories (id, conversation_id, run_terminal) VALUES ('history-
 	}
 	if !secondTimestamps.CreatedAt.Equal(timestamps.CreatedAt) || !secondTimestamps.UpdatedAt.Equal(timestamps.UpdatedAt) {
 		t.Fatalf("idempotent apply changed injection timestamps: first=%#v second=%#v", timestamps, secondTimestamps)
+	}
+	if err := os.Remove(installedPayload); err != nil {
+		t.Fatal(err)
+	}
+	repaired, err := Apply(t.Context(), db, BundleSource{Path: bundle, Manifest: manifest},
+		TargetOwner{ID: "target-user", Username: "admin"}, RuntimeRoots{Uploads: uploads, Subagent: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !repaired.AlreadyPresent || repaired.FilesCopied != 1 {
+		t.Fatalf("missing payload was not repaired: %#v", repaired)
+	}
+	if body, err := os.ReadFile(installedPayload); err != nil || string(body) != "demo" {
+		t.Fatalf("repaired payload = %q, %v", body, err)
 	}
 
 	// Simulate a database populated by an older importer: the bundle dates are
