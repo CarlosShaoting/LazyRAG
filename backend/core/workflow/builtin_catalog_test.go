@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -98,6 +99,38 @@ func TestBuiltinPackageIgnoresPythonRuntimeCacheFiles(t *testing.T) {
 	}
 	if ignoredBuiltinPackageFile("tools.py") {
 		t.Fatal("source file tools.py must remain in the immutable package")
+	}
+}
+
+func TestReadBuiltinPackageFilesIgnoresNodeModulesEntries(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "workflow.yaml"), []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Windows directory junctions can be surfaced to WalkDir as non-directory
+	// entries, so exercise both representations.
+	if err := os.WriteFile(filepath.Join(root, "node_modules"), []byte("junction placeholder"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(root, "runtime", "node_modules")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "dependency.js"), []byte("ignore"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	files, err := readBuiltinPackageFiles(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(files["workflow.yaml"]) != "keep" {
+		t.Fatalf("source file missing: %#v", files)
+	}
+	for path := range files {
+		if strings.Contains(path, "node_modules") {
+			t.Fatalf("runtime dependency leaked into built-in package: %s", path)
+		}
 	}
 }
 

@@ -63,36 +63,7 @@ func SeedBuiltinWorkflows(ctx context.Context, db *gorm.DB) error {
 }
 
 func seedBuiltinWorkflow(ctx context.Context, db *gorm.DB, root string) (string, error) {
-	files := map[string][]byte{}
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if path != root && ignoredBuiltinPackageDir(entry.Name()) {
-			if entry.IsDir() {
-				return filepath.SkipDir
-			}
-			// Windows directory junctions can be reported as non-directories by
-			// WalkDir. Ignore the entry before attempting to read it as a file.
-			return nil
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		if ignoredBuiltinPackageFile(entry.Name()) {
-			return nil
-		}
-		relative, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		body, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		files[filepath.ToSlash(relative)] = body
-		return nil
-	})
+	files, err := readBuiltinPackageFiles(root)
 	if err != nil {
 		return "", err
 	}
@@ -201,6 +172,43 @@ func seedBuiltinWorkflow(ctx context.Context, db *gorm.DB, root string) (string,
 			"status": "active", "updated_at": now}).Error
 	})
 	return ref, err
+}
+
+func readBuiltinPackageFiles(root string) (map[string][]byte, error) {
+	files := map[string][]byte{}
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path != root && ignoredBuiltinPackageDir(entry.Name()) {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			// Windows directory junctions can be reported as non-directories by
+			// WalkDir. Ignore the entry before attempting to read it as a file.
+			return nil
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if ignoredBuiltinPackageFile(entry.Name()) {
+			return nil
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		files[filepath.ToSlash(relative)] = body
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return files, nil
 }
 
 func ignoredBuiltinPackageDir(name string) bool {
