@@ -20,18 +20,36 @@ func main() {
 
 func run(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: history-injection export|pack|import [flags]")
+		return fmt.Errorf("usage: history-injection export|compact|pack|import [flags]")
 	}
 	switch args[0] {
 	case "export":
 		return runExport(ctx, args[1:])
 	case "pack":
 		return runPack(args[1:])
+	case "compact":
+		return runCompact(args[1:])
 	case "import":
 		return runImport(ctx, args[1:])
 	default:
 		return fmt.Errorf("unknown history-injection command %q", args[0])
 	}
+}
+
+func runCompact(args []string) error {
+	flags := flag.NewFlagSet("compact", flag.ContinueOnError)
+	source := flags.String("source", "", "")
+	output := flags.String("output", "", "")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	stats, err := historyinjection.CompactPortableSQLFile(*source, *output)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("compacted sub_agent_steps %d -> %d (removed %d)\n",
+		stats.InputSteps, stats.OutputSteps, stats.MergedSteps())
+	return nil
 }
 
 func database() (*orm.DB, error) {

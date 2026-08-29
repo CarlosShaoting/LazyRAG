@@ -134,6 +134,9 @@ func Export(ctx context.Context, db *gorm.DB, options ExportOptions) (Manifest, 
 	if err := sqlFile.Close(); err != nil {
 		return Manifest{}, err
 	}
+	if _, err := CompactPortableSQLFile(sqlPath, sqlPath); err != nil {
+		return Manifest{}, fmt.Errorf("history injection failed: compact exported SQL: %w", err)
+	}
 
 	files, err := exportPayload(ctx, db, staging, options, sessions, taskIDs, conversation.CreateUserID)
 	if err != nil {
@@ -637,6 +640,26 @@ func Pack(sourceDir, outputPath string) error {
 			_ = archive.Close()
 			_ = output.Close()
 			return err
+		}
+		if filepath.ToSlash(relative) == "data.sql" {
+			body, err := os.ReadFile(path)
+			if err != nil {
+				_ = archive.Close()
+				_ = output.Close()
+				return err
+			}
+			compacted, _, err := CompactPortableSQL(string(body))
+			if err != nil {
+				_ = archive.Close()
+				_ = output.Close()
+				return err
+			}
+			if _, err := io.WriteString(writer, compacted); err != nil {
+				_ = archive.Close()
+				_ = output.Close()
+				return err
+			}
+			continue
 		}
 		input, err := os.Open(path)
 		if err != nil {

@@ -11,6 +11,7 @@ func init() {
 		code    = 2002318
 	)
 	for _, alias := range []string{
+		"history injection failed",
 		"usage",
 		"acl_db_driver and acl_db_dsn are required",
 		"history injection output already exists",

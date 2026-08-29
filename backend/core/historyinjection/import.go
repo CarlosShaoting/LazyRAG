@@ -83,6 +83,13 @@ func Apply(ctx context.Context, db *gorm.DB, source BundleSource, owner TargetOw
 	if err != nil {
 		return result, err
 	}
+	if !result.AlreadyPresent {
+		compacted, _, err := CompactPortableSQL(string(sqlBody))
+		if err != nil {
+			return result, fmt.Errorf("history injection failed: compact imported SQL: %w", err)
+		}
+		sqlBody = []byte(compacted)
+	}
 	rendered := renderSQL(string(sqlBody), map[string]string{
 		ownerIDToken: owner.ID, ownerNameToken: owner.Username,
 		workflowResourceToken: "", workflowRevisionToken: "0",
