@@ -257,6 +257,7 @@ export interface WorkflowRuntimeProjection {
   pruned?: string[];
   bypassed?: string[];
   nodes?: Record<string, {
+    requires_approval: boolean;
     execution: string;
     validity: string;
     reachability: string;
@@ -285,6 +286,11 @@ export interface SlotWidgetConfig {
   widgetType?: string;
   readOnly?: boolean;
   maxHeight?: number;
+  collapsed?: boolean;
+  itemLayout?: 'scroll' | 'grid';
+  gridMaxCols?: number;
+  itemWidth?: number;
+  itemHeight?: number;
   [key: string]: unknown;
 }
 
