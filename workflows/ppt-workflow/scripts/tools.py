@@ -3276,23 +3276,24 @@ def ppt_attach_material_images(deck_dir: str) -> dict:
         deck_dir (str): Absolute deck directory from ppt_init_deck / ppt_find_deck.
 
     Returns:
-        On success: attached count and reference_images paths.
+        Attached count and reference_images paths. Zero attached images is a
+        successful no-op because material_images is optional for PPT decks.
     """
     try:
         deck = _resolve_deck_dir(deck_dir)
     except FileNotFoundError as exc:
         return _tool_error('ppt_attach_material_images', str(exc))
     result = _attach_material_images_to_deck(deck)
-    if result['attached'] <= 0:
-        return _tool_error(
-            'ppt_attach_material_images',
-            'no material images registered — call ppt_register_material_images in collect_materials first',
-        )
     return _tool_success('ppt_attach_material_images', {
         'deck_dir': str(deck.resolve()),
         'attached': result['attached'],
         'reference_image_count': len(result['reference_images']),
         'reference_images': result['reference_images'],
+        'note': (
+            'No material images were registered; continuing with CSS/SVG/ECharts visuals.'
+            if result['attached'] <= 0 else
+            'Material images attached as Pool B reference images.'
+        ),
     })
 
 
@@ -3550,17 +3551,6 @@ def ppt_build_outline(
     stages: list[dict[str, Any]] = [
         {'step': 'init', 'ok': True, 'deck_id': init_payload.get('deck_id')},
     ]
-
-    # Late register recovery: init attaches automatically, but retry once if empty.
-    if int(init_payload.get('material_images_attached') or 0) <= 0:
-        attach_res = ppt_attach_material_images(deck_dir)
-        if not _tool_failed(attach_res):
-            stages.append({
-                'step': 'attach_material_images',
-                'ok': True,
-                **{k: v for k, v in _tool_payload(attach_res).items()
-                   if k in ('attached', 'reference_image_count')},
-            })
 
     for stage_name in ('preflight', 'style', 'outline'):
         stage_res = ppt_run_stage(deck_dir, stage=stage_name)
