@@ -166,7 +166,7 @@ class PartialEditTests(unittest.TestCase):
             'sys.modules',
             {'lazyllm': lazyllm_module, 'lazyllm.components': components_module},
         ), mock.patch.dict(
-            TOOLS.os.environ, {'LAZYMIND_PPT_LLM_TIMEOUT': '300'}, clear=False,
+            TOOLS.os.environ, {'LAZYMIND_PPT_LLM_TIMEOUT': '90'}, clear=False,
         ):
             self.assertEqual(TOOLS._agent_llm_call('system', 'user'), 'generated')
             self.assertEqual(
@@ -176,12 +176,16 @@ class PartialEditTests(unittest.TestCase):
 
         self.assertEqual(
             shared.call_args_list[0],
-            mock.call('user', timeout=300.0, max_retries=1),
+            mock.call('user', timeout=90.0, max_retries=1),
         )
         self.assertEqual(
             shared.call_args_list[1],
             mock.call('user', timeout=75.0, max_retries=1),
         )
+        self.assertEqual(model.share.call_count, 2)
+        self.assertTrue(all(
+            call.kwargs['stream'] is True for call in model.share.call_args_list
+        ))
 
     def test_add_item_below_clones_structure_and_assigns_fresh_ids(self):
         selection = {
@@ -750,6 +754,43 @@ class PartialEditTests(unittest.TestCase):
             self.assertEqual(result['retry_count'], 1)
             self.assertEqual(result['retries'][0]['page'], 1)
             self.assertTrue(result['retries'][0]['ok'])
+
+    def test_batch_page_html_does_not_retry_timed_out_page(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            deck, _page = make_deck(Path(tmp))
+            attempts = 0
+
+            def capture(*_args, **_kwargs):
+                nonlocal attempts
+                attempts += 1
+                raise TOOLS._PPTModelTimeoutError(
+                    'LLM timed out after 90s without receiving progress [page-html:1]'
+                )
+
+            fake_model_client = mock.Mock()
+            fake_runtime = mock.Mock()
+            fake_runtime._capture_cmd.side_effect = capture
+            fake_runtime.cmd_page_html = mock.Mock()
+            with mock.patch.object(
+                TOOLS, '_load_sn_ppt_modules',
+                return_value=(fake_model_client, fake_runtime),
+            ), mock.patch.object(
+                TOOLS, '_load_slide_outline_briefs', return_value={},
+            ), mock.patch.object(
+                TOOLS, '_ui_slot_order_list', return_value=[],
+            ), mock.patch.object(
+                TOOLS.time, 'sleep', return_value=None,
+            ), mock.patch.dict(
+                TOOLS.os.environ, {'LAZYMIND_PPT_PAGE_RETRIES': '1'}, clear=False,
+            ):
+                result = TOOLS._batch_page_html_publish_progressive(
+                    deck, concurrency=1,
+                )
+
+            self.assertEqual(attempts, 1)
+            self.assertEqual(result['status'], 'failed')
+            self.assertEqual(result['retry_count'], 0)
+            self.assertIn('timed out after 90s', result['failed_detail'][0]['error'])
 
 
 if __name__ == '__main__':
