@@ -576,6 +576,20 @@ test("Desktop allows slow first-launch Chat rendering", () => {
   assert.doesNotMatch(source, /did not render within 30 seconds/);
 });
 
+test("Desktop recreates a stuck hidden Chat renderer once after the full runtime is ready", () => {
+  const source = readFileSync(electronMainScript, "utf8");
+  const start = source.indexOf("async function createWindow()");
+  const end = source.indexOf('ipcMain.on("lazymind:renderer-ready"', start);
+  const createWindow = source.slice(start, end);
+
+  assert.ok(start >= 0 && end > start, "could not locate createWindow");
+  assert.match(createWindow, /const runtimeReadyPromise = waitForRuntimeReady\(\)/);
+  assert.match(createWindow, /waitForRendererWithRuntimeRecovery\(/);
+  assert.match(createWindow, /recreating hidden frontend window once/);
+  assert.match(createWindow, /shouldRecover:[\s\S]*!isQuitting[\s\S]*!windowHiddenByUser/);
+  assert.doesNotMatch(createWindow, /app\.relaunch|runSidecar\("down"\)/);
+});
+
 test("Desktop warmup reports bundled history extraction before Core starts", () => {
   const source = readFileSync(electronMainScript, "utf8");
   assert.match(source, /history-injection-payload/);
@@ -628,8 +642,13 @@ test("Desktop does not create the Chat window after quitting or moving to backgr
 
   assert.match(
     createWindow,
-    /const status = await waitForDesktopHomeReady\(\);\s*if \(isQuitting \|\| windowHiddenByUser \|\| nextStartupWindow\.isDestroyed\(\)\) \{\s*return;\s*\}\s*nextMainWindow = new BrowserWindow/,
+    /const status = await waitForDesktopHomeReady\(\);\s*if \(isQuitting \|\| windowHiddenByUser \|\| nextStartupWindow\.isDestroyed\(\)\) \{\s*return;\s*\}[\s\S]*startAttempt:[\s\S]*createHiddenRendererAttempt/,
     "quit and background state must be rechecked before creating the hidden Chat window",
+  );
+  assert.match(
+    createWindow,
+    /shouldRecover:\s*\(\) => !isQuitting && !windowHiddenByUser && !nextStartupWindow\.isDestroyed\(\)/,
+    "quit and background state must prevent the one-time renderer recovery",
   );
 });
 
