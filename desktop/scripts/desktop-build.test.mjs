@@ -155,10 +155,14 @@ test("macOS and Windows builds materialize offline assets before writing the run
     assert.match(darwin, new RegExp(`--exclude "${escaped}"`));
     assert.match(windows, new RegExp(`'${escaped}'`));
   }
-  for (const developmentFile of [".coverage", "README.md", "README.CN.md", "Makefile"]) {
+  for (const developmentFile of [".coverage", "README.md", "README.CN.md"]) {
     assert.match(darwin, new RegExp(developmentFile.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     assert.match(windows, new RegExp(developmentFile.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
+  assert.doesNotMatch(darwin, /--exclude "\/Makefile"/);
+  assert.doesNotMatch(windows, /robocopy\.exe[^\r\n]*'Makefile'/);
+  assert.match(darwin, /desktop runtime repo marker is required/);
+  assert.match(windows, /Desktop runtime repo marker Makefile is missing/);
   assert.match(windows, /skills\\\.runtime/);
   assert.match(darwin, /"\$\{ROOT\}\/" "\$\{RUNTIME_ROOT\}\/app\/"/);
   assert.match(windows, /robocopy\.exe \$repoRoot \$appRoot \/MIR/);
