@@ -84,9 +84,14 @@ prune_python_runtime() {
 assert_desktop_runtime_app() {
   local app_root="$1"
   local frontend_dist="${app_root}/frontend/dist/index.html"
+  local repo_marker="${app_root}/Makefile"
   local lazyllm_source="${app_root}/algorithm/lazyllm/lazyllm"
   if [[ ! -f "${frontend_dist}" ]]; then
     echo "desktop frontend dist is required: ${frontend_dist}" >&2
+    exit 1
+  fi
+  if [[ ! -f "${repo_marker}" ]]; then
+    echo "desktop runtime repo marker is required: ${repo_marker}" >&2
     exit 1
   fi
   if [[ "${RELEASE_BUILD}" != "true" && ! -d "${lazyllm_source}" ]]; then
@@ -204,6 +209,10 @@ rsync -a --delete \
   --exclude "/.claude" \
   --exclude "/.cursor" \
   --exclude "/.vscode" \
+  --exclude "/.github" \
+  --exclude "/.coverage" \
+  --exclude "/docs" \
+  --exclude "/tests" \
   --exclude "/data" \
   --exclude "/volumes" \
   --exclude "/local/config.env" \
@@ -217,7 +226,18 @@ rsync -a --delete \
   --exclude "skills/research" \
   --exclude "skills/review" \
   --exclude "skills/search" \
+  --exclude "skills/featured" \
   --exclude "node_modules" \
+  --exclude "test" \
+  --exclude "tests" \
+  --exclude "testdata" \
+  --exclude "__snapshots__" \
+  --exclude "*_test.go" \
+  --exclude "test_*.py" \
+  --exclude "*.test.js" \
+  --exclude "*.test.mjs" \
+  --exclude "*.test.ts" \
+  --exclude "*.test.tsx" \
   --exclude "__pycache__" \
   --exclude ".pytest_cache" \
   --exclude ".ruff_cache" \
@@ -230,6 +250,8 @@ rsync -a --delete \
   --exclude "/frontend/public" \
   --exclude "/frontend/scripts" \
   --exclude "/backend/core/core" \
+  --exclude "/README.md" \
+  --exclude "/README.CN.md" \
   "${ROOT}/" "${RUNTIME_ROOT}/app/"
 
 prune_runtime_app "${RUNTIME_ROOT}/app"

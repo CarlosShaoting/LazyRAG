@@ -16,6 +16,7 @@ type BindingTarget string
 
 const (
 	CodexCLI         BindingTarget = "codex-cli"
+	CodexDesktop     BindingTarget = "codex-desktop"
 	CursorCLI        BindingTarget = "cursor-cli"
 	CodeBuddyCLI     BindingTarget = "codebuddy-cli"
 	CursorDesktop    BindingTarget = "cursor-desktop"
@@ -27,7 +28,7 @@ const (
 
 var (
 	bindingTargets = map[BindingTarget]bool{
-		CodexCLI: true, CursorCLI: true, CodeBuddyCLI: true,
+		CodexCLI: true, CursorCLI: true, CodeBuddyCLI: true, CodexDesktop: true,
 		CursorDesktop: true, WorkBuddyDesktop: true, RaccoonDesktop: true,
 		TRAEWorkDesktop: true,
 	}
@@ -92,12 +93,28 @@ func SetExecutableBinding(target BindingTarget, path string) (string, error) {
 }
 
 func resolveBindingExecutable(target BindingTarget, path string) (string, error) {
-	switch target {
-	case CodexCLI, CursorCLI, CodeBuddyCLI:
+	if isCLIBindingTarget(target) {
 		return ResolveRunnable(path)
-	default:
-		return ResolveExecutable(path)
 	}
+	return ResolveDesktopApplication(path)
+}
+
+func isCLIBindingTarget(target BindingTarget) bool {
+	return target == CodexCLI || target == CursorCLI || target == CodeBuddyCLI
+}
+
+func desktopApplicationBindings() []string {
+	bindings, err := ExecutableBindings()
+	if err != nil {
+		return nil
+	}
+	paths := make([]string, 0, len(bindings))
+	for target, path := range bindings {
+		if !isCLIBindingTarget(target) {
+			paths = append(paths, path)
+		}
+	}
+	return paths
 }
 
 func ClearExecutableBinding(target BindingTarget) error {
