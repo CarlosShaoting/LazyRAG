@@ -55,6 +55,7 @@
 - 当前传输上限为 200 万字符；超过后明确返回 `truncated=true`，不会静默截断。
 - 通过 WebSocket 主动连接 LazyMind，使用设备 ID/token 完成 hello 认证，支持断线重连和命令 deadline。
 - 使用 `chrome.debugger`/CDP 创建并控制扩展自己的 managed window/tab。
+- managed window 默认以最大化状态打开，保留 Chrome 标签栏、地址栏和用户接管能力。
 - 已实现动作：
   - `open`
   - `navigate`
