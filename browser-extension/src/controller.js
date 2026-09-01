@@ -40,7 +40,12 @@ export class BrowserController {
 
   async open(payload) {
     const url = validateTargetURL(payload.url, payload.allow_private_network);
-    const created = await chrome.windows.create({url, focused: true, type: 'normal'});
+    const created = await chrome.windows.create({
+      url,
+      focused: true,
+      type: 'normal',
+      state: 'maximized',
+    });
     const tab = created.tabs?.[0];
     if (!tab?.id) {
       if (created.id) await chrome.windows.remove(created.id);
