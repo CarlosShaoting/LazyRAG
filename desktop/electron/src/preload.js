@@ -3,6 +3,14 @@ function createDesktopBridge(ipcRenderer) {
     platform: process.platform,
     openLogsDir: () => ipcRenderer.invoke("lazymind:openLogsDir"),
     openDataDir: () => ipcRenderer.invoke("lazymind:openDataDir"),
+    openBrowserExtensionDir: () => ipcRenderer.invoke("lazymind:openBrowserExtensionDir"),
+    embeddedBrowserState: () => ipcRenderer.invoke("lazymind:embeddedBrowserState"),
+    embeddedBrowserBounds: (payload) => ipcRenderer.invoke("lazymind:embeddedBrowserBounds", payload),
+    embeddedBrowserCommand: (action, payload) => ipcRenderer.invoke(
+      "lazymind:embeddedBrowserCommand",
+      action,
+      payload,
+    ),
     runtimeStatus: () => ipcRenderer.invoke("lazymind:runtimeStatus"),
     agentIntegrationStatuses: () => ipcRenderer.invoke("lazymind:agentIntegrationStatuses"),
     agentIntegrationAction: (agent, action) => ipcRenderer.invoke("lazymind:agentIntegrationAction", agent, action),
@@ -33,6 +41,12 @@ function createDesktopBridge(ipcRenderer) {
       const listener = (_event, payload) => handler(payload);
       ipcRenderer.on("lazymind:startupDiagnosticsUpdate", listener);
       return () => ipcRenderer.removeListener("lazymind:startupDiagnosticsUpdate", listener);
+    },
+    onEmbeddedBrowserState: (handler) => {
+      if (typeof handler !== "function") return () => {};
+      const listener = (_event, payload) => handler(payload);
+      ipcRenderer.on("lazymind:embeddedBrowserState", listener);
+      return () => ipcRenderer.removeListener("lazymind:embeddedBrowserState", listener);
     },
   };
 }

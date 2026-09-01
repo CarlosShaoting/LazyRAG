@@ -14,6 +14,7 @@ import {
 import {
   DownloadOutlined,
   FolderOpenOutlined,
+  GlobalOutlined,
   RightOutlined,
   SearchOutlined,
   SettingOutlined,
@@ -24,17 +25,23 @@ import { useLocation } from "react-router-dom";
 import {
   checkFFmpegDependency,
   checkEditablePPTDependency,
+  checkBrowserExtensionDependency,
+  createBrowserPairingCode,
   getFFmpegDependencyStatus,
   getEditablePPTDependencyStatus,
+  getBrowserExtensionDependencyStatus,
   installFFmpegDependency,
   installEditablePPTDependency,
+  installBrowserExtensionDependency,
   updateFFmpegDependency,
   type EditablePPTDependencyStatus,
+  type BrowserExtensionDependencyStatus,
+  type BrowserPairingCode,
   type FFmpegDependencyStatus,
 } from "../api/systemDependencies";
 import { getLocalizedErrorMessage } from "@/components/request";
 import { isDesktopRuntime, isLocalRuntime } from "@/runtime/mode";
-import { selectExecutable } from "@/runtime/desktopBridge";
+import { openBrowserExtensionDir, selectExecutable } from "@/runtime/desktopBridge";
 
 
 const DEPENDENCY_ICON_DATA_URL =
@@ -47,27 +54,35 @@ export default function DependencyInstallSection() {
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<FFmpegDependencyStatus | null>(null);
   const [pptStatus, setPptStatus] = useState<EditablePPTDependencyStatus | null>(null);
+  const [browserStatus, setBrowserStatus] = useState<BrowserExtensionDependencyStatus | null>(null);
   const [loadError, setLoadError] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [pptModalOpen, setPptModalOpen] = useState(false);
+  const [browserModalOpen, setBrowserModalOpen] = useState(false);
   const [customPath, setCustomPath] = useState("");
   const [saving, setSaving] = useState(false);
   const [installing, setInstalling] = useState(false);
   const [checking, setChecking] = useState(false);
   const [pptInstalling, setPptInstalling] = useState(false);
   const [pptChecking, setPptChecking] = useState(false);
+  const [browserInstalling, setBrowserInstalling] = useState(false);
+  const [browserChecking, setBrowserChecking] = useState(false);
+  const [browserPairing, setBrowserPairing] = useState<BrowserPairingCode | null>(null);
+  const [browserPairingCreating, setBrowserPairingCreating] = useState(false);
   const [searchValue, setSearchValue] = useState("");
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setLoadError("");
     try {
-      const [next, nextPpt] = await Promise.all([
+      const [next, nextPpt, nextBrowser] = await Promise.all([
         getFFmpegDependencyStatus(),
         getEditablePPTDependencyStatus(),
+        getBrowserExtensionDependencyStatus(),
       ]);
       setStatus(next);
       setPptStatus(nextPpt);
+      setBrowserStatus(nextBrowser);
       setCustomPath(next.customPath || "");
     } catch (error) {
       setLoadError(getLocalizedErrorMessage(error) || t("modelProvider.external.dependencyLoadFailed"));
@@ -88,11 +103,14 @@ export default function DependencyInstallSection() {
     }
     const dependencyId = location.hash === "#editable-ppt-dependency"
       ? "editable-ppt-dependency"
-      : location.hash === "#ffmpeg-dependency"
-        ? "ffmpeg-dependency"
-        : "";
+      : location.hash === "#browser-extension-dependency"
+        ? "browser-extension-dependency"
+        : location.hash === "#ffmpeg-dependency"
+          ? "ffmpeg-dependency"
+          : "";
     if (!dependencyId) return;
     if (dependencyId === "editable-ppt-dependency") setPptModalOpen(true);
+    else if (dependencyId === "browser-extension-dependency") setBrowserModalOpen(true);
     else setModalOpen(true);
     requestAnimationFrame(() => {
       document
@@ -120,6 +138,11 @@ export default function DependencyInstallSection() {
     if (!normalizedSearchValue) return true;
     return t("modelProvider.external.dependencyEditablePptTitle").toLowerCase().includes(normalizedSearchValue)
       || t("modelProvider.external.dependencyEditablePptSummary").toLowerCase().includes(normalizedSearchValue);
+  }, [normalizedSearchValue, t]);
+  const shouldShowBrowserCard = useMemo(() => {
+    if (!normalizedSearchValue) return true;
+    return t("modelProvider.external.dependencyBrowserExtensionTitle").toLowerCase().includes(normalizedSearchValue)
+      || t("modelProvider.external.dependencyBrowserExtensionSummary").toLowerCase().includes(normalizedSearchValue);
   }, [normalizedSearchValue, t]);
 
   const handleSaveCustomPath = async () => {
@@ -203,6 +226,64 @@ export default function DependencyInstallSection() {
       message.error(getLocalizedErrorMessage(error) || t("modelProvider.external.dependencyLoadFailed"));
     } finally {
       setPptChecking(false);
+    }
+  };
+
+  const handleInstallBrowserExtension = async () => {
+    setBrowserInstalling(true);
+    try {
+      const next = await installBrowserExtensionDependency();
+      setBrowserStatus(next);
+      message.success(t("modelProvider.external.dependencyBrowserExtensionInstallSuccess"));
+    } catch (error) {
+      message.error(getLocalizedErrorMessage(error) || t("modelProvider.external.dependencyBrowserExtensionInstallFailed"));
+    } finally {
+      setBrowserInstalling(false);
+    }
+  };
+
+  const handleRecheckBrowserExtension = async () => {
+    setBrowserChecking(true);
+    try {
+      const next = await checkBrowserExtensionDependency();
+      setBrowserStatus(next);
+      message.success(next.installed
+        ? t("modelProvider.external.dependencyCheckReady")
+        : t("modelProvider.external.dependencyCheckMissing"));
+    } catch (error) {
+      message.error(getLocalizedErrorMessage(error) || t("modelProvider.external.dependencyLoadFailed"));
+    } finally {
+      setBrowserChecking(false);
+    }
+  };
+
+  const handleRevealBrowserExtension = async () => {
+    const result = await openBrowserExtensionDir();
+    if (!result.ok) {
+      message.error(t("modelProvider.external.dependencyBrowserExtensionRevealFailed"));
+    }
+  };
+
+  const handleCreateBrowserPairing = async () => {
+    setBrowserPairingCreating(true);
+    try {
+      const pairing = await createBrowserPairingCode();
+      setBrowserPairing(pairing);
+      message.success(t("modelProvider.external.dependencyBrowserPairingCreated"));
+    } catch (error) {
+      message.error(getLocalizedErrorMessage(error) || t("modelProvider.external.dependencyBrowserPairingFailed"));
+    } finally {
+      setBrowserPairingCreating(false);
+    }
+  };
+
+  const handleCopyBrowserPairing = async () => {
+    if (!browserPairing?.code) return;
+    try {
+      await navigator.clipboard.writeText(browserPairing.code);
+      message.success(t("modelProvider.external.dependencyBrowserPairingCopied"));
+    } catch {
+      message.error(t("modelProvider.external.dependencyBrowserPairingCopyFailed"));
     }
   };
 
@@ -311,8 +392,34 @@ export default function DependencyInstallSection() {
                 <span className="model-provider-service-card-arrow" aria-hidden="true"><RightOutlined /></span>
               </button>
             ) : null}
+            {shouldShowBrowserCard ? (
+              <button
+                className="model-provider-service-card tone-blue"
+                id="browser-extension-dependency"
+                onClick={() => setBrowserModalOpen(true)}
+                type="button"
+              >
+                <span className="model-provider-service-logo" aria-hidden="true">
+                  <GlobalOutlined />
+                </span>
+                <div className="model-provider-service-card-copy">
+                  <div className="model-provider-service-title-row">
+                    <h4>{t("modelProvider.external.dependencyBrowserExtensionTitle")}</h4>
+                    <Tag className="model-provider-service-status" color={browserStatus?.installed ? "success" : "default"}>
+                      {t(`modelProvider.external.status.${browserStatus?.installed ? "configured" : "missing"}`)}
+                    </Tag>
+                  </div>
+                  <Tooltip placement="topLeft" title={t("modelProvider.external.dependencyBrowserExtensionSummary")}>
+                    <span className="model-provider-service-summary-wrap">
+                      <p className="model-provider-service-summary">{t("modelProvider.external.dependencyBrowserExtensionSummary")}</p>
+                    </span>
+                  </Tooltip>
+                </div>
+                <span className="model-provider-service-card-arrow" aria-hidden="true"><RightOutlined /></span>
+              </button>
+            ) : null}
           </div>
-          {!loading && !loadError && !shouldShowFFmpegCard && !shouldShowPptCard ? (
+          {!loading && !loadError && !shouldShowFFmpegCard && !shouldShowPptCard && !shouldShowBrowserCard ? (
             <div className="model-provider-category-empty">
               <Empty description={t("modelProvider.external.noMatchedServices")} image={Empty.PRESENTED_IMAGE_SIMPLE} />
             </div>
@@ -439,6 +546,91 @@ export default function DependencyInstallSection() {
                 {t("modelProvider.external.dependencyRecheckAction")}
               </Button>
             </Space>
+          </div>
+        </Space>
+      </Modal>
+
+      <Modal
+        className="model-provider-service-config-modal"
+        destroyOnClose
+        footer={null}
+        onCancel={() => {
+          setBrowserModalOpen(false);
+          setBrowserPairing(null);
+        }}
+        open={browserModalOpen}
+        title={t("modelProvider.external.dependencyBrowserExtensionModalTitle")}
+        width={640}
+      >
+        <Space direction="vertical" size={16} style={{ width: "100%" }}>
+          <Alert message={t("modelProvider.external.dependencyBrowserExtensionImpact")} showIcon type="info" />
+          {browserStatus?.message && !browserStatus.installed
+            ? <Alert message={browserStatus.message} showIcon type="warning" />
+            : null}
+          {browserStatus?.installed ? (
+            <>
+              <Alert
+                message={t("modelProvider.external.dependencyBrowserExtensionDetected", {
+                  path: browserStatus.installDir || "-",
+                  version: browserStatus.version || "-",
+                })}
+                showIcon
+                type="success"
+              />
+              <Alert
+                message={t("modelProvider.external.dependencyBrowserExtensionApproval")}
+                showIcon
+                type="warning"
+              />
+            </>
+          ) : null}
+          <div>
+            <h4>{t("modelProvider.external.dependencyInstallBundledTitle")}</h4>
+            <p>{t("modelProvider.external.dependencyBrowserExtensionInstallDesc")}</p>
+            <Space>
+              <Button
+                disabled={!browserStatus?.installSupported || Boolean(browserStatus?.installed)}
+                icon={<DownloadOutlined />}
+                loading={browserInstalling}
+                onClick={() => void handleInstallBrowserExtension()}
+                type="primary"
+              >
+                {browserStatus?.installed
+                  ? t("modelProvider.external.dependencyInstalledAction")
+                  : t("modelProvider.external.dependencyInstallAction")}
+              </Button>
+              <Button
+                icon={<SyncOutlined />}
+                loading={browserChecking}
+                onClick={() => void handleRecheckBrowserExtension()}
+              >
+                {t("modelProvider.external.dependencyRecheckAction")}
+              </Button>
+              {browserStatus?.installed && isDesktopRuntime() ? (
+                <Button icon={<FolderOpenOutlined />} onClick={() => void handleRevealBrowserExtension()}>
+                  {t("modelProvider.external.dependencyOpenInstallDirAction")}
+                </Button>
+              ) : null}
+            </Space>
+          </div>
+          <div>
+            <h4>{t("modelProvider.external.dependencyBrowserPairingTitle")}</h4>
+            <p>{t("modelProvider.external.dependencyBrowserPairingDesc")}</p>
+            {browserPairing?.code ? (
+              <Space.Compact style={{ width: "100%", marginBottom: 12 }}>
+                <Input readOnly value={browserPairing.code} />
+                <Button onClick={() => void handleCopyBrowserPairing()}>
+                  {t("modelProvider.external.dependencyBrowserPairingCopyAction")}
+                </Button>
+              </Space.Compact>
+            ) : null}
+            <Button
+              loading={browserPairingCreating}
+              onClick={() => void handleCreateBrowserPairing()}
+              type="primary"
+            >
+              {t("modelProvider.external.dependencyBrowserPairingCreateAction")}
+            </Button>
           </div>
         </Space>
       </Modal>

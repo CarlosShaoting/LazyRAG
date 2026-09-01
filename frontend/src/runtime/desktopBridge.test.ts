@@ -13,8 +13,13 @@ import {
   agentExecutableBindings,
   agentIntegrationStatuses,
   bindAgentExecutable,
+  embeddedBrowserCommand,
+  embeddedBrowserState,
   executorIntegrationAction,
   executorIntegrationPolicies,
+  hasDesktopEmbeddedBrowser,
+  onEmbeddedBrowserState,
+  setEmbeddedBrowserBounds,
 } from "./desktopBridge";
 
 describe("browser Assistant Bridge session synchronization", () => {
@@ -170,5 +175,44 @@ describe("browser Assistant Bridge session synchronization", () => {
     expect(fetchMock.mock.calls[0][0]).toBe("http://127.0.0.1:19091/v1/bindings/cursor-cli");
     expect(init.method).toBe("PUT");
     expect(JSON.parse(String(init.body))).toEqual({ path: "D:\\Agents\\cursor-agent.exe" });
+  });
+
+  it("forwards embedded browser commands, bounds, state, and subscriptions", async () => {
+    const state = {
+      open: true,
+      visible: true,
+      loading: false,
+      session_id: "bs_1",
+      url: "https://example.com/",
+      title: "Example",
+      can_go_back: false,
+      can_go_forward: false,
+    };
+    const command = vi.fn().mockResolvedValue({ ok: true, result: { session_id: "bs_1" } });
+    const bounds = vi.fn().mockResolvedValue(state);
+    const readState = vi.fn().mockResolvedValue(state);
+    const unsubscribe = vi.fn();
+    const subscribe = vi.fn().mockReturnValue(unsubscribe);
+    Object.defineProperty(window, "lazymindDesktop", {
+      configurable: true,
+      value: {
+        embeddedBrowserCommand: command,
+        embeddedBrowserBounds: bounds,
+        embeddedBrowserState: readState,
+        onEmbeddedBrowserState: subscribe,
+      },
+    });
+
+    expect(hasDesktopEmbeddedBrowser()).toBe(true);
+    await expect(embeddedBrowserState()).resolves.toEqual(state);
+    await expect(setEmbeddedBrowserBounds({ x: 10, y: 20, width: 600, height: 700 })).resolves.toEqual(state);
+    await expect(embeddedBrowserCommand("snapshot", { session_id: "bs_1" })).resolves.toEqual({
+      ok: true,
+      result: { session_id: "bs_1" },
+    });
+    const listener = vi.fn();
+    expect(onEmbeddedBrowserState(listener)).toBe(unsubscribe);
+    expect(subscribe).toHaveBeenCalledWith(listener);
+    expect(command).toHaveBeenCalledWith("snapshot", { session_id: "bs_1" });
   });
 });

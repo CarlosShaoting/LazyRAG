@@ -51,6 +51,8 @@ func TestCoreServiceEnvUsesLocalEndpoints(t *testing.T) {
 	assertEnvContains(t, env, "LAZYMIND_DOCUMENT_SERVICE_URL=http://127.0.0.1:"+strconv.Itoa(cfg.Algorithm.DocPort))
 	assertEnvContains(t, env, "LAZYMIND_PARSING_SERVICE_URL=http://127.0.0.1:"+strconv.Itoa(cfg.Algorithm.ProcessorPort))
 	assertEnvContains(t, env, "LAZYMIND_CHAT_SERVICE_URL=http://127.0.0.1:"+strconv.Itoa(cfg.Algorithm.ChatPort))
+	assertEnvContains(t, env, "LAZYMIND_BROWSER_PREFERRED_DEVICE_BROWSER=")
+	assertEnvContains(t, env, "LAZYMIND_BROWSER_EXTENSION_SOURCE_DIR="+filepath.Join(paths.RepoRoot, "browser-extension"))
 	assertEnvContains(t, env, "LAZYMIND_OFFICE_CONVERT_URL=http://127.0.0.1:18082/v1/office/to-pdf")
 	assertEnvContains(t, env, "LAZYMIND_READONLY_DB_DRIVER=sqlite")
 	assertEnvContains(t, env, "LAZYMIND_READONLY_DB_DSN="+paths.LazyLLMDBPath)
@@ -59,6 +61,23 @@ func TestCoreServiceEnvUsesLocalEndpoints(t *testing.T) {
 	assertEnvContains(t, env, "LAZYMIND_BOOTSTRAP_ADMIN_USERNAME=admin")
 	assertEnvContains(t, env, "LAZYMIND_BOOTSTRAP_ADMIN_PASSWORD=admin")
 	assertEnvNotContains(t, env, "LAZYMIND_CAPABILITY_MCP_ENABLED=")
+}
+
+func TestCoreServiceEnvDoesNotPreferEmbeddedBrowserForDesktopProfile(t *testing.T) {
+	t.Setenv("LAZYMIND_BROWSER_PREFERRED_DEVICE_BROWSER", "")
+	repo := t.TempDir()
+	writeComposeFixture(t, repo)
+	cfg, paths, err := NewRuntimeConfig(defaultProfileValue(), repo)
+	if err != nil {
+		t.Fatalf("runtime config: %v", err)
+	}
+	cfg.Profile = "desktop"
+
+	assertEnvContains(
+		t,
+		coreServiceEnv(cfg, paths),
+		"LAZYMIND_BROWSER_PREFERRED_DEVICE_BROWSER=",
+	)
 }
 
 func TestCoreServiceEnvUsesRuntimeUploadPaths(t *testing.T) {

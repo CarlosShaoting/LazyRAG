@@ -339,6 +339,44 @@ def _mcp_server_cache_key(server: Dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+_MCP_MODEL_TOOL_NAME_MAX_LENGTH = 64
+
+
+def _mcp_model_tool_name(original_name: str) -> str:
+    """Return a registry-safe model alias while the MCP closure keeps its wire name."""
+    original_name = str(original_name or '').strip()
+    alias = re.sub(r'[^A-Za-z0-9_]+', '_', original_name).strip('_') or 'mcp_tool'
+    if alias[0].isdigit():
+        alias = f'mcp_{alias}'
+    if len(alias) > _MCP_MODEL_TOOL_NAME_MAX_LENGTH:
+        digest = hashlib.sha256(original_name.encode()).hexdigest()[:8]
+        alias = f'{alias[:_MCP_MODEL_TOOL_NAME_MAX_LENGTH - len(digest) - 1]}_{digest}'
+    return alias
+
+
+def _normalize_mcp_tool_names(tools: list, server_name: str) -> list:
+    """Prevent dotted MCP method names from becoming LazyLLM registry groups."""
+    used: set[str] = set()
+    aliases: list[tuple[str, str]] = []
+    normalized = list(tools)
+    for index, tool in enumerate(normalized):
+        original_name = str(getattr(tool, '__name__', '') or '').strip()
+        alias = _mcp_model_tool_name(original_name)
+        if alias in used:
+            digest = hashlib.sha256(
+                f'{server_name}\0{original_name}\0{index}'.encode()
+            ).hexdigest()[:8]
+            alias = f'{alias[:_MCP_MODEL_TOOL_NAME_MAX_LENGTH - len(digest) - 1]}_{digest}'
+        used.add(alias)
+        setattr(tool, '_lazymind_mcp_original_name', original_name)
+        tool.__name__ = alias
+        if alias != original_name:
+            aliases.append((original_name, alias))
+    if aliases:
+        LOG.info(f'[MCP] normalized tool names from {server_name}: {aliases}')
+    return normalized
+
+
 def _load_mcp_server_tools(server: Dict[str, Any]) -> list:
     url = server.get('url')
     if not url:
@@ -360,6 +398,7 @@ def _load_mcp_server_tools(server: Dict[str, Any]) -> list:
         )
         allowed = server.get('allowed_tools') or None
         mcp_tools = client.get_tools(allowed_tools=allowed)
+        mcp_tools = _normalize_mcp_tool_names(mcp_tools, str(server.get('name') or 'mcp'))
         with _mcp_tool_cache_lock:
             _mcp_tool_cache[cache_key] = (time.monotonic(), list(mcp_tools))
         LOG.info(f"[MCP] loaded {len(mcp_tools)} tools from {server.get('name')}")
@@ -955,6 +994,7 @@ async def _handle_chat_impl(
         'tool_config': runtime.tool_config or {},
         'ocr_config': runtime.ocr_config or {},
         'mcp_config': runtime.mcp_config or [],
+        'system_mcp_config': runtime.system_mcp_config or [],
         'environment_context': runtime.environment_context or {},
         'user_id': user_id or '',
         'use_memory': personalization.use_memory,
@@ -1205,10 +1245,15 @@ async def _handle_chat_impl(
         )
         else []
     )
-    mcp_tools = (
+    system_mcp_tools = (
+        await _build_mcp_tools(runtime.system_mcp_config)
+        if runtime.system_mcp_config and not workflow_turn_is_bound else []
+    )
+    user_mcp_tools = (
         await _build_mcp_tools(runtime.mcp_config)
         if runtime.mcp_config and not workflow_turn_is_bound else []
     )
+    mcp_tools = [*system_mcp_tools, *user_mcp_tools]
     # User attachment tools are only meaningful when the user has uploaded files.
     attachment_tools = (
         [] if workflow_turn_is_bound else _build_user_attachment_tools(bool(files_map))
