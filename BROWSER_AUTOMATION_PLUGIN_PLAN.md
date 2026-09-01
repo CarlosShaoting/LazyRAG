@@ -1,22 +1,57 @@
-# LazyMind 浏览器自动化插件接入方案
+# LazyMind 浏览器插件方案：页面感知、浏览器控制与录制转 Skill
 
-> 状态：设计方案，尚未实现  
-> 范围：Chrome / Edge（Manifest V3）、Docker 部署、LazyMind Desktop（macOS / Windows）  
-> 目标：Agent 可以打开一个 URL，并在用户可见、可随时接管的浏览器页面中读取和执行点击、输入、选择、滚动、等待、截图等操作。
+> 2026-09-01 产品决策：当前测试版采用完全自动化，点击发送/提交、Enter、敏感字段输入和任意按键不再要求人工接管。扩展与 Desktop 中原有的本地安全判断已注释保留，本文后续审批设计作为未来可选模式保留。
+>
+> 2026-09-01 形态决策：PRD 没有要求把网页嵌入 LazyMind。Docker、`make local-up` 和 Desktop 统一使用 Chrome/Edge 扩展打开独立可见浏览器窗口；已经实现的 Electron `WebContentsView` 驱动保留为默认关闭的实验能力，不进入当前 PRD 验收。
+
+部署命令: LazyMind/build_command.txt
+
+> 状态：Docker、Local 和 Desktop 统一的“扩展 + 独立有头 Chrome”开发版 MVP 已实现；生产验收项见根目录 `BROWSER_PLUGIN_IMPLEMENTATION_STATUS.md`<br>
+> 范围：Chrome / Edge（Manifest V3）、Docker 部署、LazyMind Desktop（macOS / Windows）<br>
+> PRD 基线：PRD 0.3 遗留的“抓取当前页面”能力<br>
+> 增强目标：Agent 可以打开一个 URL，并在用户可见、可随时接管的浏览器页面中执行点击、输入、选择、滚动、等待和截图；后续把用户录制的网页操作整理成可复用 Skill。
 
 ## 1. 结论
 
-推荐采用 **“浏览器扩展 + Browser Gateway + LazyMind 内置浏览器工具协议”**，而不是让 Docker 或 Electron 直接接管用户正在使用的浏览器。
+推荐并已经按 **“一个扩展代码库 + Browser Gateway + LazyMind 第一方浏览器工具”** 的统一架构实施，按能力分层交付：
 
-- 浏览器扩展运行在用户的 Chrome / Edge 中，负责创建一个由 LazyMind 管理的新窗口或标签页，并通过 `chrome.debugger` 使用 Chrome DevTools Protocol（CDP）操作页面。
+1. **P0 页面感知（PRD 0.3）**：抓取当前激活标签页的 URL、标题、正文、图片 alt 和链接，先满足现有验收。
+2. **P1 受控浏览器**：由插件打开 URL，只控制本次任务创建的 managed tab/window，提供观察、点击、输入、选择、滚动、等待和截图。
+3. **P1/P2 录制转 Skill**：用户手工演示操作时，插件记录语义事件和截图关键帧，LazyMind 生成 `SKILL.md` 草稿并经过人工复核；P2 再增加可选视频录制和视觉理解。（做个mock，先留一个 按钮， mock一哥生成的 video 和导出的skill 先不要真做）
+
+- 浏览器扩展运行在用户的 Chrome / Edge 中。页面感知使用标准 DOM；浏览器控制负责创建由 LazyMind 管理的新窗口或标签页，并通过 `chrome.debugger` 使用 Chrome DevTools Protocol（CDP）操作页面。
 - `browser-gateway` 负责设备配对、在线连接、会话路由、命令超时、审批和审计，并同时向 LazyMind Agent 暴露浏览器工具。
 - Docker 侧由扩展主动通过 WebSocket 连接容器中的 Gateway。容器不能直接访问宿主机浏览器，这个边界不能靠 `host.docker.internal` 解决。
-- Desktop 侧目标形态使用 Native Messaging 发现动态本地运行时并传输命令；首个开发版本可以先复用 loopback WebSocket，但正式 Desktop 验收应包含 Native Messaging，避免本地端口变化和跨域配置问题。
+- Desktop 与 Docker/Local 使用同一个扩展和控制驱动：模型打开 URL 时，扩展创建独立有头窗口；读取当前 Chrome 页时由用户授权当前站点。Native Messaging 只作为后续动态端口发现优化。
+- 已完成的 Electron `WebContentsView` + `webContents.debugger` 驱动不删除，但前端默认不挂载、Desktop Core 默认不偏好该设备；设置 `VITE_DESKTOP_EMBEDDED_BROWSER=true` 时才挂载实验 UI，如需模型在多设备在线时固定选择它，再显式设置 `LAZYMIND_BROWSER_PREFERRED_DEVICE_BROWSER=Electron WebContentsView`。
 - Docker 中的 Playwright Chromium 仅作为自动化测试环境，以及后续可选的“托管无头浏览器”驱动，不代替产品态扩展。
 - 页面由 React、Vue、Angular、Svelte 或传统服务端模板实现时，**不需要分别适配框架**。通用层操作 DOM、可访问性树和真实输入事件；只为富文本编辑器、Canvas 或特殊网站增加能力适配器。
 - 对 Agent 框架也不做 LangChain、LlamaIndex、LazyLLM 等多套实现。内部统一使用一套工具协议，并通过 MCP / LazyMind Tool Provider 暴露。
 
-建议先支持“扩展创建并管理的页面”，V1 不允许 Agent 静默接管用户原有标签页。这样既满足“打开 URL 后控制页面”，也能显著降低误操作和隐私风险。
+当前 PRD 的验收项只覆盖“读取当前页”，**并不能验收“控制浏览器”**。因此不能以页面抓取完成宣称浏览器控制完成；必须为 P1 单独增加控制验收。控制阶段先支持“扩展创建并管理的页面”，不允许 Agent 静默控制用户原有标签页；当前页只允许读取，后续若要控制必须再次显式授权。
+
+### 1.1 PRD 0.3 范围与验收缺口
+
+| 能力 | 当前 PRD 是否覆盖 | 本方案优先级 | 说明 |
+|---|---:|---:|---|
+| 获取当前页 URL、标题、正文、图片 alt、链接 | 是 | P0 | 现有验收主路径 |
+| 未登录、未配对或未授权时拒绝抓取 | 是 | P0 | 三个状态都要有明确提示 |
+| 打开指定 URL | 否 | P1 | 新增 `browser.open` 验收 |
+| 点击、输入、选择、滚动、等待、截图 | 否 | P1 | 新增可控浏览器验收 |
+| 录制操作并生成 Skill | 否 | P1/P2 | 作为新需求独立验收 |
+
+P0 与 P1 共用一套扩展、配对和 Gateway，但在代码和权限策略中分成 `page_capture` 与 `browser_control` 两个 capability。这样既能尽快交付 PRD 0.3，又不会把高权限控制逻辑混入每次页面抓取。
+
+### 1.2 对 OpenAI Codex 开源实现的核对结论
+
+核对基线为 `openai/codex` 提交 `a9519cbcdd2d664530edb2469224ee03c1056799`（2026-08-31）。开源仓库能够确认的部分是：
+
+- `browser_use`、`browser_use_full_cdp_access`、`browser_use_external` 和 `computer_use` 是独立、稳定的能力开关，而不是把所有权限合成一个布尔值。
+- Browser Use 策略按 origin 划分 `access`、`downloads`、`uploads`、`full_cdp_access`；托管要求还包含 `auto_review`、`persistent_approval` 和 `turn/thread` 两种授权生命周期。
+- 浏览器/计算机动作通过 `node_repl` 或 `cua_repl` 工具接入，确认策略作为 MCP 调用 metadata 下发；执行结果和截图被收集为有大小边界的审查证据。
+- 网页和嵌套工具返回值被明确标为 **untrusted evidence, not instructions**。点击风险按真实 UI、当前状态和最终后果判断，而不是按 Agent 对动作的文字描述判断。
+
+开源仓库中**没有** Chrome 扩展、Native Messaging Host、`browser-client.mjs` 或浏览器运行时驱动源码，也没有 `chrome.debugger` 的直接实现。因此本方案不会声称“照搬 Codex 插件代码”。公开 GitHub issue 中出现过 bundled Chrome 插件、Native Messaging、`agent.browsers.get("extension")` 和 Playwright/CDP 的运行痕迹，但这是运行时线索，不是已开源实现合同。LazyMind 可复用的是 Codex 已公开的分层和安全模型，扩展桥接需要自行实现。
 
 ## 2. 与 LazyMind 当前架构的衔接
 
@@ -53,15 +88,26 @@ flowchart LR
     end
 
     subgraph Desktop
-        G2[Browser Gateway 本机进程]
-        N[Native Messaging Host<br/>lazymind browser bridge]
-        G2 --- N
+        G2[Core 内置 Browser Gateway<br/>本机进程]
+        UI[LazyMind Desktop<br/>安装、配对与 Chat]
+        UI --- G2
     end
 
-    E[Chrome / Edge MV3 扩展]
-    E -->|WebSocket，Docker / Cloud| P
-    E -->|Native Messaging，Desktop| N
-    E -->|chrome.tabs + chrome.debugger / CDP| B[LazyMind 管理的浏览器窗口]
+    subgraph E[Chrome / Edge MV3 扩展]
+        S[Page Capture<br/>DOM / Readability]
+        D[Control Driver<br/>chrome.debugger / CDP]
+        R[Recorder<br/>语义事件 + 截图关键帧]
+        T[Transport]
+        S --> T
+        D --> T
+        R --> T
+    end
+    T -->|WebSocket，Docker / Cloud| P
+    T -->|loopback WebSocket，Local / Desktop| G2
+    S -->|只读| CT[当前激活标签页]
+    D -->|创建并控制| B[LazyMind managed tab/window]
+    R -->|用户显式开始/结束| CT
+    R -->|用户显式开始/结束| B
 
     G -.同一服务，不同部署形态.-> G1
     G -.同一服务，不同部署形态.-> G2
@@ -70,11 +116,74 @@ flowchart LR
 关键原则：
 
 - Agent 不直接持有 `tabId`、CSS Selector、Cookie 或 CDP 权限。
+- 页面抓取和页面控制是两个独立 capability；抓取授权不能自动升级为控制授权。
 - Browser Gateway 只把经过校验的高层动作下发给扩展。
 - 扩展内部也使用 CDP method allowlist，只调用实现高层动作所需的固定命令；明确拒绝 Cookie / Storage 导出、网络拦截和模型传入的任意 `Runtime.evaluate` 代码。
 - 扩展只允许操作自己创建并登记过的窗口 / 标签页。
+- Desktop 页面控制同样只操作扩展创建并登记的 managed window/tab；第三方网页不会获得 Electron Node 或 LazyMind preload。
 - 用户手工接管、关闭标签页、撤销设备或附加 DevTools 时，当前自动化会话立即暂停或结束。
 - 页面内容一律视为不可信数据，不能把网页中的“忽略之前指令”等内容当作系统指令执行。
+
+### 3.1 P0 页面感知设计
+
+#### 触发和授权
+
+支持两种授权模式：
+
+1. **单次当前页**：用户点击扩展或 LazyMind 的“连接当前页”，通过 `activeTab + scripting` 获得本次标签页临时读取权限。适合首次使用和隐私敏感页面。
+2. **记住此站点**：用户在扩展 UI 中主动授予当前 origin 的 optional host permission。以后可由对话指令抓取该站点当前激活页；页面导航到新 origin 后必须重新授权。
+
+以下三个条件缺一不可：LazyMind 用户已登录、扩展设备已配对且未撤销、目标标签页拥有本次或当前 origin 的读取授权。任一条件不满足时，扩展不得执行 `executeScript` 或回传内容，只返回对应的 `LOGIN_REQUIRED`、`PAIRING_REQUIRED` 或 `SITE_PERMISSION_REQUIRED`，前端展示可操作的引导。
+
+“授权后默认开启”只能理解为记住用户明确批准的 origin，不能变成安装后读取所有网站，也不能使用一次 `activeTab` 授权静默扩大为永久全站权限。
+
+#### 提取逻辑
+
+内容脚本返回两个正文视图：
+
+- `article_text`：使用 Mozilla Readability 类算法提取主文章，适合总结文章；提取失败时回退到可见正文。
+- `visible_text`：遍历可见 DOM 文本并规范空白，覆盖正文、表格和页面主要控件文案，用于满足“正文全文”及操作上下文。
+
+同时返回：
+
+```json
+{
+  "schema_version": "1",
+  "capture_id": "cap_01...",
+  "tab": {
+    "url": "https://example.com/article",
+    "origin": "https://example.com",
+    "title": "Example article",
+    "captured_at": "2026-08-31T08:00:00Z"
+  },
+  "content": {
+    "article_text": "...",
+    "visible_text": "...",
+    "lang": "zh-CN",
+    "total_chars": 128430,
+    "sha256": "..."
+  },
+  "images": [{"alt": "流程图", "src": "https://example.com/a.png"}],
+  "links": [{"text": "详情", "href": "https://example.com/detail"}],
+  "limitations": ["cross_origin_iframe_not_captured"]
+}
+```
+
+正文不能为了塞入一次模型上下文而静默截断。扩展按 64～256KB 的受控帧分块上传，Gateway 校验顺序、总大小和 hash 后写入短期对象；Agent 首次只拿摘要索引和必要片段，可按 chunk 继续读取。验收所说“完整”是指提取结果在传输和存储层完整、没有乱码或无提示截断，不代表无限长度网页一次全部进入模型上下文。
+
+明确记录浏览器限制：`chrome://`、`edge://`、Chrome Web Store、浏览器 PDF viewer 等受保护页面无法注入；跨 origin iframe 未获得相应 host permission 时只能报告未抓取，不能宣称内容完整。对支持范围内的普通 HTML 页面，应通过 UTF-8、中文、长文、动态 SPA、Shadow DOM 和 iframe 测试证明结果。
+
+#### 对话工具
+
+P0 只需三个第一方工具：
+
+| Tool | 作用 |
+|---|---|
+| `browser.current_tab` | 返回当前激活页的 URL、标题、授权状态和支持状态，不返回正文 |
+| `browser.capture_current_page` | 生成结构化抓取结果和内容对象引用 |
+| `browser.read_capture` | 按 section/chunk 读取完整抓取对象，避免一次塞满上下文 |
+
+工具结果必须包在 `untrusted_browser_content` 语义边界中。正文中的命令、表单提示和 prompt injection 只作为待分析数据，不能修改系统指令、授权或工具策略。
 
 ## 4. 为什么选择扩展 + CDP
 
@@ -83,7 +192,7 @@ flowchart LR
 | 仅 content script | 权限提示较轻，开发简单 | 合成事件不一定可信；跨域 iframe、复杂编辑器、Shadow DOM 和动态页面稳定性不足 | 不作为通用控制主驱动 |
 | MV3 扩展 + `chrome.debugger` / CDP | 可访问 DOM、Accessibility、Input、Page、Runtime 等域，可产生真实鼠标键盘事件 | `debugger` 是高权限且不能声明为 optional；需要明确安装告知和严格审批 | **产品态主方案** |
 | Docker Playwright 浏览器 | 自动化稳定、适合 CI 和无人值守 | 是容器里的独立浏览器，拿不到用户宿主机 Chrome 的登录态，用户不易接管 | 测试与后续无头模式 |
-| Electron `webContents.debugger` / BrowserView | Desktop 内集成方便 | Desktop 独占，Docker 无法复用，并形成第二套驱动 | 不建议作为主方案 |
+| Electron `webContents.debugger` / WebContentsView | 可在 Desktop 内嵌且不受 iframe 策略限制 | Desktop 独占，增加第二套驱动与 E2E 成本，且 PRD 未要求 | **实验代码保留，默认关闭，不作为产品主驱动** |
 
 V1 建议最低支持 Chromium 125，以使用较完整的 CDP Target / iframe 会话能力；Chrome 和 Edge 使用同一套扩展代码、分别发布商店包。Firefox 不进入 V1，因为其调试接口和 CDP 行为不能直接等价复用。
 
@@ -95,22 +204,32 @@ Manifest V3 的必需权限控制在：
 {
   "manifest_version": 3,
   "minimum_chrome_version": "125",
-  "permissions": ["debugger", "storage", "alarms", "nativeMessaging"],
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "debugger",
+    "storage",
+    "alarms",
+    "nativeMessaging"
+  ],
   "host_permissions": [
     "http://127.0.0.1/*",
     "http://localhost/*"
   ],
-  "optional_host_permissions": ["https://*/*"]
+  "optional_host_permissions": ["https://*/*", "http://*/*"]
 }
 ```
 
 说明：
 
+- `activeTab + scripting` 用于用户明确触发的一次当前页抓取；“记住此站点”再按 origin 请求 `optional_host_permissions`。安装时不申请 `<all_urls>`。
 - `chrome.tabs.create()` 本身不要求 `tabs` 权限。只有需要读取所有普通标签页的 URL / 标题时才需要 `tabs`，而 V1 不应这样做。
 - `debugger` 权限不能声明为 optional。安装页面必须解释它只用于用户显式启动的 LazyMind 受控页面。
-- `nativeMessaging` 供 Desktop 使用；Docker / Cloud 仍使用 WebSocket，但 Chrome / Edge 可以共用同一份扩展业务代码。
+- `nativeMessaging` 仅作为未来“Desktop 自动发现本机 Gateway 端口”的可选增强；当前 MVP 不申请该权限。Docker、Local 和 Desktop 扩展均使用同一 WebSocket 协议。
 - 本地 Docker / Desktop 网关使用固定 loopback host permission；远程 Docker / Cloud 地址在用户配置服务地址时按域名请求 optional host permission。
 - 不申请 `cookies`、`history`、`webRequest`、`downloads` 或 `<all_urls>`。登录态由受控页面自然使用当前浏览器 Profile，扩展不读取或导出 Cookie。
+
+`debugger` 带来的安装警告会明显高于纯内容抓取。由于产品目标已经明确包含控制浏览器，推荐正式产品只维护一个 **Controller 扩展**，安装时完整解释权限；代码内部仍把 Capture 与 Control 隔离。如果商店审核或企业安全要求不能接受高权限包，可从同一代码库构建一个不含 `debugger` 的 Reader 发行物，但这只是打包差异，不能演变成两套协议和两套业务代码。
 
 ## 5. 浏览器工具协议
 
@@ -120,7 +239,7 @@ Agent 只看到高层、可审计的 Tool，不直接执行 JavaScript 或任意
 
 | Tool | 作用 | 风险级别 |
 |---|---|---|
-| `browser.open` | 创建受控窗口并打开 `http/https` URL | 读；内网地址需额外确认 |
+| `browser.open` | 打开可见受控页面；所有部署形态都由扩展创建独立窗口 | 读；内网地址需额外确认 |
 | `browser.navigate` | 在当前受控标签页跳转 URL | 读；跨域重新检查授权 |
 | `browser.snapshot` | 返回标题、URL、可访问性树和可交互元素引用 | 读 |
 | `browser.click` | 点击快照中的元素引用 | 根据元素语义动态分级 |
@@ -193,6 +312,59 @@ V1 不提供以下能力：
 - `HUMAN_TAKEOVER_REQUIRED`
 - `ACTION_TIMEOUT`
 
+### 5.4 录制网页操作并生成 Skill（P1/P2）
+
+“录屏转 Skill”不应把视频作为唯一输入。视频可以说明用户看到了什么，但缺少稳定的元素身份、输入参数、导航和等待条件，直接从像素反推操作会脆弱。推荐采用 **语义操作轨迹为主、截图关键帧为辅、视频为可选证据** 的方案。
+
+#### 录制流程
+
+1. 用户在扩展中点击“开始录制”，选择允许的 origin；录制状态必须持续可见。
+2. 内容脚本在 capture phase 监听用户真实的 `click`、`input/change`、`submit`、键盘、滚动和导航，Control Driver 补充 DOM/AX 快照与页面截图。
+3. 每一步记录 `role/name`、稳定属性、附近文本、DOM/AX 路径候选、页面 URL、前后状态和时间；不要只记录绝对 CSS/XPath。
+4. 密码、OTP、支付卡、token、`autocomplete=current-password/new-password/one-time-code` 等字段只记录“需要人工输入”的占位符，绝不记录值。普通输入由用户选择“固定示例”或“转为 Skill 参数”。
+5. 用户点击“停止录制”后，Gateway 对轨迹去噪：合并连续输入/滚动、删除无效果点击、识别页面跳转、推导等待条件和候选变量。
+6. Skill 生成器产出草稿，由用户查看步骤、参数、目标网站和审批规则；先在测试/预演模式重放，用户确认后再写入个人 Skill。
+
+建议轨迹结构：
+
+```json
+{
+  "trace_version": "1",
+  "allowed_origins": ["https://example.com"],
+  "steps": [
+    {
+      "action": "click",
+      "target": {"role": "button", "name": "新建报告"},
+      "url_pattern": "https://example.com/reports*",
+      "checkpoint": {"visible": {"role": "heading", "name": "创建报告"}}
+    },
+    {
+      "action": "type",
+      "target": {"role": "textbox", "name": "报告名称"},
+      "value": {"parameter": "report_name", "example": "季度复盘"}
+    }
+  ]
+}
+```
+
+#### Skill 产物与现有 LazyMind Skill 系统衔接
+
+LazyMind 当前 Skill 包要求根部存在带 `name`、`description` frontmatter 的 `SKILL.md`，并已有 draft/review/commit 生命周期。因此录制结果不应绕过 SkillV2 直接写最终文件：
+
+```text
+recording trace
+  -> trace normalizer
+  -> SKILL.md 草稿（抽象 SOP、参数、前置条件、人工接管点）
+  -> references/browser-workflow.json（可机器回放的结构化步骤）
+  -> 可选 references/checkpoints/（脱敏截图）
+  -> SkillV2 draft review
+  -> 用户确认后 commit
+```
+
+`SKILL.md` 描述任务意图、何时使用、参数和安全约束；可执行细节放到结构化引用文件中，避免把一次录制中的用户名、项目名、具体数据或脆弱 selector 固化成 SOP。重放时仍执行“snapshot → 语义定位 → action → checkpoint”，找不到唯一目标就暂停并请求用户修复录制，而不是猜测点击。
+
+P1 先交付事件轨迹、截图关键帧和 Skill 草稿；P2 如确有复盘或视觉应用需求，再使用 `chrome.tabCapture`、offscreen document 与 `MediaRecorder` 增加可选视频。视频默认本地临时保存、短期保留、用户主动上传，生成 Skill 后可删除；不能用全桌面录屏替代浏览器标签页范围授权。
+
 ## 6. 一次完整执行流程
 
 1. 用户在 LazyMind 中说：“打开 `https://example.com/form`，帮我填写表单。”
@@ -243,48 +415,25 @@ V1 不提供以下能力：
 
 ## 8. Desktop 侧方案
 
-### 8.1 目标形态：Native Messaging
+### 8.1 产品默认形态：外部 Chrome / Edge
 
-Desktop 的前端端口可能动态分配，因此正式方案增加 Native Messaging Host：
+- Desktop 设置页下载并校验与 Docker/Local 相同的 MV3 扩展，安装到用户数据目录下的 `deps/browser-extension`。
+- Chrome 安全策略要求用户在 `chrome://extensions` 或商店页面确认安装、启用和站点权限；Desktop 不能静默加载普通用户扩展。
+- 设置页可以直接生成 5 分钟有效的一次性配对码。用户把地址和配对码粘贴到扩展弹窗，连接后即可抓取当前页或由 Agent 打开独立有头窗口。
+- Gateway 作为 `backend/core/browser/` 内置模块运行，Desktop 不增加独立进程；local-proxy 只对精确 `/api/browser/v1` 公开配对/WebSocket，其他 Route 继续执行普通 RBAC。
+- Desktop 不再注入内嵌设备偏好。扩展是唯一默认控制设备，因此 Docker、Local、Desktop 的 Agent 行为、页面登录态和问题定位路径一致。
 
-- 扩展使用 `chrome.runtime.connectNative("ai.lazymind.browser_bridge")`。
-- Native Host 复用 Desktop 已打包的 `lazymind` Go CLI，增加 `lazymind browser bridge` 子命令。
-- Bridge 读取平台 LazyMind 运行时状态，定位当前 `browser-gateway` 端口，并双向转发版本化 JSON 帧。
-- Native Host 不执行页面动作，也不持有 CDP 权限；CDP 始终只在扩展内。
-- 单条协议消息限制在较小尺寸，例如 256KB。截图和大快照通过 Gateway 临时对象接口传输，不塞入 Native Messaging 帧。
+### 8.2 已保留但默认关闭：Electron 内嵌实验驱动
 
-Chrome 与 Edge 需要分别登记 Native Messaging Host。注册动作由“设置 → 浏览器控制 → 连接浏览器”显式触发：
+已有的 `desktop/electron/src/embedded-browser.js`、preload IPC 和聊天右侧面板代码继续保留，避免丢失已经完成的工作。但默认构建不会挂载面板，也不会自动创建或优先选择 Electron 浏览器设备。仅在研究内嵌体验时显式设置 `VITE_DESKTOP_EMBEDDED_BROWSER=true`；若有多个浏览器设备同时在线，再设置 `LAZYMIND_BROWSER_PREFERRED_DEVICE_BROWSER=Electron WebContentsView`。该模式不属于当前 PRD 的交付或验收前提。
 
-- macOS：写入当前用户的 Chrome / Edge NativeMessagingHosts 目录，manifest 指向应用包内稳定的桥接可执行文件。
-- Windows：写当前用户范围 manifest 和 HKCU 注册项，不要求管理员权限；便携版首次连接时也执行同一流程。
-- Native Host manifest 的 `allowed_origins` 只能列出精确扩展 ID，不能使用通配符；正式包要同时登记 Chrome Web Store 与 Edge Add-ons 的扩展 ID，开发包使用独立 manifest。
-- 用户断开连接时撤销 LazyMind 设备 token；卸载或用户点击“移除桥接”时清理 LazyMind 自己创建的登记项，不覆盖其他扩展配置。
+### 8.3 未来可选：Native Messaging
 
-### 8.2 Desktop 运行时接入点
-
-需要修改：
-
-- `backend/browser-gateway/`：与 Docker 使用同一个 Go 服务代码。
-- `local/local-runtime-manager/config.go`：增加 Gateway 动态端口、路径、日志和运行状态。
-- `local/local-runtime-manager/process_plan.go`、`processcompose.go`、`main.go`：加入 Gateway 的 build / run / down / probe 生命周期。
-- `local/local-proxy/configs/*.yaml` 和 Route 鉴权：增加浏览器路由。若设备路由不走普通 RBAC，必须增加精确到 Route 的鉴权模式，默认仍为 RBAC，禁止做全局匿名放行。
-- `desktop/scripts/build-darwin-arm64.sh`、`build-windows-x64.ps1`：构建并打包 `browser-gateway`，同步更新运行时 manifest 和构建测试。
-- `desktop/electron/src/main.js`、`preload.js`：增加浏览器桥接状态、安装、移除、打开扩展商店和诊断 IPC。
-- `desktop/installer/installer.nsh`：只处理安装器可安全完成的清理 / 升级工作；首次注册仍建议在应用内由用户触发。
-
-### 8.3 可先交付的开发过渡方案
-
-开发阶段可让 Desktop 扩展直接连接：
-
-```text
-ws://127.0.0.1:<当前 frontendPort>/api/browser/v1/connect
-```
-
-设置页把当前端口和一次性配对码传给扩展。此方式可以快速打通完整控制链，但遇到端口变化时需要重新发现，因此不能作为 Desktop 最终完成标准。扩展内部定义 `Transport` 接口，让 `WebSocketTransport` 与 `NativeMessagingTransport` 共用后续的命令、CDP 和审批逻辑。
+若要免去 Desktop 动态端口的手工配置，可后续增加 Native Host。它只负责端口发现和协议转发，页面抓取与 CDP 控制仍在扩展内；Chrome/Edge 注册必须使用精确扩展 ID，并由用户显式安装/移除。
 
 ## 9. 配对、鉴权与多用户隔离
 
-不能把 Local / Desktop 的 `/_local/admin-session` 自动登录 token 直接交给扩展。扩展属于高权限、长生命周期客户端，只应获得浏览器能力范围内的设备凭证。
+不能把 Local / Desktop 的 `/_local/admin-session` 自动登录 token 直接交给扩展。扩展只获得一次性配对产生、且仅限浏览器能力的设备凭证；第三方页面本身接触不到该凭证。
 
 建议流程：
 
@@ -305,6 +454,31 @@ ws://127.0.0.1:<当前 frontendPort>/api/browser/v1/connect
 默认不保存完整页面正文、输入值、截图和密码字段。需要诊断时只允许用户主动导出脱敏报告。
 
 ## 10. 操作审批与安全边界
+
+参考 Codex 开源策略模型，LazyMind 不应只保存一个模糊的“允许浏览器”开关。建议策略最少包含：
+
+```yaml
+browser_use:
+  allow_history_access: false
+  default_origin_policy:
+    capture: prompt
+    control: deny
+    downloads: deny
+    uploads: deny
+    full_cdp_access: deny
+    persistent_approval: false
+    approval_lifetime: turn
+  origins:
+    "https://docs.example.com":
+      capture: allow
+      control: prompt
+```
+
+- `capture`、`control`、`downloads`、`uploads`、`full_cdp_access` 分开授权。V1 不向 Agent 暴露 full CDP，它只表示内部经过审计的驱动是否可使用扩展 CDP 域。
+- 授权生命周期支持 `action`、`turn`、`thread`；默认 `turn`，跨 thread 的永久授权必须在设置页显式开启和撤销。
+- 浏览历史默认关闭；P0 只读取当前激活页，不能枚举历史或后台标签。
+- Gateway、扩展本地策略各做一次校验。服务端误下发或旧版本扩展都不能绕过 origin、managed tab 和敏感字段限制。
+- 自动风险审查可以辅助判断，但不代替确定性禁用项和用户确认；截图和 DOM 证据都按不可信输入处理并设大小上限。
 
 ### 10.1 动作分级
 
@@ -377,7 +551,9 @@ LazyMind/
 ├── browser-extension/                 # Chrome / Edge MV3 扩展
 │   ├── manifest.json
 │   ├── src/background/                # 连接、设备状态、managed tabs
+│   ├── src/capture/                   # 当前页正文、元数据、分块上传
 │   ├── src/driver/cdp/                # snapshot / click / type / wait
+│   ├── src/recorder/                  # 语义事件、脱敏、截图关键帧
 │   ├── src/transport/                 # websocket / native-messaging
 │   ├── src/policy/                    # URL、风险和敏感字段本地兜底
 │   └── tests/
@@ -386,8 +562,10 @@ LazyMind/
 │   ├── internal/protocol/
 │   ├── internal/session/
 │   ├── internal/transport/
-│   └── internal/mcp/
+│   ├── internal/mcp/
+│   └── internal/recording/
 ├── backend/core/browser/              # 配对设备、策略、管理 API
+├── algorithm/lazymind/browser_skill/  # trace 归一化与 Skill 草稿生成
 ├── local/lazymind-cli/internal/browserbridge/
 ├── tests/browser-fixtures/            # HTML / React / Vue / iframe / shadow DOM
 └── tests/browser-e2e/                  # Playwright 扩展 E2E
@@ -400,15 +578,15 @@ LazyMind/
 ### 13.1 分层测试
 
 1. **协议单测**
-   - schema 兼容、版本拒绝、幂等 command、超时、断线重连、过期 token。
+   - capture chunk 顺序/hash/大小、schema 兼容、版本拒绝、幂等 command、超时、断线重连、过期 token。
 2. **扩展驱动单测**
-   - managed tab 白名单、revision 失效、URL 策略、敏感输入屏蔽、CDP detach。
+   - 未登录/未配对/未授权拒绝抓取、origin 权限变化、长文/中文/动态页完整性、managed tab 白名单、revision 失效、URL 策略、敏感输入屏蔽、CDP detach。
 3. **Gateway 集成测试**
    - 多用户设备隔离、审批阻塞 / 恢复、离线错误、审计脱敏、撤销实时生效。
 4. **Agent 工具测试**
    - 普通 Chat、Workflow 和 SubAgent 都只在策略允许时看到 Browser Tool。
 5. **真实浏览器 E2E**
-   - 打开 URL → 快照 → 输入 → 点击 → SPA 跳转 → 截图 → 关闭。
+   - 当前页授权 → 抓取 → 分块读取；打开 URL → 快照 → 输入 → 点击 → SPA 跳转 → 截图 → 关闭；录制 → 草稿 → 预演回放。
 
 ### 13.2 Docker E2E
 
@@ -433,33 +611,43 @@ E2E 必须使用 Playwright 自带 Chromium 和 persistent context 加载扩展�
 测试矩阵至少包含：
 
 - 普通 HTML 表单；
+- 10MB 级长文、中文编码、图片 alt、相对/绝对链接及无正文页面；
 - React 与 Vue SPA 各一个，用来证明无需框架驱动；
 - Shadow DOM；
 - 跨域 iframe；
 - 动态列表、弹窗、新标签页；
 - 内网 URL 拦截、过期配对码、用户拒绝高风险操作；
 - 页面中包含 prompt injection 文本，但不会改变 Agent / Gateway 策略。
+- 录制中出现密码、OTP 和普通参数字段，敏感值不会进入 trace、日志、截图或 Skill 草稿。
 
 ### 13.3 Desktop 测试
 
-- `desktop/scripts/desktop-build.test.mjs`：断言 Gateway / Native Host 被打包并写入 manifest。
-- `runtime-smoke`：Gateway 被 process plan 启动、探活、停止，端口冲突可恢复。
-- `preload-bridge`：连接、移除和诊断 IPC 只暴露固定参数，不暴露任意命令执行。
-- Native Messaging 合同测试：Windows / macOS 路径、HKCU / 用户目录登记、升级保留、只删除 LazyMind 自己的条目。
-- macOS arm64 与 Windows x64 各跑一次真实 Chromium E2E，使用临时 Profile，不污染开发者浏览器。
-- 同一动作 transcript 分别跑 `WebSocketTransport` 和 `NativeMessagingTransport`，结果语义必须一致。
+- 前端单测覆盖 Desktop 默认不挂载内嵌浏览器；实验开关只能在 Desktop profile 显式启用。
+- local-runtime-manager 测试覆盖 Desktop profile 不注入内嵌设备偏好。
+- macOS arm64 与 Windows x64 各跑一次真实打包应用 E2E：安装目录打开、生成配对码、扩展连接、模型打开独立窗口、点击/输入/截图和登录态恢复。
+- Docker、Local 与 Desktop 使用同一动作 transcript 验证扩展 CDP 结果一致。
+- 若后续实现 Native Messaging，再补 Windows/macOS 路径、HKCU/用户目录登记、升级保留和清理合同测试。
 
 ## 14. 分阶段交付
 
-### Phase 0：协议与安全基线
+### Phase 0：协议与安全基线（工程前置）
 
-- 冻结 V1 Tool schema、扩展命令协议、错误码和审批准则。
-- 完成 URL / managed tab / 多用户隔离设计。
+- 冻结 Capture、Control、Recording 三类 schema、扩展命令协议、错误码和审批准则。
+- 完成登录/配对/site permission、origin policy、managed tab 和多用户隔离设计。
 - 建立 HTML、React、Vue、iframe、Shadow DOM 测试夹具。
 
 验收：协议合同测试完成，禁止项有确定性测试，不依赖 LLM 判断。
 
-### Phase 1：Docker 闭环 MVP
+### Phase 1：PRD 0.3 页面感知（P0）
+
+- 实现 MV3 当前页提取、结构化元数据、长文分块和 untrusted content 标记。
+- 实现 Gateway 的配对、WebSocket、Capture Tool 和短期抓取对象。
+- Docker 通过 `127.0.0.1:8090` 跑通；Desktop 先复用 loopback WebSocket 跑通，不等待控制能力。
+- Chat 支持“抓取当前页面”“总结我正在看的文章”，设置页支持单次授权、按站点记住和撤销。
+
+验收：普通支持页面的 URL、标题、正文、图片 alt、链接与页面一致；长文在传输/存储层无静默截断或乱码；未登录、未配对、未授权三种状态均不抓取且有明确引导。这一阶段完成后才可关闭 PRD 0.3 遗留项。
+
+### Phase 2：Docker 受控浏览器闭环（P1）
 
 - 实现 Gateway、WebSocket 配对和 MV3 CDP 驱动。
 - 普通 Chat 支持 open / snapshot / click / type / wait / screenshot / close。
@@ -468,39 +656,63 @@ E2E 必须使用 Playwright 自带 Chromium 和 persistent context 加载扩展�
 
 验收：本地 Docker + 宿主 Chrome / Edge 可以从 Chat 打开测试 URL、填写并提交一个低风险测试表单；不同用户不能互相控制设备。
 
-### Phase 2：Desktop 正式接入
+### Phase 3：Desktop 正式接入（P1）
 
-- Gateway 纳入 local-runtime-manager 和 Desktop 打包。
-- 完成 Native Messaging Host、Electron 设置 IPC、诊断和卸载清理。
-- macOS / Windows 真实运行时测试。
+- Gateway 纳入 local-runtime-manager，Desktop 设置页复用扩展下载、校验和安装目录打开能力。
+- 设置页生成一次性配对码，扩展连接 Desktop loopback Gateway 后打开独立有头窗口。
+- 完成 macOS / Windows 真实打包运行时测试。
 
-验收：Desktop 端口变化后扩展仍可通过 Native Host 自动找到正确运行时；Desktop 退出后命令明确返回离线，不残留可控制通道。
+验收：Chat 打开 URL 后 Chrome/Edge 出现独立受控窗口，模型和用户均可操作；抓取当前页需要站点授权；Desktop 退出或 Gateway 断开后设备离线。代码和外部 Chrome 联调已完成，真实打包 E2E 尚未完成。
 
-### Phase 3：Workflow、审批和站点能力
+### Phase 3B：外部 Chrome 自动发现（可选 P2）
+
+- 如产品要求 Desktop 无配置连接扩展，再实现 Native Messaging Host、注册/卸载和动态端口发现。
+- 这不会替换扩展控制，也不进入当前 Desktop 控制 MVP 的完成条件。
+
+### Phase 4：录制转 Skill、Workflow 与审批（P1/P2）
 
 - Browser Tool 进入受控 Workflow / SubAgent Tool Provider。
 - 实现高风险动作审批、人工接管和恢复。
+- 先实现语义事件轨迹、截图关键帧、Skill 草稿、draft review 和预演回放。
+- 后续按需求增加 tab 视频录制和视觉对齐，不把视频设为生成 Skill 的必需输入。
 - 增加富文本编辑器与飞书等能力适配器。
 
-验收：Workflow 不能绕过审批；用户拒绝后动作不会在扩展端执行；人工登录 / 验证后可从新快照继续。
+验收：录制结果不会保存密码/OTP，生成的 Skill 参数化且能在同站点测试夹具稳定回放；Workflow 不能绕过审批；用户拒绝后动作不会在扩展端执行；人工登录/验证后可从新快照继续。
 
-### Phase 4：可选托管浏览器
+### Phase 5：可选托管浏览器（P2）
 
 - 为无扩展、CI 或远程无人值守场景增加 Playwright Driver。
 - 保持同一 Tool schema，Gateway 根据 session driver 路由到 `extension-cdp` 或 `managed-playwright`。
 - UI 明确显示托管浏览器没有用户 Chrome 登录态，并提供独立 Profile 生命周期。
 
-## 15. V1 完成标准
+## 15. 分层完成标准
 
-- Chrome / Edge 能安装同一代码构建的 MV3 扩展。
-- Docker 与 Desktop 都能从 Chat 打开一个受控 URL 并完成标准 DOM 页面操作。
-- 只操作扩展创建的 managed tabs，不能枚举或接管其他标签页。
+### 15.1 PRD 0.3 / P0 完成标准
+
+- Chrome 安装扩展并与 Docker 或 Desktop 配对后，用户可在普通 Chat 发出“抓取当前页面”或“总结当前文章”。
+- 对支持页面返回 URL、标题、正文全文对象、图片 alt 与链接；无乱码、无未声明截断，超长正文可继续按 chunk 读取。
+- 未登录、未配对、未授权时不读取页面，并分别提供登录、配对和站点授权引导。
+- 用户能撤销站点权限和设备凭证；撤销立即生效。
+- Chrome 受保护页面和未授权跨域 iframe 明确返回 limitation，不伪造“完整抓取”。
+
+### 15.2 浏览器控制 / P1 完成标准
+
+- Chrome / Edge 能从同一代码库构建 MV3 扩展。
+- Docker、Local 与 Desktop 都能通过同一扩展从 Chat 打开一个受控 URL，完成标准 DOM 页面操作和截图。
+- 只操作扩展创建的 managed tabs，不能枚举或静默接管其他标签页。
 - 普通 Chat、允许的 Workflow / SubAgent 使用同一 Browser Tool 协议。
 - 跨用户、跨 conversation、跨 session 命令全部被拒绝。
-- 高风险动作有服务端确定性审批；密码 / MFA / 支付默认要求人工接管。
+- 高风险动作有服务端确定性审批；密码/MFA/支付默认要求人工接管。
 - 断线、页面关闭、DevTools 抢占 debugger、扩展撤销、Desktop 退出均能安全终止。
-- Docker E2E 覆盖 HTML、React、Vue、iframe 和 Shadow DOM；证明不需要逐前端框架适配。
+- Docker E2E 覆盖 HTML、React、Vue、iframe 和 Shadow DOM，证明不需要逐前端框架适配。
 - 审计日志不记录密码、token、Cookie、完整表单值和完整页面正文。
+
+### 15.3 录制转 Skill 完成标准
+
+- 录制开始/结束、目标 origin 和持续状态对用户明确可见。
+- trace 能把示例输入转为参数，密码、OTP、支付和 token 字段只生成 `HUMAN_INPUT` 占位符。
+- 生成合法 `SKILL.md` 和结构化 browser workflow，并进入 LazyMind 现有 draft/review/commit 流程，未经用户确认不发布。
+- 在录制网站的小幅 DOM 变化后仍优先通过 role/name/上下文定位；目标不唯一时暂停，不猜测执行。
 
 ## 16. 主要风险与应对
 
@@ -512,11 +724,25 @@ E2E 必须使用 Playwright 自带 Chromium 和 persistent context 加载扩展�
 | 网站反自动化、验证码 | 不绕过；转人工接管，明确记录暂停原因 |
 | 网页 Prompt Injection | 页面内容不可信标记、system policy、服务端风险引擎、敏感动作审批 |
 | Docker 误以为能控制宿主浏览器 | 产品文档明确扩展主动连接边界；容器 Chromium 标记为独立托管模式 |
-| Desktop 动态端口 | Native Messaging Host 读取运行时状态，不把固定端口当正式依赖 |
+| Desktop 动态端口 | 当前由用户在扩展设置 loopback 地址；后续可由 Native Messaging Host 读取运行时状态 |
 | 多框架维护成本 | 标准 DOM / AX / CDP 主驱动；只按控件或站点能力增加适配器 |
 | 截图 / 快照过大 | 快照裁剪、差量返回、对象存储临时 URL、严格大小和有效期限制 |
 
 ## 17. 官方技术依据
+
+### 17.1 OpenAI Codex（核对基线 `a9519cbc`）
+
+- [Codex Browser Use feature gates](https://github.com/openai/codex/blob/a9519cbcdd2d664530edb2469224ee03c1056799/codex-rs/features/src/lib.rs#L248-L260)：In-app、外部浏览器、full CDP 和 Computer Use 分层控制。
+- [Browser Use 用户配置](https://github.com/openai/codex/blob/a9519cbcdd2d664530edb2469224ee03c1056799/codex-rs/config/src/browser_use.rs)：按 origin 区分 access、download、upload 与 full CDP。
+- [Browser/Computer Use 托管要求](https://github.com/openai/codex/blob/a9519cbcdd2d664530edb2469224ee03c1056799/codex-rs/config/src/browser_computer_use_requirements.rs)：auto review、persistent approval 和 turn/thread 授权生命周期。
+- [Browser/Computer Use Guardian policy](https://github.com/openai/codex/blob/a9519cbcdd2d664530edb2469224ee03c1056799/codex-rs/core/assets/guardian/node_repl_policy.md)：递归审查嵌套动作、按真实 UI 后果判定风险、敏感数据出站与站点默认不可信。
+- [REPL 审查证据](https://github.com/openai/codex/blob/a9519cbcdd2d664530edb2469224ee03c1056799/codex-rs/core/src/context/node_repl_review_evidence.rs#L93-L95)：对 `node_repl/cua_repl` 的文本和截图证据做 thread scope 与资源边界处理，并标记为不可信证据。
+- [截图调用测试](https://github.com/openai/codex/blob/a9519cbcdd2d664530edb2469224ee03c1056799/codex-rs/core/tests/suite/code_mode.rs#L4355-L4405)：截图通过 REPL 包装的 MCP tool 返回，而不是作为模型直连 Chrome 的裸 CDP 接口。
+- [Codex use cases](https://developers.openai.com/codex/use-cases)：官方产品文档提到前端/UI 工作中的浏览器验证，但没有公开 Chrome 扩展桥接实现。
+
+以下链接仅作为 bundled 运行时的**线索**，不是开源实现依据：[Chrome Extension + Native Messaging 报告](https://github.com/openai/codex/issues/21955)、[`browser-client.mjs` / extension browser 报告](https://github.com/openai/codex/issues/30889)、[`chrome.debugger` / Playwright-CDP 报告](https://github.com/openai/codex/issues/30841)。三者都来自 GitHub issue 内容，不能替代公开源码或稳定 API 合同。
+
+### 17.2 Chromium 与测试运行时
 
 - [Chrome `chrome.debugger` API](https://developer.chrome.com/docs/extensions/reference/api/debugger)：扩展可通过 CDP 访问 Accessibility、DOM、Input、Page、Runtime、Target 等受支持域。
 - [Chrome Permissions API](https://developer.chrome.com/docs/extensions/reference/api/permissions)：optional permission 的使用方式，并明确 `debugger` 不能声明为 optional。

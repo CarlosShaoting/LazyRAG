@@ -26,6 +26,24 @@ export interface EditablePPTDependencyStatus {
   message?: string;
 }
 
+export interface BrowserExtensionDependencyStatus {
+  installed: boolean;
+  installDir?: string;
+  manifestPath?: string;
+  version?: string;
+  affectedFeatures: string[];
+  runtimeLocal: boolean;
+  installSupported: boolean;
+  browserApprovalRequired: boolean;
+  browserSettingsUrl: string;
+  message?: string;
+}
+
+export interface BrowserPairingCode {
+  code: string;
+  expires_at: string;
+}
+
 interface ApiEnvelope<T> {
   data?: T;
 }
@@ -90,4 +108,36 @@ export async function installEditablePPTDependency() {
     { timeout: 45 * 60 * 1000 },
   );
   return unwrapApiData<EditablePPTDependencyStatus>(response.data);
+}
+
+export async function getBrowserExtensionDependencyStatus() {
+  const response = await axiosInstance.get<
+    ApiEnvelope<BrowserExtensionDependencyStatus> | BrowserExtensionDependencyStatus
+  >(`${basePath}/api/core/system-dependencies/browser-extension`);
+  return unwrapApiData<BrowserExtensionDependencyStatus>(response.data);
+}
+
+export async function checkBrowserExtensionDependency() {
+  const response = await axiosInstance.post<
+    ApiEnvelope<BrowserExtensionDependencyStatus> | BrowserExtensionDependencyStatus
+  >(`${basePath}/api/core/system-dependencies/browser-extension:check`);
+  return unwrapApiData<BrowserExtensionDependencyStatus>(response.data);
+}
+
+export async function installBrowserExtensionDependency() {
+  const response = await axiosInstance.post<
+    ApiEnvelope<BrowserExtensionDependencyStatus> | BrowserExtensionDependencyStatus
+  >(
+    `${basePath}/api/core/system-dependencies/browser-extension:install`,
+    undefined,
+    { timeout: 10 * 60 * 1000 },
+  );
+  return unwrapApiData<BrowserExtensionDependencyStatus>(response.data);
+}
+
+export async function createBrowserPairingCode() {
+  const response = await axiosInstance.post<
+    ApiEnvelope<BrowserPairingCode> | BrowserPairingCode
+  >(`${basePath}/api/core/browser/manage/pairings`);
+  return unwrapApiData<BrowserPairingCode>(response.data);
 }
