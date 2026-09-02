@@ -88,6 +88,7 @@ class StyleRenderingRecipeTest(unittest.TestCase):
 
         self.assertEqual(field['type'], 'single')
         self.assertEqual(field['choice_policy'], 'fixed')
+        self.assertFalse(field['allow_other'])
         self.assertEqual(len(field['choices']), 2)
         self.assertTrue(field['choices'][0].startswith('启用'))
         self.assertTrue(field['choices'][1].startswith('不启用'))

@@ -206,7 +206,7 @@ def test_selected_workflow_declares_missing_only_startup_clarification():
         'clarification_fields': [
             {'id': 'topic', 'label': '主题', 'question': '主题是什么？', 'type': 'text'},
             {'id': 'slide_count', 'label': '页数', 'question': '生成多少页？',
-             'type': 'single', 'choices': ['3 页', '5 页']},
+             'type': 'single', 'choices': ['3 页', '5 页'], 'allow_other': False},
         ],
     }
     contribution = resolve_workflow_injection(
@@ -234,6 +234,8 @@ def test_selected_workflow_declares_missing_only_startup_clarification():
     assert '生成多少页？' in contribution.runtime_context
     assert 'exactly once TOTAL' in contribution.runtime_context
     assert 'context-specific suggested answers' in contribution.runtime_context
+    assert 'allow_other=false' in contribution.runtime_context
+    assert '"allow_other": false' in contribution.runtime_context
 
 
 def test_seed_choices_do_not_invalidate_explicit_chinese_slide_count():

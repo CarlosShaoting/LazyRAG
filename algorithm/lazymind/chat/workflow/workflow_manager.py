@@ -590,14 +590,17 @@ def _runtime_clarification_fields(runtime_policy: Any) -> List[Dict[str, Any]]:
         choice_policy = _clean_workflow_text(raw.get('choice_policy')).lower() or 'seed'
         if choice_policy not in {'seed', 'subset', 'fixed'}:
             choice_policy = 'seed'
-        result.append({
+        field = {
             'id': field_id,
             'label': _clean_workflow_text(raw.get('label')) or field_id,
             'question': question,
             'type': question_type,
             'choices': choices,
             'choice_policy': choice_policy,
-        })
+        }
+        if question_type in {'single', 'multiple'}:
+            field['allow_other'] = raw.get('allow_other', True) is not False
+        result.append(field)
     return result
 
 
@@ -807,7 +810,10 @@ def _startup_clarification_guidance(runtime_policy: Any) -> str:
         'Treat numbers written as words or digits as equivalent '
         'explicit values when they are tied to the field, for example 六页 and 6页 both explicitly '
         'supply a slide count. Keep type=text only '
-        'when responsible suggestions cannot be inferred. On the answer turn, NEVER call ask_user '
+        'when responsible suggestions cannot be inferred. When a declared choice field has '
+        'allow_other=false, pass allow_other=false in that ask_user question so the card does not '
+        'append an Other option. Keep allow_other=true or omit it for other choice fields. '
+        'On the answer turn, NEVER call ask_user '
         'again or reassess fields as missing. Combine the original request, all already-known '
         'fields, and the new answers into one concise request_context and pass that value to '
         'the trigger; an answer-only current_query must never replace the original request. '
