@@ -264,7 +264,7 @@ steps:
 
   build_outline:
     label: Build Outline
-    mode: auto
+    mode: human
     prompt: |
       You are a PPT outline planner. Build the deck structure and publish one
       editable outline brief per page for the UI. Do NOT generate slide HTML yet.
@@ -330,7 +330,7 @@ steps:
 
   generate_ppt:
     label: Generate PPT
-    mode: auto
+    mode: human
     prompt: |
       You are a PPT HTML generator. You do NOT rewrite the outline. You MUST
       drive generation through ppt_* tools and publish preview_html.

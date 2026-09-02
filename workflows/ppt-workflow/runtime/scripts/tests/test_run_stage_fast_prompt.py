@@ -92,6 +92,13 @@ class StyleRenderingRecipeTest(unittest.TestCase):
         self.assertTrue(field['choices'][1].startswith('不启用'))
         self.assertIn('background_images', workflow['runtime']['publisher_owned_slots'])
 
+    def test_prompt_and_slide_generation_require_human_approval(self) -> None:
+        state_path = Path(__file__).resolve().parents[3] / 'scenario' / 'state.yml'
+        state = yaml.safe_load(state_path.read_text(encoding='utf-8'))
+
+        self.assertEqual(state['steps']['build_outline']['mode'], 'human')
+        self.assertEqual(state['steps']['generate_ppt']['mode'], 'human')
+
 
 class OutlineReferenceImageRepairTest(unittest.TestCase):
     def test_empty_image_pool_clears_hallucinated_binding_without_failing(self) -> None:

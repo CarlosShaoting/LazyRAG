@@ -25,7 +25,10 @@ Workflow:
    Missing images never block the workflow; slides can use CSS/SVG/ECharts.
 3. `build_outline` — one call: `ppt_build_outline` → `slide_outline[page1..]`;
    when enabled, generate one AI background per page into `background_images`.
-4. `generate_ppt` — one call: `ppt_generate_pages`; no outline rewrite.
+   This step stops for human approval so the generated page prompts / outline
+   can be reviewed before slide generation starts.
+4. `generate_ppt` — one call: `ppt_generate_pages`; no outline rewrite. The
+   generated slide results also stop for human approval.
 
 After `analyze_requirements` succeeds, always advance to `collect_materials`.
 This removes the ambiguous two-ready-step choice. The collection step must use

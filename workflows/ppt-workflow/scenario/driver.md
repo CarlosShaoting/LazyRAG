@@ -38,6 +38,8 @@ Allowed verdicts: PASS, RETRY, DONE, FAIL.
 
 - `slide_outline` list has at least 2 pages with sort_order aligned, each page
   brief containing a title and content points -> PASS
+- This is a human-approval step. After validation, stop at the result approval
+  checkpoint so the user can review/edit the page prompts before generation.
 - When the user enabled AI backgrounds, `background_images` should align with
   the outline pages. A provider/model failure must be reported with its exact
   reason; do not silently pretend backgrounds were generated.
@@ -46,6 +48,9 @@ Allowed verdicts: PASS, RETRY, DONE, FAIL.
 - 2 consecutive failures -> FAIL
 
 ### generate_ppt
+
+- This is a human-approval step. After generation succeeds, stop at the result
+  approval checkpoint so the user can review the rendered slides.
 
 Full generation:
 

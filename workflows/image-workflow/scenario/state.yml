@@ -387,6 +387,7 @@ steps:
 
   optimize_prompt:
     label: Optimize Prompt
+    mode: human
     route: choice
     prompt: |
       You are a professional prompt engineer for still images, image editing, short videos,
@@ -576,6 +577,7 @@ steps:
 
   generate_image:
     label: Generate Image
+    mode: human
     route: choice
     prompt: |
       You are an image, meme, and animated-sticker generation agent.
