@@ -83,6 +83,7 @@ runtime:
       label: AI 底图
       question: 是否为每一页启用 AI 生成底图？启用后会根据需求和素材先生成一组相互关联、可编辑的底图提示词，再生成 16:9 无文字背景并应用到幻灯片背景层。
       type: single
+      choice_policy: fixed
       choices:
         - 启用｜为每页生成独立 AI 底图
         - 不启用｜使用纯色、渐变和矢量装饰
