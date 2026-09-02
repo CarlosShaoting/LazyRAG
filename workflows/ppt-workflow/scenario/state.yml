@@ -35,15 +35,15 @@ steps:
       {{runtime_instruction}}
 
       Analyze the presentation requirements. Produce a concise but useful
-      requirement brief in the user's language. The next step is always
-      collect_materials; do not try to skip directly to build_outline.
+      requirement brief in the user's language. Decide whether external or
+      uploaded source collection is genuinely needed; a simple, self-contained
+      presentation request should not spend a separate step collecting material.
 
       Step boundary (mandatory):
       - This step only analyzes requirements.
       - Do NOT search or call a knowledge base in this step. When the user asks
         to use a knowledge base, record that requirement clearly;
-        collect_materials is the next step and is the only step that performs
-        KB retrieval.
+        collect_materials is the only step that performs KB retrieval.
 
       Input availability rule:
       - A user upload is NOT required. For a text-only request, immediately
@@ -115,6 +115,22 @@ steps:
             key='skip_background_images', content_type='text', value='skip',
           )
 
+        Also decide whether to skip material collection. Save:
+          save_artifact(
+            key='skip_material_collection', content_type='text', value='skip',
+          )
+        when ALL of these are true:
+        - the request is self-contained and uses common, stable knowledge;
+        - there is no uploaded source, selected/mentioned knowledge base, or
+          pasted source material that needs processing;
+        - the user did not request research, current facts, citations, real
+          photos, product/industry evidence, cases, data, or reference images.
+        Examples that should skip: a short children's holiday introduction,
+        a simple classroom deck, or a basic concept explainer whose topic,
+        audience, page count, and style are already known. Do not save this
+        marker for research/report/product/case-study decks or any request that
+        needs source-grounded claims or foreground visual assets.
+
       Use exactly one of those two capability marker values. Do not add prose,
       punctuation, Markdown, or any other capability to that hidden artifact.
       After both artifacts are saved, Executor runs the deterministic model
@@ -123,6 +139,8 @@ steps:
       - material: requirement_analysis
       - material: ppt_capability_requirements
       - material: skip_background_images
+        required: false
+      - material: skip_material_collection
         required: false
     acceptance_criteria: |
       requirement_analysis must be saved and must cover goal, presentation
@@ -135,6 +153,7 @@ steps:
   collect_materials:
     label: Collect Materials
     mode: auto
+    skip_if: {material: skip_material_collection}
     prompt: |
       You are a presentation research and material collection assistant.
 

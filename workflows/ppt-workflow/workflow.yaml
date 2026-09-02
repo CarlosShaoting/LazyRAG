@@ -158,6 +158,13 @@ slots:
     exposed: false
     summary_max_chars: 40
 
+  - id: skip_material_collection
+    label: Skip Material Collection
+    type: text
+    cardinality: single
+    exposed: false
+    summary_max_chars: 40
+
   - id: uploaded_materials
     label: Uploaded Materials
     type: file
