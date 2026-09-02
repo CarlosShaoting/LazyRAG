@@ -968,6 +968,12 @@ model_providers:
           type: cross_modal_embed
         - name: wan2.6-t2i
           type: text2image
+        - name: wan2.6-t2v
+          type: text2video
+        - name: wan2.6-i2v
+          type: text2video
+        - name: wan2.6-i2v-flash
+          type: text2video
         - name: wanx2.1-t2i-pro
           type: text2image
         - name: wanx2.1-t2i-turbo
@@ -1209,6 +1215,10 @@ model_providers:
       base_url: "https://api.siliconflow.cn/v1/"
       # Verified-free model source: https://siliconflow.cn/pricing
       models:
+        - name: Wan-AI/Wan2.2-T2V-A14B
+          type: text2video
+        - name: Wan-AI/Wan2.2-I2V-A14B
+          type: text2video
         - name: deepseek-ai/DeepSeek-V4-Flash
           type: llm
           max_input_tokens: "1M"
