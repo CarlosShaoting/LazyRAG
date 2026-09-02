@@ -202,6 +202,9 @@ class RemoteWorkflowExecutor:
                     failure = str(event.get('message') or 'LazyMind SubAgent failed')
         except Exception as exc:
             failure = str(exc)
+            terminal_event = {
+                'type': 'error', 'status': 'failed', 'message': failure,
+            }
         finally:
             stopped.set()
             heartbeat_thread.join(timeout=1)

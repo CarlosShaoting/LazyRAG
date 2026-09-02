@@ -1,5 +1,6 @@
 from __future__ import annotations
 import asyncio
+from functools import wraps
 import hashlib
 import json
 import os
@@ -442,7 +443,7 @@ def _build_user_attachment_tools(has_files: bool) -> list:
     ]
 
 
-def _build_ask_user_tool() -> list:
+def _build_ask_user_tool(runtime_policy: Any = None) -> list:
     """Return the ask_user stop-tool for ChatAgent.
 
     Intentionally NOT added to DEFAULT_TOOLS so SubAgents never receive it.
@@ -450,7 +451,20 @@ def _build_ask_user_tool() -> list:
     injected here, into the ChatAgent's all_tools list.
     """
     from lazymind.chat.engine.tools.ask_user import ask_user
-    return [ask_user]
+    from lazymind.chat.workflow.workflow_manager import enforce_startup_clarification_policy
+
+    if not runtime_policy:
+        return [ask_user]
+
+    @wraps(ask_user)
+    def governed_ask_user(questions, title=None, description=None):
+        return ask_user(
+            enforce_startup_clarification_policy(questions, runtime_policy),
+            title=title,
+            description=description,
+        )
+
+    return [governed_ask_user]
 
 
 def _should_register_ask_user(
@@ -1248,7 +1262,10 @@ async def _handle_chat_impl(
             and 'ask_user' not in disabled
         )
     )
-    ask_user_tools = _build_ask_user_tool() if allow_ask_user else []
+    ask_user_tools = (
+        _build_ask_user_tool(workflow_contribution.runtime_policy)
+        if allow_ask_user else []
+    )
     ask_user_configs = [ASK_USER_TOOL_CONFIG] if ask_user_tools else []
     session_env_configs = (
         [build_session_env_tool_config(_conversation_env_vars, env_scope_key)]

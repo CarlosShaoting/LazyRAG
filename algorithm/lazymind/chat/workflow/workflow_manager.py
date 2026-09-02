@@ -599,7 +599,13 @@ def _runtime_clarification_fields(runtime_policy: Any) -> List[Dict[str, Any]]:
             'choice_policy': choice_policy,
         }
         if question_type in {'single', 'multiple'}:
-            field['allow_other'] = raw.get('allow_other', True) is not False
+            # Fixed package choices are closed by definition. This default also
+            # covers installed package revisions created before ``allow_other``
+            # was serialized into their runtime policy.
+            default_allow_other = choice_policy != 'fixed'
+            field['allow_other'] = raw.get(
+                'allow_other', default_allow_other,
+            ) is not False
         result.append(field)
     return result
 
@@ -643,6 +649,64 @@ def _tool_call_arguments(tool_call: Any) -> Dict[str, Any]:
 
 def _question_fingerprint(value: Any) -> str:
     return re.sub(r'[^0-9a-z\u4e00-\u9fff]+', '', str(value or '').lower())
+
+
+def enforce_startup_clarification_policy(
+    questions: Any,
+    runtime_policy: Any,
+) -> Any:
+    """Apply package-owned fixed choice fields to an ``ask_user`` call.
+
+    Startup clarification is model-routed, but a model omission must not turn a
+    package-declared closed choice into an open-ended one.  Match by the declared
+    field id first, then by question text or the exact declared choice set so the
+    policy also survives providers that omit the optional id.
+    """
+    if not isinstance(questions, list):
+        return questions
+    fixed_fields = [
+        field for field in _runtime_clarification_fields(runtime_policy)
+        if field.get('choice_policy') == 'fixed'
+        and field.get('type') in {'single', 'multiple'}
+        and field.get('choices')
+    ]
+    if not fixed_fields:
+        return questions
+
+    governed: List[Any] = []
+    for raw_question in questions:
+        if not isinstance(raw_question, dict):
+            governed.append(raw_question)
+            continue
+        question = dict(raw_question)
+        question_id = _clean_workflow_text(question.get('id'))
+        question_text = _question_fingerprint(question.get('text'))
+        question_choices = {
+            _clean_workflow_text(value)
+            for value in (question.get('choices') or [])
+            if _clean_workflow_text(value) and _clean_workflow_text(value) != '其他'
+        }
+        matched = None
+        for field in fixed_fields:
+            field_text = _question_fingerprint(field.get('question'))
+            field_choices = set(field.get('choices') or [])
+            if question_id and question_id == field.get('id'):
+                matched = field
+                break
+            if question_text and field_text and (
+                question_text in field_text or field_text in question_text
+            ):
+                matched = field
+                break
+            if question_choices and question_choices == field_choices:
+                matched = field
+                break
+        if matched is not None:
+            question['type'] = matched['type']
+            question['choices'] = list(matched['choices'])
+            question['allow_other'] = matched.get('allow_other', True)
+        governed.append(question)
+    return governed
 
 
 def _history_startup_ask_index(

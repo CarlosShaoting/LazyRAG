@@ -6,6 +6,7 @@ import lazyllm
 import pytest
 
 from lazymind.chat.workflow.workflow_manager import (
+    enforce_startup_clarification_policy,
     resolve_workflow_injection,
     workflow_startup_clarification_already_asked,
 )
@@ -236,6 +237,50 @@ def test_selected_workflow_declares_missing_only_startup_clarification():
     assert 'context-specific suggested answers' in contribution.runtime_context
     assert 'allow_other=false' in contribution.runtime_context
     assert '"allow_other": false' in contribution.runtime_context
+
+
+def test_fixed_startup_choice_policy_overrides_model_other_option():
+    runtime = {
+        'clarification_fields': [{
+            'id': 'generate_background_images',
+            'question': '是否为每一页启用 AI 生成底图？',
+            'type': 'single',
+            'choice_policy': 'fixed',
+            'choices': ['启用｜为每页生成独立 AI 底图', '不启用｜使用纯色、渐变和矢量装饰'],
+        }],
+    }
+
+    questions = enforce_startup_clarification_policy([{
+        'id': 'generate_background_images',
+        'text': '是否为这份 PPT 启用 AI 底图？',
+        'type': 'single',
+        'choices': ['启用', '不启用', '其他'],
+    }], runtime)
+
+    assert questions == [{
+        'id': 'generate_background_images',
+        'text': '是否为这份 PPT 启用 AI 底图？',
+        'type': 'single',
+        'choices': ['启用｜为每页生成独立 AI 底图', '不启用｜使用纯色、渐变和矢量装饰'],
+        'allow_other': False,
+    }]
+
+
+def test_seed_startup_choice_policy_remains_open_ended():
+    questions = [{
+        'id': 'slide_count',
+        'text': '希望生成多少页？',
+        'type': 'single',
+        'choices': ['3 页', '5 页'],
+    }]
+    runtime = {
+        'clarification_fields': [{
+            **questions[0],
+            'choice_policy': 'seed',
+        }],
+    }
+
+    assert enforce_startup_clarification_policy(questions, runtime) == questions
 
 
 def test_seed_choices_do_not_invalidate_explicit_chinese_slide_count():
