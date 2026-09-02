@@ -8,6 +8,12 @@ transitions:
     - to: collect_materials
 
   collect_materials:
+    - to: plan_background_prompts
+
+  plan_background_prompts:
+    - to: generate_backgrounds
+
+  generate_backgrounds:
     - to: build_outline
 
   build_outline:
@@ -104,6 +110,10 @@ steps:
                 per-slide AI backgrounds, otherwise
                 'AI_BACKGROUND_IMAGES: disabled',
         )
+        When and only when that marker is disabled, also save:
+          save_artifact(
+            key='skip_background_images', content_type='text', value='skip',
+          )
 
       Use exactly one of those two capability marker values. Do not add prose,
       punctuation, Markdown, or any other capability to that hidden artifact.
@@ -112,6 +122,8 @@ steps:
     outputs:
       - material: requirement_analysis
       - material: ppt_capability_requirements
+      - material: skip_background_images
+        required: false
     acceptance_criteria: |
       requirement_analysis must be saved and must cover goal, presentation
       topic, exact slide count, target customer/audience, communication tone,
@@ -294,9 +306,12 @@ steps:
 
       {{runtime_instruction}}
 
-      Call ONE tool only:
+      When AI backgrounds were enabled, first call ppt_find_deck to locate the
+      deck prepared by the background-prompt step. Then call ppt_build_outline
+      once with its deck_dir:
 
       ppt_build_outline — pass only these (omit unused optionals; never pass null):
+           deck_dir=<ppt_find_deck deck_dir>,
            user_query=<merged request>,
            page_count=<positive integer>,
            topic=<short topic>,
@@ -313,11 +328,13 @@ steps:
       from requirement_analysis into style_hint. The PPT runtime selects one
       deck-wide style and applies that same contract to every page.
 
-      This single call runs init → preflight → style → outline → publish_outline
+      This call reuses the prepared deck and runs preflight → style → outline →
+      publish_outline
       and writes slide_outline list items (sort_order=page) for the Outline tab.
-      When generate_background_images=true it also generates one no-text 16:9
-      background per page and publishes background_images. Do not treat those
-      backgrounds as foreground material_images.
+      This step never generates AI backgrounds; the two dedicated human steps
+      before it already published prompts and images. When AI backgrounds were
+      disabled and those steps were skipped, do not call ppt_find_deck: call
+      ppt_build_outline without deck_dir so it initializes the deck itself.
 
       This is an atomic step. If ppt_build_outline fails, report that exact tool
       error and stop so the Workflow step fails and can be retried. Do NOT recover
@@ -326,6 +343,7 @@ steps:
       Do NOT call batch-page-html or export here — HTML is generate_ppt.
       After success, stop.
     tools:
+      - ppt_find_deck
       - ppt_build_outline
     inputs:
       - material: requirement_analysis
@@ -336,11 +354,133 @@ steps:
         required: false
     outputs:
       - material: slide_outline
-      - material: background_images
-        required: false
     acceptance_criteria: |
       slide_outline must be saved as a list with at least 2 pages (sort_order
       aligned), each containing that page's title / bullets / layout brief.
+
+  plan_background_prompts:
+    label: Plan Background Prompts
+    mode: human
+    skip_if: {material: skip_background_images}
+    rerun_when: >
+      用户要求修改、替换或重新生成全部/指定页的底图提示词。
+    prompt: |
+      You are the AI-background art director for one presentation. Produce one
+      editable English image prompt per slide, then stop for human approval.
+      Do not generate any image in this step.
+
+      Requirement analysis:
+      {{requirement_analysis}}
+
+      Material summary:
+      {{material_summary}}
+
+      Existing background prompts, if this is a targeted revision:
+      {{background_prompts}}
+
+      Original/current user request:
+      {{user_input}}
+
+      {{runtime_instruction}}
+
+      On the first full run, call ppt_init_deck once using the analyzed request,
+      exact positive page_count N, audience/scene/style, and
+      generate_background_images=true. Then call
+      ppt_publish_background_prompts with that deck_dir and exactly N objects:
+        [{"page_no":1,"prompt":"..."}, ..., {"page_no":N,"prompt":"..."}]
+
+      On a targeted rerun, call ppt_find_deck instead of ppt_init_deck, then
+      publish only the selected page objects into that existing deck.
+
+      Prompt-series contract:
+      - Every prompt is a complete standalone 16:9 slide-background prompt.
+      - Use one shared visual world: identical palette, art medium, lighting
+        language, texture family, camera grammar, edge-detail strategy, and a
+        recurring visual motif across all pages.
+      - Evolve that motif with the deck narrative so adjacent backgrounds feel
+        connected, while each page remains recognizably different.
+      - Keep title/central safe areas calm and low contrast; detail belongs near
+        edges. No words, letters, numbers, logos, watermarks, UI, charts, labels,
+        or text placeholders.
+      - Include the common series anchor explicitly in every prompt so each
+        image can be generated independently without losing continuity.
+
+      For a targeted request such as “重新生成底图提示词 1、2” or “替换第 3
+      页提示词”, preserve all other prompts and pass only the requested page
+      objects. The publisher overwrites those sort_order positions. Never append
+      replacements and never renumber pages.
+
+      After ppt_publish_background_prompts succeeds, stop for user review/editing.
+    tools:
+      - ppt_init_deck
+      - ppt_find_deck
+      - ppt_publish_background_prompts
+    inputs:
+      - material: requirement_analysis
+        required: true
+      - material: material_summary
+        required: false
+    outputs:
+      - material: background_prompts
+        required: true
+    acceptance_criteria: |
+      On a full run, background_prompts has exactly one non-empty English prompt
+      for the analyzed page count with aligned sort_order. Every prompt repeats a shared
+      series anchor and contains page-specific variation plus the no-text/safe-
+      area contract. On a targeted rerun, only requested positions are replaced.
+
+  generate_backgrounds:
+    label: Generate Backgrounds
+    mode: human
+    skip_if: {material: skip_background_images}
+    rerun_when: >
+      用户要求重新生成全部底图，或重新生成/替换第 1、2 等指定位置的底图。
+    prompt: |
+      Generate PPT AI backgrounds strictly from the approved editable prompt
+      list. Do not rewrite, summarize, merge, or improve any prompt here.
+
+      Approved background prompts:
+      {{background_prompts}}
+
+      Existing background images, if any:
+      {{background_images}}
+
+      Original/current user request:
+      {{user_input}}
+
+      {{runtime_instruction}}
+
+      First call ppt_find_deck(). Then call ppt_generate_background_images once.
+
+      First full run:
+      - Pass every prompt as prompts_json with its page_no.
+      - Omit pages_json and use replace=false.
+
+      Targeted regeneration such as “重新生成底图 1、2”:
+      - Pass the CURRENT approved prompt objects for pages 1 and 2 only.
+      - Pass pages_json=[1,2] and replace=true.
+      - Existing images at positions 1 and 2 must be overwritten. Do not append,
+        delete, reorder, or regenerate any other page.
+
+      Full regeneration:
+      - Pass all current prompts and replace=true.
+
+      If generation fails or returns no file, report the exact model/tool reason
+      and fail the step. After success, stop for human image approval.
+    tools:
+      - ppt_find_deck
+      - ppt_generate_background_images
+    inputs:
+      - material: background_prompts
+        required: true
+    outputs:
+      - material: background_images
+        required: true
+    acceptance_criteria: |
+      background_images aligns one-to-one with background_prompts by sort_order.
+      Full runs have N images. Targeted reruns replace only requested positions,
+      preserve all others, and expose exact provider failures instead of empty
+      success.
 
   generate_ppt:
     label: Generate PPT

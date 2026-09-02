@@ -40,16 +40,37 @@ Allowed verdicts: PASS, RETRY, DONE, FAIL.
 - This step must not be skipped. It may finish without web calls when user/KB
   material is already sufficient.
 
+### plan_background_prompts
+
+- This is the next visible checkpoint after material collection and is skipped
+  when AI backgrounds are disabled.
+- On a full run, `background_prompts` has exactly one editable English prompt
+  for the analyzed page count, aligned by sort_order -> PASS
+- The prompts repeat one shared visual-series anchor while varying the page
+  scene, and all prohibit text/logos while reserving calm content-safe areas.
+- On a targeted rerun, only the requested positions are replaced; untouched
+  prompt positions remain unchanged -> PASS
+- Missing, empty, unaligned, or unrelated prompts -> RETRY
+- 2 consecutive failures -> FAIL
+
+### generate_backgrounds
+
+- This is a human-approval step and is skipped when AI backgrounds are disabled.
+- On a full run, `background_images` has exactly one image per approved prompt,
+  aligned by sort_order -> PASS
+- On “重新生成底图 1、2”, only positions 1 and 2 are overwritten. No append,
+  reorder, or regeneration of untouched positions is allowed -> PASS
+- A provider/model failure or missing returned file must expose the exact reason
+  -> FAIL; never accept an empty image result.
+- Missing or unaligned images -> RETRY
+- 2 consecutive failures -> FAIL
+
 ### build_outline
 
 - `slide_outline` list has at least 2 pages with sort_order aligned, each page
   brief containing a title and content points -> PASS
 - This is a human-approval step. After validation, stop at the result approval
   checkpoint so the user can review/edit the page prompts before generation.
-- When the user enabled AI backgrounds, `background_images` should align with
-  the outline pages. A provider/model failure must be reported with its exact
-  reason; do not silently pretend backgrounds were generated.
-- When the user disabled AI backgrounds, zero `background_images` is valid.
 - Missing slide_outline or fewer than 2 pages -> RETRY
 - 2 consecutive failures -> FAIL
 
@@ -102,6 +123,8 @@ Any required preview slot family missing for the requested scope, or
 <verdict>PASS</verdict><reason>requirement_analysis is saved and covers the deck goal, audience, length, tone, and constraints.</reason>
 <verdict>PASS</verdict><reason>material_summary is saved with references and assumptions.</reason>
 <verdict>PASS</verdict><reason>slide_outline list has one brief per page for the planned deck.</reason>
+<verdict>PASS</verdict><reason>background_prompts contains one connected, editable prompt per requested page.</reason>
+<verdict>PASS</verdict><reason>background images align with approved prompts; requested positions were replaced in place.</reason>
 <verdict>DONE</verdict><reason>preview_html HTML pages and preview_notes are saved for aligned rows.</reason>
 <verdict>DONE</verdict><reason>partial edit updated preview_html HTML for sort_order=1.</reason>
 <verdict>DONE</verdict><reason>ppt_delete_page removed sort_order=3; remaining pages renumbered.</reason>

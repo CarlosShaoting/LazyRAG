@@ -833,6 +833,43 @@ def _remove_background_image_page(deck: Path, page_no: int) -> Optional[dict[str
     return {'ok': True, 'found': found, 'remaining': len(output), 'renamed': renamed}
 
 
+def _remove_background_prompt_page(deck: Path, page_no: int) -> Optional[dict[str, Any]]:
+    """Delete one approved background prompt and compact later page bindings."""
+    path = deck / 'background_prompts.json'
+    if not path.exists():
+        return None
+    try:
+        manifest = json.loads(path.read_text(encoding='utf-8'))
+    except Exception:
+        return {'ok': False, 'error': 'background_prompts.json unreadable'}
+    pages = manifest.get('pages')
+    if not isinstance(pages, list):
+        return None
+
+    output: list[dict[str, Any]] = []
+    found = False
+    for raw in pages:
+        if not isinstance(raw, dict):
+            continue
+        try:
+            old_no = int(raw.get('page_no', 0))
+        except (TypeError, ValueError):
+            continue
+        if old_no == page_no:
+            found = True
+            continue
+        item = dict(raw)
+        if old_no > page_no:
+            item['page_no'] = old_no - 1
+        output.append(item)
+
+    manifest['pages'] = output
+    tmp = path.with_name(path.name + '.tmp')
+    tmp.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
+    os.replace(tmp, path)
+    return {'ok': True, 'found': found, 'remaining': len(output)}
+
+
 def _sync_task_pack_page_count(deck: Path, page_count: int) -> None:
     path = deck / 'task_pack.json'
     if not path.exists():
@@ -3496,8 +3533,218 @@ def _background_prompt(page: dict, style: dict) -> str:
     )
 
 
+def _parse_background_prompt_items(
+    prompts_json: Union[str, list, None],
+) -> list[dict[str, Any]]:
+    if isinstance(prompts_json, list):
+        raw = prompts_json
+    else:
+        text = _coerce_str(prompts_json)
+        if not text:
+            return []
+        try:
+            raw = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f'prompts_json must be a JSON array: {exc}') from exc
+    if not isinstance(raw, list):
+        raise ValueError('prompts_json must be a JSON array')
+    parsed: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for index, item in enumerate(raw, start=1):
+        if isinstance(item, str):
+            page_no = index
+            prompt = _coerce_str(item)
+        elif isinstance(item, dict):
+            page_no = _coerce_int(item.get('page_no'), index, lo=1)
+            prompt = _coerce_str(item.get('prompt') or item.get('text'))
+        else:
+            raise ValueError(f'prompts_json item {index} must be a string or object')
+        if page_no in seen:
+            raise ValueError(f'prompts_json contains duplicate page_no {page_no}')
+        if not prompt:
+            raise ValueError(f'prompts_json page {page_no} has an empty prompt')
+        seen.add(page_no)
+        parsed.append({'page_no': page_no, 'prompt': prompt})
+    return parsed
+
+
+def _parse_page_selection(
+    pages_json: Union[str, list, int, None],
+) -> list[int]:
+    if pages_json is None or _coerce_str(pages_json) == '':
+        return []
+    if isinstance(pages_json, int):
+        raw = [pages_json]
+    elif isinstance(pages_json, list):
+        raw = pages_json
+    else:
+        try:
+            raw = json.loads(_coerce_str(pages_json))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f'pages_json must be a JSON integer array: {exc}') from exc
+    if not isinstance(raw, list):
+        raise ValueError('pages_json must be a JSON integer array')
+    pages = list(dict.fromkeys(_coerce_int(item, 0, lo=0) for item in raw))
+    if not pages or any(page < 1 for page in pages):
+        raise ValueError('pages_json must contain one or more positive page numbers')
+    return pages
+
+
+def _publish_ordered_ppt_artifact(
+    *,
+    slot: str,
+    page_no: int,
+    value: Any,
+    content_type: str,
+    source_tool: str,
+    caption: str,
+    order_list: list[int],
+) -> dict[str, Any]:
+    if page_no > len(order_list) + 1:
+        return {
+            'ok': False,
+            'error': (
+                f'{slot} page {page_no} cannot be published before positions '
+                f'1..{page_no - 1} (current count={len(order_list)})'
+            ),
+        }
+    append = page_no == len(order_list) + 1
+    list_index = (
+        max(order_list, default=-1) + 1
+        if append else order_list[page_no - 1]
+    )
+    saved = _save_artifact(
+        key=slot,
+        content_type=content_type,
+        value=value,
+        source_tool=source_tool,
+        caption=caption,
+        internal_publish=True,
+        publisher_list_index=list_index,
+    )
+    if append and not _tool_failed(saved):
+        order_list.append(list_index)
+    return saved
+
+
+def ppt_publish_background_prompts(
+    deck_dir: str,
+    prompts_json: Union[str, list, None],
+) -> dict:
+    """Publish editable, ordered per-page background prompts.
+
+    A full first call must include one prompt for every prepared deck page
+    (from outline.json when available, otherwise task_pack.json). Later targeted
+    calls may include only selected page numbers; those positions are overwritten
+    without changing any other prompt.
+    """
+    try:
+        deck = _resolve_deck_dir(deck_dir)
+        items = _parse_background_prompt_items(prompts_json)
+    except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
+        return _tool_error('ppt_publish_background_prompts', str(exc))
+    outline_pages: list[int] = []
+    try:
+        outline = _load_outline(deck)
+        for page in outline.get('pages') or []:
+            if not isinstance(page, dict):
+                continue
+            page_no = _coerce_int(page.get('page_no'), 0, lo=0)
+            if page_no > 0:
+                outline_pages.append(page_no)
+    except (FileNotFoundError, ValueError, json.JSONDecodeError):
+        try:
+            pack = json.loads((deck / 'task_pack.json').read_text(encoding='utf-8'))
+            page_count = _coerce_int(
+                (pack.get('params') or {}).get('page_count'), 0, lo=0,
+            )
+            outline_pages = list(range(1, page_count + 1))
+        except Exception:
+            outline_pages = []
+    if not outline_pages:
+        return _tool_error(
+            'ppt_publish_background_prompts',
+            'deck has neither outline pages nor a valid task_pack page_count',
+        )
+    item_map = {int(item['page_no']): item for item in items}
+    invalid = sorted(set(item_map) - set(outline_pages))
+    if invalid:
+        return _tool_error(
+            'ppt_publish_background_prompts',
+            f'prompt page numbers are outside the outline: {invalid}',
+        )
+
+    manifest_path = deck / 'background_prompts.json'
+    previous: dict[str, Any] = {'pages': []}
+    if manifest_path.exists():
+        try:
+            previous = json.loads(manifest_path.read_text(encoding='utf-8'))
+        except Exception:
+            previous = {'pages': []}
+    merged = {
+        int(item.get('page_no')): item
+        for item in (previous.get('pages') or [])
+        if isinstance(item, dict) and str(item.get('page_no') or '').isdigit()
+    }
+    if not merged and set(item_map) != set(outline_pages):
+        return _tool_error(
+            'ppt_publish_background_prompts',
+            f'first publication requires exactly {len(outline_pages)} prompts; '
+            f'received pages {sorted(item_map)}',
+        )
+    merged.update(item_map)
+    missing = sorted(set(outline_pages) - set(merged))
+    if missing:
+        return _tool_error(
+            'ppt_publish_background_prompts',
+            f'background prompts are missing outline pages: {missing}',
+        )
+    manifest = {
+        'pages': [merged[page_no] for page_no in outline_pages],
+        'updated_at': datetime.now(timezone(timedelta(hours=8))).isoformat(
+            timespec='seconds',
+        ),
+    }
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8',
+    )
+
+    order_list = _ui_slot_order_list('background_prompts')
+    published = 0
+    errors: list[str] = []
+    for page_no in sorted(item_map):
+        saved = _publish_ordered_ppt_artifact(
+            slot='background_prompts',
+            page_no=page_no,
+            value=item_map[page_no]['prompt'],
+            content_type='text',
+            source_tool='ppt_publish_background_prompts',
+            caption=f'第 {page_no} 页底图提示词',
+            order_list=order_list,
+        )
+        if _tool_failed(saved):
+            errors.append(f'page {page_no}: {_tool_fail_reason(saved)}')
+        else:
+            published += 1
+    if errors:
+        return _tool_error(
+            'ppt_publish_background_prompts',
+            'background prompts saved but UI publication failed: ' + '; '.join(errors[:3]),
+        )
+    return _tool_success('ppt_publish_background_prompts', {
+        'deck_dir': str(deck.resolve()),
+        'manifest_path': str(manifest_path.resolve()),
+        'count': len(manifest['pages']),
+        'updated_pages': sorted(item_map),
+        'published_count': published,
+        'prompts': manifest['pages'],
+    })
+
+
 def ppt_generate_background_images(
     deck_dir: str,
+    prompts_json: Union[str, list, None] = None,
+    pages_json: Union[str, list, int, None] = None,
     replace: Union[bool, str, None] = False,
     image_size: Optional[str] = None,
 ) -> dict:
@@ -3509,7 +3756,9 @@ def ppt_generate_background_images(
 
     Args:
         deck_dir (str): Absolute deck directory from ppt_build_outline.
-        replace (bool): Regenerate existing page backgrounds when true.
+        prompts_json (str): Approved prompt objects with page_no and prompt.
+        pages_json (str): Optional page-number array for targeted regeneration.
+        replace (bool): Regenerate selected existing backgrounds when true.
         image_size (str): Optional provider-supported size. Omit to use the
             configured image model default; CSS ``cover`` applies 16:9 framing.
 
@@ -3522,10 +3771,22 @@ def ppt_generate_background_images(
     except FileNotFoundError as exc:
         return _tool_error('ppt_generate_background_images', str(exc))
     try:
-        outline = json.loads((deck / 'outline.json').read_text(encoding='utf-8'))
-        style = json.loads((deck / 'style_spec.json').read_text(encoding='utf-8'))
-    except (FileNotFoundError, json.JSONDecodeError) as exc:
+        prompt_items = _parse_background_prompt_items(prompts_json)
+        selected_pages = _parse_page_selection(pages_json)
+    except ValueError as exc:
         return _tool_error('ppt_generate_background_images', str(exc))
+
+    try:
+        outline = json.loads((deck / 'outline.json').read_text(encoding='utf-8'))
+    except (FileNotFoundError, json.JSONDecodeError):
+        outline = {'pages': [
+            {'page_no': int(item['page_no']), 'title': f'Page {item["page_no"]}'}
+            for item in prompt_items
+        ]}
+    try:
+        style = json.loads((deck / 'style_spec.json').read_text(encoding='utf-8'))
+    except (FileNotFoundError, json.JSONDecodeError):
+        style = {}
 
     pages = [page for page in (outline.get('pages') or []) if isinstance(page, dict)]
     if not pages:
@@ -3546,21 +3807,38 @@ def ppt_generate_background_images(
     }
     force = _coerce_bool(replace)
     size = _coerce_str(image_size)
-    output: list[dict[str, Any]] = []
+    prompt_map = {int(item['page_no']): item['prompt'] for item in prompt_items}
+    outline_page_nos = [int(page.get('page_no') or 0) for page in pages]
+    targets = selected_pages or (sorted(prompt_map) if prompt_map else outline_page_nos)
+    invalid = sorted(set(targets) - set(outline_page_nos))
+    if invalid:
+        return _tool_error(
+            'ppt_generate_background_images',
+            f'selected pages are outside the outline: {invalid}',
+        )
+    missing_prompts = sorted(set(targets) - set(prompt_map)) if prompt_items else []
+    if missing_prompts:
+        return _tool_error(
+            'ppt_generate_background_images',
+            f'approved prompts are missing selected pages: {missing_prompts}',
+        )
+    output: dict[int, dict[str, Any]] = dict(existing)
+    publish_items: list[dict[str, Any]] = []
     generated_count = 0
 
     for page in pages:
         page_no = _coerce_int(page.get('page_no'), 0, lo=0)
-        if page_no <= 0:
+        if page_no <= 0 or page_no not in targets:
             continue
         old = existing.get(page_no) or {}
         old_path = deck / _coerce_str(old.get('local_path'))
         if not force and old_path.is_file():
-            output.append(old)
+            output[page_no] = old
+            publish_items.append(old)
             continue
 
         kwargs: dict[str, Any] = {
-            'prompt': _background_prompt(page, style),
+            'prompt': prompt_map.get(page_no) or _background_prompt(page, style),
             'batch_size': 1,
         }
         if size:
@@ -3605,13 +3883,14 @@ def ppt_generate_background_images(
             'source_path': str(src.resolve()),
             'prompt': kwargs['prompt'],
         }
-        output.append(item)
+        output[page_no] = item
+        publish_items.append(item)
         generated_count += 1
 
-    output.sort(key=lambda item: int(item.get('page_no') or 0))
+    ordered_output = [output[page_no] for page_no in sorted(output)]
     manifest = {
         'enabled': True,
-        'pages': output,
+        'pages': ordered_output,
         'updated_at': datetime.now(timezone(timedelta(hours=8))).isoformat(
             timespec='seconds',
         ),
@@ -3622,16 +3901,18 @@ def ppt_generate_background_images(
 
     published = 0
     publication_errors: list[str] = []
-    for item in output:
+    order_list = _ui_slot_order_list('background_images')
+    for item in publish_items:
         page_no = int(item['page_no'])
         try:
-            saved = _save_artifact(
-                key='background_images',
+            saved = _publish_ordered_ppt_artifact(
+                slot='background_images',
+                page_no=page_no,
                 content_type='image',
                 value=str((deck / item['local_path']).resolve()),
                 source_tool='ppt_generate_background_images',
-                sort_order=page_no,
                 caption=f'第 {page_no} 页 AI 底图',
+                order_list=order_list,
             )
             if _tool_failed(saved):
                 publication_errors.append(
@@ -3652,13 +3933,15 @@ def ppt_generate_background_images(
     return _tool_success('ppt_generate_background_images', {
         'deck_dir': str(deck.resolve()),
         'manifest_path': str(manifest_path.resolve()),
-        'count': len(output),
+        'count': len(ordered_output),
+        'target_count': len(targets),
+        'updated_pages': targets,
         'generated_count': generated_count,
-        'reused_count': len(output) - generated_count,
+        'reused_count': len(publish_items) - generated_count,
         'published_count': published,
         'backgrounds': [
             {'page_no': item['page_no'], 'local_path': item['local_path']}
-            for item in output
+            for item in ordered_output
         ],
     })
 
@@ -3905,16 +4188,20 @@ def ppt_build_outline(
     ppt_mode: Optional[str] = None,
     key_points_json: Union[str, list, None] = None,
     generate_background_images: Union[bool, str, None] = False,
+    deck_dir: Optional[str] = None,
 ) -> dict:
     """Build a full deck outline in one call (preferred for build_outline step).
 
-    Runs the fixed serial pipeline internally:
-      ppt_init_deck → preflight → style → outline → ppt_publish_outline
+    Runs the fixed serial pipeline internally. It initializes a deck when
+    ``deck_dir`` is omitted, otherwise it reuses the prepared deck, then runs:
+      preflight → style → outline → ppt_publish_outline
 
     Prefer this over calling those stages one by one. Do NOT generate HTML here —
     that is ppt_generate_pages / generate_ppt.
 
     Args:
+        deck_dir (str): Optional prepared deck from ppt_init_deck. When supplied,
+            reuse it so approved background prompts/images remain attached.
         user_query (str): Full presentation request (required).
         page_count (int): Target slide count (positive integer). Default 4.
         topic (str): Short topic; inferred from user_query when empty.
@@ -3931,45 +4218,71 @@ def ppt_build_outline(
         deck_dir, stages summary, and publish counts. slide_outline is already
         saved for the Outline tab — stop after success.
     """
-    init_res = ppt_init_deck(
-        user_query=user_query,
-        page_count=page_count,
-        topic=topic,
-        role=role,
-        audience=audience,
-        scene=scene,
-        style_hint=style_hint,
-        ppt_mode=ppt_mode,
-        key_points_json=key_points_json,
-        generate_background_images=generate_background_images,
-    )
-    if _tool_failed(init_res):
-        return _tool_error(
-            'ppt_build_outline',
-            f'init failed: {_tool_fail_reason(init_res)}',
-            detail=json.dumps(init_res, ensure_ascii=False)[:2000],
+    resolved_deck = _coerce_str(deck_dir)
+    prepared_backgrounds_enabled = False
+    if resolved_deck:
+        try:
+            deck = _resolve_deck_dir(resolved_deck)
+            pack = json.loads((deck / 'task_pack.json').read_text(encoding='utf-8'))
+        except (FileNotFoundError, json.JSONDecodeError) as exc:
+            return _tool_error('ppt_build_outline', f'prepared deck is invalid: {exc}')
+        attached = _attach_material_images_to_deck(deck)
+        params = pack.get('params') or {}
+        prepared_backgrounds_enabled = _coerce_bool(
+            params.get('generate_background_images'),
         )
-    init_payload = _tool_payload(init_res)
-    deck_dir = str(init_payload.get('deck_dir') or '')
-    if not deck_dir:
-        return _tool_error('ppt_build_outline', 'ppt_init_deck returned no deck_dir')
+        resolved_deck = str(deck.resolve())
+        init_payload = {
+            'deck_dir': resolved_deck,
+            'deck_id': pack.get('deck_id') or deck.name,
+            'page_count': params.get('page_count'),
+            'ppt_mode': pack.get('ppt_mode') or 'fast',
+            'material_images_attached': attached['attached'],
+        }
+    else:
+        init_res = ppt_init_deck(
+            user_query=user_query,
+            page_count=page_count,
+            topic=topic,
+            role=role,
+            audience=audience,
+            scene=scene,
+            style_hint=style_hint,
+            ppt_mode=ppt_mode,
+            key_points_json=key_points_json,
+            generate_background_images=generate_background_images,
+        )
+        if _tool_failed(init_res):
+            return _tool_error(
+                'ppt_build_outline',
+                f'init failed: {_tool_fail_reason(init_res)}',
+                detail=json.dumps(init_res, ensure_ascii=False)[:2000],
+            )
+        init_payload = _tool_payload(init_res)
+        resolved_deck = str(init_payload.get('deck_dir') or '')
+        if not resolved_deck:
+            return _tool_error('ppt_build_outline', 'ppt_init_deck returned no deck_dir')
 
     stages: list[dict[str, Any]] = [
-        {'step': 'init', 'ok': True, 'deck_id': init_payload.get('deck_id')},
+        {
+            'step': 'reuse' if deck_dir else 'init',
+            'ok': True,
+            'deck_id': init_payload.get('deck_id'),
+        },
     ]
 
     for stage_name in ('preflight', 'style', 'outline'):
-        stage_res = ppt_run_stage(deck_dir, stage=stage_name)
+        stage_res = ppt_run_stage(resolved_deck, stage=stage_name)
         if _tool_failed(stage_res):
             return _tool_error(
                 'ppt_build_outline',
                 f'{stage_name} failed: {_tool_fail_reason(stage_res)}',
                 detail=json.dumps({
-                    'deck_dir': deck_dir,
+                    'deck_dir': resolved_deck,
                     'stages': stages,
                     'failed_stage': stage_res,
                 }, ensure_ascii=False)[:2500],
-                meta={'deck_dir': deck_dir, 'failed_stage': stage_name},
+                meta={'deck_dir': resolved_deck, 'failed_stage': stage_name},
             )
         payload = _tool_payload(stage_res)
         stages.append({
@@ -3979,39 +4292,17 @@ def ppt_build_outline(
             'pages': payload.get('pages'),
         })
 
-    backgrounds_payload: dict[str, Any] = {}
-    if _coerce_bool(generate_background_images):
-        backgrounds_res = ppt_generate_background_images(deck_dir)
-        if _tool_failed(backgrounds_res):
-            return _tool_error(
-                'ppt_build_outline',
-                f'background generation failed: {_tool_fail_reason(backgrounds_res)}',
-                detail=json.dumps({
-                    'deck_dir': deck_dir,
-                    'stages': stages,
-                    'backgrounds': backgrounds_res,
-                }, ensure_ascii=False, default=str)[:2500],
-                meta={'deck_dir': deck_dir, 'failed_stage': 'background-images'},
-            )
-        backgrounds_payload = _tool_payload(backgrounds_res)
-        stages.append({
-            'step': 'background-images',
-            'ok': True,
-            'count': backgrounds_payload.get('count'),
-            'published_count': backgrounds_payload.get('published_count'),
-        })
-
-    pub_res = ppt_publish_outline(deck_dir)
+    pub_res = ppt_publish_outline(resolved_deck)
     if _tool_failed(pub_res):
         return _tool_error(
             'ppt_build_outline',
             f'publish_outline failed: {_tool_fail_reason(pub_res)}',
             detail=json.dumps({
-                'deck_dir': deck_dir,
+                'deck_dir': resolved_deck,
                 'stages': stages,
                 'publish': pub_res,
             }, ensure_ascii=False)[:2500],
-            meta={'deck_dir': deck_dir},
+            meta={'deck_dir': resolved_deck},
         )
     pub_payload = _tool_payload(pub_res)
     stages.append({
@@ -4020,20 +4311,33 @@ def ppt_build_outline(
         'published_count': pub_payload.get('published_count'),
     })
 
+    background_count = 0
+    try:
+        background_manifest = json.loads(
+            (Path(resolved_deck) / 'background_images.json').read_text(encoding='utf-8'),
+        )
+        background_count = len(background_manifest.get('pages') or [])
+    except (FileNotFoundError, json.JSONDecodeError, AttributeError):
+        background_count = 0
+
     return _tool_success('ppt_build_outline', {
-        'deck_dir': deck_dir,
+        'deck_dir': resolved_deck,
         'deck_id': init_payload.get('deck_id'),
         'page_count': init_payload.get('page_count'),
         'ppt_mode': init_payload.get('ppt_mode'),
         'material_images_attached': init_payload.get('material_images_attached'),
-        'background_images_enabled': _coerce_bool(generate_background_images),
-        'background_images_count': backgrounds_payload.get('count', 0),
+        'background_images_enabled': (
+            _coerce_bool(generate_background_images) or prepared_backgrounds_enabled
+        ),
+        'background_images_count': background_count,
+        'next_step': 'generate_ppt',
         'published_count': pub_payload.get('published_count'),
         'published': pub_payload.get('published'),
         'stages': stages,
         'note': (
             'slide_outline list is published for the Outline tab. '
-            'Stop here — call ppt_generate_pages in generate_ppt for HTML.'
+            'Stop here. AI backgrounds, when enabled, were already handled by '
+            'the two dedicated approval steps.'
         ),
     })
 
@@ -4280,11 +4584,12 @@ def ppt_delete_page(deck_dir: str, page: int) -> dict:
     ppt_edit_page_html on the same page.
 
     Effects:
-      - Removes the page from outline.json / asset_plan.json / generated
-        background manifest and shifts later page_no values down by 1.
+      - Removes the page from outline.json / asset_plan.json / approved prompt
+        and generated-background manifests, then shifts later page_no values.
       - Deletes pages/page_NNN.* (+ screenshot) and renames later files.
-      - Removes the matching UI list items (slide_outline / background_images /
-        preview_html / preview_notes) at that sort_order so all tabs stay aligned.
+      - Removes the matching UI list items (slide_outline / background_prompts /
+        background_images / preview_html / preview_notes) at that sort_order so
+        all tabs stay aligned.
 
     Args:
         deck_dir (str): Absolute deck directory from ppt_init_deck / ppt_find_deck.
@@ -4342,6 +4647,7 @@ def ppt_delete_page(deck_dir: str, page: int) -> dict:
         outline_meta = {'remaining': len(outline_nos), 'note': 'page absent from outline.json'}
 
     asset_meta = _remove_asset_plan_page(deck, page_no)
+    background_prompt_meta = _remove_background_prompt_page(deck, page_no)
     background_meta = _remove_background_image_page(deck, page_no)
     disk_meta = _delete_page_files_and_renumber(deck, page_no)
 
@@ -4351,7 +4657,10 @@ def ppt_delete_page(deck_dir: str, page: int) -> dict:
     ui_deleted: list[dict[str, Any]] = []
     try:
         require_context()
-        for slot in ('slide_outline', 'background_images', 'preview_html', 'preview_notes'):
+        for slot in (
+            'slide_outline', 'background_prompts', 'background_images',
+            'preview_html', 'preview_notes',
+        ):
             ui_deleted.append(_delete_ui_slot_item(slot, page_no))
     except Exception as exc:
         ui_deleted.append({'ok': False, 'skipped': True, 'reason': f'UI sync skipped: {exc}'})
@@ -4363,6 +4672,7 @@ def ppt_delete_page(deck_dir: str, page: int) -> dict:
         'remaining_pages': remaining,
         'outline': outline_meta,
         'asset_plan': asset_meta,
+        'background_prompts': background_prompt_meta,
         'background_images': background_meta,
         'disk': {
             'removed_count': len(disk_meta.get('removed_files') or []),

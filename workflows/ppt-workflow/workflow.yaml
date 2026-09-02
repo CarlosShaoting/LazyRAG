@@ -25,6 +25,7 @@ when_to_use: >
 runtime:
   publisher_owned_slots:
     - slide_outline
+    - background_prompts
     - background_images
     - preview_html
     - preview_notes
@@ -80,7 +81,7 @@ runtime:
         - 卡通可爱｜圆润造型、活泼色彩、友好叙事
     - id: generate_background_images
       label: AI 底图
-      question: 是否为每一页启用 AI 生成底图？启用后会根据该页大纲生成 16:9 无文字背景，并应用到幻灯片背景层。
+      question: 是否为每一页启用 AI 生成底图？启用后会根据需求和素材先生成一组相互关联、可编辑的底图提示词，再生成 16:9 无文字背景并应用到幻灯片背景层。
       type: single
       choices:
         - 启用｜为每页生成独立 AI 底图
@@ -92,6 +93,7 @@ tool_scripts:
       - ppt_search_web_images
       - ppt_register_material_images
       - ppt_generate_material_images
+      - ppt_publish_background_prompts
       - ppt_generate_background_images
       - check_ppt_workflow_capabilities
       - ppt_attach_material_images
@@ -124,6 +126,10 @@ steps:
     label: Analyze Requirements
   - id: collect_materials
     label: Collect Materials
+  - id: plan_background_prompts
+    label: Plan Background Prompts
+  - id: generate_backgrounds
+    label: Generate Backgrounds
   - id: build_outline
     label: Build Outline
   - id: generate_ppt
@@ -142,6 +148,13 @@ slots:
     cardinality: single
     exposed: false
     summary_max_chars: 80
+
+  - id: skip_background_images
+    label: Skip AI Backgrounds
+    type: text
+    cardinality: single
+    exposed: false
+    summary_max_chars: 40
 
   - id: uploaded_materials
     label: Uploaded Materials
@@ -170,6 +183,13 @@ slots:
     cardinality: list
     ordered: true
 
+  - id: background_prompts
+    label: AI Background Prompts
+    type: text
+    cardinality: list
+    ordered: true
+    summary_max_chars: 1200
+
   - id: slide_outline
     label: Slide Outline
     type: text
@@ -197,6 +217,9 @@ ui:
       widgetType: text-markdown
     material_summary:
       widgetType: text-markdown
+    background_prompts:
+      widgetType: text-markdown
+      maxHeight: 420
     background_images:
       widgetType: image-gallery
     slide_outline:
@@ -225,6 +248,19 @@ ui:
         - id: uploaded_materials
         - id: material_summary
         - id: material_images
+
+    - id: background_prompts
+      step_id: plan_background_prompts
+      label: Background Prompts
+      layout: list
+      slots:
+        - id: background_prompts
+
+    - id: background_images
+      step_id: generate_backgrounds
+      label: Background Images
+      layout: list
+      slots:
         - id: background_images
 
     - id: outline
@@ -269,16 +305,21 @@ i18n:
       analyze_requirements: {label: 需求分析}
       collect_materials: {label: 收集素材}
       build_outline: {label: 大纲}
+      plan_background_prompts: {label: 底图提示词}
+      generate_backgrounds: {label: 生成底图}
       generate_ppt: {label: 生成PPT}
     tabs:
       analysis: {label: 分析}
       materials: {label: 素材}
       outline: {label: 大纲}
+      background_prompts: {label: 底图提示词}
+      background_images: {label: 底图}
       composite_preview: {label: 幻灯片}
     slots:
       requirement_analysis: {label: 需求分析}
       material_summary: {label: 素材摘要}
       material_images: {label: 素材图片}
+      background_prompts: {label: 底图提示词}
       background_images: {label: AI 底图}
       slide_outline: {label: 页面大纲}
       preview_html: {label: 幻灯片}

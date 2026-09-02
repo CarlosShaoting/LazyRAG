@@ -150,6 +150,76 @@ class DeckInitializationTests(unittest.TestCase):
         self.assertEqual(stages, ['preflight', 'style', 'outline'])
         self.assertEqual(result['material_images_attached'], 0)
         self.assertEqual(result['published_count'], 4)
+        self.assertEqual(result['background_images_count'], 0)
+        self.assertEqual(result['next_step'], 'generate_ppt')
+
+    def test_build_outline_defers_enabled_background_generation_to_human_steps(self):
+        with mock.patch.object(TOOLS, 'ppt_init_deck', return_value={
+            'deck_dir': '/tmp/deck-with-backgrounds',
+            'deck_id': 'deck-with-backgrounds',
+            'page_count': 3,
+            'ppt_mode': 'fast',
+            'material_images_attached': 0,
+        }), mock.patch.object(
+            TOOLS, 'ppt_run_stage', return_value={'status': 'ok', 'pages': 3},
+        ), mock.patch.object(
+            TOOLS, 'ppt_publish_outline', return_value={
+                'published_count': 3,
+                'published': [1, 2, 3],
+            },
+        ), mock.patch.object(
+            TOOLS, 'ppt_generate_background_images',
+        ) as generate:
+            result = TOOLS.ppt_build_outline(
+                user_query='生成三页汇报并启用底图',
+                page_count=3,
+                generate_background_images=True,
+            )
+
+        generate.assert_not_called()
+        self.assertTrue(result['background_images_enabled'])
+        self.assertEqual(result['background_images_count'], 0)
+        self.assertEqual(result['next_step'], 'generate_ppt')
+
+    def test_build_outline_reuses_deck_prepared_by_background_steps(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            deck = Path(tmp) / 'deck'
+            deck.mkdir()
+            (deck / 'task_pack.json').write_text(json.dumps({
+                'deck_id': 'prepared-deck',
+                'ppt_mode': 'fast',
+                'params': {'page_count': 3},
+            }), encoding='utf-8')
+            (deck / 'background_prompts.json').write_text('{}', encoding='utf-8')
+            (deck / 'background_images.json').write_text('{}', encoding='utf-8')
+
+            with mock.patch.object(
+                TOOLS, '_resolve_deck_dir', return_value=deck,
+            ), mock.patch.object(
+                TOOLS, '_attach_material_images_to_deck',
+                return_value={'attached': 0, 'reference_images': []},
+            ), mock.patch.object(
+                TOOLS, 'ppt_init_deck',
+            ) as init, mock.patch.object(
+                TOOLS, 'ppt_run_stage', return_value={'status': 'ok', 'pages': 3},
+            ), mock.patch.object(
+                TOOLS, 'ppt_publish_outline', return_value={
+                    'published_count': 3,
+                    'published': [1, 2, 3],
+                },
+            ):
+                result = TOOLS.ppt_build_outline(
+                    user_query='三页汇报',
+                    page_count=3,
+                    deck_dir=str(deck),
+                    generate_background_images=True,
+                )
+
+            init.assert_not_called()
+            self.assertEqual(result['deck_id'], 'prepared-deck')
+            self.assertEqual(result['stages'][0]['step'], 'reuse')
+            self.assertTrue((deck / 'background_prompts.json').exists())
+            self.assertTrue((deck / 'background_images.json').exists())
 
 
 class PartialEditTests(unittest.TestCase):

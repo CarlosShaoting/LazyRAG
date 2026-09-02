@@ -97,7 +97,37 @@ class StyleRenderingRecipeTest(unittest.TestCase):
         state = yaml.safe_load(state_path.read_text(encoding='utf-8'))
 
         self.assertEqual(state['steps']['build_outline']['mode'], 'human')
+        self.assertEqual(state['steps']['plan_background_prompts']['mode'], 'human')
+        self.assertEqual(state['steps']['generate_backgrounds']['mode'], 'human')
         self.assertEqual(state['steps']['generate_ppt']['mode'], 'human')
+
+    def test_background_prompt_and_generation_steps_support_skip_and_targeted_rerun(self) -> None:
+        workflow_path = Path(__file__).resolve().parents[3] / 'workflow.yaml'
+        state_path = workflow_path.parent / 'scenario' / 'state.yml'
+        workflow = yaml.safe_load(workflow_path.read_text(encoding='utf-8'))
+        state = yaml.safe_load(state_path.read_text(encoding='utf-8'))
+
+        self.assertEqual(
+            state['steps']['plan_background_prompts']['skip_if'],
+            {'material': 'skip_background_images'},
+        )
+        self.assertEqual(
+            state['steps']['generate_backgrounds']['skip_if'],
+            {'material': 'skip_background_images'},
+        )
+        self.assertIn('重新生成底图 1、2', state['steps']['generate_backgrounds']['prompt'])
+        self.assertIn('shared visual world', state['steps']['plan_background_prompts']['prompt'])
+        slots = {slot['id']: slot for slot in workflow['slots']}
+        self.assertEqual(slots['background_prompts']['cardinality'], 'list')
+        self.assertIn('background_prompts', workflow['runtime']['publisher_owned_slots'])
+        self.assertEqual(
+            state['transitions']['collect_materials'],
+            [{'to': 'plan_background_prompts'}],
+        )
+        self.assertEqual(
+            state['transitions']['generate_backgrounds'],
+            [{'to': 'build_outline'}],
+        )
 
     def test_analyze_runs_conditional_background_capability_gate(self) -> None:
         workflow_path = Path(__file__).resolve().parents[3] / 'workflow.yaml'
