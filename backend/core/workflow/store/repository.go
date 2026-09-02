@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -630,11 +631,154 @@ func (r *Repository) UpdateSessionIntent(ctx context.Context, sessionID, intentC
 }
 
 type TaskAttemptStatus struct {
-	TaskID       string `json:"task_id"`
-	StepID       string `json:"step_id"`
-	Status       string `json:"status"`
-	Attempt      int    `json:"attempt"`
-	TerminalCode string `json:"terminal_code,omitempty"`
+	TaskID        string `json:"task_id"`
+	StepID        string `json:"step_id"`
+	Status        string `json:"status"`
+	Attempt       int    `json:"attempt"`
+	TerminalCode  string `json:"terminal_code,omitempty"`
+	FailureReason string `json:"failure_reason,omitempty"`
+}
+
+const mediaCapabilityDependencyMarker = "MEDIA_CAPABILITY_DEPENDENCY_MISSING"
+
+func markedFailureReason(text string) string {
+	markerIndex := strings.Index(text, mediaCapabilityDependencyMarker)
+	if markerIndex < 0 {
+		return ""
+	}
+	tail := text[markerIndex:]
+	start := strings.IndexByte(tail, '{')
+	if start < 0 {
+		return strings.TrimSpace(tail)
+	}
+	depth := 0
+	quoted := false
+	escaped := false
+	for i := start; i < len(tail); i++ {
+		char := tail[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if char == '\\' {
+			escaped = true
+			continue
+		}
+		if char == '"' {
+			quoted = !quoted
+			continue
+		}
+		if quoted {
+			continue
+		}
+		switch char {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return strings.TrimSpace(tail[:i+1])
+			}
+		}
+	}
+	return strings.TrimSpace(tail)
+}
+
+func markedFailureFromValue(value any) string {
+	switch current := value.(type) {
+	case string:
+		return markedFailureReason(current)
+	case []any:
+		for _, item := range current {
+			if marked := markedFailureFromValue(item); marked != "" {
+				return marked
+			}
+		}
+	case map[string]any:
+		for _, key := range []string{"value", "error", "message", "reason", "result"} {
+			if marked := markedFailureFromValue(current[key]); marked != "" {
+				return marked
+			}
+		}
+		for _, item := range current {
+			if marked := markedFailureFromValue(item); marked != "" {
+				return marked
+			}
+		}
+	}
+	return ""
+}
+
+func toolStepFailureReason(content json.RawMessage) string {
+	var payload struct {
+		ToolResults []struct {
+			Name   string `json:"name"`
+			Result any    `json:"result"`
+		} `json:"tool_results"`
+	}
+	if json.Unmarshal(content, &payload) != nil {
+		return ""
+	}
+	for i := len(payload.ToolResults) - 1; i >= 0; i-- {
+		result := payload.ToolResults[i]
+		if marked := markedFailureFromValue(result.Result); marked != "" {
+			return marked
+		}
+		var text string
+		switch value := result.Result.(type) {
+		case string:
+			text = value
+		default:
+			if encoded, err := json.Marshal(value); err == nil {
+				text = string(encoded)
+			}
+		}
+		failed := strings.Contains(text, "'ok': False") || strings.Contains(text, `"ok":false`)
+		if !failed {
+			continue
+		}
+		text = strings.TrimSpace(text)
+		if len(text) > 4000 {
+			text = text[:4000]
+		}
+		if name := strings.TrimSpace(result.Name); name != "" {
+			return name + ": " + text
+		}
+		return text
+	}
+	return ""
+}
+
+func attemptFailureReason(
+	row orm.WorkflowSessionStep,
+	summaries map[string]string,
+	toolFailures map[string]string,
+) string {
+	if row.Status != "failed" && row.Status != "cancelled" && row.Status != "interrupted" {
+		return ""
+	}
+	if reason := strings.TrimSpace(toolFailures[row.TaskID]); reason != "" {
+		return reason
+	}
+	if summary := strings.TrimSpace(summaries[row.TaskID]); summary != "" {
+		return summary
+	}
+	var result map[string]any
+	if json.Unmarshal([]byte(row.ResultJSON), &result) == nil {
+		for _, key := range []string{"error", "message", "reason"} {
+			if text := strings.TrimSpace(fmt.Sprint(result[key])); text != "" && text != "<nil>" {
+				return text
+			}
+		}
+		if nested, ok := result["result"].(map[string]any); ok {
+			for _, key := range []string{"error", "message", "reason"} {
+				if text := strings.TrimSpace(fmt.Sprint(nested[key])); text != "" && text != "<nil>" {
+					return text
+				}
+			}
+		}
+	}
+	return strings.TrimSpace(row.TerminalCode)
 }
 
 func (r *Repository) AutomaticAttemptCount(ctx context.Context, sessionID, stepID string) (int64, error) {
@@ -666,6 +810,30 @@ func (r *Repository) WaitTaskStatuses(ctx context.Context, sessionID string, tas
 			}
 		}
 		if terminal {
+			var tasks []orm.SubAgentTask
+			_ = r.db.WithContext(ctx).Select("id", "summary").Where("id IN ?", taskIDs).Find(&tasks).Error
+			summaries := make(map[string]string, len(tasks))
+			for _, task := range tasks {
+				summaries[task.ID] = task.Summary
+			}
+			var toolSteps []orm.SubAgentStep
+			_ = r.db.WithContext(ctx).
+				Select("task_id", "seq", "content").
+				Where("task_id IN ? AND role = ?", taskIDs, "tool").
+				Order("task_id ASC, seq DESC").
+				Find(&toolSteps).Error
+			toolFailures := make(map[string]string, len(toolSteps))
+			for _, step := range toolSteps {
+				if toolFailures[step.TaskID] != "" {
+					continue
+				}
+				toolFailures[step.TaskID] = toolStepFailureReason(step.Content)
+			}
+			for _, row := range rows {
+				status := statuses[row.TaskID]
+				status.FailureReason = attemptFailureReason(row, summaries, toolFailures)
+				statuses[row.TaskID] = status
+			}
 			return statuses, nil
 		}
 		select {

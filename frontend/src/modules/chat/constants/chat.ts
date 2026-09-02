@@ -10,6 +10,8 @@ export const CHAT_SELECT_CONVERSATION_EVENT = "lazymind:chat-select-conversation
 export const CHAT_AUTO_ADVANCE_EVENT = "lazymind:chat-auto-advance";
 export const CHAT_FFMPEG_DEPENDENCY_MISSING_EVENT =
   "lazymind:chat-ffmpeg-dependency-missing";
+export const CHAT_MEDIA_CAPABILITY_MISSING_EVENT =
+  "lazymind:chat-media-capability-missing";
 export const CHAT_CONVERSATION_ACTIVITY_EVENT =
   "lazymind:chat-conversation-activity";
 export const CHAT_CONVERSATION_LIST_REFRESH_EVENT =

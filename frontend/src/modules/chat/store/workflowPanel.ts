@@ -342,6 +342,8 @@ export interface TabDef {
   id: string;
   /** Optional workflow step id represented by this tab. Falls back to id when omitted. */
   step_id?: string;
+  /** Artifact producer scope. `selected` lets a composite join adjacent workflow steps. */
+  slot_scope?: 'step' | 'selected';
   status_step_ids?: string[];
   label: string;
   layout?: 'grid' | 'list' | 'vertical' | 'composite' | 'horizontal';
@@ -414,6 +416,8 @@ export interface CompositeMutuallyExclusiveGroup {
 export interface CompositeBehavior {
   hide_empty_columns?: boolean;
   empty_column_scope?: 'selected' | 'tab';
+  /** Reuse a slot's sole revision on every composite page when no exact sort_order exists. */
+  repeat_single_slots?: string[];
   mutually_exclusive?: CompositeMutuallyExclusiveGroup[];
 }
 

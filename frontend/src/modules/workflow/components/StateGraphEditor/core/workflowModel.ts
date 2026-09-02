@@ -162,6 +162,8 @@ export function collectCompositeSlotIds(node?: CompositePanelNode): string[] {
 export interface WorkflowUiTab {
   id: string;
   step_id?: string;
+  /** Artifact producer scope. `selected` allows cross-step result composites. */
+  slot_scope?: 'step' | 'selected';
   label?: string;
   layout?: 'vertical' | 'grid' | 'horizontal' | 'composite';
   /** Number of columns in grid layout (undefined = auto-fill). */
@@ -197,6 +199,8 @@ export interface CompositeMutuallyExclusiveGroup {
 export interface CompositeBehavior {
   hide_empty_columns?: boolean;
   empty_column_scope?: 'selected' | 'tab';
+  /** Reuse a slot's sole revision on every composite page when no exact sort_order exists. */
+  repeat_single_slots?: string[];
   mutually_exclusive?: CompositeMutuallyExclusiveGroup[];
 }
 

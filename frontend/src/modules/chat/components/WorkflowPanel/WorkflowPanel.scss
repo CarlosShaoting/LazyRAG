@@ -1994,6 +1994,16 @@
     }
   }
 
+  &--video {
+    width: 100%;
+    position: relative;
+    background: #111827;
+
+    &:hover .workflow-slot__download-btn--overlay {
+      opacity: 1;
+    }
+  }
+
   // Top-right action group (upload + delete buttons)
   &__top-right-actions {
     position: absolute;
@@ -2289,6 +2299,15 @@
     max-width: 100%;
     border-radius: 6px;
     object-fit: contain;
+  }
+
+  &__video {
+    display: block;
+    width: 100%;
+    max-height: min(48dvh, 520px);
+    border-radius: 6px;
+    object-fit: contain;
+    background: #111827;
   }
 
   &__image-card-img {

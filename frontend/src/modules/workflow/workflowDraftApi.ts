@@ -24,13 +24,16 @@ export interface BuiltinWorkflowUiTabSlot {
 export interface BuiltinWorkflowUiTab {
   id: string;
   step_id?: string;
+  slot_scope?: 'step' | 'selected';
   label: string;
   layout: string;
   slots: BuiltinWorkflowUiTabSlot[];
   composite_layout?: unknown;
+  composite_tab_position?: 'top' | 'bottom' | 'left' | 'right';
   composite_behavior?: {
     hide_empty_columns?: boolean;
     empty_column_scope?: 'selected' | 'tab';
+    repeat_single_slots?: string[];
     mutually_exclusive?: Array<{ slots: string[]; prefer?: string[] }>;
   };
   actions?: Array<{

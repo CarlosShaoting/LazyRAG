@@ -303,20 +303,45 @@ class HostWorkflowToolkit:
             if failed:
                 projection = result.get('projection') if isinstance(result.get('projection'), dict) else {}
                 retryable = result.get('retryable_steps') or projection.get('retryable') or []
+                attempt_results = result.get('attempt_results') or []
+                failure_reasons = {
+                    str(item.get('task_id') or ''): str(item.get('failure_reason') or '').strip()
+                    for item in attempt_results
+                    if isinstance(item, dict)
+                    and str(item.get('task_id') or '') in failed
+                    and str(item.get('failure_reason') or '').strip()
+                }
+                configuration_missing = any(
+                    'MEDIA_CAPABILITY_DEPENDENCY_MISSING' in reason
+                    for reason in failure_reasons.values()
+                )
+                if configuration_missing:
+                    # Configuration cannot change inside an automatic SubAgent retry.
+                    # Hide the runtime retry frontier for this response so Chat reports
+                    # the setup action immediately instead of spending the retry budget.
+                    retryable = []
                 return {
                     **result,
                     'status': 'failed',
                     'outcome': 'step_failed',
                     'failed_attempts': failed,
+                    'failure_reasons': failure_reasons,
+                    'failure_kind': (
+                        'media_capability_dependency_missing'
+                        if configuration_missing else 'execution_failed'
+                    ),
                     'retryable_steps': retryable,
                     'next_action': {
                         'decision_owner': 'ChatAgent',
                         'instruction': (
-                            'Do not advance a downstream step. Decide whether to retry only an '
+                            'Do not advance a downstream step. Never retry a '
+                            'media_capability_dependency_missing failure automatically. For other '
+                            'failures, decide whether to retry only an '
                             'exact retryable_steps ID. If automatic_retry_remaining is zero, do '
                             'not retry autonomously; explicitly tell the user that manual retry '
-                            'is still available. If the retryable list is empty, report the failure '
-                            'to the user.'
+                            'is still available. Report every non-empty failure_reasons value to '
+                            'the user in plain language, especially when media generation produced '
+                            'no output. If the retryable list is empty, report the failure to the user.'
                         ),
                     },
                     'command_id': resolved_command_id,

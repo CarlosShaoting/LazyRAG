@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { createRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Modal } from "antd";
 import {
   ChatConversationsRequestActionEnum,
   ChatConversationsResponseFinishReasonEnum,
@@ -8,6 +9,7 @@ import {
 import { RoleTypes } from "@/modules/chat/constants/common";
 import type { ChatInputImperativeProps } from "../../ChatInput";
 import { useChatConversation } from "./useChatConversation";
+import { useTaskCenterStore } from "@/modules/chat/store/taskCenter";
 
 const { waitForRuntimeCapabilityMock } = vi.hoisted(() => ({
   waitForRuntimeCapabilityMock: vi.fn(),
@@ -18,6 +20,7 @@ vi.mock("@/runtime/readiness", () => ({
 }));
 
 vi.mock("antd", () => ({
+  Button: "button",
   message: {
     error: vi.fn(),
     warning: vi.fn(),
@@ -60,6 +63,11 @@ describe("useChatConversation regeneration recovery", () => {
     sessionStorage.clear();
     waitForRuntimeCapabilityMock.mockReset();
     waitForRuntimeCapabilityMock.mockResolvedValue(undefined);
+    vi.mocked(Modal.confirm).mockClear();
+    useTaskCenterStore.setState({
+      activeConversationId: "",
+      tasksByConversation: {},
+    });
   });
 
   afterEach(() => {
@@ -70,6 +78,7 @@ describe("useChatConversation regeneration recovery", () => {
     const { result } = renderHook(() =>
       useChatConversation({
         canChat: true,
+        onOpenSSE: vi.fn(),
         setIsChatContent: vi.fn(),
         clearStorePendingMessage: vi.fn(),
         clearCiteMessages: vi.fn(),
@@ -148,5 +157,56 @@ describe("useChatConversation regeneration recovery", () => {
     });
 
     await waitFor(() => expect(onOpenSSE).toHaveBeenCalledTimes(2));
+  });
+
+  it("shows a setup card when a persisted workflow task contains a capability failure", async () => {
+    renderHook(() =>
+      useChatConversation({
+        canChat: true,
+        onOpenSSE: vi.fn(),
+        setIsChatContent: vi.fn(),
+        clearStorePendingMessage: vi.fn(),
+        clearCiteMessages: vi.fn(),
+        chatInputRef: createRef<ChatInputImperativeProps>(),
+        thinkingCollapseMap: new Map(),
+        getUserEdit: () => undefined,
+        t: (key) => key,
+      }),
+    );
+    const failure =
+      'MEDIA_CAPABILITY_DEPENDENCY_MISSING '
+      + '{"status":"blocked","workflow":"CREATE_ANIMATED_MEME",'
+      + '"required":["video_generator"],"missing":[{"id":"video_generator",'
+      + '"label":"视频生成模型","available":false,"settings_url":"/settings?section=models",'
+      + '"reason":"尚未配置视频生成模型。"}],"message":"缺少视频生成模型。"}';
+
+    act(() => {
+      useTaskCenterStore.setState({
+        activeConversationId: "conversation-capability",
+        tasksByConversation: {
+          "conversation-capability": [{
+            task_id: "task-capability",
+            conversation_id: "conversation-capability",
+            title: "image-workflow:analyze_subject",
+            agent_type: "workflow_step",
+            mode: "auto",
+            status: "failed",
+            progress_pct: 100,
+            artifacts: [],
+            sources: [],
+            artifact_streams: [],
+            execution_log: [{ type: "tool_results", content: "", tool_results: [{
+              tool_call_id: "tool-1",
+              name: "check_image_workflow_capabilities",
+              result: failure,
+            }] }],
+          }],
+        },
+      });
+    });
+
+    await waitFor(() => expect(Modal.confirm).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(Modal.confirm).mock.calls[0]?.[0]?.title)
+      .toBe("chat.mediaCapabilitiesRequiredTitle");
   });
 });

@@ -106,7 +106,10 @@ def test_advance_step_returns_failure_for_chat_agent_retry_decision():
     client.advance.return_value.result = {
         'accepted': True,
         'attempt_statuses': {'task-1': 'failed'},
-        'attempt_results': [{'task_id': 'task-1', 'step_id': 'prompt', 'attempt': 1}],
+        'attempt_results': [{
+            'task_id': 'task-1', 'step_id': 'prompt', 'attempt': 1,
+            'failure_reason': 'image_generator: provider returned no image files',
+        }],
         'step_id': 'prompt', 'attempt': 1, 'max_attempts': 3, 'retry_remaining': 2,
         'projection': {'retryable': ['prompt']},
     }
@@ -117,7 +120,36 @@ def test_advance_step_returns_failure_for_chat_agent_retry_decision():
     assert result['outcome'] == 'step_failed'
     assert result['retryable_steps'] == ['prompt']
     assert result['retry_remaining'] == 2
+    assert result['failure_reasons'] == {
+        'task-1': 'image_generator: provider returned no image files',
+    }
+    assert 'Report every non-empty failure_reasons' in result['next_action']['instruction']
     assert result['next_action']['decision_owner'] == 'ChatAgent'
+
+
+def test_advance_step_does_not_retry_missing_media_configuration():
+    client = MagicMock()
+    toolkit = HostWorkflowToolkit(lambda: client)
+    reason = (
+        'MEDIA_CAPABILITY_DEPENDENCY_MISSING '
+        '{"status":"blocked","missing":[{"id":"video_generator"}]}'
+    )
+    client.advance.return_value.result = {
+        'accepted': True,
+        'attempt_statuses': {'task-capability': 'failed'},
+        'attempt_results': [{
+            'task_id': 'task-capability', 'step_id': 'analyze_subject', 'attempt': 1,
+            'failure_reason': reason,
+        }],
+        'projection': {'retryable': ['analyze_subject']},
+    }
+
+    result = toolkit.advance_step('session-1', 1, [{'step_id': 'analyze_subject'}])
+
+    assert result['failure_kind'] == 'media_capability_dependency_missing'
+    assert result['retryable_steps'] == []
+    assert result['failure_reasons']['task-capability'] == reason
+    assert 'Never retry a media_capability_dependency_missing' in result['next_action']['instruction']
 
 
 def test_advance_step_success_directs_same_turn_continuation():

@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type RefObject } from "react";
-import { message, Modal } from "antd";
+import { createElement, useEffect, useRef, useState, type RefObject } from "react";
+import { Button, message, Modal } from "antd";
 import { useNavigate } from "react-router-dom";
 import {
   ChatConversationsRequestActionEnum,
@@ -15,6 +15,7 @@ import { RoleTypes } from "@/modules/chat/constants/common";
 import {
   CHAT_AUTO_ADVANCE_EVENT,
   CHAT_FFMPEG_DEPENDENCY_MISSING_EVENT,
+  CHAT_MEDIA_CAPABILITY_MISSING_EVENT,
   type ChatAutoAdvanceDetail,
 } from "@/modules/chat/constants/chat";
 import { streamManager } from "@/modules/chat/utils/StreamManager";
@@ -49,6 +50,12 @@ import {
   type StreamRecoveryEntry,
   type StreamRecoveryViewState,
 } from "@/modules/chat/utils/streamRecovery";
+import {
+  parseMediaCapabilityDependency,
+  type MediaCapabilityDependencyDetail,
+} from "@/modules/chat/utils/mediaCapabilityDependency";
+import { useTaskCenterStore } from "@/modules/chat/store/taskCenter";
+import { useWorkflowStore } from "@/modules/chat/store/workflowPanel";
 
 type UserEditApi = ReturnType<typeof useUserMessageEdit>;
 type RuntimeWaitingOperation = "chat" | "workflow";
@@ -92,6 +99,8 @@ export function useChatConversation({
   const conversationMessagesCache = useRef<Map<string, any[]>>(new Map());
   const ffmpegErrorBufferRef = useRef("");
   const ffmpegPromptOpenRef = useRef(false);
+  const mediaCapabilityPromptOpenRef = useRef(false);
+  const mediaCapabilityPromptSignaturesRef = useRef<Set<string>>(new Set());
   const runtimeWaitAbortRef = useRef<AbortController | null>(null);
   const runtimeWaitInProgressRef = useRef(false);
   const streamRecoveryRegistryRef = useRef(new StreamRecoveryRegistry());
@@ -131,16 +140,117 @@ export function useChatConversation({
     });
   }
 
+  function showMediaCapabilityPrompt(detail: MediaCapabilityDependencyDetail) {
+    const conversationId = useTaskCenterStore.getState().activeConversationId;
+    const signature = [
+      conversationId,
+      detail.workflow,
+      ...detail.missing.map((item) => item.id).sort(),
+    ].join("|");
+    if (
+      mediaCapabilityPromptOpenRef.current ||
+      detail.missing.length === 0 ||
+      mediaCapabilityPromptSignaturesRef.current.has(signature)
+    ) {
+      return;
+    }
+    mediaCapabilityPromptSignaturesRef.current.add(signature);
+    mediaCapabilityPromptOpenRef.current = true;
+    const firstTarget = detail.missing[0]?.settings_url || "/settings?section=models";
+    Modal.confirm({
+      title: t("chat.mediaCapabilitiesRequiredTitle"),
+      content: createElement(
+        "div",
+        { className: "chat-media-capability-prompt" },
+        createElement("p", null, detail.message || t("chat.mediaCapabilitiesRequiredDesc")),
+        ...detail.missing.map((item) =>
+          createElement(
+            "div",
+            {
+              key: item.id,
+              style: {
+                border: "1px solid #e5e7eb",
+                borderRadius: 8,
+                marginTop: 8,
+                padding: "10px 12px",
+              },
+            },
+            createElement("strong", null, item.label),
+            createElement("p", { style: { margin: "6px 0" } }, item.reason),
+            createElement(
+              Button,
+              {
+                size: "small",
+                type: "link",
+                style: { padding: 0 },
+                onClick: () => navigate(item.settings_url),
+              },
+              t("chat.configureThisCapability"),
+            ),
+          ),
+        ),
+      ),
+      okText: t("chat.configureRequiredCapability"),
+      cancelText: t("common.close"),
+      onOk: () => navigate(firstTarget),
+      afterClose: () => {
+        mediaCapabilityPromptOpenRef.current = false;
+      },
+    });
+  }
+
   useEffect(() => {
     window.addEventListener(
       CHAT_FFMPEG_DEPENDENCY_MISSING_EVENT,
       showFFmpegDependencyPrompt,
     );
+    const handleMediaCapabilityMissing = (event: Event) => {
+      const detail = (event as CustomEvent<MediaCapabilityDependencyDetail>).detail;
+      if (detail?.missing?.length) showMediaCapabilityPrompt(detail);
+    };
+    window.addEventListener(
+      CHAT_MEDIA_CAPABILITY_MISSING_EVENT,
+      handleMediaCapabilityMissing,
+    );
+    const inspectPersistedCapabilityFailures = () => {
+      const taskState = useTaskCenterStore.getState();
+      const conversationId = taskState.activeConversationId;
+      if (!conversationId) return;
+      const session = useWorkflowStore.getState().sessionByConversation[conversationId];
+      const currentTaskIds = new Set(
+        (session?.steps ?? []).map((step) => step.task_id).filter(Boolean),
+      );
+      const tasks = (taskState.tasksByConversation[conversationId] ?? [])
+        .filter((task) => (
+          currentTaskIds.size > 0
+            ? currentTaskIds.has(task.task_id)
+            : task.agent_type === "workflow_step"
+        ))
+        .sort((left, right) => (
+          new Date(right.updated_at ?? right.created_at ?? 0).getTime() -
+          new Date(left.updated_at ?? left.created_at ?? 0).getTime()
+        ));
+      for (const task of tasks) {
+        const detail = parseMediaCapabilityDependency(task);
+        if (!detail) continue;
+        showMediaCapabilityPrompt(detail);
+        break;
+      }
+    };
+    const unsubscribeTasks = useTaskCenterStore.subscribe(inspectPersistedCapabilityFailures);
+    const unsubscribeWorkflow = useWorkflowStore.subscribe(inspectPersistedCapabilityFailures);
+    inspectPersistedCapabilityFailures();
     return () => {
       runtimeWaitAbortRef.current?.abort();
+      unsubscribeTasks();
+      unsubscribeWorkflow();
       window.removeEventListener(
         CHAT_FFMPEG_DEPENDENCY_MISSING_EVENT,
         showFFmpegDependencyPrompt,
+      );
+      window.removeEventListener(
+        CHAT_MEDIA_CAPABILITY_MISSING_EVENT,
+        handleMediaCapabilityMissing,
       );
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
@@ -516,6 +626,8 @@ export function useChatConversation({
     if (!result) {
       return;
     }
+    const mediaDependency = parseMediaCapabilityDependency(result);
+    if (mediaDependency) showMediaCapabilityPrompt(mediaDependency);
     ffmpegErrorBufferRef.current = (
       ffmpegErrorBufferRef.current + JSON.stringify(result)
     ).slice(-8192);
@@ -599,7 +711,7 @@ export function useChatConversation({
             result.conversation_id,
             sseRef.current,
             streamCallbacks,
-            event,
+            e,
           );
 
           const cachedList = conversationMessagesCache.current.get(

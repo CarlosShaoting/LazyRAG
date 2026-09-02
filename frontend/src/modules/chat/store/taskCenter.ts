@@ -9,9 +9,11 @@ import { WORKFLOW_GRAPH_REFRESH_EVENT } from "@/components/StateGraphModal";
 import {
   CHAT_AUTO_ADVANCE_EVENT,
   CHAT_FFMPEG_DEPENDENCY_MISSING_EVENT,
+  CHAT_MEDIA_CAPABILITY_MISSING_EVENT,
 } from "@/modules/chat/constants/chat";
 import { useWorkflowStore } from "@/modules/chat/store/workflowPanel";
 import type { ChatSource } from "@/modules/chat/utils/sourceAdapter";
+import { parseMediaCapabilityDependency } from "@/modules/chat/utils/mediaCapabilityDependency";
 
 let convReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let workflowRefreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -481,6 +483,16 @@ export const useTaskCenterStore = create<TaskCenterStore>()((set, get) => ({
             ) {
               window.dispatchEvent(
                 new CustomEvent(CHAT_FFMPEG_DEPENDENCY_MISSING_EVENT),
+              );
+            }
+            const mediaDependency = results
+              .map((result) => parseMediaCapabilityDependency(result.result))
+              .find((detail) => detail !== null);
+            if (mediaDependency) {
+              window.dispatchEvent(
+                new CustomEvent(CHAT_MEDIA_CAPABILITY_MISSING_EVENT, {
+                  detail: mediaDependency,
+                }),
               );
             }
           }
