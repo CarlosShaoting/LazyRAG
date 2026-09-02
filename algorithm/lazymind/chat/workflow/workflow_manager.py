@@ -648,6 +648,7 @@ def _history_startup_ask_index(
     workflow_catalog: Any = None,
     *,
     discovery_mode: bool = False,
+    current_query: str = '',
 ) -> int:
     policies = _startup_clarification_policies(
         runtime_policy,
@@ -703,8 +704,19 @@ def _history_startup_ask_index(
         tail = [entry for entry in history[index + 1:] if isinstance(entry, dict)]
         if any(entry.get('role') == 'assistant' for entry in tail):
             continue
-        if sum(entry.get('role') == 'user' for entry in tail) > 1:
+        tail_users = [entry for entry in tail if entry.get('role') == 'user']
+        if len(tail_users) > 1:
             continue
+        # Most history adapters exclude the current user turn. Therefore one
+        # historical user message after the Ask means that answer turn already
+        # happened. It must not suppress clarification for a later task merely
+        # because the prior workflow crashed before writing an assistant reply.
+        # Some adapters do include the current turn; retain the Ask only when
+        # that trailing message is the current query itself.
+        if tail_users and current_query:
+            trailing_query = _clean_workflow_text(tail_users[-1].get('content'))
+            if trailing_query and trailing_query != _clean_workflow_text(current_query):
+                continue
         return index
     return -1
 
@@ -715,6 +727,7 @@ def workflow_startup_clarification_already_asked(
     workflow_catalog: Any = None,
     *,
     discovery_mode: bool = False,
+    current_query: str = '',
 ) -> bool:
     """Return whether this Workflow's one startup question card was already shown."""
     return _history_startup_ask_index(
@@ -722,6 +735,7 @@ def workflow_startup_clarification_already_asked(
         runtime_policy,
         workflow_catalog,
         discovery_mode=discovery_mode,
+        current_query=current_query,
     ) >= 0
 
 
@@ -731,7 +745,11 @@ def _merge_startup_clarification_context(
     runtime_policy: Any,
 ) -> str:
     """Merge the original request with the answer turn before trigger creation."""
-    ask_index = _history_startup_ask_index(conversation_history, runtime_policy)
+    ask_index = _history_startup_ask_index(
+        conversation_history,
+        runtime_policy,
+        current_query=current_query,
+    )
     if ask_index < 0:
         return current_query
     history = conversation_history if isinstance(conversation_history, list) else []

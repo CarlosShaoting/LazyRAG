@@ -456,6 +456,49 @@ def test_completed_historical_clarification_does_not_block_a_new_workflow_reques
     assert not workflow_startup_clarification_already_asked(history, runtime)
 
 
+def test_interrupted_historical_clarification_does_not_block_a_new_request():
+    runtime = {'clarification_fields': [{
+        'id': 'generate_background_images',
+        'question': '是否启用 AI 底图？',
+        'type': 'single',
+        'choices': ['启用', '不启用'],
+    }]}
+    history = [
+        {'role': 'user', 'content': '做一个春节 PPT'},
+        {
+            'role': 'assistant',
+            'tool_calls': [{
+                'id': 'ask-interrupted',
+                'type': 'function',
+                'function': {
+                    'name': 'ask_user',
+                    'arguments': json.dumps({'questions': [{
+                        'id': 'generate_background_images',
+                        'text': '是否启用 AI 底图？',
+                        'type': 'single',
+                        'choices': ['启用', '不启用'],
+                    }]}, ensure_ascii=False),
+                },
+            }],
+        },
+        {'role': 'tool', 'name': 'ask_user', 'tool_call_id': 'ask-interrupted',
+         'content': 'The user submitted the form.'},
+        {'role': 'user', 'content': '不启用'},
+        # The workflow crashed here, before an assistant completion was saved.
+    ]
+
+    assert not workflow_startup_clarification_already_asked(
+        history,
+        runtime,
+        current_query='重新做一个春节 PPT',
+    )
+    assert workflow_startup_clarification_already_asked(
+        history,
+        runtime,
+        current_query='不启用',
+    )
+
+
 def test_clarification_answer_turn_can_pass_merged_request_context_to_trigger():
     toolkit = MagicMock()
     toolkit.prepare_workflow.return_value = {

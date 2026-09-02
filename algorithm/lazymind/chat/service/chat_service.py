@@ -1235,6 +1235,7 @@ async def _handle_chat_impl(
             workflow_contribution.runtime_policy,
             effective_workflow_catalog,
             discovery_mode=not workflow_turn_is_bound,
+            current_query=language_query,
         )
     )
     allow_ask_user = False if workflow_startup_clarification_asked else (
