@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 from lazyllm.tools.agent import ToolExecutionError
+from PIL import Image
 
 
 TOOLS_PATH = Path(__file__).resolve().parents[1] / 'tools.py'
@@ -16,6 +17,10 @@ SPEC.loader.exec_module(TOOLS)
 
 
 class BackgroundImageGenerationTest(unittest.TestCase):
+    @staticmethod
+    def _write_generated_image(path: Path, size: tuple[int, int] = (1024, 1024)) -> None:
+        Image.new('RGB', size, '#d34a24').save(path)
+
     def _deck(self, root: Path) -> Path:
         deck = root / 'deck'
         (deck / 'images').mkdir(parents=True)
@@ -38,7 +43,7 @@ class BackgroundImageGenerationTest(unittest.TestCase):
             generated = []
             for page in (1, 2):
                 path = root / f'generated_{page}.png'
-                path.write_bytes(f'image-{page}'.encode())
+                self._write_generated_image(path)
                 generated.append(path)
 
             calls = []
@@ -64,11 +69,22 @@ class BackgroundImageGenerationTest(unittest.TestCase):
             self.assertIn('关键进展', calls[1]['prompt'])
             self.assertTrue((deck / 'images/page_001_background.png').is_file())
             self.assertTrue((deck / 'images/page_002_background.png').is_file())
+            with Image.open(deck / 'images/page_001_background.png') as image:
+                self.assertEqual(image.size, (1280, 720))
             manifest = json.loads(
                 (deck / 'background_images.json').read_text(encoding='utf-8'),
             )
             self.assertTrue(manifest['enabled'])
             self.assertEqual([item['page_no'] for item in manifest['pages']], [1, 2])
+            self.assertEqual(manifest['pages'][0]['original_size'], {
+                'width': 1024,
+                'height': 1024,
+            })
+            self.assertEqual(manifest['pages'][0]['size'], {
+                'width': 1280,
+                'height': 720,
+                'aspect': '16:9',
+            })
             self.assertEqual(save.call_count, 2)
             self.assertEqual(save.call_args_list[0].kwargs['key'], 'background_images')
             self.assertTrue(save.call_args_list[0].kwargs['internal_publish'])
@@ -84,7 +100,7 @@ class BackgroundImageGenerationTest(unittest.TestCase):
             generated = []
             for page in (1, 2):
                 path = root / f'prepared_{page}.png'
-                path.write_bytes(f'prepared-{page}'.encode())
+                self._write_generated_image(path, (1600, 900))
                 generated.append(path)
             calls = []
 
@@ -138,7 +154,7 @@ class BackgroundImageGenerationTest(unittest.TestCase):
             generated = []
             for page in (1, 2):
                 path = root / f'new_{page}.png'
-                path.write_bytes(f'new-{page}'.encode())
+                self._write_generated_image(path)
                 generated.append(path)
             calls = []
 

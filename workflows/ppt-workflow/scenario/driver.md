@@ -57,7 +57,8 @@ Allowed verdicts: PASS, RETRY, DONE, FAIL.
 
 - This is a human-approval step and is skipped when AI backgrounds are disabled.
 - On a full run, `background_images` has exactly one image per approved prompt,
-  aligned by sort_order -> PASS
+  aligned by sort_order, and every saved background is exactly 1280x720
+  (16:9) -> PASS
 - On “重新生成底图 1、2”, only positions 1 and 2 are overwritten. No append,
   reorder, or regeneration of untouched positions is allowed -> PASS
 - A provider/model failure or missing returned file must expose the exact reason

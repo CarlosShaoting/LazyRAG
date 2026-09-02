@@ -2936,6 +2936,7 @@ def _stage_tool_result(stage_name: str, payload: dict) -> dict:
 _MATERIAL_DIR_NAME = 'material_images'
 _MATERIAL_MANIFEST = 'manifest.json'
 _IMAGE_EXTS = ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp')
+_PPT_BACKGROUND_PIXEL_SIZE = (1280, 720)
 _DOWNLOAD_TIMEOUT = 25
 _DOWNLOAD_UA = 'Mozilla/5.0 (compatible; LazyMind-PPT/1.0; material-image)'
 _IMAGE_URL_KEYS = (
@@ -3741,6 +3742,30 @@ def ppt_publish_background_prompts(
     })
 
 
+def _save_ppt_background(src: Path, dest: Path) -> tuple[int, int]:
+    """Write a generated image onto the exact 16:9 HTML slide canvas."""
+    from PIL import Image, ImageOps
+
+    with Image.open(src) as raw:
+        image = ImageOps.exif_transpose(raw)
+        original_size = image.size
+        has_alpha = image.mode in {'RGBA', 'LA'} or (
+            image.mode == 'P' and 'transparency' in image.info
+        )
+        image = image.convert('RGBA' if has_alpha else 'RGB')
+        fitted = ImageOps.fit(
+            image,
+            _PPT_BACKGROUND_PIXEL_SIZE,
+            method=Image.Resampling.LANCZOS,
+            centering=(0.5, 0.5),
+        )
+        if dest.suffix.lower() in {'.jpg', '.jpeg', '.bmp'} and fitted.mode != 'RGB':
+            fitted = fitted.convert('RGB')
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        fitted.save(dest)
+    return original_size
+
+
 def ppt_generate_background_images(
     deck_dir: str,
     prompts_json: Union[str, list, None] = None,
@@ -3759,8 +3784,9 @@ def ppt_generate_background_images(
         prompts_json (str): Approved prompt objects with page_no and prompt.
         pages_json (str): Optional page-number array for targeted regeneration.
         replace (bool): Regenerate selected existing backgrounds when true.
-        image_size (str): Optional provider-supported size. Omit to use the
-            configured image model default; CSS ``cover`` applies 16:9 framing.
+        image_size (str): Optional provider-supported generation-size hint.
+            Saved PPT backgrounds are always center-cropped and resized to the
+            exact 16:9 slide canvas (1280x720), even if a provider ignores it.
 
     Returns:
         Per-page background paths and publication counts. Any model failure is
@@ -3876,12 +3902,28 @@ def ppt_generate_background_images(
         relative = f'images/page_{page_no:03d}_background{ext}'
         dest = deck / relative
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(src.read_bytes())
+        try:
+            original_size = _save_ppt_background(src, dest)
+        except Exception as exc:
+            return _tool_error(
+                'ppt_generate_background_images',
+                f'page {page_no} background could not be normalized to 16:9: {exc}',
+                meta={'deck_dir': str(deck), 'page': page_no},
+            )
         item = {
             'page_no': page_no,
             'local_path': relative,
             'source_path': str(src.resolve()),
             'prompt': kwargs['prompt'],
+            'original_size': {
+                'width': original_size[0],
+                'height': original_size[1],
+            },
+            'size': {
+                'width': _PPT_BACKGROUND_PIXEL_SIZE[0],
+                'height': _PPT_BACKGROUND_PIXEL_SIZE[1],
+                'aspect': '16:9',
+            },
         }
         output[page_no] = item
         publish_items.append(item)
