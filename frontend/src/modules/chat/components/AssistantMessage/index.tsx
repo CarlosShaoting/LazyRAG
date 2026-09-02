@@ -22,7 +22,7 @@ import {
   FeedBackChatHistoryRequestTypeEnum,
 } from "@/api/generated/chatbot-client";
 import { AgentAppsAuth } from "@/components/auth";
-import { isAskPendingReadOnly } from "@/modules/chat/utils/message";
+import { shouldRenderAskPending } from "@/modules/chat/utils/message";
 import type { ExternalExecutionProjection } from "@/modules/chat/utils/message";
 import { ChatServiceApi, decideToolLimit } from "@/modules/chat/utils/request";
 import { useWorkflowStore } from "@/modules/chat/store/workflowPanel";
@@ -1061,16 +1061,16 @@ const AssistantMessage = (props: any) => {
     // Render ask_pending card if present
     if (item.ask_pending) {
       const askPending = item.ask_pending;
-      const isReadOnly = isAskPendingReadOnly(
+      const showAskCard = shouldRenderAskPending(
         item.ask_answered,
         index === length - 1,
         !!hasLaterUserMessage,
       );
+      if (!showAskCard) return null;
       return (
         <AskCard
           key={askPending.ask_id}
           askPending={askPending}
-          disabled={isReadOnly}
           savedAnswers={item.ask_saved_answers}
           onAnswerChange={(idx, ans) => {
             const currentAnswers = {

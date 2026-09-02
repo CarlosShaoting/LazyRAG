@@ -48,6 +48,18 @@ export function isAskPendingReadOnly(
   return !!askAnswered || (!isLatestMessage && hasLaterUserMessage);
 }
 
+export function shouldRenderAskPending(
+  askAnswered: boolean | undefined,
+  isLatestMessage: boolean,
+  hasLaterUserMessage = false,
+) {
+  return !isAskPendingReadOnly(
+    askAnswered,
+    isLatestMessage,
+    hasLaterUserMessage,
+  );
+}
+
 interface ChatUserMessageLike {
   delta?: string;
   inputs?: Query[] | null;

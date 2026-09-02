@@ -1377,9 +1377,10 @@ func chatHistoryToResponseItem(h orm.ChatHistory) map[string]any {
 		}
 	}
 	if askPending != nil {
-		item["ask_pending"] = askPending
-		if askAnswered {
-			item["ask_answered"] = true
+		// ask_pending is an interaction request, not durable transcript content.
+		// Once answered, do not send it back and reopen a guide card in history.
+		if !askAnswered {
+			item["ask_pending"] = askPending
 		}
 		if askSavedAnswers != nil && !askAnswered {
 			item["ask_saved_answers"] = askSavedAnswers
