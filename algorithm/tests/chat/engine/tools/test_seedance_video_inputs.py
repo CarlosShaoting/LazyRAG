@@ -10,11 +10,11 @@ import docstring_parser
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
-from lazyllm.module.llms.onlinemodule.supplier.doubao import DoubaoText2Video
-from lazyllm.module.llms.onlinemodule.supplier import doubao as doubao_supplier
-from lazymind.chat.engine.tools import multimodal
-from lazymind.chat.engine.tools.infra import video_generation_support
-from lazymind.chat.service.component import tool_registry
+from lazyllm.module.llms.onlinemodule.supplier.doubao import DoubaoText2Video  # noqa: E402
+from lazyllm.module.llms.onlinemodule.supplier import doubao as doubao_supplier  # noqa: E402
+from lazymind.chat.engine.tools import multimodal  # noqa: E402
+from lazymind.chat.engine.tools.infra import video_generation_support  # noqa: E402
+from lazymind.chat.service.component import tool_registry  # noqa: E402
 
 
 def test_video_generator_schema_describes_model_capability_matrix():
