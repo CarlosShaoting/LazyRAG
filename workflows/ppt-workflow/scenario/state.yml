@@ -48,8 +48,9 @@ steps:
 
       Startup clarification contract:
       - The Chat host collects presentation topic, exact slide count, target
-        customer/audience, and visual style before creating this workflow
-        session. Extract all four faithfully from {{user_input}}; clarification
+        customer/audience, visual style, and whether per-slide AI background
+        generation is enabled before creating this workflow session. Extract
+        all five faithfully from {{user_input}}; clarification
         answers may have been merged into the original request.
       - Do not replace an explicitly supplied value with a generic default.
       - Do not interpret the phrase "make a PPT" itself as a presentation topic,
@@ -87,6 +88,8 @@ steps:
         industry / case-study visual; otherwise CSS/SVG/ECharts only)
       - whether the user explicitly asked for AI-generated material images
         (default: no — do not invent this need)
+      - AI background generation: record exactly enabled or disabled from the
+        startup answer. This is independent from foreground material images.
 
       If the user already attached a PDF/PPTX/report or pasted key facts, fold the
       usable numbers and claims into the brief. collect_materials will reuse
@@ -285,6 +288,7 @@ steps:
            topic=<short topic>,
            role / audience / scene=<from analysis>,
            style_hint=<ONLY visual constraints explicitly stated by the user>,
+           generate_background_images=<true only when startup answer enabled it>,
            key_points_json='["point1","point2"]'  (JSON string, or omit)
          Defaults: ppt_mode=fast.
          Slide photos come from registered material_images (KB/web, or
@@ -297,6 +301,9 @@ steps:
 
       This single call runs init → preflight → style → outline → publish_outline
       and writes slide_outline list items (sort_order=page) for the Outline tab.
+      When generate_background_images=true it also generates one no-text 16:9
+      background per page and publishes background_images. Do not treat those
+      backgrounds as foreground material_images.
 
       This is an atomic step. If ppt_build_outline fails, report that exact tool
       error and stop so the Workflow step fails and can be retried. Do NOT recover
@@ -315,6 +322,8 @@ steps:
         required: false
     outputs:
       - material: slide_outline
+      - material: background_images
+        required: false
     acceptance_criteria: |
       slide_outline must be saved as a list with at least 2 pages (sort_order
       aligned), each containing that page's title / bullets / layout brief.
@@ -423,6 +432,8 @@ steps:
       - material: material_summary
         required: false
       - material: material_images
+        required: false
+      - material: background_images
         required: false
       - material: slide_outline
         required: true

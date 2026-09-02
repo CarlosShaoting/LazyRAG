@@ -58,10 +58,12 @@ HTML 中**所有面向读者可见的文字内容**（`<title>`、标题、副�
 
 - 所有 `<img src>` 必须使用相对路径 `../images/<basename>`，其中 `<basename>` 来自 user message 给出的路径（例如 `../images/page_003_inherited.png`）。
 - user message 中只要出现 `INHERITED FOREGROUND IMAGE`，其中的 `path` 就是本页已经由素材收集阶段选定并复制好的图片。**必须原样生成且只生成一个 `<img src="该 path">`**；输出结束前检查该 `<img>` 确实存在。禁止只创建 `.image-section`、`.image-placeholder` 等空容器来代替图片。
+- user message 中只要出现 `AI BACKGROUND IMAGE`，其中的 `path` 是专用底图，不属于继承素材。必须把精确路径写入 `#bg` 的 `background-image: url(...)`，并设置 `background-size: cover; background-position: center;`；不得把它输出成前景 `<img>`。
 - **若 user message 没有给出任何可用图片路径，禁止输出任何 `<img>` 标签**（包括用生图 prompt 当 alt、编造文件名）。改用 CSS / SVG / ECharts 做视觉。
 - 禁止 `file://` / 绝对路径 / 未提供的 CDN 或远程 URL / 自己编造的文件名 / 基于自己想象的 `/mnt/data/...` 路径。
 - `background-image: url(...)` 使用的本地图片同样遵守该路径格式。
 - **来自素材 / 文档的继承图（路径形如 `../images/page_XXX_inherited.{png,jpg,jpeg,webp,...}`）禁止当作背景使用**：不得作为 `background-image` / `background` 的 `url(...)` 值、不得放在 `#bg` 层、不得放在任何遮罩 / 渐变 / 半透明色块**之下**被压暗或半隐藏。这类图是页面内容的一部分，必须以前景 `<img>` 元素呈现，放在版面中清晰可见的位置（建议占页面 30-50% 视觉面积），并结合 user message 给出的"图的内容描述"配上贴合的 caption / 标签 / 配文。
+- AI 底图路径形如 `../images/page_XXX_background.*`，只允许用于背景层，不计入前景素材图数量。
 
 ## Infographic images vs ECharts
 

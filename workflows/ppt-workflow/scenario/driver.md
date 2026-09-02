@@ -38,6 +38,10 @@ Allowed verdicts: PASS, RETRY, DONE, FAIL.
 
 - `slide_outline` list has at least 2 pages with sort_order aligned, each page
   brief containing a title and content points -> PASS
+- When the user enabled AI backgrounds, `background_images` should align with
+  the outline pages. A provider/model failure must be reported with its exact
+  reason; do not silently pretend backgrounds were generated.
+- When the user disabled AI backgrounds, zero `background_images` is valid.
 - Missing slide_outline or fewer than 2 pages -> RETRY
 - 2 consecutive failures -> FAIL
 

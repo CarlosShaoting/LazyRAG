@@ -15,14 +15,16 @@ This workflow helps users create a multi-slide presentation using the
 
 Workflow:
 
-1. `analyze_requirements` — goal, audience, length, visual style, constraints.
+1. `analyze_requirements` — goal, audience, length, visual style, constraints,
+   and the user's explicit AI-background choice.
 2. `collect_materials` — always runs after analysis; uses supplied KB first and
    calls web tools only for a concrete remaining gap; collects facts and may
    optionally register images (`ppt_search_web_images` +
    `ppt_register_material_images`, or `ppt_generate_material_images` only when
    the user explicitly asks for AI material images) so later HTML can embed them.
    Missing images never block the workflow; slides can use CSS/SVG/ECharts.
-3. `build_outline` — one call: `ppt_build_outline` → `slide_outline[page1..]`.
+3. `build_outline` — one call: `ppt_build_outline` → `slide_outline[page1..]`;
+   when enabled, generate one AI background per page into `background_images`.
 4. `generate_ppt` — one call: `ppt_generate_pages`; no outline rewrite.
 
 After `analyze_requirements` succeeds, always advance to `collect_materials`.

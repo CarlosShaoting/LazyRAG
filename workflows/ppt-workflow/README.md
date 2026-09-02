@@ -64,6 +64,21 @@ can use CSS, SVG, and ECharts instead.
 
 Do not generate material images unless the user explicitly requests them.
 
+## Opt-in AI slide backgrounds
+
+Startup clarification asks whether the user wants a dedicated AI background for
+every slide. The default remains the export-safe CSS/SVG path unless the user
+explicitly enables it.
+
+When enabled, `ppt_build_outline(generate_background_images=true)` runs
+`ppt_generate_background_images` after style + outline. It calls the configured
+framework `image_generator` once per page with a 16:9, no-text background prompt,
+writes `images/page_NNN_background.*`, publishes aligned `background_images`
+artifacts, and records `background_images.json`. Page HTML must use the exact
+file as the `#bg` CSS background; it remains separate from foreground Pool-B
+`material_images`. Provider failures are terminal and include the failing page
+and provider reason instead of silently falling back.
+
 ## Outline → HTML split
 
 - `build_outline`: **one call** `ppt_build_outline` → list slot `slide_outline`
@@ -115,9 +130,10 @@ rebuilding the deck:
 Whole-slide removal ("删掉第3页", "去掉封面") is different from deleting a bullet:
 
 1. `ppt_find_deck`
-2. `ppt_delete_page(deck_dir, page=N)` — updates outline/asset_plan, renumbers
-   later pages on disk, and removes the matching UI list items
-   (`slide_outline` / `preview_html` / `preview_notes`)
+2. `ppt_delete_page(deck_dir, page=N)` — updates outline/asset-plan/background
+   manifests, renumbers later pages on disk, and removes the matching UI list
+   items (`slide_outline` / `background_images` / `preview_html` /
+   `preview_notes`)
 
 Do not re-run outline/style or regenerate untouched pages after a delete.
 

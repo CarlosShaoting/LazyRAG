@@ -78,6 +78,20 @@ class StyleRenderingRecipeTest(unittest.TestCase):
         self.assertEqual(slide_count['choice_policy'], 'seed')
         self.assertEqual(slide_count['choices'], ['3 页', '5 页', '8 页', '10 页'])
 
+    def test_workflow_asks_for_explicit_ai_background_opt_in(self) -> None:
+        workflow_path = Path(__file__).resolve().parents[3] / 'workflow.yaml'
+        workflow = yaml.safe_load(workflow_path.read_text(encoding='utf-8'))
+        field = next(
+            item for item in workflow['runtime']['clarification_fields']
+            if item['id'] == 'generate_background_images'
+        )
+
+        self.assertEqual(field['type'], 'single')
+        self.assertEqual(len(field['choices']), 2)
+        self.assertTrue(field['choices'][0].startswith('启用'))
+        self.assertTrue(field['choices'][1].startswith('不启用'))
+        self.assertIn('background_images', workflow['runtime']['publisher_owned_slots'])
+
 
 class OutlineReferenceImageRepairTest(unittest.TestCase):
     def test_empty_image_pool_clears_hallucinated_binding_without_failing(self) -> None:
@@ -223,6 +237,41 @@ class PagePromptModeTest(unittest.TestCase):
         outline['pages'][0]['use_image'] = {'reference_image_index': 0}
         outline_path.write_text(json.dumps(outline, ensure_ascii=False), encoding='utf-8')
         return source
+
+    def _attach_background_image(self, deck: Path) -> str:
+        relative = 'images/page_001_background.png'
+        path = deck / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(base64.b64decode(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII='
+        ))
+        (deck / 'background_images.json').write_text(json.dumps({
+            'enabled': True,
+            'pages': [{'page_no': 1, 'local_path': relative}],
+        }), encoding='utf-8')
+        return relative
+
+    def test_generated_background_is_mandatory_in_page_css(self) -> None:
+        calls: list[tuple[str, str]] = []
+        html = """<!DOCTYPE html><html><head><style>
+        #bg{background-image:url('../images/page_001_background.png');background-size:cover}
+        </style></head><body><div class='wrapper'><div id='bg'></div><div id='ct'>完成</div></div></body></html>"""
+
+        def fake_llm(system: str, user: str, **_kwargs) -> str:
+            calls.append((system, user))
+            return html
+
+        with tempfile.TemporaryDirectory() as temp, patch.object(
+            run_stage, 'llm', side_effect=fake_llm,
+        ):
+            deck = self._deck(Path(temp))
+            relative = self._attach_background_image(deck)
+            self.assertEqual(run_stage.cmd_page_html(deck, 1), 0)
+            self.assertEqual(len(calls), 1)
+            self.assertIn('AI BACKGROUND IMAGE', calls[0][1])
+            self.assertIn('../images/page_001_background.png', calls[0][1])
+            rendered = (deck / 'pages' / 'page_001.html').read_text(encoding='utf-8')
+            self.assertTrue(run_stage._html_has_background_image(rendered, relative))
 
     def test_deterministic_mode_makes_one_model_call(self) -> None:
         html = "<!DOCTYPE html><html><head><title>快速生成</title></head><body><div class='wrapper'><div id='ct'>完成</div></div></body></html>"
