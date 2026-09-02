@@ -113,9 +113,11 @@ func TestModelCatalogIncludesWanVideoSuppliers(t *testing.T) {
 
 	expected := map[string]map[string]string{
 		"Qwen": {
-			"wan2.6-t2v":       "text2video",
-			"wan2.6-i2v":       "text2video",
-			"wan2.6-i2v-flash": "text2video",
+			"wan3.0-video":       "text2video",
+			"wan3.0-video-prime": "text2video",
+			"wan2.6-t2v":         "text2video",
+			"wan2.6-i2v":         "text2video",
+			"wan2.6-i2v-flash":   "text2video",
 		},
 		"SiliconFlow": {
 			"Wan-AI/Wan2.2-T2V-A14B": "text2video",
