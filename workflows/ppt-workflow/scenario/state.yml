@@ -97,14 +97,28 @@ steps:
 
       Save the result:
         save_artifact(key='requirement_analysis', content_type='text', value=<analysis>)
+        save_artifact(
+          key='ppt_capability_requirements',
+          content_type='text',
+          value='AI_BACKGROUND_IMAGES: enabled' if the startup answer enabled
+                per-slide AI backgrounds, otherwise
+                'AI_BACKGROUND_IMAGES: disabled',
+        )
 
-      Stop after saving. Do not call advance tools yourself.
+      Use exactly one of those two capability marker values. Do not add prose,
+      punctuation, Markdown, or any other capability to that hidden artifact.
+      After both artifacts are saved, Executor runs the deterministic model
+      capability check. Stop after saving. Do not call advance tools yourself.
     outputs:
       - material: requirement_analysis
+      - material: ppt_capability_requirements
     acceptance_criteria: |
       requirement_analysis must be saved and must cover goal, presentation
       topic, exact slide count, target customer/audience, communication tone,
       explicit visual constraints, structure, constraints, and assumptions.
+      ppt_capability_requirements must be exactly AI_BACKGROUND_IMAGES: enabled
+      or AI_BACKGROUND_IMAGES: disabled. Executor must run the configured
+      deterministic check exactly once before this Attempt can pass.
 
   collect_materials:
     label: Collect Materials

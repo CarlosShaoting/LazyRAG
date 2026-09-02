@@ -16,7 +16,8 @@ This workflow helps users create a multi-slide presentation using the
 Workflow:
 
 1. `analyze_requirements` — goal, audience, length, visual style, constraints,
-   and the user's explicit AI-background choice.
+   and the user's explicit AI-background choice. A deterministic post-step gate
+   checks the configured `image_generator` only when that choice is enabled.
 2. `collect_materials` — always runs after analysis; uses supplied KB first and
    calls web tools only for a concrete remaining gap; collects facts and may
    optionally register images (`ppt_search_web_images` +

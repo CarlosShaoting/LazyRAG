@@ -62,6 +62,7 @@ from lazymind.chat.service.utils.static_file_url import (
     _upload_root,
     local_path_from_static_file_url,
 )
+from lazymind.model_config import is_model_role_available
 
 _PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 # Vendored SenseNova runtime (not the full skills tree). See workflows/ppt-workflow/README.md.
@@ -91,6 +92,62 @@ _CANONICAL_SUBAGENT_ROOT = '/data/subagent'
 _run_stage_mod: Any = None
 _model_client_mod: Any = None
 _LOG = logging.getLogger(__name__)
+
+_PPT_BACKGROUND_CAPABILITY_RE = re.compile(
+    r'^AI_BACKGROUND_IMAGES:\s*(enabled|disabled)$',
+)
+
+
+def check_ppt_workflow_capabilities(capability_requirements: str) -> dict[str, Any]:
+    """Check the image model only when startup Ask enabled AI backgrounds."""
+    marker = str(capability_requirements or '').strip()
+    matched = _PPT_BACKGROUND_CAPABILITY_RE.fullmatch(marker)
+    if not matched:
+        raise ValueError(
+            'ppt_capability_requirements must be exactly '
+            'AI_BACKGROUND_IMAGES: enabled or AI_BACKGROUND_IMAGES: disabled'
+        )
+    enabled = matched.group(1) == 'enabled'
+    if not enabled:
+        return {
+            'status': 'ready',
+            'workflow': 'PPT',
+            'required': [],
+            'checks': [],
+            'missing': [],
+            'message': '未启用 AI 底图，无需检查文生图模型。',
+        }
+
+    available = bool(is_model_role_available('image_generator'))
+    check = {
+        'id': 'image_generator',
+        'label': '文生图模型',
+        'available': available,
+        'settings_url': '/settings?section=models',
+        'reason': (
+            '' if available else
+            '已启用 PPT AI 底图，但尚未配置可用的文生图模型。'
+        ),
+    }
+    missing = [] if available else [check]
+    payload = {
+        'status': 'ready' if available else 'blocked',
+        'workflow': 'PPT',
+        'required': ['image_generator'],
+        'checks': [check],
+        'missing': missing,
+        'message': (
+            'PPT AI 底图所需的文生图模型已配置，可以继续执行。'
+            if available else
+            '当前任务缺少文生图模型。请完成配置后重试当前工作流。'
+        ),
+    }
+    if missing:
+        raise ToolExecutionError(
+            'MEDIA_CAPABILITY_DEPENDENCY_MISSING '
+            + json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
+        )
+    return payload
 
 
 class _PPTModelTimeoutError(RuntimeError):

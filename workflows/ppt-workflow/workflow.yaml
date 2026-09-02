@@ -30,6 +30,11 @@ runtime:
     - preview_notes
   collects_knowledge: true
   completed_edit_step: generate_ppt
+  post_step_checks:
+    - step_id: analyze_requirements
+      tool: check_ppt_workflow_capabilities
+      arguments:
+        capability_requirements: ppt_capability_requirements
   clarification_fields:
     - id: topic
       label: 主题
@@ -88,6 +93,7 @@ tool_scripts:
       - ppt_register_material_images
       - ppt_generate_material_images
       - ppt_generate_background_images
+      - check_ppt_workflow_capabilities
       - ppt_attach_material_images
       - ppt_build_outline
       - ppt_generate_pages
@@ -129,6 +135,13 @@ slots:
     type: text
     cardinality: single
     summary_max_chars: 600
+
+  - id: ppt_capability_requirements
+    label: PPT Capability Requirements
+    type: text
+    cardinality: single
+    exposed: false
+    summary_max_chars: 80
 
   - id: uploaded_materials
     label: Uploaded Materials

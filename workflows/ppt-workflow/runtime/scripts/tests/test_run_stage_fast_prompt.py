@@ -99,6 +99,21 @@ class StyleRenderingRecipeTest(unittest.TestCase):
         self.assertEqual(state['steps']['build_outline']['mode'], 'human')
         self.assertEqual(state['steps']['generate_ppt']['mode'], 'human')
 
+    def test_analyze_runs_conditional_background_capability_gate(self) -> None:
+        workflow_path = Path(__file__).resolve().parents[3] / 'workflow.yaml'
+        workflow = yaml.safe_load(workflow_path.read_text(encoding='utf-8'))
+        checks = workflow['runtime']['post_step_checks']
+        slots = {slot['id']: slot for slot in workflow['slots']}
+
+        self.assertEqual(checks, [{
+            'step_id': 'analyze_requirements',
+            'tool': 'check_ppt_workflow_capabilities',
+            'arguments': {
+                'capability_requirements': 'ppt_capability_requirements',
+            },
+        }])
+        self.assertFalse(slots['ppt_capability_requirements']['exposed'])
+
 
 class OutlineReferenceImageRepairTest(unittest.TestCase):
     def test_empty_image_pool_clears_hallucinated_binding_without_failing(self) -> None:

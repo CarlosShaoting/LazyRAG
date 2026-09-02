@@ -92,5 +92,36 @@ class BackgroundImageGenerationTest(unittest.TestCase):
                     TOOLS.ppt_generate_background_images(str(deck))
 
 
+class PptCapabilityCheckTest(unittest.TestCase):
+    def test_disabled_backgrounds_skip_image_model_check(self) -> None:
+        with mock.patch.object(
+            TOOLS,
+            'is_model_role_available',
+            side_effect=AssertionError('disabled backgrounds must not inspect models'),
+        ):
+            result = TOOLS.check_ppt_workflow_capabilities(
+                'AI_BACKGROUND_IMAGES: disabled',
+            )
+
+        self.assertEqual(result['status'], 'ready')
+        self.assertEqual(result['required'], [])
+        self.assertEqual(result['checks'], [])
+
+    def test_enabled_backgrounds_return_settings_card_when_model_is_missing(self) -> None:
+        with mock.patch.object(
+            TOOLS, 'is_model_role_available', return_value=False,
+        ), self.assertRaisesRegex(
+            ToolExecutionError, 'MEDIA_CAPABILITY_DEPENDENCY_MISSING',
+        ) as captured:
+            TOOLS.check_ppt_workflow_capabilities(
+                'AI_BACKGROUND_IMAGES: enabled',
+            )
+
+        message = str(captured.exception)
+        self.assertIn('image_generator', message)
+        self.assertIn('/settings?section=models', message)
+        self.assertIn('尚未配置可用的文生图模型', message)
+
+
 if __name__ == '__main__':
     unittest.main()

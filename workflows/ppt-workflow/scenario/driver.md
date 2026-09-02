@@ -13,6 +13,12 @@ Allowed verdicts: PASS, RETRY, DONE, FAIL.
 
 - `requirement_analysis` is present and identifies goal, audience, slide count
   or inferred page count, tone/style, structure, and constraints -> PASS
+- `ppt_capability_requirements` must contain exactly one enabled/disabled marker.
+  After artifacts are saved, the Host must run `check_ppt_workflow_capabilities`
+  exactly once as a deterministic post-step check. When AI backgrounds are
+  enabled and no image generator is configured, the resulting
+  `MEDIA_CAPABILITY_DEPENDENCY_MISSING` failure is terminal and must expose the
+  model-settings jump card; do not advance to material collection.
 - Missing or too vague -> RETRY
 - 2 consecutive failures -> FAIL
 - After PASS, always advance to `collect_materials`. Never select
