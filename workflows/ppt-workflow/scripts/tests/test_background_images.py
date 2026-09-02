@@ -216,6 +216,25 @@ class BackgroundImageGenerationTest(unittest.TestCase):
                 ):
                     TOOLS.ppt_generate_background_images(str(deck))
 
+    def test_preview_inlines_local_css_background_for_srcdoc_and_export(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            deck = self._deck(Path(temp))
+            page = deck / 'pages/page_001.html'
+            page.parent.mkdir()
+            background = deck / 'images/page_001_background.png'
+            self._write_generated_image(background, (1280, 720))
+            html = (
+                '<html><head><style>'
+                '#bg{background-image:url("../images/page_001_background.png")}'
+                '</style></head><body><div id="bg"></div></body></html>'
+            )
+
+            public, inlined = TOOLS._inline_preview_images(html, deck, page)
+
+            self.assertEqual(inlined, 1)
+            self.assertIn('background-image:url("data:image/png;base64,', public)
+            self.assertNotIn('../images/page_001_background.png', public)
+
 
 class PptCapabilityCheckTest(unittest.TestCase):
     def test_disabled_backgrounds_skip_image_model_check(self) -> None:

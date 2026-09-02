@@ -650,9 +650,10 @@ export function buildBackground(bgIR, bodyBgColor, deckDir) {
   // 如果图片来自 <img> 子元素，CSS gradient 是 #bg 的独立背景，不作为 overlay
   if (imageUrl && overlayColor && imageFromCss) {
     const isRemoteUrl = /^https?:\/\//.test(imageUrl);
-    const imageExists = isRemoteUrl ? false : existsSync(imageUrl);
+    const isInlineImage = /^data:image\/[a-z0-9.+-]+;base64,/i.test(imageUrl);
+    const imageExists = isInlineImage || (!isRemoteUrl && existsSync(imageUrl));
     if (imageExists) {
-      result.slideBackground = { path: imageUrl };
+      result.slideBackground = isInlineImage ? { data: imageUrl } : { path: imageUrl };
       const transparency = Math.round((1 - overlayAlpha) * 100);
       result.bgElements.push({
         type: 'shape',
@@ -671,11 +672,12 @@ export function buildBackground(bgIR, bodyBgColor, deckDir) {
   if (imageUrl) {
     // 远程 URL（http/https）跳过，pptxgenjs 可能无法加载
     const isRemoteUrl = /^https?:\/\//.test(imageUrl);
-    const imageExists = isRemoteUrl ? false : existsSync(imageUrl);
+    const isInlineImage = /^data:image\/[a-z0-9.+-]+;base64,/i.test(imageUrl);
+    const imageExists = isInlineImage || (!isRemoteUrl && existsSync(imageUrl));
     if (imageExists) {
       if (bgOpacity >= 1) {
         // 完全不透明：直接设为 slide 背景图
-        result.slideBackground = { path: imageUrl };
+        result.slideBackground = isInlineImage ? { data: imageUrl } : { path: imageUrl };
         // filter: brightness() → 黑色半透明遮罩模拟暗化效果
         const brightness = parseBrightness(imgChildFilter || bgIR.styles?.filter);
         if (brightness !== null && brightness < 1) {
@@ -691,7 +693,7 @@ export function buildBackground(bgIR, bodyBgColor, deckDir) {
       } else {
         // opacity < 1：图片作为 slide 背景，叠加 body 底色的半透明遮罩
         // transparency = bgOpacity * 100 → 遮罩 (1-bgOpacity) 不透明，透过 bgOpacity 的图片
-        result.slideBackground = { path: imageUrl };
+        result.slideBackground = isInlineImage ? { data: imageUrl } : { path: imageUrl };
         const baseHex = bodyHex || 'FFFFFF';
         const transparency = Math.round(bgOpacity * 100);
         result.bgElements.push({
@@ -2087,7 +2089,7 @@ export function buildSlideFromIR(pptx, ir, deckDir) {
       // underlay so body chrome (#1a1a1a) cannot stick when #bg resolved a
       // better color — D-ii gradient shapes still paint on top when present.
       if (bgResult.slideBackground) {
-        if (bgResult.slideBackground.path) {
+        if (bgResult.slideBackground.path || bgResult.slideBackground.data) {
           slide.background = bgResult.slideBackground;
           bgApplied = true;
         } else if (bgResult.slideBackground.fill

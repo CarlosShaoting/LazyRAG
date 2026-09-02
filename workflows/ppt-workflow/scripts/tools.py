@@ -1055,22 +1055,19 @@ def _inline_preview_images(html: str, deck: Path, html_path: Path) -> tuple[str,
 
     The on-disk page intentionally keeps ``../images/...`` references for PPTX
     export.  A ``srcDoc`` iframe has no deck-directory base URL, however, so the
-    artifact copy must carry local images as data URLs.
+    artifact copy must carry local ``<img>`` and CSS ``url(...)`` images as data
+    URLs. The latter is required for generated ``#bg`` slide backgrounds.
     """
     deck_root = deck.resolve()
     page_root = html_path.parent.resolve()
     inlined = 0
-    pattern = re.compile(
-        r'(<img\b[^>]*?\bsrc\s*=\s*)(["\'])(.*?)(\2)',
-        re.IGNORECASE,
-    )
 
-    def _replace(match: re.Match) -> str:
+    def _data_uri(src: str) -> Optional[str]:
         nonlocal inlined
-        src = (match.group(3) or '').strip()
-        if not src or src.startswith(('data:', 'http://', 'https://', '//')):
-            return match.group(0)
-        clean_path = src.split('#', 1)[0].split('?', 1)[0]
+        value = (src or '').strip()
+        if not value or value.startswith(('data:', 'http://', 'https://', '//', '#')):
+            return None
+        clean_path = value.split('#', 1)[0].split('?', 1)[0]
         candidate = Path(clean_path)
         if not candidate.is_absolute():
             candidate = page_root / candidate
@@ -1078,19 +1075,43 @@ def _inline_preview_images(html: str, deck: Path, html_path: Path) -> tuple[str,
             candidate = candidate.resolve()
             candidate.relative_to(deck_root)
         except (OSError, ValueError):
-            return match.group(0)
+            return None
         mime = _PREVIEW_IMAGE_MIME.get(candidate.suffix.lower())
         if not mime or not candidate.is_file():
-            return match.group(0)
+            return None
         try:
             payload = base64.b64encode(candidate.read_bytes()).decode('ascii')
         except OSError:
-            return match.group(0)
+            return None
         inlined += 1
-        quote = match.group(2)
-        return f'{match.group(1)}{quote}data:{mime};base64,{payload}{quote}'
+        return f'data:{mime};base64,{payload}'
 
-    return pattern.sub(_replace, html), inlined
+    img_pattern = re.compile(
+        r'(<img\b[^>]*?\bsrc\s*=\s*)(["\'])(.*?)(\2)',
+        re.IGNORECASE,
+    )
+
+    def _replace_img(match: re.Match) -> str:
+        data_uri = _data_uri(match.group(3))
+        if not data_uri:
+            return match.group(0)
+        quote = match.group(2)
+        return f'{match.group(1)}{quote}{data_uri}{quote}'
+
+    html = img_pattern.sub(_replace_img, html)
+    css_pattern = re.compile(
+        r'(url\(\s*)(["\']?)([^"\')]+)(\2)(\s*\))',
+        re.IGNORECASE,
+    )
+
+    def _replace_css(match: re.Match) -> str:
+        data_uri = _data_uri(match.group(3))
+        if not data_uri:
+            return match.group(0)
+        quote = match.group(2)
+        return f'{match.group(1)}{quote}{data_uri}{quote}{match.group(5)}'
+
+    return css_pattern.sub(_replace_css, html), inlined
 
 
 def _publish_one_page(
