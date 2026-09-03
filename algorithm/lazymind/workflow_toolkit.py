@@ -262,7 +262,9 @@ class HostWorkflowToolkit:
             'next_action': {
                 'tool': 'advance_step',
                 'instruction': (
-                    'Call advance_step with exact returned ready step ids. The Host injects '
+                    'Call advance_step with exactly one returned Ready step ID. Never batch '
+                    'multiple IDs or start Workflow SubAgents in parallel. Wait for its '
+                    'terminal result before selecting another Ready step. The Host injects '
                     'session, state version, and command identity; do not provide them.'
                 ),
             },
@@ -387,9 +389,11 @@ class HostWorkflowToolkit:
                 'instruction': (
                     'Workflow is complete; summarize the final result to the user.'
                     if completed else
-                    'Continue in this same ChatAgent turn by selecting exact IDs from the '
-                    'returned ready_steps. Stop only for a terminal state, required user input, '
-                    'explicit user boundary, or a failed step decision. If the next Ready '
+                    'Continue in this same ChatAgent turn by selecting exactly one ID from the '
+                    'returned ready_steps. Never batch IDs or start Workflow SubAgents in '
+                    'parallel; wait for each terminal result before selecting the next step. '
+                    'Stop only for a terminal state, required user input, explicit user '
+                    'boundary, or a failed step decision. If the next Ready '
                     'Workflow step requires human approval, execute it with advance_step_and_hand_off; '
                     'approval happens after that step runs, for its result, so do not ask whether '
                     'to execute the step.'

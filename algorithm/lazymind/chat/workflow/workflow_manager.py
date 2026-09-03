@@ -24,6 +24,15 @@ from lazymind.workflow_toolkit import (
 
 LOG = logging.getLogger(__name__)
 
+_SERIAL_WORKFLOW_EXECUTION_POLICY = (
+    'Workflow SubAgent execution is strictly serial. Never issue more than one Workflow '
+    'execution tool call in the same assistant tool-call batch, and never call Workflow '
+    'execution tools in parallel. Pass exactly one step_id in each '
+    'advance_step(step_ids=[...]) call even when Runtime returns multiple ready_steps. '
+    'Wait for that call to return a terminal result, then use its refreshed frontier before '
+    'starting the next Workflow SubAgent. '
+)
+
 
 @dataclass
 class WorkflowAgentContribution:
@@ -294,7 +303,7 @@ def _safe_session_tools(
         return toolkit.get_ready_steps(session_id())
 
     def advance_step(step_ids: List[str]) -> Dict[str, Any]:
-        """Execute exact Runtime-returned target IDs; Host injects version and commands."""
+        """Execute exactly one Runtime-returned target; never batch or parallelize steps."""
         requested = [str(value).strip() for value in step_ids if str(value).strip()]
         selected_session_id = session_id()
         state_refreshed = False
@@ -1485,8 +1494,10 @@ def resolve_workflow_injection(
         runtime_context = (
             '## Workflow Runtime [AUTHORITATIVE]\n'
             + 'The Host owns session/version concurrency fields. Never ask the user for '
-            + 'state_version or expected_state_version. If a Workflow tool returns '
-            + 'user_notice, explicitly relay that notice to the user. advance_step waits for '
+            + 'state_version or expected_state_version. '
+            + _SERIAL_WORKFLOW_EXECUTION_POLICY
+            + 'If a Workflow tool returns user_notice, explicitly relay that notice to the '
+            + 'user. advance_step waits for '
             + 'terminal execution. A failed result never means success and never permits a '
             + 'downstream advance. You may decide to retry only an exact retryable_steps ID; '
             + 'Runtime enforces the finite AI automatic-retry budget. User-requested retries '
@@ -1540,7 +1551,9 @@ def resolve_workflow_injection(
             + '\n'.join(activation_prompts) + '\n'
             + 'A Workflow is an executable, versioned procedure, not a document to search, '
             + 'summarize, or merely describe. The @workflow mention means the user explicitly '
-            + 'selected and authorized this exact procedure. ' + entry_instruction
+            + 'selected and authorized this exact procedure. '
+            + _SERIAL_WORKFLOW_EXECUTION_POLICY
+            + entry_instruction
             + 'Conversation attachments are optional unless the selected Workflow Runtime '
             + 'explicitly returns a required-input result. Never infer that an upload is '
             + 'required merely because the Workflow supports uploaded materials. A non-empty '

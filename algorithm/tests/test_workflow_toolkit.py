@@ -170,6 +170,9 @@ def test_advance_step_success_directs_same_turn_continuation():
     assert result['ready_steps'] == ['script']
     assert result['next_action']['tool'] == 'advance_step'
     assert 'same ChatAgent turn' in result['next_action']['instruction']
+    assert 'exactly one ID' in result['next_action']['instruction']
+    assert 'in parallel' in result['next_action']['instruction']
+    assert 'terminal result' in result['next_action']['instruction']
 
 
 def test_advance_step_completion_stops_continuation():
@@ -205,6 +208,9 @@ def test_chat_prepare_starts_session_and_returns_authoritative_ready_frontier():
     assert result['session_id'] == 'server-session'
     assert result['ready_steps'] == ['prompt']
     assert result['next_action']['tool'] == 'advance_step'
+    assert 'exactly one returned Ready step ID' in result['next_action']['instruction']
+    assert 'in parallel' in result['next_action']['instruction']
+    assert 'terminal result' in result['next_action']['instruction']
     client.start_workflow.assert_called_once_with(
         'preparation-1', '', command_id='',
     )

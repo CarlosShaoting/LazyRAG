@@ -75,6 +75,9 @@ def test_mentioned_workflow_is_injected_as_authoritative_selection():
     assert 'revision-1' in contribution.runtime_context
     assert '"current_query": "run it now"' in contribution.runtime_context
     assert 'do not ask for a second trigger message' in contribution.runtime_context
+    assert 'Workflow SubAgent execution is strictly serial' in contribution.runtime_context
+    assert 'never call Workflow execution tools in parallel' in contribution.runtime_context
+    assert 'exactly one step_id' in contribution.runtime_context
     assert _tool(contribution, 'trigger_image_workflow').__doc__.startswith(
         "Load the exact 'AI image generation' Workflow"
     )
@@ -961,6 +964,10 @@ def test_existing_session_tools_inject_protocol_and_concurrency_fields():
         )
 
     advance = _tool(contribution, 'advance_step')
+    assert 'exactly one Runtime-returned target' in advance.__doc__
+    assert 'Workflow SubAgent execution is strictly serial' in contribution.runtime_context
+    assert 'never call Workflow execution tools in parallel' in contribution.runtime_context
+    assert 'exactly one step_id' in contribution.runtime_context
     assert list(inspect.signature(advance).parameters) == ['step_ids']
     assert list(inspect.signature(_tool(contribution, 'get_workflow_state')).parameters) == []
     assert advance(['draft']) == {'status': 'succeeded'}
