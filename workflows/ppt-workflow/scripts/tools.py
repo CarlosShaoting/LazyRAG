@@ -3985,7 +3985,7 @@ def _save_ppt_background(src: Path, dest: Path) -> tuple[int, int]:
 
 
 def ppt_generate_background_images(
-    deck_dir: str,
+    deck_dir: Optional[str] = None,
     prompts_json: Union[str, list, None] = None,
     pages_json: Union[str, list, int, None] = None,
     replace: Union[bool, str, None] = False,
@@ -3998,7 +3998,9 @@ def ppt_generate_background_images(
     consumed by page-html as ``#bg`` CSS background images.
 
     Args:
-        deck_dir (str): Absolute deck directory from ppt_build_outline.
+        deck_dir (str): Optional absolute deck directory from ppt_build_outline.
+            When omitted or invalid, the current conversation's newest valid
+            deck is discovered automatically.
         prompts_json (str): Approved prompt objects with page_no and prompt.
         pages_json (str): Optional page-number array for targeted regeneration.
         replace (bool): Regenerate selected existing backgrounds when true.
@@ -4010,10 +4012,31 @@ def ppt_generate_background_images(
         Per-page background paths and publication counts. Any model failure is
         raised with its page number and exact provider reason.
     """
-    try:
-        deck = _resolve_deck_dir(deck_dir)
-    except FileNotFoundError as exc:
-        return _tool_error('ppt_generate_background_images', str(exc))
+    requested_deck = _coerce_str(deck_dir)
+    deck: Optional[Path] = None
+    resolution = 'provided'
+    invalid_reason = ''
+    if requested_deck:
+        try:
+            deck = _resolve_deck_dir(requested_deck)
+        except FileNotFoundError as exc:
+            invalid_reason = str(exc)
+    if deck is None:
+        found = ppt_find_deck()
+        if _tool_failed(found):
+            reason = _tool_fail_reason(found) or 'no current conversation deck'
+            if invalid_reason:
+                reason = f'{invalid_reason}; automatic deck lookup also failed: {reason}'
+            return _tool_error('ppt_generate_background_images', reason)
+        discovered = _coerce_str(_tool_payload(found).get('deck_dir'))
+        try:
+            deck = _resolve_deck_dir(discovered)
+        except FileNotFoundError as exc:
+            return _tool_error(
+                'ppt_generate_background_images',
+                f'automatically discovered deck is invalid: {exc}',
+            )
+        resolution = 'fallback' if requested_deck else 'discovered'
     try:
         prompt_items = _parse_background_prompt_items(prompts_json)
         selected_pages = _parse_page_selection(pages_json)
@@ -4192,6 +4215,7 @@ def ppt_generate_background_images(
         )
     return _tool_success('ppt_generate_background_images', {
         'deck_dir': str(deck.resolve()),
+        'deck_resolution': resolution,
         'manifest_path': str(manifest_path.resolve()),
         'count': len(ordered_output),
         'target_count': len(targets),
