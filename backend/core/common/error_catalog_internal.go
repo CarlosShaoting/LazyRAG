@@ -5,6 +5,10 @@ package common
 import "net/http"
 
 func init() {
+	registerAdditionalErrorAlias("invalid chat model selection", "Invalid request", http.StatusBadRequest, 2000103)
+	registerAdditionalErrorAlias("conversation model selection changed", "Conflict", http.StatusConflict, 2000107)
+	registerAdditionalErrorAlias("conversation is busy", "Conflict", http.StatusConflict, 2000107)
+	registerAdditionalErrorAlias("save conversation model failed", "Internal server error", http.StatusInternalServerError, 2000000)
 	registerAdditionalErrorPattern("%w; fallback parser chunks failed", "Primary and fallback document parsing failed", http.StatusInternalServerError, 2001601)
 	registerAdditionalError("acl_db_dsn is empty", http.StatusInternalServerError, 2001602)
 	registerAdditionalError("active plugin session already exists for conversation", http.StatusConflict, 2001603)
@@ -545,6 +549,7 @@ func init() {
 		registerAdditionalErrorAlias(source, "Upstream service error", http.StatusBadGateway, 2000110)
 	}
 	registerAdditionalErrorPattern("chat service returned status %d", "Upstream service error", http.StatusBadGateway, 2000110)
+	registerAdditionalErrorAlias("record chat cancellation failed", "Upstream service error", http.StatusServiceUnavailable, 2000110)
 	registerAdditionalErrorPattern("migrate model provider credential %s", "Internal server error", http.StatusInternalServerError, 2000000)
 	registerAdditionalErrorPattern("load workflow head revision %s", "Internal server error", http.StatusInternalServerError, 2000000)
 	registerAdditionalErrorPattern("session_ids must belong to user %q and must not contain plugin conversations", "Invalid request", http.StatusBadRequest, 2000103)
@@ -590,6 +595,7 @@ func init() {
 		"invalid run_finished data",
 		"run_finished partial_output is required",
 		"run_finished partial_output must be boolean",
+		"run_finished model_invoked must be boolean",
 		"run_finished code must be a string",
 		"invalid run status/reason combination",
 	} {

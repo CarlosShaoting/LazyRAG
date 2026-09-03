@@ -45,8 +45,10 @@ import {
   preserveProviderRetryAfterReconciliation,
   recoveryActionAfterFailure,
   recoveryDelayForAttempt,
+  removeTrailingEmptyAssistantPlaceholder,
   StreamRecoveryRegistry,
   STREAM_RECOVERY_MAX_ATTEMPTS,
+  STREAM_RECOVERY_SUCCESS_DURATION_MS,
   type StreamRecoveryEntry,
   type StreamRecoveryViewState,
 } from "@/modules/chat/utils/streamRecovery";
@@ -56,6 +58,10 @@ import {
 } from "@/modules/chat/utils/mediaCapabilityDependency";
 import { useTaskCenterStore } from "@/modules/chat/store/taskCenter";
 import { useWorkflowStore } from "@/modules/chat/store/workflowPanel";
+import {
+  applyChatStreamFailure,
+  parseCoreChatStreamError,
+} from "@/modules/chat/utils/chatStreamError";
 
 type UserEditApi = ReturnType<typeof useUserMessageEdit>;
 type RuntimeWaitingOperation = "chat" | "workflow";
@@ -72,6 +78,9 @@ interface UseChatConversationOptions {
   chatInputRef: RefObject<ChatInputImperativeProps>;
   thinkingCollapseMap: Map<string, boolean>;
   getUserEdit: () => UserEditApi | undefined;
+  isModelSelectionSaving?: () => boolean;
+  concurrentStream?: boolean;
+  onRequestPendingChange?: (pending: boolean) => void;
   t: (key: string) => string;
 }
 
@@ -87,6 +96,9 @@ export function useChatConversation({
   chatInputRef,
   thinkingCollapseMap,
   getUserEdit,
+  isModelSelectionSaving,
+  concurrentStream = false,
+  onRequestPendingChange,
   t,
 }: UseChatConversationOptions) {
   const navigate = useNavigate();
@@ -103,7 +115,12 @@ export function useChatConversation({
   const mediaCapabilityPromptSignaturesRef = useRef<Set<string>>(new Set());
   const runtimeWaitAbortRef = useRef<AbortController | null>(null);
   const runtimeWaitInProgressRef = useRef(false);
+  const regenerateInProgressRef = useRef(false);
+  const pendingClientConversationIdRef = useRef("");
   const streamRecoveryRegistryRef = useRef(new StreamRecoveryRegistry());
+  const streamRecoverySuccessTimerRef = useRef<
+    ReturnType<typeof setTimeout> | null
+  >(null);
 
   const [messageList, setMessageList] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -260,6 +277,10 @@ export function useChatConversation({
         }
       }
       streamRecoveryRegistryRef.current.clearAll();
+      if (streamRecoverySuccessTimerRef.current) {
+        clearTimeout(streamRecoverySuccessTimerRef.current);
+        streamRecoverySuccessTimerRef.current = null;
+      }
 
       streamManager.cleanupFinishedStreams();
       conversationMessagesCache.current.clear();
@@ -268,7 +289,9 @@ export function useChatConversation({
         if (streamManager.hasActiveStream(currentConversationIdRef.current)) {
           disconnectConversationStream(currentConversationIdRef.current);
         }
-        streamManager.setActiveConversation(null);
+        if (!concurrentStream) {
+          streamManager.setActiveConversation(null);
+        }
       }
     };
   }, []);
@@ -399,8 +422,61 @@ export function useChatConversation({
   function clearStreamRecovery(conversationId: string) {
     streamRecoveryRegistryRef.current.clear(conversationId);
     if (currentConversationIdRef.current === conversationId) {
+      if (streamRecoverySuccessTimerRef.current) {
+        clearTimeout(streamRecoverySuccessTimerRef.current);
+        streamRecoverySuccessTimerRef.current = null;
+      }
       setStreamRecovery(idleStreamRecoveryState(conversationId));
     }
+  }
+
+  function settleStreamRecoveryFromMessage(
+    sourceConversationIds: string[],
+    visibleConversationId: string,
+    continuesGenerating: boolean,
+  ) {
+    let recoveredAttempt: number | undefined;
+    for (const conversationId of new Set(sourceConversationIds.filter(Boolean))) {
+      const entry = streamRecoveryRegistryRef.current.get(conversationId);
+      if (entry?.status === "resuming") {
+        recoveredAttempt = Math.max(recoveredAttempt ?? 0, entry.attempt);
+      }
+      streamRecoveryRegistryRef.current.clear(conversationId);
+    }
+    if (
+      recoveredAttempt === undefined ||
+      currentConversationIdRef.current !== visibleConversationId
+    ) {
+      return;
+    }
+
+    if (streamRecoverySuccessTimerRef.current) {
+      clearTimeout(streamRecoverySuccessTimerRef.current);
+      streamRecoverySuccessTimerRef.current = null;
+    }
+    if (!continuesGenerating) {
+      setStreamRecovery(idleStreamRecoveryState(visibleConversationId));
+      return;
+    }
+
+    setStreamRecovery({
+      conversationId: visibleConversationId,
+      status: "recovered",
+      attempt: recoveredAttempt,
+      maxAttempts: STREAM_RECOVERY_MAX_ATTEMPTS,
+    });
+    streamRecoverySuccessTimerRef.current = setTimeout(() => {
+      streamRecoverySuccessTimerRef.current = null;
+      if (currentConversationIdRef.current !== visibleConversationId) {
+        return;
+      }
+      setStreamRecovery((current) =>
+        current.conversationId === visibleConversationId &&
+        current.status === "recovered"
+          ? idleStreamRecoveryState(visibleConversationId)
+          : current,
+      );
+    }, STREAM_RECOVERY_SUCCESS_DURATION_MS);
   }
 
   function conversationHasAuthoritativeTerminal(conversationId: string) {
@@ -516,8 +592,65 @@ export function useChatConversation({
     }
     entry.status = "failed";
     entry.attempt = STREAM_RECOVERY_MAX_ATTEMPTS;
+    const sourceList =
+      currentConversationIdRef.current === conversationId
+        ? messageListRef.current
+        : (conversationMessagesCache.current.get(conversationId) ?? []);
+    const preservedList = removeTrailingEmptyAssistantPlaceholder(
+      sourceList,
+      RoleTypes.ASSISTANT,
+    );
+    if (preservedList !== sourceList) {
+      conversationMessagesCache.current.set(conversationId, preservedList);
+      streamManager.saveMessageList(conversationId, preservedList);
+      if (currentConversationIdRef.current === conversationId) {
+        messageListRef.current = preservedList;
+        setMessageList(preservedList);
+      }
+    }
     updateVisibleRecovery(conversationId, entry);
     stopStreamAfterReconciliation(conversationId);
+  }
+
+  function markStructuredChatFailure(
+    conversationId: string,
+    semanticCode: string,
+  ) {
+    clearStreamRecovery(conversationId);
+    const sourceList =
+      currentConversationIdRef.current === conversationId
+        ? messageListRef.current
+        : (conversationMessagesCache.current.get(conversationId) ?? []);
+    const failedList = applyChatStreamFailure(
+      sourceList,
+      RoleTypes.ASSISTANT,
+      semanticCode,
+    );
+    if (conversationId) {
+      conversationMessagesCache.current.set(conversationId, failedList);
+      streamManager.saveMessageList(conversationId, failedList);
+    }
+    if (currentConversationIdRef.current === conversationId) {
+      messageListRef.current = failedList;
+      setMessageList(failedList);
+    }
+    if (conversationId) {
+      stopStreamAfterReconciliation(conversationId);
+    } else {
+      closeSSE();
+    }
+  }
+
+  function confirmPendingClientConversation(conversationId: string) {
+    if (
+      !conversationId ||
+      pendingClientConversationIdRef.current !== conversationId
+    ) {
+      return false;
+    }
+    pendingClientConversationIdRef.current = "";
+    onConversationIdChange?.(conversationId);
+    return true;
   }
 
   function scheduleStreamRecovery(conversationId: string) {
@@ -606,6 +739,20 @@ export function useChatConversation({
     }
 
     if (errorConversationId) {
+      const mappedError = parseCoreChatStreamError(
+        (e as any).data,
+        (e as any).status,
+      );
+      if (mappedError) {
+        confirmPendingClientConversation(errorConversationId);
+        if (!conversationHasAuthoritativeTerminal(errorConversationId)) {
+          markStructuredChatFailure(
+            errorConversationId,
+            mappedError.semanticCode,
+          );
+          return;
+        }
+      }
       streamManager.removeStreamEntry(errorConversationId);
       void handleStreamRecoveryFailure(
         errorConversationId,
@@ -640,12 +787,17 @@ export function useChatConversation({
 
     const messageConversationId = result.conversation_id || "";
     const currentConversationIdAtStart = currentConversationIdRef.current;
-    clearStreamRecovery(currentConversationIdAtStart);
+    const pendingClientConversationId = pendingClientConversationIdRef.current;
     if (
+      pendingClientConversationId &&
       messageConversationId &&
-      messageConversationId !== currentConversationIdAtStart
+      messageConversationId !== pendingClientConversationId
     ) {
-      clearStreamRecovery(messageConversationId);
+      markStructuredChatFailure(
+        pendingClientConversationId,
+        "protocol_error",
+      );
+      return;
     }
     const isUsingTempId = currentConversationIdAtStart.startsWith("temp_");
     const isActiveConversation =
@@ -655,11 +807,14 @@ export function useChatConversation({
 
     const isFirstTimeReceivingId =
       result.conversation_id &&
-      result.conversation_id !== currentConversationIdRef.current &&
-      isActiveConversation;
+      isActiveConversation &&
+      (result.conversation_id !== currentConversationIdRef.current ||
+        result.conversation_id === pendingClientConversationId);
 
     if (isFirstTimeReceivingId) {
-      onConversationIdChange?.(result.conversation_id);
+      if (!confirmPendingClientConversation(result.conversation_id)) {
+        onConversationIdChange?.(result.conversation_id);
+      }
 
       const previousConversationId = currentConversationIdRef.current;
       const isPreviousTempId = previousConversationId.startsWith("temp_");
@@ -672,7 +827,9 @@ export function useChatConversation({
         );
 
         currentConversationIdRef.current = result.conversation_id;
-        streamManager.setActiveConversation(result.conversation_id);
+        if (!concurrentStream) {
+          streamManager.setActiveConversation(result.conversation_id);
+        }
 
         if (sseRef.current) {
           const tempStream = streamManager.getStream(previousConversationId);
@@ -711,7 +868,8 @@ export function useChatConversation({
             result.conversation_id,
             sseRef.current,
             streamCallbacks,
-            e,
+            event,
+            { allowConcurrent: concurrentStream },
           );
 
           const cachedList = conversationMessagesCache.current.get(
@@ -764,6 +922,15 @@ export function useChatConversation({
           messageConversationId || currentConversationIdAtStart,
         )
       : undefined;
+    const recoveredIntoTerminalFailure = Boolean(
+      runTerminal &&
+        ["failed", "interrupted", "cancelled"].includes(runTerminal.status),
+    );
+    settleStreamRecoveryFromMessage(
+      [currentConversationIdAtStart, messageConversationId],
+      messageConversationId || currentConversationIdAtStart,
+      !allRunsFinished && !recoveredIntoTerminalFailure,
+    );
 
     if (
       isActiveConversation &&
@@ -891,6 +1058,10 @@ export function useChatConversation({
       assistantMessage = {
         ...assistantMessage,
         ...result,
+        // Raw upstream/provider diagnostics must remain server-side only.
+        errMessage: undefined,
+        error_message: undefined,
+        provider_raw_error: undefined,
         model_retry: scheduledRetry ??
           (clearsRetry ? undefined : assistantMessage.model_retry),
         run_terminal: finalRunTerminal || assistantMessage.run_terminal,
@@ -946,21 +1117,29 @@ export function useChatConversation({
     action: ChatConversationsRequestActionEnum,
     extras?: Record<string, unknown>,
   ) => {
-    const operation = extras?.run_in_background === true ? "workflow" : "chat";
-    if (!(await waitForChatRuntime(operation))) {
-      return false;
-    }
-
-    activeStreamRef.current = true;
-    setLoading(true);
-    setIsStreaming(true);
-
     let conversationId = currentConversationIdRef.current;
     if (!conversationId) {
       conversationId = `temp_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
       currentConversationIdRef.current = conversationId;
     }
     clearStreamRecovery(conversationId);
+    onRequestPendingChange?.(true);
+
+    const operation = extras?.run_in_background === true ? "workflow" : "chat";
+    if (!(await waitForChatRuntime(operation))) {
+      if (action === ChatConversationsRequestActionEnum.ChatActionNext) {
+        markStructuredChatFailure(
+          conversationId,
+          "service_unavailable",
+        );
+      }
+      onRequestPendingChange?.(false);
+      return false;
+    }
+
+    activeStreamRef.current = true;
+    setLoading(true);
+    setIsStreaming(true);
 
     const callbacks: Record<string, (e: CustomEvent) => void> = {
       message: (e) => onMessage(e),
@@ -970,41 +1149,42 @@ export function useChatConversation({
 
     let sse: any;
     try {
-      const sseOrPromise = onOpenSSE(input, action, {}, extras);
+      const requestExtras = {
+        ...extras,
+        __prepareClientConversationId: (preparedId: unknown) => {
+          if (typeof preparedId !== "string" || !preparedId.trim()) {
+            return;
+          }
+          const normalizedId = preparedId.trim();
+          conversationId = normalizedId;
+          currentConversationIdRef.current = normalizedId;
+          pendingClientConversationIdRef.current = normalizedId;
+        },
+      };
+      const sseOrPromise = onOpenSSE(input, action, {}, requestExtras);
       sse =
         sseOrPromise instanceof Promise ? await sseOrPromise : sseOrPromise;
       sseRef.current = sse;
 
-      streamManager.registerStream(conversationId, sse, callbacks);
-      streamManager.setActiveConversation(conversationId);
+      streamManager.registerStream(conversationId, sse, callbacks, undefined, {
+        allowConcurrent: concurrentStream,
+      });
+      if (!concurrentStream) {
+        streamManager.setActiveConversation(conversationId);
+      }
 
       const currentList = messageListRef.current;
       conversationMessagesCache.current.set(conversationId, currentList);
       streamManager.saveMessageList(conversationId, currentList);
     } catch (error) {
       console.error("Failed to open chat SSE:", error);
-      rollbackFailedStreamOpen(conversationId, sse);
+      if (action === ChatConversationsRequestActionEnum.ChatActionNext) {
+        markStructuredChatFailure(conversationId, "transport_error");
+      } else {
+        rollbackFailedStreamOpen(conversationId, sse);
+      }
+      onRequestPendingChange?.(false);
       return false;
-    }
-
-    if (conversationId.startsWith("temp_")) {
-      const tempId = conversationId;
-      setTimeout(() => {
-        ChatServiceApi()
-          .conversationServiceListConversations({
-            pageToken: "",
-            pageSize: 5,
-          })
-          .then((res) => {
-            const conversations = res?.data?.conversations ?? [];
-            const latest = conversations[0];
-            const realId = latest?.conversation_id;
-            if (!realId) return;
-            if (currentConversationIdRef.current !== tempId) return;
-            onConversationIdChange?.(realId);
-          })
-          .catch(() => {});
-      }, 400);
     }
     return true;
   };
@@ -1056,10 +1236,12 @@ export function useChatConversation({
     if (!onOpenResumeSSE) {
       return false;
     }
+    onRequestPendingChange?.(true);
     if (!(await waitForChatRuntime())) {
       if (!isRecoveryCycle) {
         void handleStreamRecoveryFailure(conversationId, 0);
       }
+      onRequestPendingChange?.(false);
       return false;
     }
     if (streamManager.hasActiveStream(conversationId)) {
@@ -1091,8 +1273,12 @@ export function useChatConversation({
         sseOrPromise instanceof Promise ? await sseOrPromise : sseOrPromise;
       sseRef.current = sse;
 
-      streamManager.registerStream(conversationId, sse, callbacks);
-      streamManager.setActiveConversation(conversationId);
+      streamManager.registerStream(conversationId, sse, callbacks, undefined, {
+        allowConcurrent: concurrentStream,
+      });
+      if (!concurrentStream) {
+        streamManager.setActiveConversation(conversationId);
+      }
       const currentList = messageListRef.current;
       conversationMessagesCache.current.set(conversationId, currentList);
       streamManager.saveMessageList(conversationId, currentList);
@@ -1103,6 +1289,7 @@ export function useChatConversation({
       if (!isRecoveryCycle) {
         void handleStreamRecoveryFailure(conversationId, 0);
       }
+      onRequestPendingChange?.(false);
       return false;
     }
   }
@@ -1224,11 +1411,11 @@ export function useChatConversation({
       activeStreamRef.current ||
       runtimeWaitInProgressRef.current ||
       loading ||
+      isModelSelectionSaving?.() ||
       !normalizedText
     ) {
       return;
     }
-    const previousMessageList = messageListRef.current;
     const normalizedCiteMessages =
       paramsCiteMessages
         ?.map((item) => item.trim())
@@ -1240,15 +1427,16 @@ export function useChatConversation({
       normalizedCiteMessages,
     );
 
-    if (params?.fileList) {
-      setFileList(params.fileList);
+    const submittedFileList = params.fileList ?? fileList;
+    if (params.fileList) {
+      setFileList(submittedFileList);
     }
     if (params?.fileListRef) {
       fileRef.current = params.fileListRef.current;
     }
 
     const tempGroup =
-      Object.groupBy(params?.fileList ?? [], (item) => {
+      Object.groupBy(submittedFileList, (item) => {
         const name = item.name ?? "";
         const suffix = name.substring(name.lastIndexOf(".")).toLowerCase();
         return allowedImageTypes.includes(suffix) ? "image" : "file";
@@ -1289,7 +1477,7 @@ export function useChatConversation({
       role: RoleTypes.USER,
       images: tempGroup?.image,
       files: tempGroup?.file,
-      fileList,
+      fileList: submittedFileList,
       inputs,
       finish_reason: ChatConversationsResponseFinishReasonEnum.FinishReasonStop,
       create_time,
@@ -1332,14 +1520,20 @@ export function useChatConversation({
               ),
             }
           : {}),
+        ...(params.ask_answers_structured
+          ? { ask_answers_structured: params.ask_answers_structured }
+          : {}),
+        ...(params.mail_draft_confirm_id
+          ? { mail_draft_confirm_id: params.mail_draft_confirm_id }
+          : {}),
+        ...(typeof params.mail_draft_confirm_revision === "number" &&
+        Number.isFinite(params.mail_draft_confirm_revision) &&
+        params.mail_draft_confirm_revision > 0
+          ? { mail_draft_confirm_revision: params.mail_draft_confirm_revision }
+          : {}),
       },
     );
     if (!opened) {
-      messageListRef.current = previousMessageList;
-      setMessageList(previousMessageList);
-      if (clearInput) {
-        setContent(normalizedText);
-      }
       return;
     }
 
@@ -1384,10 +1578,13 @@ export function useChatConversation({
         disconnectConversationStream(previousConversationId);
       }
 
-      streamManager.setActiveConversation(null);
+      if (!concurrentStream) {
+        streamManager.setActiveConversation(null);
+      }
     }
 
     currentConversationIdRef.current = id;
+    pendingClientConversationIdRef.current = "";
     const selectedRecovery = streamRecoveryRegistryRef.current.get(id);
     setStreamRecovery(
       selectedRecovery
@@ -1400,7 +1597,9 @@ export function useChatConversation({
         : idleStreamRecoveryState(id),
     );
 
-    streamManager.setActiveConversation(id || null);
+    if (!concurrentStream) {
+      streamManager.setActiveConversation(id || null);
+    }
     if (id) {
       // `list` was just loaded from the server and is authoritative. Reusing a
       // cached list here makes A -> B -> A navigation display the previous pane.
@@ -1449,10 +1648,13 @@ export function useChatConversation({
         disconnectConversationStream(previousConversationId);
       }
 
-      streamManager.setActiveConversation(null);
+      if (!concurrentStream) {
+        streamManager.setActiveConversation(null);
+      }
     }
 
     currentConversationIdRef.current = "";
+    pendingClientConversationIdRef.current = "";
     streamRecoveryRegistryRef.current.clearAll();
     setStreamRecovery(idleStreamRecoveryState());
     setMessageList([]);
@@ -1489,7 +1691,13 @@ export function useChatConversation({
       }
       return;
     }
-    if (loading || runtimeWaitInProgressRef.current) {
+    if (
+      activeStreamRef.current ||
+      loading ||
+      runtimeWaitInProgressRef.current ||
+      regenerateInProgressRef.current ||
+      isModelSelectionSaving?.()
+    ) {
       return;
     }
     const userMessage = messageListRef.current.findLast(
@@ -1500,6 +1708,8 @@ export function useChatConversation({
       message.error(t("chat.regenerateInputMissing"));
       return;
     }
+
+    regenerateInProgressRef.current = true;
 
     const currentId = currentConversationIdRef.current;
     const previousMessageList = messageListRef.current;
@@ -1524,7 +1734,29 @@ export function useChatConversation({
       answer_preference: undefined,
     };
     const newList = [...messageListRef.current];
-    newList[newList.length - 1] = assistantMessage;
+    const previousAssistant = newList[newList.length - 1];
+    const preservesFailedAttempt =
+      previousAssistant?.role === RoleTypes.ASSISTANT &&
+      ["failed", "interrupted"].includes(previousAssistant.run_status);
+    if (preservesFailedAttempt) {
+      const originalHistoryId = previousAssistant.history_id;
+      const archivedAttemptId = `${originalHistoryId || "pending"}:failed:${
+        previousAssistant.run_id || Date.now()
+      }`;
+      newList[newList.length - 1] = {
+        ...previousAssistant,
+        id: archivedAttemptId,
+        history_id: archivedAttemptId,
+        original_history_id: originalHistoryId,
+        archived_failure: true,
+      };
+      newList.push({
+        ...assistantMessage,
+        history_id: originalHistoryId,
+      });
+    } else {
+      newList[newList.length - 1] = assistantMessage;
+    }
     messageListRef.current = newList;
     setMessageList(newList);
 
@@ -1534,20 +1766,24 @@ export function useChatConversation({
     }
 
     scroll.isMouseScrollingRef.current = true;
-    const opened = await openSSE(
-      regenerationInputs,
-      ChatConversationsRequestActionEnum.ChatActionRegeneration,
-    );
-    if (!opened) {
-      messageListRef.current = previousMessageList;
-      setMessageList(previousMessageList);
-      if (currentId) {
-        conversationMessagesCache.current.set(
-          currentId,
-          previousMessageList,
-        );
-        streamManager.saveMessageList(currentId, previousMessageList);
+    try {
+      const opened = await openSSE(
+        regenerationInputs,
+        ChatConversationsRequestActionEnum.ChatActionRegeneration,
+      );
+      if (!opened) {
+        messageListRef.current = previousMessageList;
+        setMessageList(previousMessageList);
+        if (currentId) {
+          conversationMessagesCache.current.set(
+            currentId,
+            previousMessageList,
+          );
+          streamManager.saveMessageList(currentId, previousMessageList);
+        }
       }
+    } finally {
+      regenerateInProgressRef.current = false;
     }
   }
 
