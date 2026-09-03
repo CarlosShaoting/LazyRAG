@@ -1705,6 +1705,203 @@ def _load_slide_outline_briefs(page_nos: list[int]) -> dict[int, str]:
     return briefs
 
 
+def _artifact_text(value: Any) -> str:
+    """Return editable text from an inline Workflow artifact value."""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, dict):
+        for key in ('text', 'data'):
+            candidate = value.get(key)
+            if isinstance(candidate, str):
+                return candidate.strip()
+    return ''
+
+
+def _selected_slide_outline_items() -> list[tuple[int, str]]:
+    """Load selected slide briefs in the UI's durable visual order."""
+    session_id = _workflow_session_id()
+    if not session_id:
+        return []
+    response = _workflow_client().list_artifacts(session_id).result
+    raw_artifacts = response.get('artifacts') if isinstance(response, dict) else []
+    by_index: dict[int, dict[str, Any]] = {}
+    for raw in raw_artifacts or []:
+        if not isinstance(raw, dict) or raw.get('slot') != 'slide_outline':
+            continue
+        if raw.get('selected') is False or raw.get('deleted') is True:
+            continue
+        try:
+            list_index = int(raw['list_index'])
+            revision = int(raw.get('revision') or 0)
+        except (KeyError, TypeError, ValueError):
+            continue
+        previous = by_index.get(list_index)
+        if previous is None or revision >= int(previous.get('revision') or 0):
+            by_index[list_index] = raw
+
+    order = [index for index in _ui_slot_order_list('slide_outline') if index in by_index]
+    order.extend(sorted(index for index in by_index if index not in set(order)))
+    items: list[tuple[int, str]] = []
+    for list_index in order:
+        artifact = by_index[list_index]
+        content = _artifact_text(artifact.get('value'))
+        if not content:
+            artifact_id = _coerce_str(artifact.get('artifact_id') or artifact.get('id'))
+            if artifact_id:
+                detail = _workflow_client().read_artifact(artifact_id).result
+                if isinstance(detail, dict):
+                    content = _artifact_text(detail.get('value'))
+        items.append((list_index, content))
+    return items
+
+
+def _parse_brief_item(line: str) -> tuple[str, str]:
+    item = re.sub(r'^\s*(?:[-*•]|\d+[.、])\s*', '', line).strip()
+    if ' — ' in item:
+        head, detail = item.split(' — ', 1)
+    elif '—' in item:
+        head, detail = item.split('—', 1)
+    else:
+        head, detail = item, ''
+    return head.strip(), detail.strip()
+
+
+def _parse_brief_json(value: str, label: str) -> Any:
+    raw = value.strip()
+    if not raw or raw.lower() in {'none', 'null', '无', '不使用'}:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f'{label}字段必须是有效 JSON：{exc.msg}') from exc
+
+
+def _parse_slide_outline_brief(text: str, fallback: dict, page_no: int) -> dict:
+    """Convert one human-editable slide brief back into outline.json shape."""
+    page = json.loads(json.dumps(fallback, ensure_ascii=False)) if fallback else {}
+    page.update({
+        'page_no': page_no,
+        'page_kind': '',
+        'title': '',
+        'subtitle': '',
+        'narrative': '',
+        'visual_hints': '',
+        'bullets': [],
+        'data_points': [],
+        'use_image': None,
+        'use_table': None,
+    })
+    field_labels = {
+        '页面类型：': 'page_kind',
+        '标题：': 'title',
+        '副标题：': 'subtitle',
+        '叙事：': 'narrative',
+        '版面提示：': 'visual_hints',
+    }
+    section = ''
+    extra_narrative: list[str] = []
+    ignored = (
+        '请根据以上内容生成完整可渲染的单页 PPT HTML',
+        '保留全部事实、标题、要点数量与数据',
+        '按版面提示排版；配图/表格字段如存在必须落到页面上',
+    )
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or re.fullmatch(r'第\s*\d+\s*页', line):
+            continue
+        if line == '要点：':
+            section = 'bullets'
+            continue
+        if line == '数据点：':
+            section = 'data_points'
+            continue
+        matched_field = False
+        for label, field in field_labels.items():
+            if line.startswith(label):
+                page[field] = line[len(label):].strip()
+                section = ''
+                matched_field = True
+                break
+        if matched_field:
+            continue
+        if line.startswith('配图：'):
+            page['use_image'] = _parse_brief_json(line[len('配图：'):], '配图')
+            section = ''
+            continue
+        if line.startswith('表格：'):
+            page['use_table'] = _parse_brief_json(line[len('表格：'):], '表格')
+            section = ''
+            continue
+        if line.startswith(ignored):
+            section = ''
+            continue
+        head, detail = _parse_brief_item(line)
+        if section == 'bullets' and head:
+            page['bullets'].append({'head': head, 'detail': detail})
+        elif section == 'data_points' and head:
+            bits = [bit.strip() for bit in head.split('·', 2)]
+            bits.extend([''] * (3 - len(bits)))
+            page['data_points'].append({
+                'label': bits[0], 'value': bits[1], 'context': bits[2],
+            })
+        else:
+            extra_narrative.append(line)
+
+    if extra_narrative:
+        existing = _coerce_str(page.get('narrative'))
+        page['narrative'] = '\n'.join(([existing] if existing else []) + extra_narrative)
+    page['page_kind'] = _coerce_str(page.get('page_kind')) or 'content'
+    page['title'] = _coerce_str(page.get('title')) or f'第 {page_no} 页'
+    return page
+
+
+def _sync_outline_from_selected_artifacts(deck: Path) -> dict[str, Any]:
+    """Make selected, user-edited slide_outline cards authoritative on disk."""
+    if not _workflow_session_id():
+        return {'status': 'skipped', 'reason': 'no workflow session'}
+    try:
+        items = _selected_slide_outline_items()
+    except Exception as exc:
+        return {'status': 'failed', 'reason': f'读取 slide_outline 失败：{exc}'}
+    if not items:
+        return {'status': 'failed', 'reason': '没有可读取的 slide_outline 页面'}
+
+    outline = _load_outline(deck)
+    old_pages = outline.get('pages') or []
+    old_by_page: dict[int, dict] = {}
+    for old_page in old_pages:
+        if not isinstance(old_page, dict):
+            continue
+        try:
+            old_by_page[int(old_page.get('page_no'))] = old_page
+        except (TypeError, ValueError):
+            continue
+
+    pages: list[dict] = []
+    for page_no, (list_index, brief) in enumerate(items, start=1):
+        if not brief.strip():
+            return {'status': 'failed', 'reason': f'第 {page_no} 页编辑稿为空'}
+        fallback = old_by_page.get(list_index + 1)
+        if fallback is None and page_no <= len(old_pages):
+            fallback = old_pages[page_no - 1]
+        try:
+            pages.append(_parse_slide_outline_brief(brief, fallback or {}, page_no))
+        except ValueError as exc:
+            return {'status': 'failed', 'reason': f'第 {page_no} 页编辑稿无法解析：{exc}'}
+
+    before = json.dumps(old_pages, ensure_ascii=False, sort_keys=True)
+    outline['pages'] = pages
+    outline['page_count'] = len(pages)
+    _write_outline(deck, outline)
+    _sync_task_pack_page_count(deck, len(pages))
+    return {
+        'status': 'ok',
+        'page_count': len(pages),
+        'changed': before != json.dumps(pages, ensure_ascii=False, sort_keys=True),
+        'list_indices': [list_index for list_index, _brief in items],
+    }
+
+
 _VOID_TAGS = frozenset({
     'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
     'link', 'meta', 'param', 'source', 'track', 'wbr',
@@ -4412,7 +4609,7 @@ def ppt_generate_pages(
     """Generate all slide HTML pages from published slide_outline in one call.
 
     Preferred for the full-deck generate_ppt path. Runs:
-      asset-plan → batch-page-html
+      sync-edited-outline → asset-plan → batch-page-html
     batch-page-html auto-publishes preview_html (+ notes) page-by-page.
 
     Do NOT call this for single-page edits — use ppt_patch_page_outline /
@@ -4442,7 +4639,20 @@ def ppt_generate_pages(
     deck_dir_s = str(deck.resolve())
 
     conc = _coerce_int(concurrency, 2, lo=1, hi=8)
-    stages: list[dict[str, Any]] = []
+    sync_result = _sync_outline_from_selected_artifacts(deck)
+    if sync_result.get('status') == 'failed':
+        return _tool_error(
+            'ppt_generate_pages',
+            f'edited outline sync failed: {sync_result.get("reason") or "unknown error"}',
+            meta={'deck_dir': deck_dir_s},
+        )
+    stages: list[dict[str, Any]] = [{
+        'step': 'sync-edited-outline',
+        'ok': True,
+        'status': sync_result.get('status'),
+        'changed': sync_result.get('changed', False),
+        'page_count': sync_result.get('page_count'),
+    }]
 
     plan_res = ppt_run_stage(deck_dir_s, stage='asset-plan')
     if _tool_failed(plan_res):
