@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -26,6 +27,13 @@ const (
 	SessionStatusFailed    = "failed"
 	SessionStatusWaiting   = "waiting"
 )
+
+func normalizeSessionWorkflowMode(value string) string {
+	if strings.EqualFold(strings.TrimSpace(value), "auto") {
+		return "auto"
+	}
+	return "dynamic"
+}
 
 // Step status mirrors sub_agent_tasks.status.
 const (
@@ -46,6 +54,7 @@ type CreateSessionInput struct {
 	WorkflowRevisionNo int64
 	WorkflowTreeHash   string
 	WorkflowRemoteRoot string
+	WorkflowMode       string
 	GraphHash          string
 	GraphSchemaVersion string
 	TriggerHistoryID   string
@@ -75,7 +84,8 @@ func CreateSession(ctx context.Context, db *gorm.DB, in CreateSessionInput) (*or
 		ConversationID: in.ConversationID,
 		WorkflowID:     in.WorkflowID,
 		WorkflowRef:    in.WorkflowRef, WorkflowRevisionID: in.WorkflowRevisionID, WorkflowRevisionNo: in.WorkflowRevisionNo, WorkflowTreeHash: in.WorkflowTreeHash, WorkflowRemoteRoot: in.WorkflowRemoteRoot,
-		GraphHash: in.GraphHash, GraphSchemaVersion: in.GraphSchemaVersion,
+		WorkflowMode: normalizeSessionWorkflowMode(in.WorkflowMode),
+		GraphHash:    in.GraphHash, GraphSchemaVersion: in.GraphSchemaVersion,
 		TriggerHistoryID: in.TriggerHistoryID,
 		Status:           SessionStatusActive,
 		CurrentStepID:    in.CurrentStepID,

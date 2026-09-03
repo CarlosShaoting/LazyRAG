@@ -57,8 +57,9 @@ can use CSS, SVG, and ECharts instead.
    existing Materials layout shows preview cards with the original caption
    instead of local paths
 4. `ppt_build_outline` auto-inits the deck and attaches them into
-   `info_pack.user_assets.reference_images`, then style/outline/publish
-5. Outline assigns `use_image.reference_image_index`; UI gets per-page `slide_outline`
+   `info_pack.user_assets.reference_images`, then publishes one Markdown `deck_outline`
+5. `plan_page_prompts` publishes one editable `slide_outline` prompt per page;
+   outline assigns `use_image.reference_image_index`
 6. `ppt_generate_pages` runs asset-plan + batch-page-html (incl. UI edits) and
    embeds foreground `<img>`
 
@@ -70,10 +71,10 @@ Startup clarification asks whether the user wants a dedicated AI background for
 every slide. The default remains the export-safe CSS/SVG path unless the user
 explicitly enables it.
 
-When enabled, background creation is split into two explicit human checkpoints
+When enabled, background creation is split into an automatic prompt stage and a human image checkpoint
 immediately after material collection and before outline generation:
 
-1. `plan_background_prompts` publishes one editable prompt per page. Every
+1. `plan_background_prompts` publishes one editable prompt per page without pausing for approval. Every
    prompt repeats the same visual-series anchor (palette, medium, light,
    texture, camera grammar, edge-detail strategy, recurring motif) while its
    page scene evolves with the deck narrative.
@@ -93,13 +94,14 @@ and provider reason instead of silently falling back.
 
 ## Outline → HTML split
 
-- `plan_background_prompts`: N editable, connected prompts (human approval)
+- `plan_background_prompts`: N editable, connected prompts (automatic)
 - `generate_backgrounds`: N generated images from approved prompts (human approval)
-- `build_outline`: **one call** `ppt_build_outline` → list slot `slide_outline`
+- `build_outline`: **one call** `ppt_build_outline` → one Markdown `deck_outline` (automatic)
+- `plan_page_prompts`: `ppt_publish_outline` → editable per-page `slide_outline` prompts (human approval)
 - `generate_ppt`: **one call** `ppt_generate_pages` — **no** re-outline
 - Low-level `ppt_init_deck` / `ppt_run_stage` / `ppt_publish_*` remain for
   debug, recovery, and single-page edits
-- User can edit each page brief in the Outline tab; generate reads human revisions via `_resolve_artifact_text`
+- User can edit each page prompt in the Page Prompts tab; generate reads human revisions via `_resolve_artifact_text`
 
 ## Deck storage (conversation-scoped)
 

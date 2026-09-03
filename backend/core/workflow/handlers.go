@@ -53,6 +53,7 @@ type sessionDTO struct {
 	SessionID      string `json:"session_id"`
 	ConversationID string `json:"conversation_id"`
 	WorkflowID     string `json:"workflow_id"`
+	WorkflowMode   string `json:"workflow_mode"`
 	// PinnedRevisionID is retained for immutable runtime identity; version numbers
 	// are intentionally not exposed because they are not a reliable UI run label.
 	PinnedRevisionID string    `json:"pinned_revision_id,omitempty"`
@@ -116,6 +117,7 @@ func toSessionDTO(s *orm.WorkflowSession) sessionDTO {
 		SessionID:        s.ID,
 		ConversationID:   s.ConversationID,
 		WorkflowID:       s.WorkflowID,
+		WorkflowMode:     normalizeSessionWorkflowMode(s.WorkflowMode),
 		PinnedRevisionID: s.WorkflowRevisionID,
 		Status:           s.Status,
 		CurrentStepID:    s.CurrentStepID,

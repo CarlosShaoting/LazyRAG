@@ -216,6 +216,115 @@ class BackgroundImageGenerationTest(unittest.TestCase):
                 ):
                     TOOLS.ppt_generate_background_images(str(deck))
 
+    def test_checkpoints_completed_pages_and_resumes_after_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            deck = self._deck(root)
+            first = root / 'first.png'
+            second = root / 'second.png'
+            self._write_generated_image(first)
+            self._write_generated_image(second)
+
+            with mock.patch.object(
+                TOOLS, '_resolve_deck_dir', return_value=deck,
+            ), mock.patch.object(
+                TOOLS, 'image_generator', side_effect=[
+                    {'local_path': str(first)},
+                    TimeoutError('provider connect timeout'),
+                ],
+            ), self.assertRaisesRegex(
+                ToolExecutionError, 'page 2 background generation failed',
+            ):
+                TOOLS.ppt_generate_background_images(str(deck))
+
+            checkpoint = json.loads(
+                (deck / 'background_images.json').read_text(encoding='utf-8'),
+            )
+            self.assertEqual(
+                [item['page_no'] for item in checkpoint['pages']], [1],
+            )
+
+            with mock.patch.object(
+                TOOLS, '_resolve_deck_dir', return_value=deck,
+            ), mock.patch.object(
+                TOOLS, '_ui_slot_order_list', return_value=[],
+            ), mock.patch.object(
+                TOOLS, 'image_generator', return_value={'local_path': str(second)},
+            ) as generate, mock.patch.object(
+                TOOLS, '_save_artifact', return_value={'stored': True},
+            ) as save:
+                result = TOOLS.ppt_generate_background_images(str(deck))
+
+            generate.assert_called_once()
+            self.assertEqual(result['generated_count'], 1)
+            self.assertEqual(result['reused_count'], 1)
+            self.assertEqual(result['published_count'], 2)
+            self.assertEqual(save.call_count, 2)
+
+    def test_targeted_recovery_backfills_predecessors_before_ui_publication(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            deck = self._deck(root)
+            previous = []
+            for page in (1, 2):
+                rel = f'images/page_{page:03d}_background.png'
+                self._write_generated_image(deck / rel)
+                previous.append({
+                    'page_no': page,
+                    'local_path': rel,
+                    'prompt': f'prompt {page}',
+                })
+            (deck / 'background_images.json').write_text(json.dumps({
+                'enabled': True,
+                'pages': previous,
+            }), encoding='utf-8')
+
+            with mock.patch.object(
+                TOOLS, '_resolve_deck_dir', return_value=deck,
+            ), mock.patch.object(
+                TOOLS, '_ui_slot_order_list', return_value=[],
+            ), mock.patch.object(
+                TOOLS, 'image_generator', side_effect=AssertionError(
+                    'existing page must be reused',
+                ),
+            ), mock.patch.object(
+                TOOLS, '_save_artifact', return_value={'stored': True},
+            ) as save:
+                result = TOOLS.ppt_generate_background_images(
+                    str(deck), pages_json=[2], replace=False,
+                )
+
+            self.assertEqual(result['published_count'], 2)
+            self.assertEqual([
+                call.kwargs['caption'] for call in save.call_args_list
+            ], ['第 1 页 AI 底图', '第 2 页 AI 底图'])
+
+    def test_ui_publication_failure_preserves_exact_reason(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            deck = self._deck(root)
+            generated = []
+            for page in (1, 2):
+                path = root / f'generated_{page}.png'
+                self._write_generated_image(path)
+                generated.append(path)
+
+            with mock.patch.object(
+                TOOLS, '_resolve_deck_dir', return_value=deck,
+            ), mock.patch.object(
+                TOOLS, 'image_generator', side_effect=[
+                    {'local_path': str(path)} for path in generated
+                ],
+            ), mock.patch.object(
+                TOOLS, '_save_artifact', return_value={
+                    'ok': False,
+                    'error': 'workflow publisher unavailable',
+                },
+            ), self.assertRaisesRegex(
+                ToolExecutionError, 'workflow publisher unavailable',
+            ):
+                TOOLS.ppt_generate_background_images(str(deck))
+
     def test_preview_inlines_local_css_background_for_srcdoc_and_export(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             deck = self._deck(Path(temp))

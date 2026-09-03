@@ -137,6 +137,8 @@ Use ECharts only when no such diagram image is available for the data on this pa
 ## 可编辑 PPTX 导出兼容（硬性）
 
 - 禁止使用 `clip-path`、`filter: blur(...)`、`backdrop-filter`、CSS animation / transition 来承载页面可见效果；这些效果无法稳定重建为可编辑 PowerPoint 形状。
+- 禁止使用 `<canvas>`（尤其 WebGL / WebGPU）、`<video>`、`<iframe>`、`<object>`、`<embed>` 和 SVG `<foreignObject>`；这些元素在缩略图、预览或截图导出时可能变成黑块。装饰图形改用普通 HTML/CSS 或原生 SVG path，数据图表只用上文约定的 ECharts SVG renderer。
+- 禁止使用 `mix-blend-mode`、`background-blend-mode`、CSS mask / `-webkit-mask`、SVG filter 或 3D perspective/transform-style 来承载必要信息；需要发光、裁切、玻璃或叠色效果时，改用纯色/单层渐变、边框、box-shadow 和显式半透明色块近似。
 - `::before` / `::after` 只能用于不超过 80×80px 的小型点、短线或角标。禁止用伪元素制作大面积背景、图片遮罩、渐变面板或覆盖内容区；大面积视觉层必须写成显式 `<div>`。
 - 禁止使用带 `transparent` 或 alpha=0 色标的大面积渐变遮罩。需要弱化背景时使用一个显式 `<div>` 和单一 `rgba(...)` 半透明填充，且不得覆盖继承图片。
 - 不得在 `<img>` 上方叠放深色、黑色、渐变或半透明遮罩。继承图片必须保持清晰可见。

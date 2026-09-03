@@ -81,6 +81,21 @@ def make_deck(root: Path) -> tuple[Path, Path]:
 
 
 class DeckInitializationTests(unittest.TestCase):
+    def test_deck_outline_markdown_has_one_description_per_page(self):
+        markdown = TOOLS._format_deck_outline_markdown({
+            'title': '季度经营复盘',
+            'pages': [
+                {'page_no': 1, 'title': '封面', 'narrative': '建立汇报主题与基调'},
+                {'page_no': 2, 'title': '核心指标', 'subtitle': '说明收入与利润变化'},
+            ],
+        })
+
+        self.assertIn('# 季度经营复盘', markdown)
+        self.assertIn('## 第 1 页｜封面', markdown)
+        self.assertIn('页面描述：建立汇报主题与基调', markdown)
+        self.assertIn('## 第 2 页｜核心指标', markdown)
+        self.assertIn('页面描述：说明收入与利润变化', markdown)
+
     def test_page_count_is_not_capped_at_twelve(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -137,9 +152,10 @@ class DeckInitializationTests(unittest.TestCase):
             'reference_images': [],
         }) as attach, mock.patch.object(
             TOOLS, 'ppt_run_stage', side_effect=run_stage,
-        ), mock.patch.object(TOOLS, 'ppt_publish_outline', return_value={
-            'published_count': 4,
-            'published': [1, 2, 3, 4],
+        ), mock.patch.object(TOOLS, '_publish_deck_outline', return_value={
+            'ok': True,
+            'page_count': 4,
+            'chars': 120,
         }):
             result = TOOLS.ppt_build_outline(
                 user_query='生成四页无图汇报',
@@ -149,9 +165,9 @@ class DeckInitializationTests(unittest.TestCase):
         attach.assert_not_called()
         self.assertEqual(stages, ['preflight', 'style', 'outline'])
         self.assertEqual(result['material_images_attached'], 0)
-        self.assertEqual(result['published_count'], 4)
+        self.assertTrue(result['deck_outline_published'])
         self.assertEqual(result['background_images_count'], 0)
-        self.assertEqual(result['next_step'], 'generate_ppt')
+        self.assertEqual(result['next_step'], 'plan_page_prompts')
 
     def test_build_outline_defers_enabled_background_generation_to_human_steps(self):
         with mock.patch.object(TOOLS, 'ppt_init_deck', return_value={
@@ -163,9 +179,10 @@ class DeckInitializationTests(unittest.TestCase):
         }), mock.patch.object(
             TOOLS, 'ppt_run_stage', return_value={'status': 'ok', 'pages': 3},
         ), mock.patch.object(
-            TOOLS, 'ppt_publish_outline', return_value={
-                'published_count': 3,
-                'published': [1, 2, 3],
+            TOOLS, '_publish_deck_outline', return_value={
+                'ok': True,
+                'page_count': 3,
+                'chars': 100,
             },
         ), mock.patch.object(
             TOOLS, 'ppt_generate_background_images',
@@ -179,7 +196,7 @@ class DeckInitializationTests(unittest.TestCase):
         generate.assert_not_called()
         self.assertTrue(result['background_images_enabled'])
         self.assertEqual(result['background_images_count'], 0)
-        self.assertEqual(result['next_step'], 'generate_ppt')
+        self.assertEqual(result['next_step'], 'plan_page_prompts')
 
     def test_build_outline_reuses_deck_prepared_by_background_steps(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -203,9 +220,10 @@ class DeckInitializationTests(unittest.TestCase):
             ) as init, mock.patch.object(
                 TOOLS, 'ppt_run_stage', return_value={'status': 'ok', 'pages': 3},
             ), mock.patch.object(
-                TOOLS, 'ppt_publish_outline', return_value={
-                    'published_count': 3,
-                    'published': [1, 2, 3],
+                TOOLS, '_publish_deck_outline', return_value={
+                    'ok': True,
+                    'page_count': 3,
+                    'chars': 100,
                 },
             ):
                 result = TOOLS.ppt_build_outline(

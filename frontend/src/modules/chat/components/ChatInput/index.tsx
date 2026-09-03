@@ -383,6 +383,8 @@ interface ChatInputProps {
   initialConversationSettings?: ConversationRuntimeSettings;
   /** When true, the allow-workflow toggle in config is locked (workflow session is active). */
   hasWorkflowSession?: boolean;
+  /** Immutable mode selected when the active Workflow Session was created. */
+  lockedWorkflowMode?: 'auto' | 'dynamic';
   /** Optional case-driven category selectors shown in the welcome composer. */
   showcaseSelection?: ShowcaseSelection;
   /** Resources bound by a curated experience and included in every send. */
@@ -605,6 +607,7 @@ const ChatInput = forwardRef<ChatInputImperativeProps, ChatInputProps>(
       onConversationSettingsChange,
       initialConversationSettings,
       hasWorkflowSession,
+      lockedWorkflowMode,
       showcaseSelection,
       boundMentions = [],
       runInBackground = false,
@@ -1484,6 +1487,7 @@ const ChatInput = forwardRef<ChatInputImperativeProps, ChatInputProps>(
                     initialSettings={initialConversationSettings}
                     disabled={disabled || isStreaming}
                     hasWorkflowSession={hasWorkflowSession}
+                    lockedWorkflowMode={lockedWorkflowMode}
                     onSave={(settings) => {
                       setContextRuntimeSettings(settings);
                       onConversationSettingsChange?.(settings);

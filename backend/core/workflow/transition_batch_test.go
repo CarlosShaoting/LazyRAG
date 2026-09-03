@@ -160,6 +160,31 @@ func TestBatchTransitionAcceptsAllReadyTargetsAtomically(t *testing.T) {
 	}
 }
 
+func TestTransitionUsesWorkflowModeLockedAtSessionCreation(t *testing.T) {
+	db, graphHash := setupBatchTransitionSession(t)
+	if err := db.Model(&orm.WorkflowSession{}).Where("id = ?", "batch-session").
+		Update("workflow_mode", "auto").Error; err != nil {
+		t.Fatal(err)
+	}
+	w, data := runBatchTransition(t, db, graphHash, "execute", []map[string]any{
+		{"target_step_id": "branch_b", "task_id": "batch-task-locked-mode", "objective": "run b"},
+	})
+	if w.Code != http.StatusOK || data["accepted"] != true {
+		t.Fatalf("transition rejected: status=%d body=%s", w.Code, w.Body.String())
+	}
+	var task orm.SubAgentTask
+	if err := db.Where("id = ?", "batch-task-locked-mode").First(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	var params map[string]any
+	if err := json.Unmarshal(task.Params, &params); err != nil {
+		t.Fatal(err)
+	}
+	if params["workflow_mode"] != "auto" {
+		t.Fatalf("workflow_mode=%v, want immutable session mode auto", params["workflow_mode"])
+	}
+}
+
 func TestExternalControllerTransitionQueuesHostedAttemptForBoundConversation(t *testing.T) {
 	db, graphHash := setupBatchTransitionSession(t)
 	if err := db.Model(&orm.WorkflowSession{}).Where("id = ?", "batch-session").

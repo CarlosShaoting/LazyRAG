@@ -211,6 +211,8 @@ export interface WorkflowSession {
   session_id: string;
   conversation_id: string;
   workflow_id: string;
+  /** Execution mode selected when this immutable session was created. */
+  workflow_mode: 'auto' | 'dynamic';
   /** Immutable package revision selected when this session was created. */
   pinned_revision_id?: string;
   status: "active" | "completed" | "failed" | "waiting" | "stopped";

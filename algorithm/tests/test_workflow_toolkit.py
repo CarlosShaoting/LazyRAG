@@ -93,11 +93,14 @@ def test_prepare_workflow_persists_request_context_for_session_defaults():
     client.prepare_workflow.return_value.result = {'status': 'missing_inputs'}
     toolkit = HostWorkflowToolkit(lambda: client, origin_ref='conversation-1')
 
-    toolkit.prepare_workflow('writer', request_context='run this workflow')
+    toolkit.prepare_workflow(
+        'writer', request_context='run this workflow', workflow_mode='auto',
+    )
 
     assert client.prepare_workflow.call_args.kwargs['fields'] == {
         'origin_ref': 'conversation-1',
         'request_context': 'run this workflow',
+        'workflow_mode': 'auto',
     }
 
 

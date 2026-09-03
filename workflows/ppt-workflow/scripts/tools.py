@@ -4,7 +4,8 @@ Preferred high-level pipeline (one tool call each):
   collect: KB-first retrieval; web_search / ppt_search_web_images only for gaps
     → ppt_register_material_images  (workspace Pool-B images)
     → ppt_generate_material_images  (ONLY when user explicitly asks for AI material images)
-  ppt_build_outline(...)   # init → preflight → style → outline → publish_outline
+  ppt_build_outline(...)   # init → preflight → style → outline → publish deck_outline Markdown
+  ppt_publish_outline(...) # publish editable per-page generation prompts
   ppt_generate_pages(...)  # asset-plan → batch-page-html
 
 Low-level stages (ppt_init_deck / ppt_run_stage / ppt_publish_*) remain for
@@ -1570,7 +1571,7 @@ def _outline_page_view(page: dict) -> dict:
 
 
 def _format_slide_outline_brief(page: dict) -> str:
-    """Human-editable per-page brief shown in the Outline tab and fed to page-html."""
+    """Human-editable per-page generation prompt fed to page-html."""
     view = _outline_page_view(page)
     lines: list[str] = [
         f'第{view["page"]}页',
@@ -1614,6 +1615,66 @@ def _format_slide_outline_brief(page: dict) -> str:
         '按版面提示排版；配图/表格字段如存在必须落到页面上。',
     ])
     return '\n'.join(lines).strip()
+
+
+def _format_deck_outline_markdown(outline: dict) -> str:
+    """Render one concise deck-level Markdown outline with per-page descriptions."""
+    title = _coerce_str(outline.get('topic')) or _coerce_str(outline.get('title'))
+    lines: list[str] = [f'# {title or "PPT 大纲"}', '']
+    pages = outline.get('pages') or []
+    for index, page in enumerate(pages, start=1):
+        if not isinstance(page, dict):
+            continue
+        try:
+            page_no = int(page.get('page_no') or index)
+        except (TypeError, ValueError):
+            page_no = index
+        page_title = _coerce_str(page.get('title')) or f'第 {page_no} 页'
+        bullet_heads = [
+            _coerce_str(item.get('head'))
+            for item in (page.get('bullets') or [])
+            if isinstance(item, dict) and _coerce_str(item.get('head'))
+        ]
+        description = (
+            _coerce_str(page.get('narrative'))
+            or _coerce_str(page.get('subtitle'))
+            or ('；'.join(bullet_heads[:3]) if bullet_heads else '')
+            or _coerce_str(page.get('visual_hints'))
+            or '本页承接整体叙事并展开核心信息。'
+        )
+        lines.extend([
+            f'## 第 {page_no} 页｜{page_title}',
+            '',
+            f'页面描述：{description}',
+            '',
+        ])
+    return '\n'.join(lines).strip()
+
+
+def _publish_deck_outline(deck: Path) -> dict[str, Any]:
+    outline = _load_outline(deck)
+    markdown = _format_deck_outline_markdown(outline)
+    if not markdown:
+        return {'ok': False, 'error': 'deck outline is empty'}
+    save_res = _save_artifact(
+        key='deck_outline',
+        value=markdown,
+        content_type='text',
+        source_tool='ppt_build_outline',
+        internal_publish=True,
+    )
+    if _tool_failed(save_res):
+        return {
+            'ok': False,
+            'error': f'deck_outline publish failed: {_tool_fail_reason(save_res)}',
+            'save': save_res,
+        }
+    return {
+        'ok': True,
+        'chars': len(markdown),
+        'page_count': len(outline.get('pages') or []),
+        'save': save_res,
+    }
 
 
 def _publish_one_slide_outline(deck: Path, page_no: int) -> dict[str, Any]:
@@ -3984,6 +4045,25 @@ def _save_ppt_background(src: Path, dest: Path) -> tuple[int, int]:
     return original_size
 
 
+def _checkpoint_ppt_backgrounds(
+    manifest_path: Path,
+    output: dict[int, dict[str, Any]],
+) -> None:
+    """Persist completed pages so a later retry can resume after a failure."""
+    manifest = {
+        'enabled': True,
+        'pages': [output[page_no] for page_no in sorted(output)],
+        'updated_at': datetime.now(timezone(timedelta(hours=8))).isoformat(
+            timespec='seconds',
+        ),
+    }
+    tmp = manifest_path.with_name(manifest_path.name + '.tmp')
+    tmp.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8',
+    )
+    os.replace(tmp, manifest_path)
+
+
 def ppt_generate_background_images(
     deck_dir: Optional[str] = None,
     prompts_json: Union[str, list, None] = None,
@@ -4092,6 +4172,7 @@ def ppt_generate_background_images(
     output: dict[int, dict[str, Any]] = dict(existing)
     publish_items: list[dict[str, Any]] = []
     generated_count = 0
+    reused_count = 0
 
     for page in pages:
         page_no = _coerce_int(page.get('page_no'), 0, lo=0)
@@ -4102,6 +4183,7 @@ def ppt_generate_background_images(
         if not force and old_path.is_file():
             output[page_no] = old
             publish_items.append(old)
+            reused_count += 1
             continue
 
         kwargs: dict[str, Any] = {
@@ -4170,17 +4252,27 @@ def ppt_generate_background_images(
         publish_items.append(item)
         generated_count += 1
 
+        # Image providers can take minutes to report a transport timeout.  Save
+        # each successful page immediately so the next attempt only generates
+        # the missing pages instead of starting the whole deck again.
+        _checkpoint_ppt_backgrounds(manifest_path, output)
+
+    _checkpoint_ppt_backgrounds(manifest_path, output)
     ordered_output = [output[page_no] for page_no in sorted(output)]
-    manifest = {
-        'enabled': True,
-        'pages': ordered_output,
-        'updated_at': datetime.now(timezone(timedelta(hours=8))).isoformat(
-            timespec='seconds',
-        ),
+
+    # A targeted recovery may start at page 2 or later while the UI list is
+    # still empty because the previous attempt failed before publication.
+    # Backfill completed predecessors first to preserve the ordered slot.
+    publish_map = {
+        int(item['page_no']): item for item in publish_items
     }
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8',
-    )
+    if targets:
+        for page_no in range(1, max(targets) + 1):
+            item = output.get(page_no)
+            local_path = deck / _coerce_str((item or {}).get('local_path'))
+            if item and local_path.is_file():
+                publish_map.setdefault(page_no, item)
+    publish_items = [publish_map[page_no] for page_no in sorted(publish_map)]
 
     published = 0
     publication_errors: list[str] = []
@@ -4221,7 +4313,7 @@ def ppt_generate_background_images(
         'target_count': len(targets),
         'updated_pages': targets,
         'generated_count': generated_count,
-        'reused_count': len(publish_items) - generated_count,
+        'reused_count': reused_count,
         'published_count': published,
         'backgrounds': [
             {'page_no': item['page_no'], 'local_path': item['local_path']}
@@ -4452,7 +4544,16 @@ def _tool_fail_reason(resp: Any) -> str:
     if not isinstance(resp, dict):
         return 'empty tool response'
     if resp.get('ok') is False:
-        return str(resp.get('value') or resp.get('msg') or 'failed')
+        direct = resp.get('value') or resp.get('msg')
+        if direct:
+            return str(direct)
+        err = resp.get('error')
+        if isinstance(err, dict):
+            return str(
+                err.get('reason') or err.get('detail')
+                or err.get('message') or 'failed'
+            )
+        return str(err or 'failed')
     err = resp.get('error')
     if isinstance(err, dict):
         return str(err.get('reason') or err.get('detail') or 'failed')
@@ -4478,7 +4579,7 @@ def ppt_build_outline(
 
     Runs the fixed serial pipeline internally. It initializes a deck when
     ``deck_dir`` is omitted, otherwise it reuses the prepared deck, then runs:
-      preflight → style → outline → ppt_publish_outline
+      preflight → style → outline → publish deck_outline Markdown
 
     Prefer this over calling those stages one by one. Do NOT generate HTML here —
     that is ppt_generate_pages / generate_ppt.
@@ -4499,8 +4600,8 @@ def ppt_build_outline(
             background question was explicitly enabled. Default false.
 
     Returns:
-        deck_dir, stages summary, and publish counts. slide_outline is already
-        saved for the Outline tab — stop after success.
+        deck_dir, stages summary, and the deck_outline publication result.
+        Per-page slide_outline prompts are published by plan_page_prompts.
     """
     resolved_deck = _coerce_str(deck_dir)
     prepared_backgrounds_enabled = False
@@ -4576,23 +4677,23 @@ def ppt_build_outline(
             'pages': payload.get('pages'),
         })
 
-    pub_res = ppt_publish_outline(resolved_deck)
-    if _tool_failed(pub_res):
+    deck_outline_res = _publish_deck_outline(Path(resolved_deck))
+    if not deck_outline_res.get('ok'):
         return _tool_error(
             'ppt_build_outline',
-            f'publish_outline failed: {_tool_fail_reason(pub_res)}',
+            f'publish deck outline failed: {deck_outline_res.get("error") or "unknown error"}',
             detail=json.dumps({
                 'deck_dir': resolved_deck,
                 'stages': stages,
-                'publish': pub_res,
+                'publish': deck_outline_res,
             }, ensure_ascii=False)[:2500],
             meta={'deck_dir': resolved_deck},
         )
-    pub_payload = _tool_payload(pub_res)
     stages.append({
-        'step': 'publish_outline',
+        'step': 'publish_deck_outline',
         'ok': True,
-        'published_count': pub_payload.get('published_count'),
+        'page_count': deck_outline_res.get('page_count'),
+        'chars': deck_outline_res.get('chars'),
     })
 
     background_count = 0
@@ -4614,12 +4715,13 @@ def ppt_build_outline(
             _coerce_bool(generate_background_images) or prepared_backgrounds_enabled
         ),
         'background_images_count': background_count,
-        'next_step': 'generate_ppt',
-        'published_count': pub_payload.get('published_count'),
-        'published': pub_payload.get('published'),
+        'next_step': 'plan_page_prompts',
+        'deck_outline_published': True,
+        'deck_outline_chars': deck_outline_res.get('chars'),
         'stages': stages,
         'note': (
-            'slide_outline list is published for the Outline tab. '
+            'One deck_outline Markdown artifact is published for the Outline tab. '
+            'The next step publishes editable per-page generation prompts. '
             'Stop here. AI backgrounds, when enabled, were already handled by '
             'the two dedicated approval steps.'
         ),

@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import { Popconfirm, Tooltip } from 'antd';
+import { message as antdMessage, Popconfirm, Tooltip } from 'antd';
 import {
   CloudUploadOutlined,
   DownloadOutlined,
@@ -50,6 +50,7 @@ import { WorkflowTabActions } from './actions/WorkflowTabActions';
 import { WorkflowPanelTabActiveContext, SlotEditingContext, type SlotFooterAction } from './slotEditingContext';
 import { findWriterArtifactStream } from './writerArtifactStream';
 import { resolveCompletedContinueStep } from './workflowContinue';
+import { resolvePendingApprovalStep } from './workflowApproval';
 import { moveSelectedCompositePages, sameCompositePageOrder } from './compositePageReorder';
 import {
   filterPresentCompositeItems,
@@ -1897,14 +1898,15 @@ export function WorkflowPanel({
       : undefined);
   const effectivePast = new Set(session.projection?.past ?? []);
   const continueDisabled = buttonsDisabled || currentStepStatus === 'failed';
+  const approvalStepId = resolvePendingApprovalStep(session, displayStatus);
 
-  async function runFooterAction(action: () => void, flushKey?: string) {
+  async function runFooterAction(action: () => void | Promise<void>, flushKey?: string) {
     if (sessionBusy || actionPending) return;
     setActionPending(true);
     try {
       const saved = await flushPendingEdits(flushKey);
       if (!saved) return;
-      action();
+      await action();
     } finally {
       setActionPending(false);
     }
@@ -1917,6 +1919,22 @@ export function WorkflowPanel({
     void runFooterAction(() => onSendMessage?.(message));
   }
 
+  function handleContinueWithApprovalPreference(scope: 'step' | 'following') {
+    if (!approvalStepId) return;
+    void runFooterAction(async () => {
+      try {
+        await WorkflowSessionApi().setApprovalPreference(session.session_id, {
+          step_id: approvalStepId,
+          scope,
+          approval_required: false,
+        });
+        onSendMessage?.(t('chat.workflowContinue'));
+      } catch {
+        antdMessage.error(t('chat.workflowApprovalPreferenceSaveFailed'));
+      }
+    });
+  }
+
   function handleRetry() {
     void runFooterAction(() => onSendMessage?.(t('chat.workflowRetry')));
   }
@@ -1925,8 +1943,10 @@ export function WorkflowPanel({
     void runFooterAction(() => onSendMessage?.(`${t('chat.workflowRollbackPrefix')}${stepId}`));
   }
 
-  const continueLabel = displayStatus === 'waiting'
-    ? t('chat.workflowSaveAndContinue')
+  const continueLabel = approvalStepId
+    ? t('chat.workflowContinueExecution')
+    : displayStatus === 'waiting'
+      ? t('chat.workflowSaveAndContinue')
     : t('chat.workflowContinue');
 
   const panel = (
@@ -2245,7 +2265,7 @@ export function WorkflowPanel({
               {actionPending ? t('chat.workflowSavingBeforeAction') : t('chat.workflowRetry')}
             </button>
           )}
-          {showContinue && (
+          {showContinue && !approvalStepId && (
             <button
               type='button'
               className='workflow-panel__action-btn workflow-panel__action-btn--primary'
@@ -2303,6 +2323,40 @@ export function WorkflowPanel({
         </div>
       )}
     </div>
+    {!collapsed && approvalStepId && (
+      <div className='workflow-panel__approval-bar' role='group' aria-label={t('chat.workflowApprovalActions')}>
+        <span className='workflow-panel__approval-label'>{t('chat.workflowApprovalRequired')}</span>
+        <button
+          type='button'
+          className='workflow-panel__action-btn workflow-panel__action-btn--primary'
+          disabled={continueDisabled}
+          aria-disabled={continueDisabled}
+          onClick={handleContinue}
+        >
+          {t('chat.workflowContinueExecution')}
+        </button>
+        <button
+          type='button'
+          className='workflow-panel__action-btn workflow-panel__action-btn--secondary'
+          disabled={continueDisabled}
+          aria-disabled={continueDisabled}
+          onClick={() => handleContinueWithApprovalPreference('step')}
+          title={t('chat.workflowSkipThisApprovalHint')}
+        >
+          {t('chat.workflowSkipThisApproval')}
+        </button>
+        <button
+          type='button'
+          className='workflow-panel__action-btn workflow-panel__action-btn--secondary'
+          disabled={continueDisabled}
+          aria-disabled={continueDisabled}
+          onClick={() => handleContinueWithApprovalPreference('following')}
+          title={t('chat.workflowSkipFollowingApprovalsHint')}
+        >
+          {t('chat.workflowSkipFollowingApprovals')}
+        </button>
+      </div>
+    )}
     {session && (
       <StateGraphModal
         open={stateGraphOpen}

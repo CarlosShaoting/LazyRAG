@@ -24,6 +24,7 @@ when_to_use: >
 
 runtime:
   publisher_owned_slots:
+    - deck_outline
     - slide_outline
     - background_prompts
     - background_images
@@ -134,6 +135,8 @@ steps:
     label: Generate Backgrounds
   - id: build_outline
     label: Build Outline
+  - id: plan_page_prompts
+    label: Plan Page Prompts
   - id: generate_ppt
     label: Generate PPT
 
@@ -200,11 +203,17 @@ slots:
     summary_max_chars: 1200
 
   - id: slide_outline
-    label: Slide Outline
+    label: Page Prompt
     type: text
     cardinality: list
     ordered: true
     summary_max_chars: 900
+
+  - id: deck_outline
+    label: Deck Outline
+    type: text
+    cardinality: single
+    summary_max_chars: 1600
 
   - id: preview_html
     label: Slide
@@ -232,6 +241,9 @@ ui:
     background_images:
       widgetType: image-gallery
     slide_outline:
+      widgetType: text-markdown
+      maxHeight: 420
+    deck_outline:
       widgetType: text-markdown
       maxHeight: 420
     preview_html:
@@ -295,6 +307,13 @@ ui:
       label: Outline
       layout: list
       slots:
+        - id: deck_outline
+
+    - id: page_prompts
+      step_id: plan_page_prompts
+      label: Page Prompts
+      layout: list
+      slots:
         - id: slide_outline
 
     - id: composite_preview
@@ -332,6 +351,7 @@ i18n:
       analyze_requirements: {label: 需求分析}
       collect_materials: {label: 收集素材}
       build_outline: {label: 大纲}
+      plan_page_prompts: {label: 每页提示词}
       plan_background_prompts: {label: 底图提示词}
       generate_backgrounds: {label: 生成底图}
       generate_ppt: {label: 生成PPT}
@@ -339,6 +359,7 @@ i18n:
       analysis: {label: 分析}
       materials: {label: 素材}
       outline: {label: 大纲}
+      page_prompts: {label: 每页提示词}
       background_prompts: {label: 底图提示词}
       background_images: {label: 底图}
       composite_preview: {label: 幻灯片}
@@ -348,6 +369,7 @@ i18n:
       material_images: {label: 素材图片}
       background_prompts: {label: 底图提示词}
       background_images: {label: AI 底图}
-      slide_outline: {label: 页面大纲}
+      deck_outline: {label: 大纲}
+      slide_outline: {label: 每页提示词}
       preview_html: {label: 幻灯片}
       preview_notes: {label: 讲稿}

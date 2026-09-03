@@ -519,7 +519,7 @@ function TaskCard({ task }: { task: SubAgentTask }) {
   const cardDragRef = useRef<{ startY: number; startH: number } | null>(null);
   const { t } = useTranslation();
   const isRunning = RUNNING_STATUSES.includes(task.status);
-  const runInstruction = task.objective?.trim();
+  const runInstruction = task.query?.trim();
 
   const onCardResizeStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault();

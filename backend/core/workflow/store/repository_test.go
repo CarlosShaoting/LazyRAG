@@ -281,6 +281,7 @@ func TestCreateInitializedHostSessionRollsBackSessionIntentAndBindings(t *testin
 	_, created, err := repo.CreateInitializedHostSession(
 		t.Context(), "u1", "new-session", "conversation", "lazymind", "conversation", "lazymind",
 		WorkflowPackage{WorkflowID: "writer", WorkflowRef: "builtin:writer", RevisionID: "rev-1"},
+		"auto",
 		`{"text":"draft carefully"}`,
 		[]InputBinding{
 			{MaterialID: "valid", ResourceType: "input_resource", ResourceID: resource.ID,

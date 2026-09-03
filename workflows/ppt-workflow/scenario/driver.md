@@ -68,10 +68,17 @@ Allowed verdicts: PASS, RETRY, DONE, FAIL.
 
 ### build_outline
 
+- `deck_outline` is one Markdown artifact with at least 2 numbered page
+  descriptions -> PASS
+- This is an automatic step; continue to `plan_page_prompts` after validation.
+- Missing deck_outline or fewer than 2 page descriptions -> RETRY
+- 2 consecutive failures -> FAIL
+
+### plan_page_prompts
+
 - `slide_outline` list has at least 2 pages with sort_order aligned, each page
-  brief containing a title and content points -> PASS
-- This is a human-approval step. After validation, stop at the result approval
-  checkpoint so the user can review/edit the page prompts before generation.
+  prompt containing a title and content points -> PASS
+- This is a human-approval step. Stop so the user can review/edit prompts.
 - Missing slide_outline or fewer than 2 pages -> RETRY
 - 2 consecutive failures -> FAIL
 

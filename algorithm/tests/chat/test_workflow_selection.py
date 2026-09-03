@@ -144,7 +144,7 @@ def test_dynamic_trigger_loads_pinned_remote_package_without_listing():
         'image-workflow', input_bindings={
             'source': {'resource_id': 'resource-1', 'revision': 1,
                        'content_hash': 'sha256:test'},
-        }, request_context='original workflow request',
+        }, request_context='original workflow request', workflow_mode='dynamic',
     )
     toolkit.advance_step.assert_not_called()
 
@@ -198,7 +198,7 @@ def test_dynamic_trigger_imports_scalar_binding_without_conversation_attachments
                 'resource_id': 'text-resource', 'revision': 1,
                 'content_hash': 'sha256:text',
             },
-        }, request_context='write about 3000 words',
+        }, request_context='write about 3000 words', workflow_mode='dynamic',
     )
 
 
@@ -471,6 +471,7 @@ def test_startup_clarification_is_single_shot_and_default_trigger_merges_context
     assert '面向哪类客户？: 公司负责人' in result['request_context']
     toolkit.prepare_workflow.assert_called_once_with(
         'ppt-workflow', input_bindings={}, request_context=result['request_context'],
+        workflow_mode='dynamic',
     )
     command = toolkit.advance_step.call_args.args[2][0]
     assert command.user_input == result['request_context']
@@ -587,7 +588,7 @@ def test_clarification_answer_turn_can_pass_merged_request_context_to_trigger():
 
     assert result['request_context'] == merged
     toolkit.prepare_workflow.assert_called_once_with(
-        'ppt-workflow', input_bindings={}, request_context=merged,
+        'ppt-workflow', input_bindings={}, request_context=merged, workflow_mode='dynamic',
     )
 
 
@@ -688,6 +689,7 @@ def test_selected_workflow_session_tool_auto_initializes_without_attachments():
     toolkit.prepare_workflow.assert_called_once_with(
         'ppt-workflow', input_bindings={},
         request_context='生成三页关于加减法数学题的PPT',
+        workflow_mode='dynamic',
     )
     assert 'upload is required' in contribution.runtime_context
 
@@ -861,6 +863,7 @@ def test_dynamic_trigger_preserves_exact_query_instead_of_model_paraphrase():
     assert result['request_context'] == original
     toolkit.prepare_workflow.assert_called_once_with(
         'image-workflow', input_bindings={}, request_context=original,
+        workflow_mode='dynamic',
     )
 
 

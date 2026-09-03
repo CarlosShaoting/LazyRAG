@@ -5,8 +5,9 @@
 This workflow helps users create a multi-slide presentation using the
 **workflow HTML runtime** under `workflows/ppt-workflow/runtime/` (wrapped as SubAgent tools).
 
-- Outline: **`ppt_build_outline`** (init → preflight → style → outline →
-  `ppt_publish_outline`; one editable `slide_outline` list item per page)
+- Outline: **`ppt_build_outline`** (init → preflight → style → outline → one
+  Markdown `deck_outline` containing every page description)
+- Page prompts: **`ppt_publish_outline`** (one editable `slide_outline` item per page)
 - Generation: **`ppt_generate_pages`** (asset-plan → batch-page-html using each
   page's `slide_outline` brief, including human UI edits; auto-publishes
   `preview_html`)
@@ -25,15 +26,15 @@ Workflow:
    the user explicitly asks for AI material images) so later HTML can embed them.
    Missing images never block the workflow; slides can use CSS/SVG/ECharts.
 3. `plan_background_prompts` — when AI backgrounds are enabled, create N
-   connected but page-specific prompts and stop for human editing/approval.
+   connected but page-specific prompts automatically.
 4. `generate_backgrounds` — generate N images strictly from the approved
    prompts and stop for human image approval. A request such as “重新生成底图
    1、2” overwrites only those positions.
 5. `build_outline` — reuse the deck prepared above and call
-   `ppt_build_outline` → `slide_outline[page1..]`. This step stops for human
-   approval so page briefs can be reviewed. When AI backgrounds are disabled,
-   it initializes the deck itself.
-6. `generate_ppt` — one call: `ppt_generate_pages`; no outline rewrite. The
+   `ppt_build_outline` → one `deck_outline` Markdown artifact. This stage is automatic.
+6. `plan_page_prompts` — publish `slide_outline[page1..]` and stop for human
+   approval so prompts can be reviewed.
+7. `generate_ppt` — one call: `ppt_generate_pages`; no outline rewrite. The
    generated slide results also stop for human approval.
 
 Steps 3 and 4 are skipped together when AI backgrounds are disabled.
@@ -91,7 +92,7 @@ After background approval, call:
 advance_step_and_hand_off(step_id="build_outline")
 ```
 
-After outline approval, call:
+After the automatic outline, advance to the page-prompt checkpoint; after page-prompt approval, call:
 
 ```text
 advance_step_and_hand_off(step_id="generate_ppt")

@@ -438,6 +438,7 @@ func launchWorkflowAttempt(
 				ConversationID: convID,
 				WorkflowID:     workflowID,
 				WorkflowRef:    params.WorkflowRef, WorkflowRevisionID: params.RevisionID, WorkflowRevisionNo: params.RevisionNo, WorkflowTreeHash: params.TreeHash, WorkflowRemoteRoot: params.RemoteRoot,
+				WorkflowMode:     params.WorkflowMode,
 				TriggerHistoryID: historyID,
 				CurrentStepID:    currentStepID,
 				CreateUserID:     userID,

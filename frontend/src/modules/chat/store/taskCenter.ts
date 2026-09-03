@@ -115,6 +115,8 @@ export interface SubAgentTask {
   created_at?: string;
   updated_at?: string;
   title: string;
+  /** User-authored task query. Never contains the expanded workflow/system prompt. */
+  query?: string;
   objective?: string;
   agent_type: string;
   mode: string;
@@ -180,7 +182,7 @@ interface TaskCenterStore {
 // Convert persisted sub_agent_steps rows back to TaskLogEntry[] for display.
 function stepsToExecutionLog(steps: any[]): TaskLogEntry[] {
   if (!steps || steps.length === 0) return [];
-  return steps.flatMap((s): TaskLogEntry[] => {
+  const entries = steps.flatMap((s): TaskLogEntry[] => {
     const role: string = s.role ?? "";
     const content = s.content ?? {};
     if (role === "think") {
@@ -209,6 +211,19 @@ function stepsToExecutionLog(steps: any[]): TaskLogEntry[] {
     }
     return [];
   });
+  return entries.reduce<TaskLogEntry[]>((log, entry) => {
+    const last = log[log.length - 1];
+    if (
+      last
+      && (entry.type === "text" || entry.type === "think")
+      && last.type === entry.type
+    ) {
+      log[log.length - 1] = { ...last, content: last.content + entry.content };
+    } else {
+      log.push(entry);
+    }
+    return log;
+  }, []);
 }
 
 export const useTaskCenterStore = create<TaskCenterStore>()((set, get) => ({
@@ -275,6 +290,7 @@ export const useTaskCenterStore = create<TaskCenterStore>()((set, get) => ({
           {
             task_id: task.task_id,
             title: task.title ?? "",
+            query: task.query,
             objective: task.objective,
             agent_type: task.agent_type ?? "",
             mode: task.mode ?? "auto",
@@ -436,20 +452,22 @@ export const useTaskCenterStore = create<TaskCenterStore>()((set, get) => ({
         case "text": {
           const textContent = event.text ?? "";
           if (textContent) {
-            task.execution_log = [
-              ...(task.execution_log ?? []),
-              { type: "text", content: textContent },
-            ];
+            const log = task.execution_log ?? [];
+            const last = log[log.length - 1];
+            task.execution_log = last?.type === "text"
+              ? [...log.slice(0, -1), { ...last, content: last.content + textContent }]
+              : [...log, { type: "text", content: textContent }];
           }
           break;
         }
         case "think": {
           const thinkContent = event.think ?? "";
           if (thinkContent) {
-            task.execution_log = [
-              ...(task.execution_log ?? []),
-              { type: "think", content: thinkContent },
-            ];
+            const log = task.execution_log ?? [];
+            const last = log[log.length - 1];
+            task.execution_log = last?.type === "think"
+              ? [...log.slice(0, -1), { ...last, content: last.content + thinkContent }]
+              : [...log, { type: "think", content: thinkContent }];
           }
           break;
         }
@@ -713,6 +731,7 @@ export const useTaskCenterStore = create<TaskCenterStore>()((set, get) => ({
             created_at: t.created_at,
             updated_at: t.updated_at,
             title: t.title ?? "",
+            query: t.query,
             objective: t.objective,
             agent_type: t.agent_type ?? "",
             mode: t.mode ?? "auto",
@@ -861,6 +880,7 @@ export const useTaskCenterStore = create<TaskCenterStore>()((set, get) => ({
               trigger_history_id: payload.trigger_history_id,
               seq_in_conversation: payload.seq_in_conversation,
               title: payload.title,
+              query: payload.query,
               objective: payload.objective,
               agent_type: payload.agent_type,
               mode: payload.mode,

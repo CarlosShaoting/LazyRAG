@@ -787,6 +787,7 @@ const ChatLayout: FC<IChatLayoutProps> = (props) => {
         }}
         initialConversationSettings={conversationSettings}
         hasWorkflowSession={hasWorkflowSession}
+        lockedWorkflowMode={workflowSession?.workflow_mode}
         knowledgeRefreshKey={knowledgeRefreshKey}
         embeddingReady={embeddingReady}
         multimodalEmbeddingReady={multimodalEmbeddingReady}

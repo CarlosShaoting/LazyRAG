@@ -94,12 +94,13 @@ class StyleRenderingRecipeTest(unittest.TestCase):
         self.assertTrue(field['choices'][1].startswith('不启用'))
         self.assertIn('background_images', workflow['runtime']['publisher_owned_slots'])
 
-    def test_prompt_and_slide_generation_require_human_approval(self) -> None:
+    def test_only_page_prompts_and_generation_checkpoints_require_approval(self) -> None:
         state_path = Path(__file__).resolve().parents[3] / 'scenario' / 'state.yml'
         state = yaml.safe_load(state_path.read_text(encoding='utf-8'))
 
-        self.assertEqual(state['steps']['build_outline']['mode'], 'human')
-        self.assertEqual(state['steps']['plan_background_prompts']['mode'], 'human')
+        self.assertEqual(state['steps']['plan_background_prompts']['mode'], 'auto')
+        self.assertEqual(state['steps']['build_outline']['mode'], 'auto')
+        self.assertEqual(state['steps']['plan_page_prompts']['mode'], 'human')
         self.assertEqual(state['steps']['generate_backgrounds']['mode'], 'human')
         self.assertEqual(state['steps']['generate_ppt']['mode'], 'human')
 
@@ -130,6 +131,11 @@ class StyleRenderingRecipeTest(unittest.TestCase):
             state['transitions']['generate_backgrounds'],
             [{'to': 'build_outline'}],
         )
+        self.assertEqual(state['transitions']['build_outline'], [{'to': 'plan_page_prompts'}])
+        self.assertEqual(state['transitions']['plan_page_prompts'], [{'to': 'generate_ppt'}])
+        slots = {slot['id']: slot for slot in workflow['slots']}
+        self.assertEqual(slots['deck_outline']['cardinality'], 'single')
+        self.assertEqual(slots['slide_outline']['cardinality'], 'list')
 
     def test_analyze_runs_conditional_background_capability_gate(self) -> None:
         workflow_path = Path(__file__).resolve().parents[3] / 'workflow.yaml'

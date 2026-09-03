@@ -1332,6 +1332,12 @@ async def _handle_chat_impl(
             *(selected_skills or []),
         ]))
         skill_config = selected_skills or False
+    # create_subagent snapshots these trusted Host selections into its task. The
+    # SubAgent then enables only this bounded list, not the whole installed catalog.
+    # Keep this snapshot before adding the workflow-builder skill below; ordinary
+    # domain SubAgents do not need workflow authoring instructions.
+    agentic_config['available_skills'] = list(agent.available_skills or [])
+    agentic_config['subagent_skills'] = list(selected_skills or [])
     workflow_skill_dir = ''
     if agentic_config.get('enable_workflow', True) and not workflow_turn_is_bound:
         from lazymind.workflow_toolkit import WORKFLOW_SKILL_NAME, workflow_skills_dir

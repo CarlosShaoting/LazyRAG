@@ -62,6 +62,7 @@ func TestCreateSession_Basic(t *testing.T) {
 		SessionID:      "ps-1",
 		ConversationID: "conv-1",
 		WorkflowID:     "image-workflow",
+		WorkflowMode:   "auto",
 		CurrentStepID:  "analyze_subject",
 		CreateUserID:   "user-1",
 	})
@@ -73,6 +74,9 @@ func TestCreateSession_Basic(t *testing.T) {
 	}
 	if s.WorkflowID != "image-workflow" {
 		t.Fatalf("expected image-workflow, got %s", s.WorkflowID)
+	}
+	if s.WorkflowMode != "auto" {
+		t.Fatalf("expected immutable auto mode, got %s", s.WorkflowMode)
 	}
 }
 

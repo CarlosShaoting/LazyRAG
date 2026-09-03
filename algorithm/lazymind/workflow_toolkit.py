@@ -222,7 +222,8 @@ class HostWorkflowToolkit:
         return self._client().get_workflow(workflow_id, revision_id).result
 
     def prepare_workflow(self, workflow_id: str, input_bindings: Optional[Dict[str, Any]] = None,
-                         command_id: str = '', request_context: str = '') -> Dict[str, Any]:
+                         command_id: str = '', request_context: str = '',
+                         workflow_mode: str = '') -> Dict[str, Any]:
         """Prepare a Workflow; in LazyMind create its Session and return Ready steps."""
         self._require_allowed(workflow_id)
         client = self._client()
@@ -231,6 +232,7 @@ class HostWorkflowToolkit:
             fields={
                 **({'origin_ref': self._origin_ref} if self._origin_ref else {}),
                 **({'request_context': request_context} if request_context else {}),
+                **({'workflow_mode': workflow_mode} if workflow_mode else {}),
             } or None).result
         if not self._origin_ref or prepared.get('status') != 'ready':
             return prepared
@@ -283,7 +285,7 @@ class HostWorkflowToolkit:
 
     def advance_step(self, session_id: str, expected_state_version: int,
                      steps: List[StepCommandInput], command_id: str = '',
-                     retry_origin: str = 'automatic') -> Dict[str, Any]:
+                     retry_origin: str = 'automatic', workflow_mode: str = '') -> Dict[str, Any]:
         """Submit Ready targets; command_id is top-level and never belongs inside steps."""
         commands = [StepCommand(**item.model_dump()) if isinstance(item, StepCommandInput)
                     else StepCommand(**item) for item in steps]
@@ -293,6 +295,7 @@ class HostWorkflowToolkit:
             steps=commands,
             command_id=resolved_command_id,
             retry_origin=retry_origin,
+            workflow_mode=workflow_mode,
         )).result
         statuses = result.get('attempt_statuses') if isinstance(result, dict) else None
         if isinstance(statuses, dict):

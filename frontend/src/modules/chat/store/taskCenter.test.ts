@@ -173,6 +173,28 @@ describe("task center workflow events", () => {
     ]);
   });
 
+  it("merges consecutive token deltas into one execution-log entry", () => {
+    useTaskCenterStore.getState().subscribeConvEvents("conversation-1");
+    emitConversationEvent({
+      type: "task_created",
+      payload: {
+        task_id: "workflow-task-stream",
+        agent_type: "workflow_step",
+        title: "ppt-workflow:generate_ppt",
+        status: "running",
+      },
+    });
+    const taskMessage = sseHarness.callbacks.get("/tasks/workflow-task-stream/stream")?.message;
+    for (const token of ["<", "html", ">"]) {
+      taskMessage?.({
+        data: JSON.stringify({ type: "text", text: token }),
+      } as unknown as CustomEvent);
+    }
+
+    expect(useTaskCenterStore.getState().getTasks("conversation-1")[0].execution_log)
+      .toEqual([{ type: "text", content: "<html>" }]);
+  });
+
   it("keeps a live task when an older REST snapshot resolves and queues a reload", async () => {
     const firstSnapshot = deferred<{ data: { tasks: any[] } }>();
     const reconciledSnapshot = deferred<{ data: { tasks: any[] } }>();

@@ -27,6 +27,13 @@ var (
 	ErrSessionConflict     error = repositoryError("WORKFLOW_SESSION_CONFLICT")
 )
 
+func normalizeWorkflowMode(value string) string {
+	if strings.EqualFold(strings.TrimSpace(value), "auto") {
+		return "auto"
+	}
+	return "dynamic"
+}
+
 // MaxAutomaticWorkflowStepAttempts limits executions controlled autonomously by AI,
 // including the initial execution and subsequent AI retries.
 // A retry explicitly requested by the user is a separate control path and is
@@ -502,21 +509,21 @@ func (r *Repository) SetSessionStopped(ctx context.Context, owner, sessionID, co
 func (r *Repository) CreateHostSession(ctx context.Context, owner, sessionID, conversationID, originHost,
 	originRef, controllerHost string, workflow WorkflowPackage) (orm.WorkflowSession, bool, error) {
 	return r.createHostSession(ctx, owner, sessionID, conversationID, originHost, originRef, controllerHost,
-		workflow, "", nil)
+		workflow, "dynamic", "", nil)
 }
 
 // CreateInitializedHostSession atomically creates a Host Session and persists
 // the preparation-derived intent and input bindings. A validation failure must
 // not leave an active, partially initialized Session behind.
 func (r *Repository) CreateInitializedHostSession(ctx context.Context, owner, sessionID, conversationID, originHost,
-	originRef, controllerHost string, workflow WorkflowPackage, intentContext string,
+	originRef, controllerHost string, workflow WorkflowPackage, workflowMode, intentContext string,
 	bindings []InputBinding) (orm.WorkflowSession, bool, error) {
 	return r.createHostSession(ctx, owner, sessionID, conversationID, originHost, originRef, controllerHost,
-		workflow, intentContext, bindings)
+		workflow, workflowMode, intentContext, bindings)
 }
 
 func (r *Repository) createHostSession(ctx context.Context, owner, sessionID, conversationID, originHost,
-	originRef, controllerHost string, workflow WorkflowPackage, intentContext string,
+	originRef, controllerHost string, workflow WorkflowPackage, workflowMode, intentContext string,
 	bindings []InputBinding) (orm.WorkflowSession, bool, error) {
 	if scope := ConversationScope(ctx); scope != "" && scope != strings.TrimSpace(conversationID) {
 		return orm.WorkflowSession{}, false, ErrPermissionDenied
@@ -527,6 +534,7 @@ func (r *Repository) createHostSession(ctx context.Context, owner, sessionID, co
 	if controllerHost == "" {
 		controllerHost = originHost
 	}
+	workflowMode = normalizeWorkflowMode(workflowMode)
 	var created orm.WorkflowSession
 	createdNow := false
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -544,7 +552,7 @@ func (r *Repository) createHostSession(ctx context.Context, owner, sessionID, co
 		var existing orm.WorkflowSession
 		if err := tx.Where("id = ?", sessionID).First(&existing).Error; err == nil {
 			if existing.CreateUserID != owner || existing.WorkflowRevisionID != workflow.RevisionID ||
-				existing.ConversationID != conversationID {
+				existing.ConversationID != conversationID || existing.WorkflowMode != workflowMode {
 				return ErrIdempotencyConflict
 			}
 			created = existing
@@ -577,7 +585,8 @@ func (r *Repository) createHostSession(ctx context.Context, owner, sessionID, co
 				WorkflowRef: workflow.WorkflowRef, WorkflowRevisionID: workflow.RevisionID,
 				WorkflowRevisionNo: workflow.RevisionNo, WorkflowTreeHash: workflow.TreeHash,
 				StateVersion: 1, GraphHash: workflow.GraphHash, GraphSchemaVersion: workflow.GraphVersion,
-				Status: "active", CreateUserID: owner, CreatedAt: now, UpdatedAt: now}
+				WorkflowMode: workflowMode, Status: "active", CreateUserID: owner,
+				CreatedAt: now, UpdatedAt: now}
 			if err := tx.Create(&created).Error; err != nil {
 				return err
 			}

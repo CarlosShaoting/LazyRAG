@@ -141,6 +141,9 @@ def _handoff_tool(
                         runtime_instruction=' '.join(focus_hints),
                     )],
                     handoff=True,
+                    workflow_mode=(
+                        'auto' if cfg.get('workflow_mode') == 'auto' else 'dynamic'
+                    ),
                     retry_origin=(
                         'user' if bool(cfg.get('user_authorized_workflow_retry'))
                         else 'automatic'
@@ -349,6 +352,9 @@ def _safe_session_tools(
                     retry_origin=(
                         'user' if bool(cfg.get('user_authorized_workflow_retry'))
                         else 'automatic'
+                    ),
+                    workflow_mode=(
+                        'auto' if cfg.get('workflow_mode') == 'auto' else 'dynamic'
                     ),
                 )
                 if state_refreshed:
@@ -987,6 +993,7 @@ def _workflow_trigger_tools(
     activations: List[Dict[str, Any]], allowed_refs: set[str], current_query: str = '',
     conversation_id: str = '', session_holder: Optional[Dict[str, str]] = None,
     conversation_history: Optional[List[Dict[str, Any]]] = None,
+    workflow_mode: str = 'dynamic',
 ) -> List[Any]:
     """Bind backend-prepared activations to public package reads."""
     attachments_available = _conversation_has_attachments()
@@ -1115,6 +1122,7 @@ def _workflow_trigger_tools(
                 prepared = toolkit.prepare_workflow(
                     bound_id, input_bindings=resolved_bindings,
                     request_context=effective_context,
+                    workflow_mode=workflow_mode,
                 )
                 session_id = str(prepared.get('session_id') or '')
                 if not session_id:
@@ -1289,7 +1297,7 @@ def resolve_workflow_injection(
     session_id = str(context.get('session_id') or '')
     workflow_id = str(context.get('workflow_id') or context.get('workflow_ref') or '')
     revision_id = str(context.get('revision_id') or '')
-    mode = str(context.get('workflow_mode') or 'dynamic')
+    mode = 'auto' if context.get('workflow_mode') == 'auto' else 'dynamic'
     # Keep the model-facing advance tools narrow (step_id only), while restoring
     # the pre-refactor behaviour where every Workflow step receives the user's
     # exact current instruction. This is essential for completed-session edits
@@ -1356,7 +1364,7 @@ def resolve_workflow_injection(
     session_holder: Dict[str, str] = {'session_id': session_id}
     trigger_tools = _workflow_trigger_tools(
         activations, allowed_refs, current_query, conversation_id, session_holder,
-        conversation_history,
+        conversation_history, mode,
     )
     toolkit = HostWorkflowToolkit(
         _client, allowed_workflow_ids=allowed_ids, origin_ref=conversation_id,

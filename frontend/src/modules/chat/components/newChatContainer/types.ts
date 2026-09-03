@@ -67,6 +67,7 @@ export interface ChatContainerProps {
   ) => void;
   initialConversationSettings?: import("@/modules/chat/utils/request").ConversationRuntimeSettings;
   hasWorkflowSession?: boolean;
+  lockedWorkflowMode?: 'auto' | 'dynamic';
   conversationTrailEnabled?: boolean;
   showThinkingDepth?: boolean;
   showSkillDeposit?: boolean;
