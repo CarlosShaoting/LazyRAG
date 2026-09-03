@@ -261,16 +261,34 @@ ui:
     - id: background_prompts
       step_id: plan_background_prompts
       label: Background Prompts
-      layout: list
+      layout: composite
+      slot_scope: selected
+      composite_tab_position: left
       slots:
         - id: background_prompts
+      composite_layout:
+        direction: row
+        children:
+          - slot: background_prompts
+      composite_behavior:
+        hide_empty_columns: true
+        empty_column_scope: selected
 
     - id: background_images
       step_id: generate_backgrounds
       label: Background Images
-      layout: list
+      layout: composite
+      slot_scope: selected
+      composite_tab_position: left
       slots:
         - id: background_images
+      composite_layout:
+        direction: row
+        children:
+          - slot: background_images
+      composite_behavior:
+        hide_empty_columns: true
+        empty_column_scope: selected
 
     - id: outline
       step_id: build_outline
