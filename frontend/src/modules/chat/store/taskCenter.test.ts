@@ -173,6 +173,37 @@ describe("task center workflow events", () => {
     ]);
   });
 
+  it("refreshes workflow slots when a task publishes an artifact before completion", async () => {
+    useTaskCenterStore.getState().subscribeConvEvents("conversation-1");
+    emitConversationEvent({
+      type: "task_created",
+      payload: {
+        task_id: "workflow-task-ppt",
+        agent_type: "workflow_step",
+        title: "ppt-workflow:generate_ppt",
+        status: "running",
+      },
+    });
+    await vi.advanceTimersByTimeAsync(100);
+    workflowState.loadActiveSession.mockClear();
+
+    const taskMessage = sseHarness.callbacks.get("/tasks/workflow-task-ppt/stream")?.message;
+    taskMessage?.({
+      data: JSON.stringify({
+        type: "artifact",
+        slot: "preview_html",
+        content_type: "text",
+        seq: 1,
+        value: { text: "<html>page one</html>", list_index: 0 },
+      }),
+    } as unknown as CustomEvent);
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(workflowState.loadActiveSession).toHaveBeenCalledWith("conversation-1", {
+      silentError: true,
+    });
+  });
+
   it("merges consecutive token deltas into one execution-log entry", () => {
     useTaskCenterStore.getState().subscribeConvEvents("conversation-1");
     emitConversationEvent({

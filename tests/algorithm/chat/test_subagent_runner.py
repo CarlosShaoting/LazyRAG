@@ -516,6 +516,58 @@ def test_workflow_tool_internal_text_is_not_forwarded(monkeypatch):
     assert '<html>' not in visible_text
 
 
+def test_workflow_tool_artifact_is_streamed_before_tool_returns(monkeypatch):
+    workflow_task = {
+        **_DEFAULT_TASK,
+        'agent_type': 'workflow_step',
+        'params': {'required_output_artifact_keys': ['result']},
+    }
+    _install_fake_db(monkeypatch, workflow_task)
+    _install_fake_lazyllm(monkeypatch)
+    _install_fake_build(monkeypatch)
+    _install_fake_translator(monkeypatch)
+    context_holder: Dict[str, Any] = {}
+
+    def capture_context(ctx):
+        context_holder['ctx'] = ctx
+        ctx._artifact_counts['result'] = 1
+
+    monkeypatch.setattr(runner_mod, 'set_context', capture_context)
+
+    class ProgressiveArtifactExecutor:
+        async def stream(self, llm, plan):
+            yield 'event', {
+                'tag': 'tool_calls',
+                'tool_calls': [{'id': 'ppt-1', 'name': 'ppt_generate_pages', 'args': {}}],
+            }
+            context_holder['ctx'].emit({
+                'type': 'artifact',
+                'slot': 'result',
+                'content_type': 'text',
+                'seq': 1,
+                'value': {'text': '<html>page one</html>', 'list_index': 0},
+            })
+            # Model a publisher that keeps generating more pages after page one
+            # has already been made available to the UI.
+            await asyncio.sleep(0.01)
+            yield 'event', {
+                'tag': 'tool_results',
+                'tool_results': [{'id': 'ppt-1', 'name': 'ppt_generate_pages', 'result': 'ok'}],
+            }
+            yield 'final', 'done'
+
+    monkeypatch.setattr(runner_mod, 'AgentExecutor', ProgressiveArtifactExecutor)
+
+    async def run():
+        return await _collect(runner_mod.run_subagent_stream(_DEFAULT_TASK_ID, 'dsn://'))
+
+    events_out = _sse_to_events(asyncio.run(run()))
+    event_types = [event.get('type') for event in events_out]
+
+    assert event_types.count('artifact') == 1
+    assert event_types.index('artifact') < event_types.index('tool_results')
+
+
 def test_run_subagent_stream_emits_task_scoped_source_snapshot(monkeypatch):
     _install_fake_db(monkeypatch)
     _install_fake_lazyllm(monkeypatch)

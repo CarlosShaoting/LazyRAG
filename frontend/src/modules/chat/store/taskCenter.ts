@@ -561,6 +561,10 @@ export const useTaskCenterStore = create<TaskCenterStore>()((set, get) => ({
               value: event.value,
             };
             void get().loadArtifactStreamContent(conversationId, taskId, artifact);
+            // Workflow publishers can emit list items while a long tool call is
+            // still running (notably PPT pages). Reconcile the durable slot as
+            // soon as each task artifact arrives instead of waiting for done.
+            scheduleWorkflowSessionRefresh(conversationId);
           }
           if (event.type === "done" || event.type === "error") {
             get().unsubscribeTask(taskId);

@@ -929,6 +929,7 @@ async def run_subagent_stream(
     emitted: List[Dict[str, Any]] = []
     stream_events: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
     loop = asyncio.get_running_loop()
+    stream_merge_active = False
     clear_cancel_queue = True
     source_state: Dict[str, Any] = {}
     reset_citation_state(source_state)
@@ -984,11 +985,15 @@ async def run_subagent_stream(
         return {'type': 'sources', 'task_id': task_id, 'sources': sources}
 
     def _emit(ev: Dict[str, Any]) -> None:
-        if ev.get('type') in DRAFT_STREAM_EVENT_TYPES:
+        event_type = ev.get('type')
+        if (
+            event_type in DRAFT_STREAM_EVENT_TYPES
+            or (event_type == 'artifact' and stream_merge_active)
+        ):
             try:
                 loop.call_soon_threadsafe(stream_events.put_nowait, dict(ev))
             except RuntimeError as exc:
-                LOG.warning('[SubAgent] failed to enqueue Draft stream event: %s', exc)
+                LOG.warning('[SubAgent] failed to enqueue live tool event: %s', exc)
             return
         emitted.append(ev)
 
@@ -1146,6 +1151,11 @@ async def run_subagent_stream(
         workflow_tool_in_flight = False
 
         executor = AgentExecutor()
+        # Package publisher tools can emit several durable artifacts during one
+        # long-running tool call (for example, one HTML artifact per completed
+        # PPT page). Route those events through the live queue while the Agent
+        # iterator is running instead of holding them until tool_results.
+        stream_merge_active = True
         merged_events = merge_agent_and_stream_events(
             executor.stream(llm, plan), stream_events,
         )
@@ -1267,6 +1277,7 @@ async def run_subagent_stream(
                     ctx.db.append_step(task_id, step_seq, 'text', {'content': _pending_text})
                     step_seq += 1
                     _pending_text = ''
+        stream_merge_active = False
 
         # Drain remaining artifact events.
         while emitted:
