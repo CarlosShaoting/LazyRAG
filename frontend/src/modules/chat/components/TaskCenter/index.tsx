@@ -567,14 +567,12 @@ function TaskCard({ task }: { task: SubAgentTask }) {
       {!collapsed && (
         <>
           {runInstruction && (
-            <div className="task-card-instruction">
-              <span className="task-card-instruction-label">
-                {t("taskCenter.runInstruction")}:
-              </span>
-              <Tooltip title={runInstruction} placement="topLeft">
-                <span className="task-card-instruction-value">{runInstruction}</span>
-              </Tooltip>
-            </div>
+            <CollapsibleSection
+              title={t("taskCenter.runInstruction")}
+              defaultOpen={false}
+            >
+              <div className="task-card-instruction-content">{runInstruction}</div>
+            </CollapsibleSection>
           )}
           {isRunning && (
           <Progress

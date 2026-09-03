@@ -873,8 +873,13 @@ export const useTaskCenterStore = create<TaskCenterStore>()((set, get) => ({
             // authoritative reload after preserving this newly created task.
             if (get()._loadingTasks[conversationId]) {
               liveTaskIdsCreatedDuringLoad.get(conversationId)?.add(payload.task_id);
-              void get().loadConversationTasks(conversationId);
             }
+            // The task row is committed before task_created is published. Load
+            // it immediately so fields omitted by an older notice (notably the
+            // objective/run instruction) do not appear only after completion.
+            // loadConversationTasks also queues one follow-up when a snapshot
+            // is already in flight.
+            void get().loadConversationTasks(conversationId);
           } else if (type === 'task_updated' && payload?.task_id && payload?.event) {
             const taskEvent = payload.event;
             if (replayed) {
