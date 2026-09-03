@@ -115,6 +115,7 @@ export interface SubAgentTask {
   created_at?: string;
   updated_at?: string;
   title: string;
+  objective?: string;
   agent_type: string;
   mode: string;
   status: TaskStatus;
@@ -274,6 +275,7 @@ export const useTaskCenterStore = create<TaskCenterStore>()((set, get) => ({
           {
             task_id: task.task_id,
             title: task.title ?? "",
+            objective: task.objective,
             agent_type: task.agent_type ?? "",
             mode: task.mode ?? "auto",
             status: (task.status as TaskStatus) ?? "pending",
@@ -711,6 +713,7 @@ export const useTaskCenterStore = create<TaskCenterStore>()((set, get) => ({
             created_at: t.created_at,
             updated_at: t.updated_at,
             title: t.title ?? "",
+            objective: t.objective,
             agent_type: t.agent_type ?? "",
             mode: t.mode ?? "auto",
             status: t.status ?? "pending",
@@ -858,6 +861,7 @@ export const useTaskCenterStore = create<TaskCenterStore>()((set, get) => ({
               trigger_history_id: payload.trigger_history_id,
               seq_in_conversation: payload.seq_in_conversation,
               title: payload.title,
+              objective: payload.objective,
               agent_type: payload.agent_type,
               mode: payload.mode,
               status: payload.status || 'pending',

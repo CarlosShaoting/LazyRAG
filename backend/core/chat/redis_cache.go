@@ -89,6 +89,7 @@ type TaskCreatedNotice struct {
 	TaskID            string `json:"task_id"`
 	TriggerHistoryID  string `json:"trigger_history_id"`
 	Title             string `json:"title"`
+	Objective         string `json:"objective,omitempty"`
 	AgentType         string `json:"agent_type"`
 	Mode              string `json:"mode"`
 	Status            string `json:"status"`

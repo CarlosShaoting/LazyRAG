@@ -2461,6 +2461,7 @@ const zhCN = {
     references: "参考来源",
     download: "下载",
     executionProcess: "执行过程",
+    runInstruction: "运行指令",
     estimatedSeconds: "约 {{seconds}} 秒",
     durationSeconds: "{{seconds}} 秒",
     durationMinutes: "{{minutes}} 分 {{seconds}} 秒",

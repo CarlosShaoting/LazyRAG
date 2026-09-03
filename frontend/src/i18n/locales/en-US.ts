@@ -2516,6 +2516,7 @@ const enUS = {
     references: "References",
     download: "Download",
     executionProcess: "Execution Process",
+    runInstruction: "Run instruction",
     estimatedSeconds: "~{{seconds}}s",
     durationSeconds: "{{seconds}}s",
     durationMinutes: "{{minutes}}m {{seconds}}s",
