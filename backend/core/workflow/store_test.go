@@ -359,10 +359,14 @@ func TestWriteSlotRevision_List_AppendsAll(t *testing.T) {
 
 	// Three enhance runs — each appends to the list.
 	for i := 1; i <= 3; i++ {
-		if _, err := WriteSlotRevision(ctx, db.DB,
+		created, err := WriteSlotRevision(ctx, db.DB,
 			"ps-1", "enhanced_image_output", "enhanced_image_url",
-			"enhance_image", i, "list", nil); err != nil {
+			"enhance_image", i, "list", nil)
+		if err != nil {
 			t.Fatalf("rev %d: %v", i, err)
+		}
+		if created.ListIndex == nil || *created.ListIndex != i-1 {
+			t.Fatalf("append %d returned list_index=%v, want %d", i, created.ListIndex, i-1)
 		}
 	}
 

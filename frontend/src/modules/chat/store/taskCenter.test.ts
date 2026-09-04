@@ -60,7 +60,10 @@ vi.mock("@/components/StateGraphModal", () => ({
 }));
 
 import { useTaskCenterStore } from "./taskCenter";
-import { CHAT_AUTO_ADVANCE_EVENT } from "@/modules/chat/constants/chat";
+import {
+  CHAT_AUTO_ADVANCE_EVENT,
+  CHAT_WORKFLOW_STEP_FEEDBACK_EVENT,
+} from "@/modules/chat/constants/chat";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -336,6 +339,35 @@ describe("task center workflow events", () => {
       CHAT_AUTO_ADVANCE_EVENT,
     );
     dispatchSpy.mockRestore();
+  });
+
+  it("forwards each live workflow step feedback to chat and ignores replay", () => {
+    const received: CustomEvent[] = [];
+    const listener = (event: Event) => received.push(event as CustomEvent);
+    window.addEventListener(CHAT_WORKFLOW_STEP_FEEDBACK_EVENT, listener);
+    useTaskCenterStore.getState().subscribeConvEvents("conversation-1");
+
+    const workflowFeedback = {
+      type: "workflow_step_feedback",
+      payload: {
+        task_id: "workflow-task-feedback",
+        history_id: "history-1",
+        status: "succeeded",
+        message: "步骤「生成大纲」已完成：已生成 10 页大纲。",
+      },
+    };
+    emitConversationEvent(workflowFeedback);
+    emitConversationEvent({ ...workflowFeedback, replayed: true });
+
+    expect(received).toHaveLength(1);
+    expect(received[0].detail).toEqual({
+      conversationId: "conversation-1",
+      feedbackId: "workflow-task-feedback",
+      historyId: "history-1",
+      message: "步骤「生成大纲」已完成：已生成 10 页大纲。",
+      status: "succeeded",
+    });
+    window.removeEventListener(CHAT_WORKFLOW_STEP_FEEDBACK_EVENT, listener);
   });
 
   it("refreshes the active workflow session for live and replayed creation events", async () => {

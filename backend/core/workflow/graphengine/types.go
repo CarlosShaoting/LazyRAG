@@ -112,6 +112,7 @@ type RuntimePolicy struct {
 	ExclusiveToolCapabilities []string             `json:"exclusive_tool_capabilities,omitempty" yaml:"exclusive_tool_capabilities,omitempty"`
 	CollectsKnowledge         bool                 `json:"collects_knowledge,omitempty" yaml:"collects_knowledge,omitempty"`
 	CompletedEditStep         string               `json:"completed_edit_step,omitempty" yaml:"completed_edit_step,omitempty"`
+	CompletedEditRouting      string               `json:"completed_edit_routing,omitempty" yaml:"completed_edit_routing,omitempty"`
 	CompletedContinueSteps    []string             `json:"completed_continue_steps,omitempty" yaml:"completed_continue_steps,omitempty"`
 	ClarificationFields       []ClarificationField `json:"clarification_fields,omitempty" yaml:"clarification_fields,omitempty"`
 	PostStepChecks            []PostStepCheck      `json:"post_step_checks,omitempty" yaml:"post_step_checks,omitempty"`
@@ -119,7 +120,7 @@ type RuntimePolicy struct {
 
 func (p RuntimePolicy) IsZero() bool {
 	return len(p.PublisherOwnedSlots) == 0 && len(p.ExclusiveToolCapabilities) == 0 && !p.CollectsKnowledge &&
-		p.CompletedEditStep == "" && len(p.CompletedContinueSteps) == 0 && len(p.ClarificationFields) == 0 &&
+		p.CompletedEditStep == "" && p.CompletedEditRouting == "" && len(p.CompletedContinueSteps) == 0 && len(p.ClarificationFields) == 0 &&
 		len(p.PostStepChecks) == 0
 }
 

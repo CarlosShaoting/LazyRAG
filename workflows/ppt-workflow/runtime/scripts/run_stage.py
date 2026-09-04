@@ -1428,7 +1428,7 @@ def _read_image_size(path: Path) -> dict | None:
 
 def _resolve_inherited_table(ip: dict, page_outline: dict) -> dict | None:
     ref = page_outline.get("use_table")
-    if not ref:
+    if not isinstance(ref, dict) or not ref:
         return None
     rde = ip.get("raw_document_excerpts") or {}
     raw_path = rde.get("path")
@@ -1457,7 +1457,7 @@ def _resolve_inherited_image(ip: dict, page_outline: dict, deck: Path, page_no: 
     and return its relative path + alt text.
     """
     ref = page_outline.get("use_image")
-    if not ref:
+    if not isinstance(ref, dict) or not ref:
         return None
 
     src = ""

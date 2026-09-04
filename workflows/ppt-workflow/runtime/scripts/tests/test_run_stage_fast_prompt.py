@@ -125,7 +125,29 @@ class StyleRenderingRecipeTest(unittest.TestCase):
         self.assertIn('background_prompts', workflow['runtime']['publisher_owned_slots'])
         self.assertEqual(
             state['transitions']['collect_materials'],
-            [{'to': 'plan_background_prompts'}],
+            [
+                {
+                    'to': 'plan_background_prompts',
+                    'when': (
+                        'ppt_capability_requirements is exactly '
+                        'AI_BACKGROUND_IMAGES: enabled.\n'
+                    ),
+                },
+                {
+                    'to': 'build_outline',
+                    'when': (
+                        'ppt_capability_requirements is exactly '
+                        'AI_BACKGROUND_IMAGES: disabled.\n'
+                    ),
+                },
+            ],
+        )
+        self.assertEqual(state['steps']['analyze_requirements']['route'], 'choice')
+        self.assertEqual(state['steps']['collect_materials']['route'], 'choice')
+        self.assertNotIn('skip_if', state['steps']['collect_materials'])
+        self.assertEqual(
+            [edge['to'] for edge in state['transitions']['analyze_requirements']],
+            ['collect_materials', 'plan_background_prompts', 'build_outline'],
         )
         self.assertEqual(
             state['transitions']['generate_backgrounds'],
@@ -136,6 +158,45 @@ class StyleRenderingRecipeTest(unittest.TestCase):
         slots = {slot['id']: slot for slot in workflow['slots']}
         self.assertEqual(slots['deck_outline']['cardinality'], 'single')
         self.assertEqual(slots['slide_outline']['cardinality'], 'list')
+        page_prompts = next(
+            tab for tab in workflow['ui']['tabs'] if tab['id'] == 'page_prompts'
+        )
+        self.assertEqual(page_prompts['layout'], 'composite')
+        for tab_id in ('background_prompts', 'background_images', 'page_prompts'):
+            tab = next(tab for tab in workflow['ui']['tabs'] if tab['id'] == tab_id)
+            self.assertEqual(tab['layout'], 'composite')
+            self.assertEqual(tab['slot_scope'], 'step')
+        self.assertEqual(
+            page_prompts['composite_layout']['children'],
+            [{'slot': 'slide_outline'}],
+        )
+        self.assertIn(
+            'rewind to plan_background_prompts',
+            workflow['runtime']['completed_edit_routing'],
+        )
+        self.assertIn(
+            "ppt_publish_outline(deck_dir, pages=[N], insert_before=N)",
+            state['steps']['plan_page_prompts']['prompt'],
+        )
+
+    def test_completed_html_chat_supports_incremental_media_replacement(self) -> None:
+        workflow_path = Path(__file__).resolve().parents[3] / 'workflow.yaml'
+        state_path = workflow_path.parent / 'scenario' / 'state.yml'
+        workflow = yaml.safe_load(workflow_path.read_text(encoding='utf-8'))
+        state = yaml.safe_load(state_path.read_text(encoding='utf-8'))
+
+        registered = workflow['tool_scripts'][0]['functions']
+        step_tools = state['steps']['generate_ppt']['tools']
+        prompt = state['steps']['generate_ppt']['prompt']
+        for tool in (
+            'ppt_replace_page_material_image',
+            'ppt_replace_page_background',
+        ):
+            self.assertIn(tool, registered)
+            self.assertIn(tool, step_tools)
+            self.assertIn(tool, prompt)
+        self.assertIn('focused_sort_order', prompt)
+        self.assertIn('updated_pages', state['steps']['generate_ppt']['acceptance_criteria'])
 
     def test_analyze_runs_conditional_background_capability_gate(self) -> None:
         workflow_path = Path(__file__).resolve().parents[3] / 'workflow.yaml'

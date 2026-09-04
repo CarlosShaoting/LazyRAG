@@ -766,12 +766,31 @@ def test_active_workflow_forwards_current_edit_request_and_focus_to_step():
             {
                 'session_id': 'session-1',
                 'workflow_id': 'deck-workflow',
-                'runtime': {'completed_edit_step': 'generate_ppt'},
                 'focused_tab': 'composite_preview',
                 'focused_sort_order': 2,
             },
             conversation_id='conversation-1',
             current_query='把这一页标题改成期末练习',
+            workflow_catalog=[
+                {
+                    'workflow_ref': 'builtin:writer-workflow',
+                    'workflow_id': 'writer-workflow',
+                    'runtime': {'completed_edit_step': 'draft'},
+                },
+                {
+                    'workflow_ref': 'builtin:deck-workflow',
+                    'workflow_id': 'deck-workflow',
+                    'runtime': {
+                        'completed_edit_step': 'generate_ppt',
+                        'completed_edit_routing': (
+                            'For whole-slide insertions, rewind to build_outline.'
+                        ),
+                    },
+                },
+            ],
+            allowed_workflow_refs=[
+                'builtin:writer-workflow', 'builtin:deck-workflow',
+            ],
         )
         # resolve_workflow_injection's patch is applied to agentic_config by ChatService.
         lazyllm.globals['agentic_config'].update(contribution.agentic_config_patch)
@@ -779,11 +798,40 @@ def test_active_workflow_forwards_current_edit_request_and_focus_to_step():
 
     assert result == {'status': 'succeeded'}
     assert 'A completed Session is not immutable' in contribution.runtime_context
-    assert "advance_step(step_ids=['generate_ppt'])" in contribution.runtime_context
+    assert 'For whole-slide insertions, rewind to build_outline.' in contribution.runtime_context
+    assert "fallback 'generate_ppt' step" in contribution.runtime_context
     assert 'never paste replacement content into chat' in contribution.runtime_context
     command = toolkit.advance_step.call_args.args[2][0]
     assert command.user_input == '把这一页标题改成期末练习'
     assert 'sort order 2' in command.runtime_instruction
+
+
+def test_completed_workflow_keeps_direct_fallback_without_semantic_routing():
+    toolkit = MagicMock()
+    toolkit.get_ready_steps.return_value = {
+        'session_id': 'session-1', 'state_version': 7,
+        'ready_steps': [], 'retryable_steps': [], 'rewindable_steps': ['generate_ppt'],
+    }
+    with patch('lazymind.chat.workflow.workflow_manager.HostWorkflowToolkit',
+               return_value=toolkit), patch(
+        'lazymind.chat.workflow.workflow_manager._client',
+    ) as client_factory:
+        client_factory.return_value.get_state.return_value = {
+            'status': 'completed', 'state_version': 7,
+            'projection': {'completed': True, 'rewindable': ['generate_ppt']},
+        }
+        contribution = resolve_workflow_injection(
+            {
+                'session_id': 'session-1',
+                'workflow_id': 'deck-workflow',
+                'runtime': {'completed_edit_step': 'generate_ppt'},
+            },
+            conversation_id='conversation-1',
+            current_query='重做当前页面',
+        )
+
+    assert "call advance_step(step_ids=['generate_ppt']) now" in contribution.runtime_context
+    assert 'semantic routing' not in contribution.runtime_context
 
 
 def test_dynamic_trigger_defaults_request_context_to_current_query():

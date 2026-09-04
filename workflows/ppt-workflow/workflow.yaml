@@ -32,6 +32,15 @@ runtime:
     - preview_notes
   collects_knowledge: true
   completed_edit_step: generate_ppt
+  completed_edit_routing: |
+    For a request to insert or add a whole slide into an already generated deck,
+    first call read_artifact(artifact_ref='ppt_capability_requirements') to inspect
+    the saved capability marker. When its content is exactly
+    AI_BACKGROUND_IMAGES: enabled, rewind to plan_background_prompts so the new
+    background prompt is inserted first. When it is exactly
+    AI_BACKGROUND_IMAGES: disabled, rewind to build_outline. These insertion
+    routes take precedence over completed_edit_step; all other completed-deck
+    edits use the generate_ppt fallback.
   post_step_checks:
     - step_id: analyze_requirements
       tool: check_ppt_workflow_capabilities
@@ -100,7 +109,11 @@ tool_scripts:
       - ppt_generate_background_images
       - check_ppt_workflow_capabilities
       - ppt_attach_material_images
+      - ppt_replace_page_material_image
+      - ppt_replace_page_background
       - ppt_build_outline
+      - ppt_insert_outline_page
+      - ppt_publish_deck_outline
       - ppt_generate_pages
       - ppt_init_deck
       - ppt_find_deck
@@ -274,7 +287,7 @@ ui:
       step_id: plan_background_prompts
       label: Background Prompts
       layout: composite
-      slot_scope: selected
+      slot_scope: step
       composite_tab_position: left
       slots:
         - id: background_prompts
@@ -290,7 +303,7 @@ ui:
       step_id: generate_backgrounds
       label: Background Images
       layout: composite
-      slot_scope: selected
+      slot_scope: step
       composite_tab_position: left
       slots:
         - id: background_images
@@ -312,9 +325,18 @@ ui:
     - id: page_prompts
       step_id: plan_page_prompts
       label: Page Prompts
-      layout: list
+      layout: composite
+      slot_scope: step
+      composite_tab_position: left
       slots:
         - id: slide_outline
+      composite_layout:
+        direction: row
+        children:
+          - slot: slide_outline
+      composite_behavior:
+        hide_empty_columns: true
+        empty_column_scope: selected
 
     - id: composite_preview
       step_id: generate_ppt

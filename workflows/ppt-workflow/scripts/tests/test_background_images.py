@@ -197,6 +197,76 @@ class BackgroundImageGenerationTest(unittest.TestCase):
             self.assertEqual(manifest['pages'][2]['prompt'], 'old prompt 3')
             self.assertEqual((deck / 'images/page_003_background.png').read_bytes(), b'old-3')
 
+    def test_inserted_background_adds_one_ui_position_without_republishing_old_images(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            deck = self._deck(root)
+            outline = json.loads((deck / 'outline.json').read_text(encoding='utf-8'))
+            outline['pages'] = [
+                outline['pages'][0],
+                {'page_no': 2, 'page_kind': 'content', 'title': '插入页'},
+                {**outline['pages'][1], 'page_no': 3},
+            ]
+            (deck / 'outline.json').write_text(
+                json.dumps(outline, ensure_ascii=False), encoding='utf-8',
+            )
+            existing = []
+            for page in (1, 3):
+                rel = f'images/page_{page:03d}_background.png'
+                (deck / rel).write_bytes(f'old-{page}'.encode())
+                existing.append({
+                    'page_no': page,
+                    'local_path': rel,
+                    'prompt': f'old prompt {page}',
+                })
+            (deck / 'background_images.json').write_text(json.dumps({
+                'enabled': True,
+                'pages': existing,
+            }), encoding='utf-8')
+            generated = root / 'inserted.png'
+            self._write_generated_image(generated, (1600, 900))
+            order = [10, 11]
+
+            with mock.patch.object(
+                TOOLS, '_resolve_deck_dir', return_value=deck,
+            ), mock.patch.object(
+                TOOLS, '_ui_slot_order_list', return_value=order,
+            ), mock.patch.object(
+                TOOLS, '_reserve_ui_slot_position', return_value=99,
+            ) as reserve, mock.patch.object(
+                TOOLS, 'image_generator', return_value={'local_path': str(generated)},
+            ) as generate, mock.patch.object(
+                TOOLS, '_save_artifact', return_value={'stored': True},
+            ) as save:
+                result = TOOLS.ppt_generate_background_images(
+                    str(deck),
+                    prompts_json=[{'page_no': 2, 'prompt': 'new approved prompt'}],
+                    pages_json=[2],
+                    replace=False,
+                    insert_before=2,
+                )
+
+            generate.assert_called_once()
+            reserve.assert_called_once()
+            save.assert_called_once()
+            self.assertEqual(save.call_args.kwargs['publisher_list_index'], 99)
+            self.assertEqual(order, [10, 99, 11])
+            self.assertEqual(result['updated_pages'], [2])
+            self.assertEqual(result['generated_count'], 1)
+            self.assertEqual(result['published_count'], 1)
+            self.assertEqual(
+                (deck / 'images/page_001_background.png').read_bytes(), b'old-1',
+            )
+            self.assertEqual(
+                (deck / 'images/page_003_background.png').read_bytes(), b'old-3',
+            )
+            manifest = json.loads(
+                (deck / 'background_images.json').read_text(encoding='utf-8'),
+            )
+            self.assertEqual(
+                [entry['page_no'] for entry in manifest['pages']], [1, 2, 3],
+            )
+
     def test_surfaces_image_model_failure_reason(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             deck = self._deck(Path(temp))

@@ -33,6 +33,27 @@ describe('workflow tab artifact scope', () => {
     expect(workflowSlotMatchesTabScope(tab, steps, firstFrame)).toBe(false);
   });
 
+  it('keeps unchanged composite items visible after their revision becomes stale', () => {
+    const tab = {
+      id: 'page_prompts',
+      step_id: 'plan_page_prompts',
+      slot_scope: 'step',
+      label: 'Page Prompts',
+      slots: [],
+    } as TabDef;
+    const unchangedPage = {
+      slot: 'slide_outline',
+      step_id: 'plan_page_prompts',
+      selected: false,
+      validity: 'stale',
+      list_index: 0,
+      sort_order: 1,
+    } as SlotRevision;
+
+    expect(resolveWorkflowTabStepId(tab, steps)).toBe('plan_page_prompts');
+    expect(workflowSlotMatchesTabScope(tab, steps, unchangedPage)).toBe(true);
+  });
+
   it('lets a selected-scope composite join generate inputs with enhance outputs', () => {
     const tab = {
       id: 'enhance_image',

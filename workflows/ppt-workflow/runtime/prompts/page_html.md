@@ -6,6 +6,9 @@
 - 不要把任何风格都退化成“顶部小图 + 居中标题 + 底部等宽圆角卡片”。除非内容确实是等权比较，否则优先采用 `art_direction.composition` 指定的主视觉分区、信息轨道、编辑式分栏或非等权模块。
 - 风格表现必须服从本文后续的机械导出约束。`art_direction.export_safe_effects` 是允许的实现方式；`art_direction.forbidden_effects` 中的效果不得使用。出现冲突时，以机械导出约束为最高优先级。
 - 同一套 deck 的页面可以采用不同构图，但必须复用同一套色彩、字体、表面和装饰语言，让页面既有变化又保持统一。
+- CSS 必须原样采用 `VISUAL DESIGN CONTRACT.typography.heading_font` 和
+  `body_font`：标题使用 heading_font，正文使用 body_font。不得擅自统一替换为
+  `system-ui`、Arial 或同一种标准字体；可编辑 PPTX 导出器会保留这里的字体名。
 
 ## 语言锁定（硬性）
 

@@ -320,7 +320,8 @@ type eventHooks struct {
 	onTerminalStatus func(ctx context.Context, db *gorm.DB, stateStore state.Store, taskID, status, message string)
 	// onConversationEvent is called when a plugin lifecycle event should be pushed to the
 	// main conversation SSE stream. convID and historyID identify the target stream;
-	// eventType is one of "step_waiting", "workflow_completed", "workflow_error".
+	// eventType is a bounded workflow lifecycle notification such as
+	// "workflow_step_feedback", "step_waiting", "workflow_completed", or "workflow_error".
 	onConversationEvent func(ctx context.Context, stateStore state.Store, convID, historyID, eventType string, payload map[string]any) error
 }
 

@@ -16,7 +16,9 @@ import {
   CHAT_AUTO_ADVANCE_EVENT,
   CHAT_FFMPEG_DEPENDENCY_MISSING_EVENT,
   CHAT_MEDIA_CAPABILITY_MISSING_EVENT,
+  CHAT_WORKFLOW_STEP_FEEDBACK_EVENT,
   type ChatAutoAdvanceDetail,
+  type ChatWorkflowStepFeedbackDetail,
 } from "@/modules/chat/constants/chat";
 import { streamManager } from "@/modules/chat/utils/StreamManager";
 import { ChatServiceApi } from "@/modules/chat/utils/request";
@@ -1357,6 +1359,74 @@ export function useChatConversation({
     void openResumeSSE(conversationId);
   }
 
+  function appendWorkflowStepFeedback(
+    conversationId: string,
+    feedbackId: string,
+    historyId: string | undefined,
+    feedbackMessage: string,
+  ) {
+    const text = feedbackMessage.trim();
+    if (!conversationId || !feedbackId || !text) return;
+
+    const cached = conversationMessagesCache.current.get(conversationId) ?? [];
+    const sourceList =
+      currentConversationIdRef.current === conversationId
+        ? messageListRef.current
+        : cached;
+    let targetIndex = historyId
+      ? sourceList.findIndex(
+          (item) =>
+            item?.role === RoleTypes.ASSISTANT &&
+            item?.history_id === historyId,
+        )
+      : -1;
+    if (targetIndex < 0 && !historyId) {
+      targetIndex = sourceList.findLastIndex(
+        (item) => item?.role === RoleTypes.ASSISTANT,
+      );
+    }
+
+    const nextList = [...sourceList];
+    if (targetIndex < 0) {
+      nextList.push({
+        id: `workflow-feedback:${feedbackId}`,
+        role: RoleTypes.ASSISTANT,
+        delta: text,
+        raw_delta: text,
+        finish_reason:
+          ChatConversationsResponseFinishReasonEnum.FinishReasonStop,
+        workflow_step_feedback_ids: [feedbackId],
+      });
+    } else {
+      const target = nextList[targetIndex];
+      const feedbackIds = Array.isArray(target?.workflow_step_feedback_ids)
+        ? target.workflow_step_feedback_ids
+        : [];
+      if (feedbackIds.includes(feedbackId) || String(target?.delta || "").includes(text)) {
+        return;
+      }
+      const appendText = (value: unknown) => {
+        const existing = String(value || "").trimEnd();
+        return existing ? `${existing}\n\n${text}` : text;
+      };
+      nextList[targetIndex] = {
+        ...target,
+        delta: appendText(target?.delta),
+        raw_delta: appendText(target?.raw_delta || target?.delta),
+        workflow_step_feedback_ids: [...feedbackIds, feedbackId],
+      };
+    }
+
+    conversationMessagesCache.current.set(conversationId, nextList);
+    streamManager.saveMessageList(conversationId, nextList);
+    if (currentConversationIdRef.current === conversationId) {
+      messageListRef.current = nextList;
+      setMessageList(nextList);
+      scroll.isMouseScrollingRef.current = true;
+      scroll.scrollToEnd();
+    }
+  }
+
   useEffect(() => {
     const handleAutoAdvance = (event: Event) => {
       const detail = (event as CustomEvent<ChatAutoAdvanceDetail>).detail;
@@ -1386,8 +1456,28 @@ export function useChatConversation({
       }
     };
     window.addEventListener(CHAT_AUTO_ADVANCE_EVENT, handleAutoAdvance);
+    const handleWorkflowStepFeedback = (event: Event) => {
+      const detail = (
+        event as CustomEvent<ChatWorkflowStepFeedbackDetail>
+      ).detail;
+      if (!detail?.conversationId) return;
+      appendWorkflowStepFeedback(
+        detail.conversationId,
+        detail.feedbackId,
+        detail.historyId,
+        detail.message || "",
+      );
+    };
+    window.addEventListener(
+      CHAT_WORKFLOW_STEP_FEEDBACK_EVENT,
+      handleWorkflowStepFeedback,
+    );
     return () => {
       window.removeEventListener(CHAT_AUTO_ADVANCE_EVENT, handleAutoAdvance);
+      window.removeEventListener(
+        CHAT_WORKFLOW_STEP_FEEDBACK_EVENT,
+        handleWorkflowStepFeedback,
+      );
     };
   }, []);
 

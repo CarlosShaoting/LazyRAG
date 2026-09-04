@@ -213,6 +213,7 @@ export interface WorkflowRuntimePolicy {
   publisher_owned_slots?: string[];
   collects_knowledge?: boolean;
   completed_edit_step?: string;
+  completed_edit_routing?: string;
   clarification_fields?: Array<{
     id: string;
     label?: string;

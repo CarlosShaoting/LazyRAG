@@ -421,6 +421,7 @@ func WriteSlotRevision(ctx context.Context, db *gorm.DB,
 
 	now := time.Now().UTC()
 	var revision int
+	var revisionID string
 	var finalListIndex *int
 
 	// Resolve artifact_seq: find the task_id for this step attempt, then pick
@@ -509,6 +510,7 @@ func WriteSlotRevision(ctx context.Context, db *gorm.DB,
 			ProducerAttemptID: step.ID,
 			CreatedAt:         now,
 		}
+		revisionID = row.ID
 		if err := tx.Create(row).Error; err != nil {
 			return err
 		}
@@ -527,7 +529,7 @@ func WriteSlotRevision(ctx context.Context, db *gorm.DB,
 
 	var result orm.WorkflowSlotRevision
 	err := db.WithContext(ctx).
-		Where("session_id = ? AND slot_id = ? AND revision = ?", sessionID, slotID, revision).
+		Where("id = ?", revisionID).
 		First(&result).Error
 	return &result, err
 }
@@ -549,6 +551,7 @@ func WriteSlotRevisionWithSnapshot(ctx context.Context, db *gorm.DB,
 
 	now := time.Now().UTC()
 	var revision int
+	var revisionID string
 	var finalListIndex *int
 
 	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -613,6 +616,7 @@ func WriteSlotRevisionWithSnapshot(ctx context.Context, db *gorm.DB,
 			Attempt:         attempt,
 			CreatedAt:       now,
 		}
+		revisionID = row.ID
 		if err := tx.Create(row).Error; err != nil {
 			return err
 		}
@@ -629,7 +633,7 @@ func WriteSlotRevisionWithSnapshot(ctx context.Context, db *gorm.DB,
 
 	var result orm.WorkflowSlotRevision
 	err := db.WithContext(ctx).
-		Where("session_id = ? AND slot_id = ? AND revision = ?", sessionID, slotID, revision).
+		Where("id = ?", revisionID).
 		First(&result).Error
 	return &result, err
 }
@@ -1190,6 +1194,7 @@ func WriteSlotRevisionWithHumanArtifact(
 	}
 
 	var revision int
+	var revisionID string
 	var finalListIndex *int
 	var expected *int
 	if len(expectedRevision) > 0 {
@@ -1272,6 +1277,7 @@ func WriteSlotRevisionWithHumanArtifact(
 			Attempt:         attempt,
 			CreatedAt:       now,
 		}
+		revisionID = row.ID
 		if err := tx.Create(row).Error; err != nil {
 			return err
 		}
@@ -1287,7 +1293,7 @@ func WriteSlotRevisionWithHumanArtifact(
 
 	var result orm.WorkflowSlotRevision
 	err := db.WithContext(ctx).
-		Where("session_id = ? AND slot_id = ? AND revision = ?", sessionID, slotID, revision).
+		Where("id = ?", revisionID).
 		First(&result).Error
 	return &result, err
 }

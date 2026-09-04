@@ -16,6 +16,10 @@ Single-page content edit (no full deck rebuild):
     → ppt_edit_page_html                  (exact removal / retext, no LLM redraw)
     or ppt_run_stage(page-html, page=N)   (LLM redraw of that page)
 
+Single-page media edit (no full deck rebuild):
+  foreground: collect/register one image → ppt_replace_page_material_image
+  AI background: ppt_replace_page_background (prompt → image → preview refresh)
+
 Delete an entire slide (not a bullet):
   ppt_find_deck → ppt_delete_page(deck_dir, page=N)
     renumbers later pages on disk + outline; removes UI list items.
@@ -46,7 +50,7 @@ from html import escape as _html_escape
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, List, NoReturn, Optional, Union
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import requests
 from lazyllm import ThreadPoolExecutor
@@ -679,6 +683,97 @@ def _ui_slot_order_list(slot: str) -> list[int]:
             return []
 
 
+def _ui_slot_order_state(slot: str) -> tuple[list[int], int]:
+    """Return one list slot's stable indices and optimistic order version."""
+    session_id = _workflow_session_id()
+    if not session_id:
+        return [], 0
+    try:
+        response = _workflow_client().get_slot_order(session_id, slot).result
+        raw = response.get('order_list') if isinstance(response, dict) else []
+        version = response.get('order_version') if isinstance(response, dict) else 0
+        return [int(value) for value in (raw or [])], int(version or 0)
+    except Exception:
+        return _ui_slot_order_list(slot), 0
+
+
+def _reserve_ui_slot_position(
+    slot: str,
+    insert_before: int,
+    *,
+    value: Any,
+    content_type: str,
+    caption: Optional[str],
+) -> int:
+    """Create a stable list index and place it at a 1-based visual position.
+
+    Package publishers normally overwrite an existing ``list_index``. A page
+    insertion is different: later cards must retain their stable indices and
+    revisions, so Core first appends one placeholder and inserts only that new
+    index into the durable visual order. The current Attempt immediately emits
+    the real artifact at the reserved index.
+    """
+    session_id = _workflow_session_id()
+    if not session_id:
+        raise RuntimeError('workflow_session_id is required for ordered insertion')
+    before, _ = _ui_slot_order_state(slot)
+    position = _coerce_int(insert_before, 0, lo=0)
+    if position < 1 or position > len(before) + 1:
+        raise ValueError(
+            f'{slot} insert_before must be within 1..{len(before) + 1}; '
+            f'received {insert_before}'
+        )
+    if content_type == 'image':
+        placeholder_value: Any = {'path': str(value)}
+    elif content_type == 'json':
+        placeholder_value = {'data': value}
+    else:
+        placeholder_value = {'text': str(value)}
+
+    client = _workflow_client()
+    response = client.transport.post(
+        f'{client.base_url}/workflow-sessions/{quote(session_id, safe="")}/slots/'
+        f'{quote(slot, safe="")}/items',
+        json={
+            'value': placeholder_value,
+            'caption': caption,
+            'insert_before': position,
+            'content_type': content_type,
+        },
+        headers=client._headers(),
+        timeout=10.0,
+    )
+    if response.status_code != 200:
+        raise RuntimeError(
+            f'could not reserve {slot} position {position}: '
+            f'Core returned {response.status_code}: {response.text[:200]}'
+        )
+
+    after, version = _ui_slot_order_state(slot)
+    new_indices = [index for index in after if index not in set(before)]
+    if len(after) != len(before) + 1 or len(new_indices) != 1:
+        raise RuntimeError(
+            f'could not identify the new {slot} list index after insertion '
+            f'(before={before}, after={after})'
+        )
+    new_index = new_indices[0]
+    desired = before[:position - 1] + [new_index] + before[position - 1:]
+    if after != desired:
+        repair = client.transport.patch(
+            f'{client.base_url}/workflow-sessions/{quote(session_id, safe="")}/slots/'
+            f'{quote(slot, safe="")}/order',
+            json={'order': desired, 'version': version},
+            headers=client._headers(),
+            timeout=10.0,
+        )
+        if repair.status_code != 200:
+            raise RuntimeError(
+                f'{slot} item was appended but could not be moved to position {position}: '
+                f'Core returned {repair.status_code}: {repair.text[:200]}'
+            )
+    return new_index
+
+
 def _delete_ui_slot_item(slot: str, sort_order: int) -> dict[str, Any]:
     """Remove one list-slot item by 1-based sort_order via Go core DELETE."""
     session_id = _workflow_session_id()
@@ -921,6 +1016,320 @@ def _delete_page_files_and_renumber(deck: Path, page_no: int) -> dict[str, Any]:
     }
 
 
+def _write_json_atomic(path: Path, value: Any) -> None:
+    tmp = path.with_name(path.name + '.tmp')
+    tmp.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding='utf-8')
+    os.replace(tmp, path)
+
+
+def _parse_inserted_outline_page(page_json: Union[str, dict, None]) -> dict[str, Any]:
+    if isinstance(page_json, str):
+        try:
+            value = json.loads(page_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f'page_json must be one JSON object: {exc}') from exc
+    else:
+        value = page_json
+    if not isinstance(value, dict):
+        raise ValueError('page_json must be one JSON object')
+    page = json.loads(json.dumps(value, ensure_ascii=False))
+    page.pop('page_no', None)
+    if not _coerce_str(page.get('title')):
+        raise ValueError('page_json.title is required')
+    page['page_kind'] = _coerce_str(page.get('page_kind')) or 'content'
+    for field in ('bullets', 'data_points'):
+        if field in page and not isinstance(page[field], list):
+            raise ValueError(f'page_json.{field} must be a list')
+        page.setdefault(field, [])
+    # Models sometimes use a boolean to express whether a page should contain
+    # an image/table. The renderer needs a concrete reference object here;
+    # treating True as one later raises ``argument of type bool is not
+    # iterable`` while resolving reference_image_index/doc_index. A boolean
+    # carries no usable binding, so normalize it to no inherited asset.
+    for field in ('use_image', 'use_table'):
+        if page.get(field) is not None and not isinstance(page.get(field), dict):
+            page[field] = None
+    return page
+
+
+def _insert_page_files_and_renumber(deck: Path, insert_before: int) -> list[dict[str, str]]:
+    """Shift position-bound page, screenshot, and image files up by one."""
+    max_no = _max_page_no_on_disk(deck)
+    images_dir = deck / 'images'
+    renamed: list[dict[str, str]] = []
+    for old_no in range(max_no, insert_before - 1, -1):
+        candidates = _paths_for_page(deck, old_no)
+        if images_dir.is_dir():
+            candidates.extend(sorted(images_dir.glob(f'page_{old_no:03d}_*')))
+        new_no = old_no + 1
+        for src in candidates:
+            if not src.exists():
+                continue
+            dst = src.with_name(src.name.replace(
+                f'page_{old_no:03d}', f'page_{new_no:03d}', 1,
+            ))
+            if dst.exists():
+                raise FileExistsError(f'cannot insert page: target already exists: {dst}')
+            src.rename(dst)
+            if dst.suffix.lower() in {'.html', '.txt', '.md'}:
+                content = dst.read_text(encoding='utf-8')
+                updated = content.replace(
+                    f'page_{old_no:03d}', f'page_{new_no:03d}',
+                )
+                if updated != content:
+                    dst.write_text(updated, encoding='utf-8')
+            renamed.append({'from': str(src.resolve()), 'to': str(dst.resolve())})
+    return renamed
+
+
+def _shift_page_manifest_for_insert(
+    deck: Path,
+    filename: str,
+    insert_before: int,
+    *,
+    rewrite_local_path: bool = False,
+) -> Optional[dict[str, Any]]:
+    path = deck / filename
+    if not path.exists():
+        return None
+    try:
+        manifest = json.loads(path.read_text(encoding='utf-8'))
+    except Exception as exc:
+        raise ValueError(f'{filename} is unreadable: {exc}') from exc
+    pages = manifest.get('pages')
+    if not isinstance(pages, list):
+        raise ValueError(f'{filename}.pages must be a list')
+    shifted = 0
+    output: list[dict[str, Any]] = []
+    for raw in pages:
+        if not isinstance(raw, dict):
+            continue
+        item = dict(raw)
+        old_no = _coerce_int(item.get('page_no'), 0, lo=0)
+        if old_no >= insert_before:
+            new_no = old_no + 1
+            item['page_no'] = new_no
+            if rewrite_local_path:
+                local_path = _coerce_str(item.get('local_path'))
+                if local_path:
+                    item['local_path'] = local_path.replace(
+                        f'page_{old_no:03d}', f'page_{new_no:03d}', 1,
+                    )
+            shifted += 1
+        output.append(item)
+    manifest['pages'] = sorted(output, key=lambda item: int(item.get('page_no') or 0))
+    _write_json_atomic(path, manifest)
+    return {'ok': True, 'shifted': shifted, 'count': len(output)}
+
+
+def _shift_asset_plan_for_insert(
+    deck: Path,
+    insert_before: int,
+    existing_page_nos: list[int],
+) -> dict[str, Any]:
+    """Preserve every old asset-plan entry and add one empty inserted page."""
+    path = deck / 'asset_plan.json'
+    if path.exists():
+        try:
+            manifest = json.loads(path.read_text(encoding='utf-8'))
+        except Exception as exc:
+            raise ValueError(f'asset_plan.json is unreadable: {exc}') from exc
+        if not isinstance(manifest.get('pages'), list):
+            raise ValueError('asset_plan.json.pages must be a list')
+        source = manifest['pages']
+    else:
+        manifest = {}
+        source = [{'page_no': page_no, 'slots': []} for page_no in existing_page_nos]
+
+    shifted: list[dict[str, Any]] = []
+    for raw in source:
+        if not isinstance(raw, dict):
+            continue
+        item = dict(raw)
+        old_no = _coerce_int(item.get('page_no'), 0, lo=0)
+        if old_no >= insert_before:
+            item['page_no'] = old_no + 1
+        shifted.append(item)
+    shifted.append({'page_no': insert_before, 'slots': []})
+    shifted.sort(key=lambda item: int(item.get('page_no') or 0))
+    manifest['pages'] = shifted
+    _write_json_atomic(path, manifest)
+    return {'ok': True, 'count': len(shifted)}
+
+
+def _prepare_page_insertion(
+    deck: Path,
+    insert_before: int,
+    page_json: Union[str, dict, None],
+    *,
+    background_enabled: bool,
+) -> dict[str, Any]:
+    """Open one persistent page gap exactly once and insert its outline plan."""
+    page = _parse_inserted_outline_page(page_json)
+    outline = _load_outline(deck)
+    pages = [entry for entry in (outline.get('pages') or []) if isinstance(entry, dict)]
+    page_nos = sorted(_coerce_int(entry.get('page_no'), 0, lo=0) for entry in pages)
+    if page_nos != list(range(1, len(pages) + 1)):
+        raise ValueError(f'outline page numbers must be contiguous before insertion: {page_nos}')
+    position = _coerce_int(insert_before, 0, lo=0)
+    marker_path = deck / 'page_insertion.json'
+    marker: dict[str, Any] = {}
+    if marker_path.exists():
+        try:
+            marker = json.loads(marker_path.read_text(encoding='utf-8'))
+        except Exception:
+            marker = {}
+    pending_same = (
+        marker.get('status') == 'pending'
+        and _coerce_int(marker.get('insert_before'), 0, lo=0) == position
+        and _coerce_int(marker.get('page_count'), 0, lo=0) == len(pages)
+    )
+    if marker.get('status') == 'pending' and not pending_same:
+        raise ValueError(
+            'another page insertion is still pending; finish its incremental '
+            'background/outline/page generation before starting a new insertion'
+        )
+    if pending_same:
+        replacement = dict(page)
+        replacement['page_no'] = position
+        outline['pages'] = [
+            replacement if _coerce_int(entry.get('page_no'), 0, lo=0) == position else entry
+            for entry in pages
+        ]
+        outline['page_count'] = len(pages)
+        _write_outline(deck, outline)
+        return {
+            'insert_before': position,
+            'page_count': len(pages),
+            'reused_pending_insertion': True,
+            'renamed_files': [],
+        }
+    if position < 1 or position > len(pages) + 1:
+        raise ValueError(
+            f'insert_before must be within 1..{len(pages) + 1}; received {insert_before}'
+        )
+
+    # Validate JSON manifests before any position-bound files are renamed.
+    for filename in ('background_prompts.json', 'background_images.json'):
+        path = deck / filename
+        if not path.exists():
+            continue
+        try:
+            manifest = json.loads(path.read_text(encoding='utf-8'))
+        except Exception as exc:
+            raise ValueError(f'{filename} is unreadable: {exc}') from exc
+        if not isinstance(manifest.get('pages'), list):
+            raise ValueError(f'{filename}.pages must be a list')
+    asset_plan_path = deck / 'asset_plan.json'
+    if asset_plan_path.exists():
+        try:
+            asset_plan = json.loads(asset_plan_path.read_text(encoding='utf-8'))
+        except Exception as exc:
+            raise ValueError(f'asset_plan.json is unreadable: {exc}') from exc
+        if not isinstance(asset_plan.get('pages'), list):
+            raise ValueError('asset_plan.json.pages must be a list')
+
+    renamed = _insert_page_files_and_renumber(deck, position)
+    prompt_meta = _shift_page_manifest_for_insert(
+        deck, 'background_prompts.json', position,
+    )
+    background_meta = _shift_page_manifest_for_insert(
+        deck, 'background_images.json', position, rewrite_local_path=True,
+    )
+    asset_meta = _shift_asset_plan_for_insert(deck, position, page_nos)
+    shifted_pages: list[dict[str, Any]] = []
+    for entry in pages:
+        shifted = dict(entry)
+        old_no = _coerce_int(shifted.get('page_no'), 0, lo=0)
+        if old_no >= position:
+            shifted['page_no'] = old_no + 1
+        shifted_pages.append(shifted)
+    inserted = dict(page)
+    inserted['page_no'] = position
+    shifted_pages.append(inserted)
+    shifted_pages.sort(key=lambda entry: int(entry.get('page_no') or 0))
+    outline['pages'] = shifted_pages
+    outline['page_count'] = len(shifted_pages)
+    _write_outline(deck, outline)
+    _sync_task_pack_page_count(deck, len(shifted_pages))
+    marker = {
+        'status': 'pending',
+        'insert_before': position,
+        'page_count': len(shifted_pages),
+        'background_enabled': bool(background_enabled),
+        'inserted_title': _coerce_str(inserted.get('title')),
+        'created_at': datetime.now(timezone(timedelta(hours=8))).isoformat(
+            timespec='seconds',
+        ),
+    }
+    _write_json_atomic(marker_path, marker)
+    return {
+        'insert_before': position,
+        'page_count': len(shifted_pages),
+        'reused_pending_insertion': False,
+        'renamed_files': renamed,
+        'background_prompts': prompt_meta,
+        'background_images': background_meta,
+        'asset_plan': asset_meta,
+    }
+
+
+def _complete_page_insertion(deck: Path, page_no: int) -> None:
+    marker_path = deck / 'page_insertion.json'
+    if not marker_path.exists():
+        return
+    try:
+        marker = json.loads(marker_path.read_text(encoding='utf-8'))
+    except Exception:
+        return
+    if (
+        marker.get('status') == 'pending'
+        and _coerce_int(marker.get('insert_before'), 0, lo=0) == page_no
+    ):
+        marker['status'] = 'completed'
+        marker['completed_at'] = datetime.now(timezone(timedelta(hours=8))).isoformat(
+            timespec='seconds',
+        )
+        _write_json_atomic(marker_path, marker)
+
+
+def _pending_page_insertion(deck: Path) -> Optional[dict[str, int]]:
+    """Return a validated pending whole-page insertion, if one exists.
+
+    The marker is durable routing state. Any generation entry point must honor
+    it before synchronizing the whole outline, otherwise rewound list items can
+    be collapsed and the inserted page can overwrite an existing preview.
+    """
+    marker_path = deck / 'page_insertion.json'
+    if not marker_path.exists():
+        return None
+    try:
+        marker = json.loads(marker_path.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f'page_insertion.json is unreadable: {exc}') from exc
+    if not isinstance(marker, dict) or marker.get('status') != 'pending':
+        return None
+
+    position = _coerce_int(marker.get('insert_before'), 0, lo=0)
+    expected_total = _coerce_int(marker.get('page_count'), 0, lo=0)
+    outline = _load_outline(deck)
+    page_nos = sorted(
+        _coerce_int(page.get('page_no'), 0, lo=0)
+        for page in (outline.get('pages') or [])
+        if isinstance(page, dict)
+    )
+    if position < 1 or expected_total < 1:
+        raise ValueError('pending page insertion has an invalid position or page_count')
+    if page_nos != list(range(1, expected_total + 1)):
+        raise ValueError(
+            'pending page insertion no longer matches outline.json '
+            f'(marker page_count={expected_total}, outline pages={page_nos})'
+        )
+    if position not in page_nos:
+        raise ValueError(f'pending inserted page {position} is missing from outline.json')
+    return {'insert_before': position, 'page_count': expected_total}
+
+
 def _parse_page_list(pages: Any) -> Optional[list[int]]:
     """Normalize pages arg to a sorted unique 1-based list, or None = all."""
     if pages is None or pages == '' or str(pages).strip().lower() in _NULLISH:
@@ -1121,6 +1530,7 @@ def _publish_one_page(
     *,
     with_notes: bool = True,
     slot_orders: Optional[dict[str, list[int]]] = None,
+    insert_before: Optional[int] = None,
 ) -> dict[str, Any]:
     """Save one page HTML (+ optional notes stub) into session artifacts."""
     path = _page_html_path(deck, page_no)
@@ -1158,20 +1568,18 @@ def _publish_one_page(
                 ),
             }
 
+    expected_total = len((_load_outline(deck).get('pages') or []))
     html_order = orders['preview_html']
-    html_append = page_no == len(html_order) + 1
-    html_list_index = (
-        max(html_order, default=-1) + 1
-        if html_append else html_order[page_no - 1]
-    )
-    html_res = _save_artifact(
-        key='preview_html',
+    html_res = _publish_ordered_ppt_artifact(
+        slot='preview_html',
+        page_no=page_no,
         value=html,
         content_type='text',
         source_tool='ppt_publish_pages',
         caption=title or None,
-        internal_publish=True,
-        publisher_list_index=html_list_index,
+        order_list=html_order,
+        insert_before=insert_before,
+        expected_total=expected_total,
     )
     if _tool_failed(html_res):
         return {
@@ -1179,23 +1587,19 @@ def _publish_one_page(
             'ok': False,
             'error': f'preview_html publish failed: {_tool_fail_reason(html_res)}',
         }
-    if html_append:
-        html_order.append(html_list_index)
     notes_res = None
     if with_notes:
         notes_order = orders['preview_notes']
-        notes_append = page_no == len(notes_order) + 1
-        notes_list_index = (
-            max(notes_order, default=-1) + 1
-            if notes_append else notes_order[page_no - 1]
-        )
-        notes_res = _save_artifact(
-            key='preview_notes',
+        notes_res = _publish_ordered_ppt_artifact(
+            slot='preview_notes',
+            page_no=page_no,
             value=_notes_from_html(html, page_no) or _notes_stub(title, page_no),
             content_type='text',
             source_tool='ppt_publish_pages',
-            internal_publish=True,
-            publisher_list_index=notes_list_index,
+            caption='',
+            order_list=notes_order,
+            insert_before=insert_before,
+            expected_total=expected_total,
         )
         if _tool_failed(notes_res):
             return {
@@ -1203,8 +1607,6 @@ def _publish_one_page(
                 'ok': False,
                 'error': f'preview_notes publish failed: {_tool_fail_reason(notes_res)}',
             }
-        if notes_append:
-            notes_order.append(notes_list_index)
     return {
         'page': page_no,
         'ok': True,
@@ -1574,7 +1976,6 @@ def _format_slide_outline_brief(page: dict) -> str:
     """Human-editable per-page generation prompt fed to page-html."""
     view = _outline_page_view(page)
     lines: list[str] = [
-        f'第{view["page"]}页',
         f'页面类型：{view["page_kind"] or "content"}',
         f'标题：{view["title"] or "(未命名)"}',
     ]
@@ -1677,20 +2078,32 @@ def _publish_deck_outline(deck: Path) -> dict[str, Any]:
     }
 
 
-def _publish_one_slide_outline(deck: Path, page_no: int) -> dict[str, Any]:
+def _publish_one_slide_outline(
+    deck: Path,
+    page_no: int,
+    *,
+    order_list: Optional[list[int]] = None,
+    insert_before: Optional[int] = None,
+    expected_total: Optional[int] = None,
+) -> dict[str, Any]:
     """Save one page brief into the slide_outline list slot."""
     outline = _load_outline(deck)
     page = _find_outline_page(outline, page_no)
     brief = _format_slide_outline_brief(page)
     title = _coerce_str(page.get('title')) or f'第 {page_no} 页'
-    save_res = _save_artifact(
-        key='slide_outline',
+    current_order = order_list if order_list is not None else _ui_slot_order_list(
+        'slide_outline',
+    )
+    save_res = _publish_ordered_ppt_artifact(
+        slot='slide_outline',
+        page_no=page_no,
         value=brief,
         content_type='text',
         source_tool='ppt_publish_outline',
-        sort_order=page_no,
         caption=title,
-        internal_publish=True,
+        order_list=current_order,
+        insert_before=insert_before,
+        expected_total=expected_total,
     )
     if _tool_failed(save_res):
         return {
@@ -1711,6 +2124,8 @@ def _publish_one_slide_outline(deck: Path, page_no: int) -> dict[str, Any]:
 def _publish_slide_outlines_from_disk(
     deck: Path,
     pages: Optional[list[int]] = None,
+    *,
+    insert_before: Optional[int] = None,
 ) -> dict[str, Any]:
     outline = _load_outline(deck)
     if pages is None:
@@ -1726,10 +2141,18 @@ def _publish_slide_outlines_from_disk(
 
     published: list[dict[str, Any]] = []
     failed: list[dict[str, Any]] = []
+    order_list = _ui_slot_order_list('slide_outline')
+    expected_total = len(outline.get('pages') or [])
     for page_no in targets:
         try:
             require_context()
-            item = _publish_one_slide_outline(deck, page_no)
+            item = _publish_one_slide_outline(
+                deck,
+                page_no,
+                order_list=order_list,
+                insert_before=insert_before,
+                expected_total=expected_total,
+            )
         except Exception as exc:
             item = {'page': page_no, 'ok': False, 'error': str(exc)}
         if item.get('ok'):
@@ -3112,6 +3535,7 @@ def _run_stage_inprocess(
     concurrency: int = 4,
     start_page: int = 0,
     end_page: int = 0,
+    insert_before: int = 0,
 ) -> dict:
     mc, rs = _load_sn_ppt_modules()
     needs_llm = stage_name != 'preflight'
@@ -3146,6 +3570,7 @@ def _run_stage_inprocess(
                         page,
                         with_notes=True,
                         slot_orders=slot_orders,
+                        insert_before=insert_before or None,
                     )
                     payload['published'] = {
                         'page': page,
@@ -3154,7 +3579,7 @@ def _run_stage_inprocess(
                         'bytes': pub.get('bytes'),
                     }
                     payload['auto_published'] = True
-                    if pub.get('ok'):
+                    if pub.get('ok') and not insert_before:
                         recovered = _publish_ready_trailing_pages(
                             deck,
                             page,
@@ -3877,9 +4302,54 @@ def _publish_ordered_ppt_artifact(
     value: Any,
     content_type: str,
     source_tool: str,
-    caption: str,
+    caption: Optional[str],
     order_list: list[int],
+    insert_before: Optional[int] = None,
+    expected_total: Optional[int] = None,
 ) -> dict[str, Any]:
+    insertion = _coerce_int(insert_before, 0, lo=0)
+    total = _coerce_int(expected_total, 0, lo=0)
+    if insertion:
+        if page_no != insertion:
+            return {
+                'ok': False,
+                'error': (
+                    f'{slot} insertion publishes page {insertion}, not page {page_no}'
+                ),
+            }
+        # A retry after the position was already reserved must overwrite that
+        # stable index instead of inserting a duplicate card.
+        if total and len(order_list) == total - 1:
+            try:
+                list_index = _reserve_ui_slot_position(
+                    slot,
+                    insertion,
+                    value=value,
+                    content_type=content_type,
+                    caption=caption,
+                )
+            except Exception as exc:
+                return {'ok': False, 'error': str(exc)}
+            saved = _save_artifact(
+                key=slot,
+                content_type=content_type,
+                value=value,
+                source_tool=source_tool,
+                caption=caption,
+                internal_publish=True,
+                publisher_list_index=list_index,
+            )
+            if not _tool_failed(saved):
+                order_list.insert(insertion - 1, list_index)
+            return saved
+        if total and len(order_list) != total:
+            return {
+                'ok': False,
+                'error': (
+                    f'{slot} insertion expected {total - 1} existing items '
+                    f'(or {total} after a retry), found {len(order_list)}'
+                ),
+            }
     if page_no > len(order_list) + 1:
         return {
             'ok': False,
@@ -3910,19 +4380,41 @@ def _publish_ordered_ppt_artifact(
 def ppt_publish_background_prompts(
     deck_dir: str,
     prompts_json: Union[str, list, None],
+    insert_before: Optional[int] = None,
+    page_json: Union[str, dict, None] = None,
 ) -> dict:
     """Publish editable, ordered per-page background prompts.
 
     A full first call must include one prompt for every prepared deck page
     (from outline.json when available, otherwise task_pack.json). Later targeted
     calls may include only selected page numbers; those positions are overwritten
-    without changing any other prompt.
+    without changing any other prompt. For a whole-slide insertion, pass one
+    prompt, ``insert_before=N``, and the new structured ``page_json``. Existing
+    prompt cards keep their stable list indices and revision histories.
     """
     try:
         deck = _resolve_deck_dir(deck_dir)
         items = _parse_background_prompt_items(prompts_json)
     except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
         return _tool_error('ppt_publish_background_prompts', str(exc))
+    insertion = _coerce_int(insert_before, 0, lo=0)
+    insertion_meta: Optional[dict[str, Any]] = None
+    if insertion:
+        if len(items) != 1 or int(items[0]['page_no']) != insertion:
+            return _tool_error(
+                'ppt_publish_background_prompts',
+                'an insertion requires exactly one prompt whose page_no equals insert_before',
+            )
+        try:
+            insertion_meta = _prepare_page_insertion(
+                deck,
+                insertion,
+                page_json,
+                background_enabled=True,
+            )
+        except (FileNotFoundError, ValueError, KeyError, json.JSONDecodeError, OSError) as exc:
+            return _tool_error('ppt_publish_background_prompts', str(exc))
+
     outline_pages: list[int] = []
     try:
         outline = _load_outline(deck)
@@ -4001,6 +4493,8 @@ def ppt_publish_background_prompts(
             source_tool='ppt_publish_background_prompts',
             caption=f'第 {page_no} 页底图提示词',
             order_list=order_list,
+            insert_before=insertion or None,
+            expected_total=len(outline_pages),
         )
         if _tool_failed(saved):
             errors.append(f'page {page_no}: {_tool_fail_reason(saved)}')
@@ -4018,6 +4512,7 @@ def ppt_publish_background_prompts(
         'updated_pages': sorted(item_map),
         'published_count': published,
         'prompts': manifest['pages'],
+        'insertion': insertion_meta,
     })
 
 
@@ -4070,6 +4565,7 @@ def ppt_generate_background_images(
     pages_json: Union[str, list, int, None] = None,
     replace: Union[bool, str, None] = False,
     image_size: Optional[str] = None,
+    insert_before: Optional[int] = None,
 ) -> dict:
     """Generate one dedicated AI background image for every outline page.
 
@@ -4087,6 +4583,9 @@ def ppt_generate_background_images(
         image_size (str): Optional provider-supported generation-size hint.
             Saved PPT backgrounds are always center-cropped and resized to the
             exact 16:9 slide canvas (1280x720), even if a provider ignores it.
+        insert_before (int): For an incremental whole-slide insertion, the
+            1-based position whose new image card must be inserted rather than
+            overwriting the old card at that position.
 
     Returns:
         Per-page background paths and publication counts. Any model failure is
@@ -4157,6 +4656,12 @@ def ppt_generate_background_images(
     prompt_map = {int(item['page_no']): item['prompt'] for item in prompt_items}
     outline_page_nos = [int(page.get('page_no') or 0) for page in pages]
     targets = selected_pages or (sorted(prompt_map) if prompt_map else outline_page_nos)
+    insertion = _coerce_int(insert_before, 0, lo=0)
+    if insertion and targets != [insertion]:
+        return _tool_error(
+            'ppt_generate_background_images',
+            'insert_before requires exactly one matching target page',
+        )
     invalid = sorted(set(targets) - set(outline_page_nos))
     if invalid:
         return _tool_error(
@@ -4266,7 +4771,7 @@ def ppt_generate_background_images(
     publish_map = {
         int(item['page_no']): item for item in publish_items
     }
-    if targets:
+    if targets and not insertion:
         for page_no in range(1, max(targets) + 1):
             item = output.get(page_no)
             local_path = deck / _coerce_str((item or {}).get('local_path'))
@@ -4288,6 +4793,8 @@ def ppt_generate_background_images(
                 source_tool='ppt_generate_background_images',
                 caption=f'第 {page_no} 页 AI 底图',
                 order_list=order_list,
+                insert_before=insertion or None,
+                expected_total=len(outline_page_nos),
             )
             if _tool_failed(saved):
                 publication_errors.append(
@@ -4351,6 +4858,273 @@ def ppt_attach_material_images(deck_dir: str) -> dict:
             if result['attached'] <= 0 else
             'Material images attached as Pool B reference images.'
         ),
+    })
+
+
+def ppt_replace_page_material_image(
+    deck_dir: str,
+    page: int,
+    material_index: Union[int, str, None] = None,
+    reference_image_index: Union[int, str, None] = None,
+) -> dict:
+    """Replace one slide's foreground image and redraw only that slide.
+
+    Register or generate the desired material first with
+    ``ppt_register_material_images`` / ``ppt_generate_material_images``. This
+    tool attaches the current material pool to the existing deck, binds exactly
+    one Pool-B image to ``outline.pages[N].use_image``, republishes only that
+    page prompt, and regenerates only page N's HTML.
+
+    Args:
+        deck_dir: Existing deck directory returned by ``ppt_find_deck``.
+        page: 1-based slide position to update.
+        material_index: Optional 1-based item in the registered material pool.
+            Omit to use the newest registered material.
+        reference_image_index: Optional 0-based Pool-B index already present in
+            the deck. Use this to reuse an existing deck image. Do not pass both
+            index forms.
+    """
+    try:
+        deck = _resolve_deck_dir(deck_dir)
+    except FileNotFoundError as exc:
+        return _tool_error('ppt_replace_page_material_image', str(exc))
+    page_no = _coerce_int(page, 0, lo=0)
+    if page_no < 1:
+        return _tool_error('ppt_replace_page_material_image', 'page must be >= 1')
+    if _coerce_str(material_index) and _coerce_str(reference_image_index):
+        return _tool_error(
+            'ppt_replace_page_material_image',
+            'pass material_index or reference_image_index, not both',
+        )
+
+    try:
+        attached = _attach_material_images_to_deck(deck)
+        outline = _load_outline(deck)
+        page_outline = _find_outline_page(outline, page_no)
+        info_pack = json.loads((deck / 'info_pack.json').read_text(encoding='utf-8'))
+    except (FileNotFoundError, ValueError, KeyError, json.JSONDecodeError, OSError) as exc:
+        return _tool_error('ppt_replace_page_material_image', str(exc))
+
+    refs = ((info_pack.get('user_assets') or {}).get('reference_images') or [])
+    selected_ref = -1
+    selected_material = 0
+    if _coerce_str(reference_image_index):
+        selected_ref = _coerce_int(reference_image_index, -1, lo=-1)
+    else:
+        manifest = _load_material_manifest()
+        materials = [
+            item for item in (manifest.get('images') or [])
+            if isinstance(item, dict) and _coerce_str(item.get('path'))
+        ]
+        if not materials:
+            return _tool_error(
+                'ppt_replace_page_material_image',
+                'no registered material image; call ppt_register_material_images or '
+                'ppt_generate_material_images first',
+            )
+        selected_material = _coerce_int(material_index, len(materials), lo=1)
+        if selected_material > len(materials):
+            return _tool_error(
+                'ppt_replace_page_material_image',
+                f'material_index {selected_material} out of range: '
+                f'{len(materials)} registered images',
+            )
+        source = Path(_coerce_str(materials[selected_material - 1].get('path')))
+        suffix = source.suffix.lower() or '.png'
+        attached_path = str(
+            (deck / 'images' / f'material_{selected_material:02d}{suffix}').resolve(),
+        )
+        try:
+            selected_ref = [
+                str((entry.get('path') or entry.get('local_path')) if isinstance(entry, dict) else entry)
+                for entry in refs
+            ].index(attached_path)
+        except ValueError:
+            return _tool_error(
+                'ppt_replace_page_material_image',
+                f'registered material {selected_material} was not attached to the deck',
+            )
+
+    if selected_ref < 0 or selected_ref >= len(refs):
+        return _tool_error(
+            'ppt_replace_page_material_image',
+            f'reference_image_index {selected_ref} out of range: deck has {len(refs)} images',
+        )
+
+    old_binding = page_outline.get('use_image')
+    page_outline['use_image'] = {'reference_image_index': selected_ref}
+    try:
+        _write_outline(deck, outline)
+    except OSError as exc:
+        return _tool_error('ppt_replace_page_material_image', f'writing outline failed: {exc}')
+
+    prompt_publish = _publish_one_slide_outline(deck, page_no)
+    if not prompt_publish.get('ok'):
+        page_outline['use_image'] = old_binding
+        _write_outline(deck, outline)
+        return _tool_error(
+            'ppt_replace_page_material_image',
+            'updated image binding could not be published: '
+            + str(prompt_publish.get('error') or 'unknown error'),
+        )
+
+    asset_plan = ppt_run_stage(str(deck), stage='asset-plan')
+    if _tool_failed(asset_plan):
+        return _tool_error(
+            'ppt_replace_page_material_image',
+            f'asset-plan failed: {_tool_fail_reason(asset_plan)}',
+        )
+    page_html = ppt_run_stage(str(deck), stage='page-html', page=page_no)
+    if _tool_failed(page_html):
+        return _tool_error(
+            'ppt_replace_page_material_image',
+            f'page {page_no} regeneration failed: {_tool_fail_reason(page_html)}',
+        )
+    page_payload = _tool_payload(page_html)
+    publication = page_payload.get('published') or {}
+    if page_payload.get('auto_published') and publication.get('ok') is False:
+        return _tool_error(
+            'ppt_replace_page_material_image',
+            f'page {page_no} HTML was generated but preview publication failed',
+        )
+    return _tool_success('ppt_replace_page_material_image', {
+        'deck_dir': str(deck.resolve()),
+        'page': page_no,
+        'reference_image_index': selected_ref,
+        'material_index': selected_material or None,
+        'previous_binding': old_binding,
+        'attached_count': attached.get('attached', 0),
+        'slide_outline_published': True,
+        'preview_html_published': bool(
+            page_payload.get('auto_published') and publication.get('ok', True)
+        ),
+        'updated_pages': [page_no],
+    })
+
+
+def _existing_background_prompt(deck: Path, page_no: int) -> str:
+    path = deck / 'background_prompts.json'
+    if not path.is_file():
+        return ''
+    try:
+        manifest = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError):
+        return ''
+    for item in manifest.get('pages') or []:
+        if not isinstance(item, dict):
+            continue
+        if _coerce_int(item.get('page_no'), 0, lo=0) == page_no:
+            return _coerce_str(item.get('prompt'))
+    return ''
+
+
+def ppt_replace_page_background(
+    deck_dir: str,
+    page: int,
+    prompt: Optional[str] = None,
+) -> dict:
+    """Regenerate one AI slide background and refresh only that preview page.
+
+    Supply a new complete English image prompt to change the scene, or omit it
+    to regenerate from the page's current approved prompt. Existing prompt and
+    image list positions are overwritten; no other page is regenerated.
+    """
+    try:
+        deck = _resolve_deck_dir(deck_dir)
+    except FileNotFoundError as exc:
+        return _tool_error('ppt_replace_page_background', str(exc))
+    page_no = _coerce_int(page, 0, lo=0)
+    if page_no < 1:
+        return _tool_error('ppt_replace_page_background', 'page must be >= 1')
+    try:
+        _find_outline_page(_load_outline(deck), page_no)
+    except (FileNotFoundError, ValueError, KeyError, json.JSONDecodeError) as exc:
+        return _tool_error('ppt_replace_page_background', str(exc))
+
+    existing_prompt = _existing_background_prompt(deck, page_no)
+    if not existing_prompt:
+        return _tool_error(
+            'ppt_replace_page_background',
+            'this deck has no approved AI-background prompt at the requested page; '
+            'use a CSS-only page redesign, or enable the full AI-background workflow first',
+        )
+    chosen_prompt = _coerce_str(prompt) or existing_prompt
+    try:
+        check_ppt_workflow_capabilities('AI_BACKGROUND_IMAGES: enabled')
+    except ToolExecutionError:
+        raise
+
+    prompt_result = ppt_publish_background_prompts(
+        str(deck),
+        prompts_json=[{'page_no': page_no, 'prompt': chosen_prompt}],
+    )
+    if _tool_failed(prompt_result):
+        return _tool_error(
+            'ppt_replace_page_background',
+            f'background prompt update failed: {_tool_fail_reason(prompt_result)}',
+        )
+
+    image_result = ppt_generate_background_images(
+        str(deck),
+        prompts_json=[{'page_no': page_no, 'prompt': chosen_prompt}],
+        pages_json=[page_no],
+        replace=True,
+    )
+    if _tool_failed(image_result):
+        return _tool_error(
+            'ppt_replace_page_background',
+            f'background generation failed: {_tool_fail_reason(image_result)}',
+        )
+
+    page_path = _page_html_path(deck, page_no)
+    refresh_mode = 'page-html'
+    preview_published = False
+    if page_path.is_file():
+        source_html = page_path.read_text(encoding='utf-8')
+        expected_name = ''
+        for item in _tool_payload(image_result).get('backgrounds') or []:
+            if _coerce_int(item.get('page_no'), 0, lo=0) == page_no:
+                expected_name = Path(_coerce_str(item.get('local_path'))).name
+                break
+        if expected_name and expected_name in source_html:
+            refreshed = _publish_one_page(deck, page_no, with_notes=True)
+            if not refreshed.get('ok'):
+                return _tool_error(
+                    'ppt_replace_page_background',
+                    f'new background was generated but page preview refresh failed: '
+                    f'{refreshed.get("error") or "unknown error"}',
+                )
+            refresh_mode = 'republish-existing-html'
+            preview_published = True
+
+    if not preview_published:
+        if not (deck / 'asset_plan.json').is_file():
+            asset_plan = ppt_run_stage(str(deck), stage='asset-plan')
+            if _tool_failed(asset_plan):
+                return _tool_error(
+                    'ppt_replace_page_background',
+                    f'asset-plan failed: {_tool_fail_reason(asset_plan)}',
+                )
+        page_result = ppt_run_stage(str(deck), stage='page-html', page=page_no)
+        if _tool_failed(page_result):
+            return _tool_error(
+                'ppt_replace_page_background',
+                f'page {page_no} refresh failed: {_tool_fail_reason(page_result)}',
+            )
+        payload = _tool_payload(page_result)
+        publication = payload.get('published') or {}
+        preview_published = bool(
+            payload.get('auto_published') and publication.get('ok', True)
+        )
+
+    return _tool_success('ppt_replace_page_background', {
+        'deck_dir': str(deck.resolve()),
+        'page': page_no,
+        'prompt_updated': bool(_coerce_str(prompt)),
+        'background_generated': True,
+        'preview_html_published': preview_published,
+        'refresh_mode': refresh_mode,
+        'updated_pages': [page_no],
     })
 
 
@@ -4508,11 +5282,48 @@ def ppt_find_deck() -> dict:
         deck_id = str(pack.get('deck_id') or deck_id)
     except Exception:
         pass
+    reference_images: list[dict[str, Any]] = []
+    try:
+        info_pack = json.loads((deck / 'info_pack.json').read_text(encoding='utf-8'))
+        user_assets = info_pack.get('user_assets') or {}
+        captions = user_assets.get('reference_image_captions') or {}
+        for index, entry in enumerate(user_assets.get('reference_images') or []):
+            if isinstance(entry, dict):
+                path = _coerce_str(entry.get('path') or entry.get('local_path'))
+                caption = _coerce_str(entry.get('caption') or entry.get('alt'))
+            else:
+                path = _coerce_str(entry)
+                caption = ''
+            if not path:
+                continue
+            reference_images.append({
+                'reference_image_index': index,
+                'basename': Path(path).name,
+                'caption': caption or _coerce_str(captions.get(path)) or None,
+            })
+    except (FileNotFoundError, json.JSONDecodeError, AttributeError):
+        reference_images = []
+
+    background_pages: list[int] = []
+    try:
+        backgrounds = json.loads(
+            (deck / 'background_images.json').read_text(encoding='utf-8'),
+        )
+        background_pages = sorted({
+            _coerce_int(item.get('page_no'), 0, lo=0)
+            for item in (backgrounds.get('pages') or [])
+            if isinstance(item, dict) and _coerce_int(item.get('page_no'), 0, lo=0) > 0
+        })
+    except (FileNotFoundError, json.JSONDecodeError, AttributeError):
+        background_pages = []
+
     return _tool_success('ppt_find_deck', {
         'deck_dir': str(deck.resolve()),
         'deck_id': deck_id,
         'page_count': page_count,
         'html_count': html_count,
+        'reference_images': reference_images,
+        'background_pages': background_pages,
         'older_deck_count': len(candidates) - 1,
     })
 
@@ -4560,6 +5371,65 @@ def _tool_fail_reason(resp: Any) -> str:
     if err:
         return str(err)
     return 'failed'
+
+
+def ppt_insert_outline_page(
+    deck_dir: str,
+    insert_before: int,
+    page_json: Union[str, dict, None],
+) -> dict:
+    """Insert one structured page into an existing deck without rebuilding it.
+
+    Use this entry point when AI backgrounds are disabled. It shifts only the
+    position-bound disk files/manifests, preserves every existing UI list item,
+    inserts the new outline page, and publishes the revised deck-level outline.
+    The following page-prompt and HTML steps publish only the new position.
+    """
+    try:
+        deck = _resolve_deck_dir(deck_dir)
+        insertion = _prepare_page_insertion(
+            deck,
+            insert_before,
+            page_json,
+            background_enabled=False,
+        )
+    except (FileNotFoundError, ValueError, KeyError, json.JSONDecodeError, OSError) as exc:
+        return _tool_error('ppt_insert_outline_page', str(exc))
+    published = _publish_deck_outline(deck)
+    if not published.get('ok'):
+        return _tool_error(
+            'ppt_insert_outline_page',
+            published.get('error') or 'deck outline publication failed',
+        )
+    return _tool_success('ppt_insert_outline_page', {
+        'deck_dir': str(deck.resolve()),
+        'inserted_page': int(insertion['insert_before']),
+        'page_count': int(insertion['page_count']),
+        'deck_outline_published': True,
+        'insertion': insertion,
+        'next_step': 'plan_page_prompts',
+    })
+
+
+def ppt_publish_deck_outline(deck_dir: str) -> dict:
+    """Publish the already-updated deck outline during an AI-background insertion."""
+    try:
+        deck = _resolve_deck_dir(deck_dir)
+    except FileNotFoundError as exc:
+        return _tool_error('ppt_publish_deck_outline', str(exc))
+    published = _publish_deck_outline(deck)
+    if not published.get('ok'):
+        return _tool_error(
+            'ppt_publish_deck_outline',
+            published.get('error') or 'deck outline publication failed',
+        )
+    return _tool_success('ppt_publish_deck_outline', {
+        'deck_dir': str(deck.resolve()),
+        'page_count': published.get('page_count'),
+        'chars': published.get('chars'),
+        'deck_outline_published': True,
+        'next_step': 'plan_page_prompts',
+    })
 
 
 def ppt_build_outline(
@@ -4738,6 +5608,10 @@ def ppt_generate_pages(
       sync-edited-outline → asset-plan → batch-page-html
     batch-page-html auto-publishes preview_html (+ notes) page-by-page.
 
+    If a durable whole-page insertion is pending, this entry point safely
+    degrades to the single inserted page even when an agent chose the full-deck
+    tool by mistake. Existing outline pages and preview revisions stay intact.
+
     Do NOT call this for single-page edits — use ppt_patch_page_outline /
     ppt_edit_page_html / ppt_run_stage(page-html) instead.
     Do NOT re-run style/outline/init here.
@@ -4765,6 +5639,67 @@ def ppt_generate_pages(
     deck_dir_s = str(deck.resolve())
 
     conc = _coerce_int(concurrency, 2, lo=1, hi=8)
+    try:
+        pending_insertion = _pending_page_insertion(deck)
+    except (FileNotFoundError, ValueError, KeyError, json.JSONDecodeError) as exc:
+        return _tool_error(
+            'ppt_generate_pages',
+            f'pending page insertion is inconsistent: {exc}',
+            meta={'deck_dir': deck_dir_s},
+        )
+    if pending_insertion:
+        position = pending_insertion['insert_before']
+        page_res = ppt_run_stage(
+            deck_dir_s,
+            stage='page-html',
+            page=position,
+            insert_before=position,
+        )
+        if _tool_failed(page_res):
+            return _tool_error(
+                'ppt_generate_pages',
+                f'inserted page generation failed: {_tool_fail_reason(page_res)}',
+                detail=json.dumps(page_res, ensure_ascii=False)[:2000],
+                meta={'deck_dir': deck_dir_s, 'insert_before': position},
+            )
+        page_payload = _tool_payload(page_res)
+        published = page_payload.get('published')
+        published_ok = isinstance(published, dict) and bool(published.get('ok'))
+        if page_payload.get('status', 'ok') != 'ok' or not published_ok:
+            return _tool_error(
+                'ppt_generate_pages',
+                'inserted page HTML was generated but not inserted into preview_html',
+                detail=json.dumps(page_payload, ensure_ascii=False)[:2000],
+                meta={'deck_dir': deck_dir_s, 'insert_before': position},
+            )
+        return _tool_success('ppt_generate_pages', {
+            'deck_dir': deck_dir_s,
+            'status': 'ok',
+            'mode': 'incremental-insertion',
+            'inserted_page': position,
+            'page_count': pending_insertion['page_count'],
+            'concurrency': 1,
+            'submitted': 1,
+            'ok': 1,
+            'failed': 0,
+            'published_count': 1,
+            'published': [{
+                'page': position,
+                'title_hint': published.get('title_hint'),
+                'bytes': published.get('bytes'),
+            }],
+            'stages': [{
+                'step': 'page-html-insert',
+                'ok': True,
+                'page': position,
+                'insert_before': position,
+            }],
+            'note': (
+                'Pending insertion detected: generated and inserted only the new '
+                'preview_html + preview_notes cards; existing pages were preserved.'
+            ),
+        })
+
     sync_result = _sync_outline_from_selected_artifacts(deck)
     if sync_result.get('status') == 'failed':
         return _tool_error(
@@ -4863,6 +5798,7 @@ def ppt_run_stage(
     concurrency: Union[int, str, None] = None,
     start_page: int = 0,
     end_page: int = 0,
+    insert_before: int = 0,
 ) -> dict:
     """Run one PPT HTML-pipeline stage (workflows/ppt-workflow/runtime).
 
@@ -4883,6 +5819,9 @@ def ppt_run_stage(
             batch-page-html and 4 for batch-refine-page.
         start_page (int): Optional batch-page-html start.
         end_page (int): Optional batch-page-html end.
+        insert_before (int): For one incremental page-html insertion, the same
+            1-based value as page. This inserts new preview/notes cards while
+            leaving all later card revisions untouched.
 
     Returns:
         Stage status fields from run_stage.
@@ -4912,12 +5851,23 @@ def ppt_run_stage(
     conc = _coerce_int(concurrency, default_concurrency, lo=1, hi=8)
     sp = _coerce_int(start_page, 0, lo=0)
     ep = _coerce_int(end_page, 0, lo=0)
+    insertion = _coerce_int(insert_before, 0, lo=0)
+    if insertion and (stage_name != 'page-html' or page_no != insertion):
+        return _tool_error(
+            'ppt_run_stage',
+            'insert_before is supported only for page-html and must equal page',
+        )
     if stage_name in _INPROCESS_STAGES:
         if stage_name in ('page-html', 'refine-page') and page_no < 1:
             return _tool_error('ppt_run_stage', f'{stage_name} requires page>=1')
         payload = _run_stage_inprocess(
-            stage_name, deck, page=page_no, concurrency=conc, start_page=sp, end_page=ep,
+            stage_name, deck, page=page_no, concurrency=conc, start_page=sp,
+            end_page=ep, insert_before=insertion,
         )
+        if stage_name == 'page-html' and insertion and payload.get('status') == 'ok':
+            published = payload.get('published') if isinstance(payload, dict) else None
+            if isinstance(published, dict) and published.get('ok'):
+                _complete_page_insertion(deck, insertion)
         return _stage_tool_result(stage_name, payload)
 
     return _tool_error('ppt_run_stage', f'Unhandled stage {stage_name}')
@@ -5089,6 +6039,7 @@ def ppt_delete_page(deck_dir: str, page: int) -> dict:
 def ppt_publish_outline(
     deck_dir: str,
     pages: Optional[Union[str, list, int]] = None,
+    insert_before: Optional[int] = None,
 ) -> dict:
     """Publish outline.json pages into slide_outline list artifacts for the UI.
 
@@ -5099,6 +6050,8 @@ def ppt_publish_outline(
     Args:
         deck_dir (str): Absolute deck directory from ppt_init_deck / ppt_find_deck.
         pages: Optional 1-based page filter. Omit = all outline pages.
+        insert_before: For an incremental whole-slide insertion, the one page
+            position to insert into the UI list while preserving later items.
 
     Returns:
         published_count and per-page titles (no full brief bodies).
@@ -5118,7 +6071,17 @@ def ppt_publish_outline(
         return _tool_error('ppt_publish_outline', str(exc))
 
     try:
-        result = _publish_slide_outlines_from_disk(deck, page_list)
+        insertion = _coerce_int(insert_before, 0, lo=0)
+        if insertion and page_list != [insertion]:
+            return _tool_error(
+                'ppt_publish_outline',
+                'insert_before requires pages to contain exactly the same one position',
+            )
+        result = _publish_slide_outlines_from_disk(
+            deck,
+            page_list,
+            insert_before=insertion or None,
+        )
     except (FileNotFoundError, ValueError, KeyError, json.JSONDecodeError) as exc:
         return _tool_error('ppt_publish_outline', str(exc))
 
@@ -5593,12 +6556,23 @@ def _artifact_html_text(artifact: Any, artifact_store: str) -> str:
     return path.read_text(encoding='utf-8')
 
 
-def _validated_action_source(artifact_html: str) -> tuple[Path, Path, str]:
+def _validated_action_source(
+    artifact_html: str,
+    expected_page: int = 0,
+) -> tuple[Path, Path, str]:
     meta = _read_ppt_source_meta(artifact_html)
     source = _runtime_ppt_path(meta['path']).resolve()
     if source.parent.name != 'pages' or not re.fullmatch(r'page_\d{3}\.html', source.name):
         raise ValueError('PPT source metadata does not point to a page')
     deck = source.parent.parent
+    # Whole-slide insertion deliberately keeps the old preview artifact revision
+    # and only changes its visual sort_order. Its embedded source path therefore
+    # still names the former page number. Resolve that safe rename from the
+    # selected visual position and validate exact rendered equality below.
+    if not source.is_file() and expected_page > 0:
+        moved = deck / 'pages' / f'page_{expected_page:03d}.html'
+        if moved.is_file():
+            source = moved.resolve()
     if not source.is_file() or not (deck / 'task_pack.json').is_file():
         raise ValueError('PPT source page no longer exists')
     original = source.read_text(encoding='utf-8')
@@ -5988,9 +6962,13 @@ def ppt_preview_selection_edit(
     if slot != 'preview_html' or _coerce_str(selection.get('type')) != 'ppt_html':
         raise ValueError('selection edit requires a preview_html PPT element')
     artifact_html = _artifact_html_text(artifact, artifact_store)
+    selected_page = _coerce_int(selection.get('page'), 0, lo=0)
     has_source = bool(_PPT_SOURCE_META_RE.search(artifact_html))
     if has_source:
-        source, deck, original = _validated_action_source(artifact_html)
+        source, deck, original = _validated_action_source(
+            artifact_html,
+            expected_page=selected_page,
+        )
     else:
         # Decks produced before source metadata existed use the selected slot
         # artifact as their export authority. Edit that artifact directly and
@@ -5999,7 +6977,6 @@ def ppt_preview_selection_edit(
         shell = _protected_structure_signature(_HtmlTree(original))
         if '<html' not in original.lower() or shell['html'] != 1 or shell['body'] != 1:
             raise ValueError('legacy PPT artifact is not a complete HTML page')
-    selected_page = _coerce_int(selection.get('page'), 0, lo=0)
     source_page = int(source.stem.rsplit('_', 1)[-1]) if source is not None else (selected_page or 1)
     if source is not None and selected_page and selected_page != source_page:
         raise ValueError('selected page does not match the artifact source')

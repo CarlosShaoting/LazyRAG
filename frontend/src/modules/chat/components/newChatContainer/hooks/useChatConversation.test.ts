@@ -7,6 +7,7 @@ import {
   ChatConversationsResponseFinishReasonEnum,
 } from "@/api/generated/chatbot-client";
 import { RoleTypes } from "@/modules/chat/constants/common";
+import { CHAT_WORKFLOW_STEP_FEEDBACK_EVENT } from "@/modules/chat/constants/chat";
 import type { ChatInputImperativeProps } from "../../ChatInput";
 import { useChatConversation } from "./useChatConversation";
 import { useTaskCenterStore } from "@/modules/chat/store/taskCenter";
@@ -143,6 +144,44 @@ describe("useChatConversation regeneration recovery", () => {
     expect(result.current.messageList).toEqual(second);
     expect(result.current.conversationMessagesCache.current.get("conversation-1"))
       .toEqual(second);
+  });
+
+  it("appends every completed workflow step to its assistant chat message once", () => {
+    const { result } = renderConversation();
+    const messages = [
+      { role: RoleTypes.USER, delta: "生成 PPT", history_id: "history-1" },
+      {
+        role: RoleTypes.ASSISTANT,
+        delta: "PPT 工作流已启动。",
+        raw_delta: "PPT 工作流已启动。",
+        history_id: "history-1",
+        finish_reason:
+          ChatConversationsResponseFinishReasonEnum.FinishReasonStop,
+      },
+    ];
+    const detail = {
+      conversationId: "conversation-1",
+      feedbackId: "task-outline",
+      historyId: "history-1",
+      message: "步骤「生成大纲」已完成：已生成 10 页大纲。",
+      status: "succeeded",
+    };
+
+    act(() => {
+      result.current.replaceMessageList("conversation-1", messages);
+      window.dispatchEvent(
+        new CustomEvent(CHAT_WORKFLOW_STEP_FEEDBACK_EVENT, { detail }),
+      );
+      window.dispatchEvent(
+        new CustomEvent(CHAT_WORKFLOW_STEP_FEEDBACK_EVENT, { detail }),
+      );
+    });
+
+    expect(result.current.messageList[1]).toMatchObject({
+      delta:
+        "PPT 工作流已启动。\n\n步骤「生成大纲」已完成：已生成 10 页大纲。",
+      workflow_step_feedback_ids: ["task-outline"],
+    });
   });
 
   it("restores the previous answer and clears busy state when opening SSE rejects", async () => {

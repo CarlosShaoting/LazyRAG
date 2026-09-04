@@ -10,6 +10,7 @@ import {
   CHAT_AUTO_ADVANCE_EVENT,
   CHAT_FFMPEG_DEPENDENCY_MISSING_EVENT,
   CHAT_MEDIA_CAPABILITY_MISSING_EVENT,
+  CHAT_WORKFLOW_STEP_FEEDBACK_EVENT,
 } from "@/modules/chat/constants/chat";
 import { useWorkflowStore } from "@/modules/chat/store/workflowPanel";
 import type { ChatSource } from "@/modules/chat/utils/sourceAdapter";
@@ -948,6 +949,17 @@ export const useTaskCenterStore = create<TaskCenterStore>()((set, get) => ({
               },
             }));
             useWorkflowStore.getState().setAutoRunning(conversationId, true);
+          } else if (type === 'workflow_step_feedback') {
+            if (replayed || !payload?.message || !payload?.task_id) return;
+            window.dispatchEvent(new CustomEvent(CHAT_WORKFLOW_STEP_FEEDBACK_EVENT, {
+              detail: {
+                conversationId,
+                feedbackId: payload.task_id,
+                historyId: payload.history_id,
+                message: payload.message,
+                status: payload.status,
+              },
+            }));
           } else if (
             type === 'workflow_runtime_updated' ||
             type === 'step_waiting' ||

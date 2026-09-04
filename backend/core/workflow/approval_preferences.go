@@ -3,7 +3,6 @@ package workflow
 import (
 	"encoding/json"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
@@ -21,6 +20,12 @@ type approvalPreferenceRequest struct {
 	ApprovalRequired bool   `json:"approval_required"`
 }
 
+// workflowApprovalPreferenceAllSteps is stored as a sentinel rather than
+// expanding the preference to the workflow's current nodes. That keeps the
+// user's workflow-wide choice valid when a later workflow revision adds or
+// reorders approval checkpoints.
+const workflowApprovalPreferenceAllSteps = "*"
+
 func applyApprovalPreferences(ctxDB *gorm.DB, userID, workflowID string, projection graphengine.Projection) graphengine.Projection {
 	if strings.TrimSpace(userID) == "" || strings.TrimSpace(workflowID) == "" {
 		return projection
@@ -31,7 +36,23 @@ func applyApprovalPreferences(ctxDB *gorm.DB, userID, workflowID string, project
 		// has reached every local/dev database.
 		return projection
 	}
+	workflowWideApprovalRequired := true
 	for _, row := range rows {
+		if row.StepID == workflowApprovalPreferenceAllSteps {
+			workflowWideApprovalRequired = row.ApprovalRequired
+			break
+		}
+	}
+	if !workflowWideApprovalRequired {
+		for stepID, node := range projection.Nodes {
+			node.RequiresApproval = false
+			projection.Nodes[stepID] = node
+		}
+	}
+	for _, row := range rows {
+		if row.StepID == workflowApprovalPreferenceAllSteps {
+			continue
+		}
 		node, ok := projection.Nodes[row.StepID]
 		if !ok {
 			continue
@@ -46,31 +67,10 @@ func projectWithApprovalPreferences(db *gorm.DB, userID, workflowID string, grap
 	return applyApprovalPreferences(db, userID, workflowID, graphengine.Project(graph, snapshot))
 }
 
-func descendantStepIDs(graph *graphengine.CompiledStateGraph, start string) []string {
-	seen := map[string]bool{start: true}
-	queue := []string{start}
-	result := make([]string, 0)
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
-		for _, edge := range graph.ControlEdges {
-			if edge.From != current || edge.To == "__end__" || seen[edge.To] {
-				continue
-			}
-			seen[edge.To] = true
-			queue = append(queue, edge.To)
-			if _, ok := graph.Nodes[edge.To]; ok {
-				result = append(result, edge.To)
-			}
-		}
-	}
-	sort.Strings(result)
-	return result
-}
-
 // SetWorkflowApprovalPreference persists a user-level exception to a package's
 // default approval modes. "step" affects this checkpoint in future sessions;
-// "following" affects all downstream checkpoints but not the current one.
+// "following" means that, from this choice onward, this user never needs to
+// approve any checkpoint in future runs of this workflow (in any chat).
 func SetWorkflowApprovalPreference(w http.ResponseWriter, r *http.Request) {
 	userID := common.UserID(r)
 	var session orm.WorkflowSession
@@ -109,7 +109,7 @@ func SetWorkflowApprovalPreference(w http.ResponseWriter, r *http.Request) {
 	}
 	stepIDs := []string{req.StepID}
 	if req.Scope == "following" {
-		stepIDs = descendantStepIDs(graph, req.StepID)
+		stepIDs = []string{workflowApprovalPreferenceAllSteps}
 	}
 	now := time.Now().UTC()
 	rows := make([]orm.WorkflowApprovalPreference, 0, len(stepIDs))
@@ -128,5 +128,8 @@ func SetWorkflowApprovalPreference(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	common.ReplyOK(w, map[string]any{"workflow_id": session.WorkflowID, "scope": req.Scope, "step_ids": stepIDs, "approval_required": false})
+	common.ReplyOK(w, map[string]any{
+		"workflow_id": session.WorkflowID, "scope": req.Scope, "step_ids": stepIDs,
+		"workflow_wide": req.Scope == "following", "approval_required": false,
+	})
 }

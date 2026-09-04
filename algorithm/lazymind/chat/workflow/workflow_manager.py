@@ -565,11 +565,21 @@ def _selected_runtime_policy(
     direct = workflow_context.get('runtime')
     if isinstance(direct, dict):
         return dict(direct)
-    identifiers = set(allowed_refs)
+    identifiers: set[str] = set()
     for key in ('workflow_ref', 'workflow_id'):
         value = str(workflow_context.get(key) or '').strip()
         if value:
             identifiers.add(value)
+    # An active session's exact identity must win over the broader set of
+    # Workflows that happen to be available to the conversation. Without this,
+    # catalog ordering can apply another package's completed-edit policy.
+    if not identifiers:
+        normalized_allowed = {
+            value for raw in allowed_refs
+            if (value := str(raw or '').strip())
+        }
+        if len(normalized_allowed) == 1:
+            identifiers = normalized_allowed
     identifiers |= {value.removeprefix('builtin:') for value in identifiers}
     for item in workflow_catalog:
         item_ids = {
@@ -1481,16 +1491,39 @@ def resolve_workflow_injection(
                 'target, and call advance_step so Runtime starts a new step attempt and '
                 'publishes a new Workflow artifact revision. '
             )
+            completed_edit_routing = str(
+                runtime_policy.get('completed_edit_routing') or ''
+            ).strip()
+            if completed_edit_routing:
+                completed_followup += (
+                    'This Workflow declares semantic routing for completed-output edits. '
+                    'Match the current user query and the existing Workflow state against '
+                    'these rules before using the fallback edit step. Select the exact '
+                    'matching rewindable step returned by get_ready_steps:\n'
+                    + completed_edit_routing
+                    + '\n'
+                )
             completed_edit_step = str(runtime_policy.get('completed_edit_step') or '').strip()
             if completed_edit_step:
-                completed_followup += (
-                    'This Workflow declares that requests to modify, repair, delete, or '
-                    f'regenerate completed output map to the {completed_edit_step!r} step. '
-                    f'If {completed_edit_step!r} is present in rewindable_steps, you MUST '
-                    f'call advance_step(step_ids=[{completed_edit_step!r}]) now. That step '
-                    'owns the existing artifacts and publishes their new revisions; never '
-                    'paste replacement content into chat as a substitute. '
-                )
+                if completed_edit_routing:
+                    completed_followup += (
+                        'This Workflow declares that requests to modify, repair, delete, or '
+                        'regenerate completed output which do not match a semantic routing rule '
+                        f'map to the fallback {completed_edit_step!r} step. '
+                        f'If {completed_edit_step!r} is present in rewindable_steps, you MUST '
+                        'call it only when no semantic routing rule matched. That step '
+                        'owns the existing artifacts and publishes their new revisions; never '
+                        'paste replacement content into chat as a substitute. '
+                    )
+                else:
+                    completed_followup += (
+                        'This Workflow declares that requests to modify, repair, delete, or '
+                        f'regenerate completed output map to the {completed_edit_step!r} step. '
+                        f'If {completed_edit_step!r} is present in rewindable_steps, you MUST '
+                        f'call advance_step(step_ids=[{completed_edit_step!r}]) now. That step '
+                        'owns the existing artifacts and publishes their new revisions; never '
+                        'paste replacement content into chat as a substitute. '
+                    )
         runtime_context = (
             '## Workflow Runtime [AUTHORITATIVE]\n'
             + 'The Host owns session/version concurrency fields. Never ask the user for '

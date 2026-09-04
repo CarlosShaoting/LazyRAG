@@ -6,9 +6,26 @@ transitions:
 
   analyze_requirements:
     - to: collect_materials
+      when: >
+        skip_material_collection was not saved because uploaded sources,
+        knowledge-base/web research, citations, current facts, real photos,
+        product evidence, cases, data, or reference images are still needed.
+    - to: plan_background_prompts
+      when: >
+        skip_material_collection was saved and ppt_capability_requirements is
+        exactly AI_BACKGROUND_IMAGES: enabled.
+    - to: build_outline
+      when: >
+        skip_material_collection was saved and ppt_capability_requirements is
+        exactly AI_BACKGROUND_IMAGES: disabled.
 
   collect_materials:
     - to: plan_background_prompts
+      when: >
+        ppt_capability_requirements is exactly AI_BACKGROUND_IMAGES: enabled.
+    - to: build_outline
+      when: >
+        ppt_capability_requirements is exactly AI_BACKGROUND_IMAGES: disabled.
 
   plan_background_prompts:
     - to: generate_backgrounds
@@ -29,6 +46,7 @@ steps:
   analyze_requirements:
     label: Analyze Requirements
     mode: auto
+    route: choice
     prompt: |
       You are a senior presentation strategist.
 
@@ -156,7 +174,7 @@ steps:
   collect_materials:
     label: Collect Materials
     mode: auto
-    skip_if: {material: skip_material_collection}
+    route: choice
     prompt: |
       You are a presentation research and material collection assistant.
 
@@ -313,6 +331,9 @@ steps:
   build_outline:
     label: Build Outline
     mode: auto
+    rerun_when: >
+      用户要求在未启用 AI 底图的现有 PPT 中插入整页；或 AI 底图插页流程
+      已经先插入底图提示词和底图，需要发布对应的新大纲。
     prompt: |
       You are a PPT outline planner. Build the deck structure and publish one
       concise Markdown deck outline for the UI. The Markdown must describe what
@@ -329,6 +350,27 @@ steps:
       {{user_input}}
 
       {{runtime_instruction}}
+
+      ## Incremental whole-slide insertion
+
+      If the current request inserts/adds one whole slide into an existing deck
+      (for example, between pages 3 and 4), do NOT run the full outline pipeline.
+      Resolve deck_dir with ppt_find_deck and author exactly one structured page
+      object from the request. Use ppt_read_page_outline for the adjacent pages
+      when their context is needed. The object must contain page_kind, title,
+      subtitle/narrative, bullets/data_points, visual_hints, and any explicit
+      use_image/use_table binding; omit page_no because insert_before is authoritative.
+
+      - When ppt_capability_requirements is AI_BACKGROUND_IMAGES: disabled, call
+        ppt_insert_outline_page(deck_dir, insert_before=N, page_json=<one object>).
+        This opens the page gap and publishes the revised deck_outline without
+        rebuilding or rewriting any existing page.
+      - When ppt_capability_requirements is AI_BACKGROUND_IMAGES: enabled, the
+        earlier plan_background_prompts insertion already opened the gap and
+        saved this page object. Call ppt_publish_deck_outline(deck_dir) only.
+
+      Stop after that one insertion publication call. Never call
+      ppt_build_outline for a whole-slide insertion.
 
       When AI backgrounds were enabled, first call ppt_find_deck to locate the
       deck prepared by the background-prompt step. Then call ppt_build_outline
@@ -366,6 +408,9 @@ steps:
       After success, stop.
     tools:
       - ppt_find_deck
+      - ppt_read_page_outline
+      - ppt_insert_outline_page
+      - ppt_publish_deck_outline
       - ppt_build_outline
     inputs:
       - material: requirement_analysis
@@ -374,6 +419,8 @@ steps:
         required: false
       - material: material_images
         required: false
+      - material: ppt_capability_requirements
+        required: true
     outputs:
       - material: deck_outline
     acceptance_criteria: |
@@ -407,6 +454,13 @@ steps:
       editable slide_outline list items. Treat those items as per-page PPT HTML
       generation prompts, not as the deck-level outline.
 
+      Incremental insertion: when the current request added one whole slide at
+      position N, call
+        ppt_publish_outline(deck_dir, pages=[N], insert_before=N)
+      so only one new composite page-prompt card is inserted. Never republish or
+      rewrite the prompts after N. The prompt body is position-independent and
+      must not contain a page number; its visual position is owned by sort_order.
+
       Stop immediately after publishing. Do not call ppt_build_outline,
       ppt_generate_pages, page-html, or save_artifacts.
     tools:
@@ -434,7 +488,8 @@ steps:
     mode: auto
     skip_if: {material: skip_background_images}
     rerun_when: >
-      用户要求修改、替换或重新生成全部/指定页的底图提示词。
+      用户要求修改、替换或重新生成全部/指定页的底图提示词；或者在已启用
+      AI 底图的现有 PPT 中插入整页（插页必须从此步骤开始）。
     prompt: |
       You are the AI-background art director for one presentation. Produce one
       editable English image prompt per slide, then finish automatically.
@@ -462,6 +517,21 @@ steps:
 
       On a targeted rerun, call ppt_find_deck instead of ppt_init_deck, then
       publish only the selected page objects into that existing deck.
+
+      Whole-slide insertion into an existing deck: call ppt_find_deck, read the
+      two adjacent page outlines with ppt_read_page_outline when available, and
+      author exactly one structured page_json for the new slide (page_kind,
+      title, subtitle/narrative, bullets/data_points, visual_hints, and explicit
+      use_image/use_table; omit page_no). Then call once:
+        ppt_publish_background_prompts(
+          deck_dir=<existing deck>,
+          prompts_json=[{"page_no":N,"prompt":"<new English prompt>"}],
+          insert_before=N,
+          page_json=<new structured page object>
+        )
+      This inserts one prompt card and opens one aligned page gap while keeping
+      every old prompt/card revision unchanged. Do not publish or rewrite any
+      prompt after N.
 
       Prompt-series contract:
       - Every prompt is a complete standalone 16:9 slide-background prompt.
@@ -512,6 +582,7 @@ steps:
     tools:
       - ppt_init_deck
       - ppt_find_deck
+      - ppt_read_page_outline
       - ppt_publish_background_prompts
     inputs:
       - material: requirement_analysis
@@ -534,7 +605,8 @@ steps:
     mode: human
     skip_if: {material: skip_background_images}
     rerun_when: >
-      用户要求重新生成全部底图，或重新生成/替换第 1、2 等指定位置的底图。
+      用户要求重新生成全部底图、重新生成/替换第 1、2 等指定位置的底图，
+      或者底图提示词步骤刚为现有 PPT 插入了一页新的底图提示词。
     prompt: |
       Generate PPT AI backgrounds strictly from the approved editable prompt
       list. Do not rewrite, summarize, merge, or improve any prompt here.
@@ -570,6 +642,12 @@ steps:
       Full regeneration:
       - Pass all current prompts and replace=true.
 
+      Incremental whole-slide insertion at N:
+      - Pass only the new approved prompt object for page N.
+      - Pass pages_json=[N], insert_before=N, and replace=false.
+      - Generate and insert exactly one new image card. Do not regenerate,
+        republish, or revise any existing background image.
+
       If generation fails or returns no file, report the exact model/tool reason
       and fail the step. After success, stop for human image approval.
     tools:
@@ -601,6 +679,9 @@ steps:
       Material summary (optional):
       {{material_summary}}
 
+      Existing editable AI-background prompts, if any:
+      {{background_prompts}}
+
       Per-page generation prompts already published (and possibly edited by the user):
       {{slide_outline}}
 
@@ -611,13 +692,22 @@ steps:
 
       ## Mode selection
 
-      ### A) Delete an entire page
+      ### A) Insert an entire page
+      If the current request inserted/added one whole slide at position N, its
+      outline and page-prompt card were already inserted by upstream steps.
+      Resolve deck_dir with ppt_find_deck, then call exactly:
+        ppt_run_stage(deck_dir, stage='page-html', page=N, insert_before=N)
+      This generates and inserts only the new preview_html + preview_notes cards.
+      Stop immediately. Do not run ppt_generate_pages, asset-plan, outline,
+      style, or any later page; existing page/card revisions must remain intact.
+
+      ### B) Delete an entire page
       If the user asks to remove a whole slide (e.g. "删掉第3页", "去掉封面",
       "delete page 2") — not a bullet inside a page:
         ppt_find_deck() → ppt_delete_page(deck_dir, page=N)
       Stop after delete. Do NOT re-run outline/style/batch-page-html.
 
-      ### B) Single-page content edit
+      ### C) Single-page content edit
       If user_input / runtime_instruction asks to modify specific pages
       (e.g. "改第3页", "page 2", "这一页", "删掉最后一个要点", or a focused sort_order):
 
@@ -644,7 +734,50 @@ steps:
       6. ppt_edit_page_html and page-html auto-publish. Stop immediately afterward:
          do NOT call ppt_publish_pages and do NOT call save_artifacts.
 
-      ### C) Full deck HTML generation (default)
+      ### D) Single-page image/background edit
+      If the request changes an image on one existing slide, resolve the target
+      from an explicit page number first, otherwise use focused_sort_order from
+      runtime_instruction. Do not rebuild the outline or regenerate other pages.
+
+      Foreground/material image ("换图片/配图/产品图/照片"):
+      1. Call ppt_find_deck.
+      2. Obtain exactly the requested replacement:
+         - KB/upload/local/web image: search only when needed, then call
+           ppt_register_material_images once for the chosen image.
+         - AI-created foreground image: only when the user explicitly asks to
+           generate/draw it; call ppt_generate_material_images once.
+         - Existing Materials-tab/deck image: do not search or generate again;
+           use material_index (1-based Materials position) or the
+           reference_image_index returned by ppt_find_deck.
+      3. Call ppt_replace_page_material_image exactly once. Omit both index
+         arguments to use the newest image just registered/generated, or pass
+         reference_image_index to reuse an existing deck image. This updates
+         use_image and regenerates only the target page HTML.
+      4. Stop. Do not call collect_materials as a Workflow step, outline/style,
+         ppt_generate_pages, or a second page-html call.
+
+      AI slide background ("换背景/换底图/重新生成背景") when the deck already
+      has background_images, or the user explicitly asks for AI regeneration:
+      1. Call ppt_find_deck.
+      2. Call ppt_replace_page_background exactly once for the target page.
+         - For plain regeneration, omit prompt so the approved prompt is reused.
+         - For a changed scene/style, pass one complete English 16:9 background
+           prompt with a calm content-safe region and no text/logos.
+         The tool overwrites the prompt/image at the same list position and
+         refreshes only that page preview. If no image model is configured it
+         returns the model-settings dependency error; surface it unchanged.
+      3. Stop. Do not treat a foreground image as a background, and do not run
+         the full background, outline, or deck generation stages.
+
+      When the deck has no AI background_images, an ordinary color/gradient/
+      texture background request is a structural/layout edit, not AI generation:
+      patch visual_hints when needed and redraw only that page. Do not invoke an
+      image model merely because the user used the word "background". If the
+      user explicitly wants to enable AI backgrounds on a deck that has none,
+      explain that this changes the deck-wide background capability instead of
+      pretending a one-page replacement succeeded.
+
+      ### E) Full deck HTML generation (default)
       Page prompts already exist from plan_page_prompts. Do NOT call ppt_init_deck,
       stage=style, or stage=outline again.
 
@@ -667,6 +800,11 @@ steps:
       - Full outline run → ppt_build_outline. Full HTML run → ppt_generate_pages.
       - Whole-page delete → ppt_delete_page. Bullet/element delete →
         ppt_patch_page_outline / ppt_edit_page_html (not ppt_delete_page).
+      - Whole-page insert → page-html with page=N and insert_before=N. Never
+        regenerate or republish shifted pages.
+      - Foreground image replacement → register/generate one material, then
+        ppt_replace_page_material_image. AI background replacement →
+        ppt_replace_page_background. Both update one preview page only.
       - Never stage=outline / style / ppt_init_deck on a full generate after
         build_outline already ran (unless ppt_find_deck finds nothing).
       - Never export PPTX from tools — UI Export only.
@@ -685,6 +823,13 @@ steps:
       - ppt_patch_page_outline
       - ppt_edit_page_html
       - ppt_delete_page
+      - kb
+      - web_search
+      - ppt_search_web_images
+      - ppt_register_material_images
+      - ppt_generate_material_images
+      - ppt_replace_page_material_image
+      - ppt_replace_page_background
     inputs:
       - material: requirement_analysis
         required: true
@@ -693,6 +838,8 @@ steps:
       - material: material_images
         required: false
       - material: background_images
+        required: false
+      - material: background_prompts
         required: false
       - material: slide_outline
         required: true
@@ -705,3 +852,7 @@ steps:
       preview_notes must be aligned with preview_html; the auto-generated draft is
       sufficient unless the user explicitly requests a richer speaker script.
       For a single-page edit: only the requested sort_order rows need updating.
+      For a foreground image or AI-background replacement, the corresponding
+      page prompt/binding and preview_html must update at the same sort_order;
+      the tool result must report updated_pages=[N], and untouched pages must
+      keep their existing revisions.
