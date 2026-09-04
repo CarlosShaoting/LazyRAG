@@ -56,6 +56,21 @@ QueryAppendixProvider = Callable[[], str | None]
 QueryAppendixPosition = Literal['before', 'after']
 SYSTEM_PROMPT_APPENDIX_SECTIONS = ('tool_policy', 'safety', 'output_contract', 'response_policy')
 
+
+def _ensure_google_drive_method_docs() -> None:
+    """Fill metadata omitted by the pinned LazyLLM Google Drive supplier."""
+    docs = {
+        'search': 'Search Google Drive file content and optionally narrow by name or folder.',
+        'find': 'Find Google Drive files whose names match a regular expression.',
+    }
+    for name, doc in docs.items():
+        method = getattr(GoogleDriveFS, name)
+        if not method.__doc__:
+            method.__doc__ = doc
+
+
+_ensure_google_drive_method_docs()
+
 IMAGE_MARKDOWN_OUTPUT_APPENDIX: SystemPromptAppendix = {
     'output_contract': (
         '# Image path formatting (mandatory)\n'
