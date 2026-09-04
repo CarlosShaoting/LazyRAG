@@ -303,6 +303,7 @@ func registerAllRoutes(r *mux.Router) {
 	handleAPI(r, "POST", "/external-chat/hosts/{provider}/claim", []string{"qa.write"}, chat.ClaimExternalChatRun)
 	handleAPI(r, "POST", "/external-chat/runs/{run_id}:heartbeat", []string{"qa.write"}, chat.HeartbeatExternalChatRun)
 	handleAPI(r, "POST", "/external-chat/runs/{run_id}:event", []string{"qa.write"}, chat.PublishExternalChatEvent)
+	handleAPI(r, "POST", "/external-chat/runs/{run_id}:attachment", []string{"qa.write"}, chat.PublishExternalChatAttachment)
 
 	// ----- SubAgent (Task Center) -----
 	handleAPI(r, "GET", "/conversations/{conversation_id}/tasks", []string{"qa.read"}, subagent.ListConversationTasks)
@@ -499,6 +500,9 @@ func registerAllRoutes(r *mux.Router) {
 	handleAPI(r, "PUT", "/memory/profile/avatar", []string{"qa.write"}, currentmemory.PutProfileAvatar)
 	handleAPI(r, "DELETE", "/memory/profile/avatar", []string{"qa.write"}, currentmemory.DeleteProfileAvatar)
 	handleAPI(r, "GET", "/memory/preferences", []string{"qa.read"}, currentmemory.ListPreferences)
+	handleAPI(r, "POST", "/memory/preferences:organize", []string{"qa.write"}, resourceupdate.SubmitPreferenceOrganizer)
+	handleAPI(r, "GET", "/memory/preferences:organize/{task_id}", []string{"qa.read"}, resourceupdate.GetPreferenceOrganizer)
+	handleAPI(r, "GET", "/memory/preferences:organize", []string{"qa.read"}, resourceupdate.GetLatestPreferenceOrganizer)
 	handleAPI(r, "PUT", "/memory/preferences:order", []string{"qa.write"}, currentmemory.ReorderPreferences)
 	handleAPI(r, "GET", "/memory/preferences/{name}", []string{"qa.read"}, currentmemory.GetPreference)
 	handleAPI(r, "DELETE", "/memory/preferences/{name}", []string{"qa.write"}, currentmemory.DeletePreference)

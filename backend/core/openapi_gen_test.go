@@ -428,10 +428,12 @@ func TestOpenAPICurrentMemoryContractAndPrivateRouteIsolation(t *testing.T) {
 			preferenceUpdatedAt,
 		)
 	}
-	residentUsage := preferenceList["resident_index_usage"].(map[string]any)
-	if residentUsage["$ref"] !=
-		"#/components/schemas/CurrentMemoryPreferenceResidentIndexUsage" {
-		t.Fatalf("Preference resident usage schema = %#v", residentUsage)
+	if _, exists := preferenceList["resident_index_usage"]; exists {
+		t.Fatal("obsolete item budget must not remain in the API")
+	}
+	projection := schemaPropertiesForTest(t, schemas, "CurrentMemoryPreferenceProjectionState")
+	if _, exists := projection["max_chars"]; !exists {
+		t.Fatal("projection must include the effective character budget")
 	}
 	publicItem := schemaPropertiesForTest(t, schemas, "CurrentMemoryPreferenceItem")
 	if _, exists := publicItem["ref"]; exists {
@@ -1220,7 +1222,7 @@ func TestOpenAPISpecMarksUIPreferencesPatchFieldsOptional(t *testing.T) {
 	if !ok {
 		t.Fatalf("userUIPreferencesPatchOpenAPIRequest properties missing")
 	}
-	for _, name := range []string{"chat_preference_notice_dismissed", "developer_mode_active", "schedules_enabled", "skills_enabled", "workflows_enabled"} {
+	for _, name := range []string{"chat_preference_notice_dismissed", "developer_mode_active", "sensitive_word_filter_enabled", "schedules_enabled", "skills_enabled", "workflows_enabled"} {
 		if _, ok := properties[name]; !ok {
 			t.Fatalf("userUIPreferencesPatchOpenAPIRequest expected property %q", name)
 		}
