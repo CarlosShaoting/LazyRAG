@@ -55,6 +55,7 @@ func setupBatchTransitionSession(t *testing.T) (*orm.DB, string) {
 		&orm.WorkflowRevision{},
 		&orm.WorkflowInputBinding{},
 		&orm.WorkflowAttemptInputBinding{},
+		&orm.WorkflowApprovalPreference{},
 		&orm.WorkflowRouteDecision{},
 		&orm.WorkflowTransitionCommand{},
 		&orm.WorkflowOutbox{},
