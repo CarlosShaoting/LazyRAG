@@ -61,6 +61,14 @@ MISSION_LIST_HTML = """<!doctype html>
 </section></main></body></html>
 """
 
+COMPOUND_CARD_HTML = """<!doctype html>
+<html><head><title>春节习俗</title></head><body>
+<main class="slide"><article class="bullet bullet-a" data-el="bullet-1">
+  <h3>团圆过大年</h3>
+  <p>春节是一家人团聚的日子，亲人们围坐一起，迎接新一年的好运与祝福。</p>
+</article></main></body></html>
+"""
+
 
 def make_deck(root: Path) -> tuple[Path, Path]:
     deck = root / 'deck'
@@ -744,6 +752,119 @@ class PartialEditTests(unittest.TestCase):
         }])
         self.assertEqual(old_text, '2025游戏行业趋势')
         self.assertEqual(new_text, '赛博朋克2077游戏行业趋势与未来展望')
+
+    def test_border_click_expands_card_text_without_flattening_inner_markup(self):
+        selection = {
+            'type': 'ppt_html',
+            'page': 1,
+            'el': 'bullet-1',
+            # Browser innerText joins the child heading and paragraph. This
+            # value does not exist as one contiguous slice of source HTML.
+            'selected_text': (
+                '团圆过大年 春节是一家人团聚的日子，亲人们围坐一起，'
+                '迎接新一年的好运与祝福。'
+            ),
+        }
+        enriched = (
+            '春节是家人团聚的重要时刻。无论相隔多远，人们都会尽量回到家中，'
+            '与亲人围坐一起吃年夜饭、聊家常、守岁迎新，共同迎接新一年的好运与祝福。'
+        )
+        model_output = json.dumps({
+            'op': 'replace_text_segments',
+            'values': ['团圆过大年', enriched],
+        }, ensure_ascii=False)
+
+        with mock.patch.object(TOOLS, '_agent_llm_call', return_value=model_output) as llm:
+            ops, old_text, new_text = TOOLS._selection_edit_ops(
+                '丰富一下内容', selection, TOOLS._HtmlTree(COMPOUND_CARD_HTML),
+            )
+
+        self.assertEqual(ops, [{
+            'op': 'replace_text_segments',
+            'el': 'bullet-1',
+            'values': ['团圆过大年', enriched],
+        }])
+        self.assertIn('团圆过大年', old_text)
+        self.assertEqual(new_text, f'团圆过大年 / {enriched}')
+        self.assertEqual(llm.call_args.kwargs['request_name'], 'ppt-selection-edit')
+        request = json.loads(llm.call_args.args[1])
+        self.assertTrue(request['selected_element']['compound_text_target'])
+        self.assertEqual(
+            request['selected_element']['text_segments_in_order'],
+            [
+                {
+                    'position': 1,
+                    'parent_tag': 'h3',
+                    'parent_el': None,
+                    'text': '团圆过大年',
+                },
+                {
+                    'position': 2,
+                    'parent_tag': 'p',
+                    'parent_el': None,
+                    'text': '春节是一家人团聚的日子，亲人们围坐一起，迎接新一年的好运与祝福。',
+                },
+            ],
+        )
+
+        edited, applied, _notes, removed = TOOLS._apply_html_ops(
+            COMPOUND_CARD_HTML, ops,
+        )
+        TOOLS._validate_local_html_edit(COMPOUND_CARD_HTML, edited)
+        self.assertIn('<article class="bullet bullet-a" data-el="bullet-1">', edited)
+        self.assertIn('<h3>团圆过大年</h3>', edited)
+        self.assertIn(f'<p>{enriched}</p>', edited)
+        self.assertNotIn('<article class="bullet bullet-a" data-el="bullet-1">团圆', edited)
+        self.assertEqual(applied, ['retexted 1 text segment(s) inside el="bullet-1"'])
+        self.assertEqual(removed, [
+            '春节是一家人团聚的日子，亲人们围坐一起，迎接新一年的好运与祝福。',
+        ])
+
+    def test_border_click_explicit_title_change_uses_structured_text_plan(self):
+        selection = {
+            'type': 'ppt_html',
+            'page': 1,
+            'el': 'bullet-1',
+            'selected_text': (
+                '团圆过大年 春节是一家人团聚的日子，亲人们围坐一起，'
+                '迎接新一年的好运与祝福。'
+            ),
+        }
+        original_body = '春节是一家人团聚的日子，亲人们围坐一起，迎接新一年的好运与祝福。'
+        model_output = json.dumps({
+            'op': 'replace_text_segments',
+            'values': ['阖家团圆', original_body],
+        }, ensure_ascii=False)
+
+        with mock.patch.object(TOOLS, '_agent_llm_call', return_value=model_output) as llm:
+            ops, _old_text, new_text = TOOLS._selection_edit_ops(
+                '修改标题为阖家团圆', selection, TOOLS._HtmlTree(COMPOUND_CARD_HTML),
+            )
+
+        self.assertEqual(ops, [{
+            'op': 'replace_text_segments',
+            'el': 'bullet-1',
+            'values': ['阖家团圆', original_body],
+        }])
+        self.assertEqual(new_text, f'阖家团圆 / {original_body}')
+        self.assertEqual(
+            llm.call_args.kwargs['request_name'],
+            'ppt-selection-retext-segments',
+        )
+
+        edited, _applied, _notes, _removed = TOOLS._apply_html_ops(
+            COMPOUND_CARD_HTML, ops,
+        )
+        self.assertIn('<h3>阖家团圆</h3>', edited)
+        self.assertIn(f'<p>{original_body}</p>', edited)
+
+    def test_structured_text_replacement_rejects_wrong_segment_count(self):
+        with self.assertRaisesRegex(ValueError, 'expected 2, got 1'):
+            TOOLS._apply_html_ops(COMPOUND_CARD_HTML, [{
+                'op': 'replace_text_segments',
+                'el': 'bullet-1',
+                'values': ['只有一段'],
+            }])
 
     def test_nested_ambiguous_match_is_rejected(self):
         with self.assertRaisesRegex(ValueError, 'contains 2 visible matches'):

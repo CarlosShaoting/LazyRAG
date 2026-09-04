@@ -879,7 +879,7 @@ func CreateSlotItem(w http.ResponseWriter, r *http.Request) {
 	}
 	// Get an existing revision to borrow its slot and step info. A rewind marks
 	// downstream revisions stale and deselects them, but deliberately preserves
-	// plugin_slot_order so incremental insertions can keep every existing
+	// the durable slot order so incremental insertions can keep every existing
 	// list_index stable. In that state there is no selected row even though the
 	// slot is valid and already has ordered items, so fall back to its latest
 	// historical revision.
