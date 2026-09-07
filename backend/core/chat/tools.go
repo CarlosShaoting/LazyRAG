@@ -182,6 +182,9 @@ func applyChatRuntimeConfigs(ctx context.Context, db *gorm.DB, userID string, bo
 	if len(llmConfig) > 0 {
 		body["llm_config"] = llmConfig
 	}
+	if err := applyConversationChatModelConfig(ctx, db, userID, body); err != nil {
+		return err
+	}
 	toolConfig, err := loadChatToolConfig(ctx, db, userID)
 	if err != nil {
 		return err
@@ -206,6 +209,9 @@ func applyChatRuntimeConfigs(ctx context.Context, db *gorm.DB, userID string, bo
 		} else {
 			body["agentic_config"] = agentConfig
 		}
+	}
+	if err := applyConversationSourceRuntimeContext(ctx, db, userID, body); err != nil {
+		return err
 	}
 	return applyBrowserRuntimeConfig(userID, body)
 }
