@@ -59,7 +59,7 @@ from . import (
 )
 from . import tools as subagent_tools
 from .context import LARGE_TOOL_RESULT_THRESHOLD, SubAgentContext, set_context
-from .db import MemorySubAgentStore, SubAgentDB
+from .db import MemorySubAgentStore
 
 DRAFT_STREAM_EVENT_TYPES = frozenset({
     'artifact_stream_start',
@@ -504,7 +504,7 @@ def _build_agentic_config(
 
 def _build_subagent_plan(
     ctx: SubAgentContext,
-    db: Optional['SubAgentDB'],
+    db: Any,
     *,
     tools: List[Any],
     tool_prompt_appendices: Dict[str, List[str]],
@@ -909,7 +909,6 @@ def _signal_task_cancel(task_id: str) -> bool:
 
 async def run_subagent_stream(
     task_id: str,
-    db_dsn: str = '',
     resume: bool = False,
     model_config: Optional[Dict[str, Any]] = None,
     tool_config: Optional[Dict[str, Any]] = None,
@@ -925,7 +924,7 @@ async def run_subagent_stream(
     giving a unified LLM output representation across both agent types.
     """
     start_time = time.time()
-    db: Optional[SubAgentDB] = None
+    db: Optional[MemorySubAgentStore] = None
     emitted: List[Dict[str, Any]] = []
     stream_events: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
     loop = asyncio.get_running_loop()
@@ -1001,8 +1000,9 @@ async def run_subagent_stream(
         return 'data: ' + json.dumps(ev, ensure_ascii=False, default=str) + '\n\n'
 
     try:
-        db = (MemorySubAgentStore(task_spec, initial_steps)
-              if task_spec is not None else SubAgentDB(db_dsn))
+        if task_spec is None:
+            raise ValueError('task_spec is required; Core owns SubAgent persistence')
+        db = MemorySubAgentStore(task_spec, initial_steps, task_spec.get('artifacts'))
         task = db.load_task(task_id)
         if not task:
             yield _sse({'type': 'error', 'status': 'failed', 'message': f'task {task_id} not found'})
@@ -1393,7 +1393,7 @@ async def run_subagent_stream(
             db.dispose()
 
 
-def _auto_flush_drafts(ctx: 'SubAgentContext', db: 'SubAgentDB') -> None:
+def _auto_flush_drafts(ctx: 'SubAgentContext', db: Any) -> None:
     """Commit any pending draft files as new artifact revisions before the step ends.
 
     This is a safety net: if the model called patch_artifact but forgot to call
@@ -1594,7 +1594,7 @@ def _evaluate_completion(
         return False, f'执行中断，已完成步骤数：{len(steps)}，缺少产出：{missing_str}'
 
 
-def _rebuild_history_from_steps(db: SubAgentDB, task_id: str) -> List[Dict[str, Any]]:
+def _rebuild_history_from_steps(db: Any, task_id: str) -> List[Dict[str, Any]]:
     """Rebuild LLM chat history from persisted steps for resume.
 
     Validates tool_call_id pairing: every assistant tool_call must have a matching tool result.

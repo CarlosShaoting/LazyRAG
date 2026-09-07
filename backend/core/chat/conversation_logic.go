@@ -1372,7 +1372,6 @@ func buildChatRequestBody(ctx context.Context, db *gorm.DB, convID, sessionID, q
 	}
 	// Propagate workflow_context so Python ChatAgent receives the active session info.
 	// Merge workflow_ui_state (focused_tab, focused_sort_order) from the request body.
-	// Python reads artifact state directly from the DB via _build_session_artifact_section.
 	if pc, ok := raw["workflow_context"].(map[string]any); ok && len(pc) > 0 {
 		mergedPC := make(map[string]any, len(pc)+4)
 		for k, v := range pc {
@@ -3010,7 +3009,6 @@ func handleTaskCreated(
 				Params:        ev.Params,
 				WorkspacePath: existing.WorkspacePath,
 				Tools:         ev.Tools,
-				DBDSN:         subagent.DBDSN(),
 				Resume:        true,
 				LLMConfig:     llmConfig,
 				ToolConfig:    toolConfig,
@@ -3057,7 +3055,6 @@ func handleTaskCreated(
 		Params:        ev.Params,
 		WorkspacePath: workspacePath,
 		Tools:         ev.Tools,
-		DBDSN:         subagent.DBDSN(),
 		Resume:        false,
 		LLMConfig:     llmConfig,
 		ToolConfig:    toolConfig,

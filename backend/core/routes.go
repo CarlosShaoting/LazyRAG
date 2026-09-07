@@ -315,6 +315,9 @@ func registerAllRoutes(r *mux.Router) {
 	// Internal endpoint for algorithm service auto polling; no request-level RBAC.
 	handleAPI(r, "GET", "/internal/subagent/tasks/{task_id}", nil, subagent.InternalGetTaskStatus)
 	handleAPI(r, "GET", "/internal/subagent/tasks/{task_id}/events", nil, subagent.InternalGetTaskEvents)
+	handleAPI(r, "GET", "/internal/subagent/conversations/{conversation_id}/tasks", nil, subagent.InternalListConversationTasks)
+	handleAPI(r, "GET", "/internal/subagent/artifacts", nil, subagent.InternalGetTaskArtifactsBatch)
+	handleAPI(r, "GET", "/internal/subagent/tasks/{task_id}/artifacts", nil, subagent.InternalGetTaskArtifacts)
 	handleAPI(r, "GET", "/internal/subagent/tasks/{task_id}/execution-spec", nil, subagent.InternalGetExecutionSpec)
 	handleAPI(r, "POST", "/internal/subagent/tasks/{task_id}/events", nil, subagent.InternalIngestTaskEvent)
 

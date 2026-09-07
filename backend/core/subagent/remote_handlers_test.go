@@ -259,6 +259,13 @@ func TestRemoteTaskEventsPersistStreamStateAndInvalidatePanel(t *testing.T) {
 			t.Fatalf("step[%d]=%#v", i, steps[i])
 		}
 	}
+	var toolContent map[string][]map[string]any
+	if err := json.Unmarshal(steps[3].Content, &toolContent); err != nil {
+		t.Fatal(err)
+	}
+	if toolContent["tool_results"][0]["tool_call_id"] != "1" {
+		t.Fatalf("tool result was not normalized for resume: %s", steps[3].Content)
+	}
 	task, _ := GetTask(context.Background(), db.DB, "task-remote")
 	if task.Status != StatusRunning || task.ProgressPct != 42 || task.CurrentPhase != "working" {
 		t.Fatalf("task=%#v", task)

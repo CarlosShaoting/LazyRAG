@@ -208,7 +208,6 @@ func coreServiceEnv(cfg RuntimeConfig, paths RuntimePaths) []string {
 		"LAZYMIND_OFFICE_CONVERT_URL=" + endpoints.Host.OfficeConvertURL,
 		"LAZYMIND_OFFICE_CONVERT_WORKERS=" + envText("LAZYMIND_OFFICE_CONVERT_WORKERS", "4"),
 		"LAZYMIND_SUBAGENT_WORKSPACE=" + paths.SubagentDataDir,
-		"LAZYMIND_SUBAGENT_DB_DSN=" + coreURL,
 		"LAZYMIND_READONLY_VALIDATE=0",
 		"LAZYMIND_READONLY_DB_DRIVER=sqlite",
 		"LAZYMIND_READONLY_DB_DSN=" + paths.LazyLLMDBPath,
