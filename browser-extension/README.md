@@ -13,7 +13,7 @@
 
 ## Desktop 依赖安装
 
-Desktop 用户可以在“设置 → 依赖安装 → 浏览器控制扩展”中安装扩展包。安装目录为 Desktop Runtime 下的 `deps/browser-extension`，安装完成后可点击“打开安装位置”。
+Desktop 用户可以在“设置 → 系统工具 → 依赖安装 → 浏览器控制扩展”中安装扩展包。安装目录为 Desktop Runtime 下的 `deps/browser-extension`，安装完成后可点击“打开安装位置”。
 
 Chrome/Edge 安全策略不允许 Desktop 在普通个人浏览器中静默启用扩展；仍需打开对应浏览器的扩展管理页、启用开发者模式并选择“加载解压缩的扩展”。正式商店版本发布后可分别改为 Chrome Web Store 或 Microsoft Edge Add-ons 安装；企业受管 Edge 可再使用 `ExtensionInstallForcelist` 部署。
 
@@ -23,7 +23,7 @@ Chrome/Edge 安全策略不允许 Desktop 在普通个人浏览器中静默启�
 2. 打开左侧“开发人员模式”。
 3. 点击“加载解压缩的扩展”，选择本目录或 Desktop 安装出的 `deps/browser-extension` 目录。
 4. 打开扩展弹窗，确认标题下方显示 `Microsoft Edge <版本>`。
-5. 在 LazyMind“设置 → 依赖安装 → 浏览器控制扩展”中选择 Microsoft Edge，生成配对码并连接。
+5. 在 LazyMind“设置 → 系统工具 → 依赖安装 → 浏览器控制扩展”中点击“配置”，选择 Microsoft Edge，生成配对码并连接。
 6. 抓取用户当前 Edge 标签页前，仍需点击“授权当前站点”；控制新页面时，扩展会创建最大化的独立 Edge 窗口。
 
 Edge 开发版不需要单独复制一套源码。用于 Edge Add-ons 提交的 ZIP 也从本目录生成，避免 Chrome/Edge 两套控制器产生行为差异。
