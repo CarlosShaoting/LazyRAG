@@ -28,7 +28,10 @@
           <input id="pairingCode" autocomplete="one-time-code" placeholder="ABCD-EFGH">
           <button id="pair">配对</button>
         </div>
-        <p class="hint">在 LazyMind 中生成 5 分钟有效的配对码，再粘贴到这里。</p>
+        <p class="hint">
+          在 LazyMind 中打开“设置 → 系统工具 → 依赖安装”，找到“浏览器控制扩展”并点击“配置”；
+          选择 <span id="pairingBrowserName">当前浏览器</span> 后点击“生成配对码”。配对码 5 分钟内有效，请复制并粘贴到这里。
+        </p>
       </section>
 
       <section id="connected" hidden>

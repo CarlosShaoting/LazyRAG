@@ -11,7 +11,7 @@
 - Browser Gateway 已显式接受并测试 `edge-extension://` WebSocket/CORS Origin，设备列表可以区分 Microsoft Edge 与 Google Chrome。
 - 扩展依赖 API 同时返回 `chrome://extensions` 和 `edge://extensions`；设置页可选择 Google Chrome/Microsoft Edge，并复制对应管理地址、查看对应加载和配对说明。
 - 本地内置扩展源会与已安装版本比较；设置页现在支持更新或重新安装扩展包，避免旧的 Chrome/Edge 开发版停留在 `0.1.1`。
-- 扩展版本升级为 `0.2.0`；Edge 开发人员模式可直接“加载解压缩的扩展”使用同一目录。
+- 扩展版本升级为 `0.2.1`；Edge 开发人员模式可直接“加载解压缩的扩展”使用同一目录，配对提示包含完整的 LazyMind 设置路径。
 - 尚未完成 Microsoft Edge Add-ons 商店上架、企业策略安装模板和 Edge 真机完整操作 E2E；这些不影响开发版手工加载，但仍属于正式发布验收项。
 
 ### 2026-09-07 主分支合并、Local 启动与 PRD 审计
@@ -73,7 +73,7 @@ Browser MCP 的 `capture/open` Tool 描述已同步为外部 Chrome/Edge 独立�
 
 - Desktop 与 Docker/Local 统一安装和连接同一个 MV3 扩展；Agent 的 `browser_open` 在三种部署形态下都打开扩展管理的独立有头 Chrome/Edge 窗口。
 - Desktop 默认不挂载聊天右侧 `WebContentsView`，Core 也不再优先选择 Electron 设备。已经完成的内嵌驱动和拖拽面板代码没有删除，可用 `VITE_DESKTOP_EMBEDDED_BROWSER=true` 显式挂载实验 UI；多设备在线时可再用 `LAZYMIND_BROWSER_PREFERRED_DEVICE_BROWSER=Electron WebContentsView` 固定实验目标。
-- “设置 → 依赖安装 → 浏览器控制扩展”弹窗新增 5 分钟一次性配对码生成与复制入口，避免再通过 curl 找配对码。
+- “设置 → 系统工具 → 依赖安装 → 浏览器控制扩展”弹窗新增 5 分钟一次性配对码生成与复制入口，避免再通过 curl 找配对码。
 
 ## 1. 这次已经完成
 
@@ -204,7 +204,7 @@ Local Runtime 已实现：
    ```
 
 2. Chrome 打开 `chrome://extensions`，Edge 打开 `edge://extensions`，启用开发者模式并加载 `LazyMind/browser-extension/`。
-3. 在 LazyMind“设置 → 依赖安装 → 浏览器控制扩展”中生成 5 分钟有效的配对码。
+3. 在 LazyMind“设置 → 系统工具 → 依赖安装 → 浏览器控制扩展”中生成 5 分钟有效的配对码。
 4. 在扩展弹窗中填写 `http://127.0.0.1:8090` 和配对码。
 5. 抓取当前页前点击“授权当前站点”。
 6. 在 LazyMind 普通对话中使用，例如：
@@ -214,7 +214,7 @@ Local Runtime 已实现：
 
 ### 2.2 Desktop 开发版（外部 Chrome/Edge）
 
-1. 正常启动 LazyMind Desktop 并登录；打开“设置 → 依赖安装 → 浏览器控制扩展”，安装并打开扩展目录。
+1. 正常启动 LazyMind Desktop 并登录；打开“设置 → 系统工具 → 依赖安装 → 浏览器控制扩展”，安装并打开扩展目录。
 2. 在 Chrome 的 `chrome://extensions` 或 Edge 的 `edge://extensions` 开启开发者模式并“加载已解压的扩展程序”；浏览器确认和授权不能由 Desktop 静默代替。
 3. 回到同一个设置弹窗生成 5 分钟有效的配对码；在扩展弹窗填写 Desktop 地址与配对码，等待显示连接成功。
 4. 在普通对话中说“打开 `https://example.com`，告诉我页面上有哪些链接”。扩展会创建独立有头窗口，Agent 和用户都可以在该窗口继续操作。
@@ -238,8 +238,8 @@ LAZYMIND_BROWSER_EXTENSION_BUNDLE_SHA256=<64位SHA256>
 
 `make local-up` 的必要前提：
 
-1. 执行“设置 → 依赖安装 → 浏览器控制扩展”，或直接在 Chrome 的 `chrome://extensions` / Edge 的 `edge://extensions` 开发者模式中加载仓库根目录的 `browser-extension/`。
-2. 在“设置 → 依赖安装 → 浏览器控制扩展”生成当前登录用户的一次性配对码，在扩展弹窗填写 `http://127.0.0.1:8090` 和配对码，等待状态显示在线。
+1. 执行“设置 → 系统工具 → 依赖安装 → 浏览器控制扩展”，或直接在 Chrome 的 `chrome://extensions` / Edge 的 `edge://extensions` 开发者模式中加载仓库根目录的 `browser-extension/`。
+2. 在“设置 → 系统工具 → 依赖安装 → 浏览器控制扩展”生成当前登录用户的一次性配对码，在扩展弹窗填写 `http://127.0.0.1:8090` 和配对码，等待状态显示在线。
 3. 只有扩展在线后，“打开某 URL”才会新建扩展管理的独立有头 Chrome 窗口。仅运行 `make local-up`、未加载扩展时，后端没有实际浏览器设备可控制。
 
 ## 3. 已有测试

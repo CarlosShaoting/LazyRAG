@@ -9,6 +9,7 @@ const elements = {
   deviceId: document.querySelector('#deviceId'),
   message: document.querySelector('#message'),
   browserName: document.querySelector('#browserName'),
+  pairingBrowserName: document.querySelector('#pairingBrowserName'),
 };
 
 let currentSite = null;
@@ -92,6 +93,7 @@ async function refresh() {
   elements.browserName.textContent = state.browser_version
     ? `${state.browser_name} ${state.browser_version}`
     : state.browser_name;
+  elements.pairingBrowserName.textContent = state.browser_name;
   elements.gateway.value = state.gateway_url;
   elements.pairing.hidden = state.paired;
   elements.connected.hidden = !state.paired;
