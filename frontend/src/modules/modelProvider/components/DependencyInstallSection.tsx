@@ -5,6 +5,7 @@ import {
   Empty,
   Input,
   Modal,
+  Segmented,
   Space,
   Spin,
   Tag,
@@ -13,6 +14,7 @@ import {
 } from "antd";
 import {
   DownloadOutlined,
+  CopyOutlined,
   FolderOpenOutlined,
   GlobalOutlined,
   RightOutlined,
@@ -42,6 +44,11 @@ import {
 import { getLocalizedErrorMessage } from "@/components/request";
 import { isDesktopRuntime, isLocalRuntime } from "@/runtime/mode";
 import { openBrowserExtensionDir, selectExecutable } from "@/runtime/desktopBridge";
+import {
+  detectPreferredBrowserExtensionTarget,
+  resolveBrowserExtensionTargets,
+  type BrowserExtensionTargetID,
+} from "../utils/browserExtensionTarget";
 
 
 const DEPENDENCY_ICON_DATA_URL =
@@ -69,7 +76,17 @@ export default function DependencyInstallSection() {
   const [browserChecking, setBrowserChecking] = useState(false);
   const [browserPairing, setBrowserPairing] = useState<BrowserPairingCode | null>(null);
   const [browserPairingCreating, setBrowserPairingCreating] = useState(false);
+  const [browserTargetID, setBrowserTargetID] = useState<BrowserExtensionTargetID>(
+    detectPreferredBrowserExtensionTarget,
+  );
   const [searchValue, setSearchValue] = useState("");
+
+  const browserTargets = useMemo(
+    () => resolveBrowserExtensionTargets(browserStatus?.supportedBrowsers),
+    [browserStatus?.supportedBrowsers],
+  );
+  const browserTarget = browserTargets.find((target) => target.id === browserTargetID)
+    || browserTargets[0];
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -284,6 +301,18 @@ export default function DependencyInstallSection() {
       message.success(t("modelProvider.external.dependencyBrowserPairingCopied"));
     } catch {
       message.error(t("modelProvider.external.dependencyBrowserPairingCopyFailed"));
+    }
+  };
+
+  const handleCopyBrowserSettingsURL = async () => {
+    if (!browserTarget?.settingsUrl) return;
+    try {
+      await navigator.clipboard.writeText(browserTarget.settingsUrl);
+      message.success(t("modelProvider.external.dependencyBrowserSettingsCopied", {
+        browser: browserTarget.name,
+      }));
+    } catch {
+      message.error(t("modelProvider.external.dependencyBrowserSettingsCopyFailed"));
     }
   };
 
@@ -563,7 +592,21 @@ export default function DependencyInstallSection() {
         width={640}
       >
         <Space direction="vertical" size={16} style={{ width: "100%" }}>
-          <Alert message={t("modelProvider.external.dependencyBrowserExtensionImpact")} showIcon type="info" />
+          <Alert
+            message={t("modelProvider.external.dependencyBrowserExtensionImpact", {
+              browser: browserTarget.name,
+            })}
+            showIcon
+            type="info"
+          />
+          <div>
+            <h4>{t("modelProvider.external.dependencyBrowserSelectTitle")}</h4>
+            <Segmented
+              onChange={(value) => setBrowserTargetID(value as BrowserExtensionTargetID)}
+              options={browserTargets.map((target) => ({ label: target.name, value: target.id }))}
+              value={browserTarget.id}
+            />
+          </div>
           {browserStatus?.message && !browserStatus.installed
             ? <Alert message={browserStatus.message} showIcon type="warning" />
             : null}
@@ -578,7 +621,10 @@ export default function DependencyInstallSection() {
                 type="success"
               />
               <Alert
-                message={t("modelProvider.external.dependencyBrowserExtensionApproval")}
+                message={t("modelProvider.external.dependencyBrowserExtensionApproval", {
+                  browser: browserTarget.name,
+                  settingsUrl: browserTarget.settingsUrl,
+                })}
                 showIcon
                 type="warning"
               />
@@ -589,14 +635,16 @@ export default function DependencyInstallSection() {
             <p>{t("modelProvider.external.dependencyBrowserExtensionInstallDesc")}</p>
             <Space>
               <Button
-                disabled={!browserStatus?.installSupported || Boolean(browserStatus?.installed)}
+                disabled={!browserStatus?.installSupported}
                 icon={<DownloadOutlined />}
                 loading={browserInstalling}
                 onClick={() => void handleInstallBrowserExtension()}
                 type="primary"
               >
                 {browserStatus?.installed
-                  ? t("modelProvider.external.dependencyInstalledAction")
+                  ? t(browserStatus.updateAvailable
+                    ? "modelProvider.external.dependencyBrowserExtensionUpdateAction"
+                    : "modelProvider.external.dependencyBrowserExtensionReinstallAction")
                   : t("modelProvider.external.dependencyInstallAction")}
               </Button>
               <Button
@@ -614,7 +662,23 @@ export default function DependencyInstallSection() {
             </Space>
           </div>
           <div>
-            <h4>{t("modelProvider.external.dependencyBrowserPairingTitle")}</h4>
+            <h4>{t("modelProvider.external.dependencyBrowserSettingsTitle", {
+              browser: browserTarget.name,
+            })}</h4>
+            <p>{t("modelProvider.external.dependencyBrowserSettingsDesc", {
+              browser: browserTarget.name,
+            })}</p>
+            <Space.Compact style={{ width: "100%" }}>
+              <Input readOnly value={browserTarget.settingsUrl} />
+              <Button icon={<CopyOutlined />} onClick={() => void handleCopyBrowserSettingsURL()}>
+                {t("modelProvider.external.dependencyBrowserSettingsCopyAction")}
+              </Button>
+            </Space.Compact>
+          </div>
+          <div>
+            <h4>{t("modelProvider.external.dependencyBrowserPairingTitle", {
+              browser: browserTarget.name,
+            })}</h4>
             <p>{t("modelProvider.external.dependencyBrowserPairingDesc")}</p>
             {browserPairing?.code ? (
               <Space.Compact style={{ width: "100%", marginBottom: 12 }}>

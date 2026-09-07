@@ -74,10 +74,13 @@ type PairingResult struct {
 }
 
 type PairExtensionInput struct {
-	Code       string `json:"code"`
-	DeviceName string `json:"device_name"`
-	Browser    string `json:"browser"`
-	Version    string `json:"version"`
+	Code             string `json:"code"`
+	DeviceName       string `json:"device_name"`
+	Browser          string `json:"browser"`
+	BrowserVersion   string `json:"browser_version,omitempty"`
+	ExtensionVersion string `json:"extension_version,omitempty"`
+	// Version is the legacy extension version field retained for older clients.
+	Version string `json:"version,omitempty"`
 }
 
 type PairExtensionResult struct {
@@ -87,9 +90,12 @@ type PairExtensionResult struct {
 }
 
 type DeviceInfo struct {
-	ID         string    `json:"id"`
-	Name       string    `json:"name"`
-	Browser    string    `json:"browser"`
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	Browser          string `json:"browser"`
+	BrowserVersion   string `json:"browser_version,omitempty"`
+	ExtensionVersion string `json:"extension_version,omitempty"`
+	// Version mirrors ExtensionVersion for compatibility with existing clients.
 	Version    string    `json:"version"`
 	Online     bool      `json:"online"`
 	CreatedAt  time.Time `json:"created_at"`
@@ -106,7 +112,7 @@ type DeviceInput struct {
 
 type OpenInput struct {
 	DeviceID            string `json:"device_id,omitempty" jsonschema:"optional device ID"`
-	URL                 string `json:"url" jsonschema:"http or https URL to open in a visible LazyMind-managed page; Desktop embeds it and the extension creates a headed window"`
+	URL                 string `json:"url" jsonschema:"http or https URL to open in a visible LazyMind-managed Chrome or Edge window"`
 	AllowPrivateNetwork bool   `json:"allow_private_network,omitempty" jsonschema:"allow an explicitly requested localhost or private-network URL"`
 }
 

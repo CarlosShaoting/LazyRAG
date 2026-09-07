@@ -465,12 +465,16 @@ func TestCORS_RejectsDisallowedOrigin(t *testing.T) {
 }
 
 func TestCORSBrowserExtensionOriginIsLimitedToBrowserRoute(t *testing.T) {
-	origin := "chrome-extension://abcdefghijklmnop"
-	if !browserExtensionOriginAllowed("/api/browser/v1/connect", origin) {
-		t.Fatal("browser extension origin should be allowed on browser route")
-	}
-	if browserExtensionOriginAllowed("/api/core/conversations", origin) {
-		t.Fatal("browser extension origin leaked to authenticated core route")
+	for _, origin := range []string{
+		"chrome-extension://abcdefghijklmnop",
+		"edge-extension://abcdefghijklmnop",
+	} {
+		if !browserExtensionOriginAllowed("/api/browser/v1/connect", origin) {
+			t.Fatalf("browser extension origin should be allowed on browser route: %s", origin)
+		}
+		if browserExtensionOriginAllowed("/api/core/conversations", origin) {
+			t.Fatalf("browser extension origin leaked to authenticated core route: %s", origin)
+		}
 	}
 	if browserExtensionOriginAllowed("/api/browser/v1/connect", "https://attacker.example") {
 		t.Fatal("web origin should not be accepted as a browser extension")

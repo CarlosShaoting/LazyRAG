@@ -26,15 +26,16 @@ const (
 )
 
 type deviceRecord struct {
-	ID         string
-	UserID     string
-	Name       string
-	Browser    string
-	Version    string
-	TokenHash  [32]byte
-	CreatedAt  time.Time
-	LastSeenAt time.Time
-	Connection *deviceConnection
+	ID             string
+	UserID         string
+	Name           string
+	Browser        string
+	BrowserVersion string
+	Version        string
+	TokenHash      [32]byte
+	CreatedAt      time.Time
+	LastSeenAt     time.Time
+	Connection     *deviceConnection
 }
 
 type commandResponse struct {
@@ -187,11 +188,16 @@ func (h *Hub) PairExtension(input PairExtensionInput) (PairExtensionResult, erro
 	deviceID := "bd_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	name := strings.TrimSpace(input.DeviceName)
 	if name == "" {
-		name = "Chrome"
+		name = "Chromium"
+	}
+	extensionVersion := strings.TrimSpace(input.ExtensionVersion)
+	if extensionVersion == "" {
+		extensionVersion = strings.TrimSpace(input.Version)
 	}
 	h.devices[deviceID] = &deviceRecord{
 		ID: deviceID, UserID: pairing.UserID, Name: name,
-		Browser: strings.TrimSpace(input.Browser), Version: strings.TrimSpace(input.Version),
+		Browser: strings.TrimSpace(input.Browser), BrowserVersion: strings.TrimSpace(input.BrowserVersion),
+		Version:   extensionVersion,
 		TokenHash: sha256.Sum256([]byte(token)), CreatedAt: now, LastSeenAt: now,
 	}
 	return PairExtensionResult{ProtocolVersion: ProtocolVersion, DeviceID: deviceID, DeviceToken: token}, nil
@@ -247,7 +253,8 @@ func (h *Hub) ListDevices(userID string) []DeviceInfo {
 			continue
 		}
 		out = append(out, DeviceInfo{
-			ID: device.ID, Name: device.Name, Browser: device.Browser, Version: device.Version,
+			ID: device.ID, Name: device.Name, Browser: device.Browser,
+			BrowserVersion: device.BrowserVersion, ExtensionVersion: device.Version, Version: device.Version,
 			Online: device.Connection != nil, CreatedAt: device.CreatedAt, LastSeenAt: device.LastSeenAt,
 		})
 	}

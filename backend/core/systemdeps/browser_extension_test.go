@@ -30,8 +30,16 @@ func TestInstallBrowserExtensionFromDesktopSource(t *testing.T) {
 	if !status.Installed || status.Version != "0.2.0" {
 		t.Fatalf("unexpected installed status: %#v", status)
 	}
+	if status.AvailableVersion != "0.2.0" || status.UpdateAvailable {
+		t.Fatalf("unexpected source version status: %#v", status)
+	}
 	if !status.BrowserApprovalRequired || status.BrowserSettingsURL != "chrome://extensions" {
 		t.Fatalf("browser approval boundary missing: %#v", status)
+	}
+	if len(status.SupportedBrowsers) != 2 ||
+		status.SupportedBrowsers[0].ID != "chrome" || status.SupportedBrowsers[0].SettingsURL != "chrome://extensions" ||
+		status.SupportedBrowsers[1].ID != "edge" || status.SupportedBrowsers[1].SettingsURL != "edge://extensions" {
+		t.Fatalf("Chrome/Edge install targets missing: %#v", status.SupportedBrowsers)
 	}
 	if status.InstallDir != BrowserExtensionInstallDir(runtimeRoot) {
 		t.Fatalf("install dir = %q", status.InstallDir)
@@ -45,6 +53,14 @@ func TestInstallBrowserExtensionFromDesktopSource(t *testing.T) {
 	}
 	if cfg.BrowserExtension.InstalledDir != status.InstallDir {
 		t.Fatalf("saved install dir = %q", cfg.BrowserExtension.InstalledDir)
+	}
+	createBrowserExtensionSource(t, source, "0.3.0")
+	status, err = DetectBrowserExtension(runtimeRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.UpdateAvailable || status.AvailableVersion != "0.3.0" || status.Version != "0.2.0" {
+		t.Fatalf("browser extension update was not detected: %#v", status)
 	}
 }
 

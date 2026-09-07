@@ -4,6 +4,16 @@
 > 分支：`cst/browswer_plugin`  
 > 当前结论：PRD 没有要求嵌入网页。Docker、Local 和 Desktop 已统一为“Chrome/Edge 扩展打开独立有头窗口”；页面感知和浏览器控制 MVP 已形成完整代码链路，但按 PRD 的严格文字仍不能判定全部验收通过，主要缺口是超长正文完整传输、产品内授权/设备撤销闭环和无登录态边界验收。已有 Electron 内嵌代码保留但默认关闭。
 
+### 2026-09-07 Edge 开发版接入
+
+- Chrome 与 Edge 继续共用同一个 Manifest V3 扩展目录和 13 个 Browser Tool，不维护第二套页面抓取或 CDP 控制代码。
+- 扩展新增浏览器身份识别：优先读取 User-Agent Client Hints，兼容 `Edg/` UA 回退；配对时分别上报浏览器名称、浏览器版本和扩展版本，不再把 Edge 错记为 Chrome。
+- Browser Gateway 已显式接受并测试 `edge-extension://` WebSocket/CORS Origin，设备列表可以区分 Microsoft Edge 与 Google Chrome。
+- 扩展依赖 API 同时返回 `chrome://extensions` 和 `edge://extensions`；设置页可选择 Google Chrome/Microsoft Edge，并复制对应管理地址、查看对应加载和配对说明。
+- 本地内置扩展源会与已安装版本比较；设置页现在支持更新或重新安装扩展包，避免旧的 Chrome/Edge 开发版停留在 `0.1.1`。
+- 扩展版本升级为 `0.2.0`；Edge 开发人员模式可直接“加载解压缩的扩展”使用同一目录。
+- 尚未完成 Microsoft Edge Add-ons 商店上架、企业策略安装模板和 Edge 真机完整操作 E2E；这些不影响开发版手工加载，但仍属于正式发布验收项。
+
 ### 2026-09-07 主分支合并、Local 启动与 PRD 审计
 
 - 已将 `upstream/main@4d71affc` 合并到 `cst/browswer_plugin`，合并提交为 `8fab7e58`。
@@ -23,13 +33,13 @@
 | 首次明确授权、授权后默认开启 | 基本满足 | 当前站点权限必须在扩展弹窗中由用户点击授予，Chrome 会记住 origin 权限；没有安装时的全站静默读取。 |
 | 随时撤销授权 | 部分满足 | 用户可在 Chrome 站点权限中撤销，扩展可“断开并清除凭证”，后端也有设备撤销 API；LazyMind 设置页尚无授权站点列表、设备列表和单设备撤销按钮。 |
 | 无登录态或未授权时不抓取 | 部分满足 | 生成配对码和设备管理需要登录，远程命令按用户绑定并在无站点权限时拒绝；但扩展本地“测试抓取”未检查配对/登录状态，且前端退出登录不会主动吊销已配对设备凭证，需要补充产品级注销联动和 E2E。 |
-| Chrome 优先、Edge 后续 | Chrome 基本满足，Edge 待验收 | Chrome MV3 开发版已真实联调；代码接受 `edge-extension://` 且使用 Chromium API，但尚无 Edge 真机 E2E、Edge Add-ons 包和商店审核。 |
+| Chrome 优先、Edge 后续 | Chrome 已提测，Edge 开发版已实现 | 同一 MV3 扩展可在 Chrome/Edge 加载，并能正确识别和上报浏览器；Edge 真机完整 E2E、Edge Add-ons 包和商店审核仍待完成。 |
 | 打开 URL、截图、操作页面 | 已实现 MVP | 13 个 Browser MCP Tool 覆盖打开、导航、快照、点击、输入、选择、按键、滚动、等待、截图、标签页和关闭；`open` 创建最大化的独立有头窗口。当前页只读，控制范围限于扩展自己创建的 managed window。 |
 | 录屏转 Skill | 未实现 | 语义事件录制、视频/截图轨迹和 Skill 草稿生成仍属于 P1/P2 待办。 |
 
 综合判断：如果本期验收口径是普通 HTML 页面、正文不超过 200 万字符、Chrome 开发者模式安装、普通 Chat 触发，则核心流程具备提测条件；如果完全按 PRD 的“正文全文”和“无登录态不执行任何抓取”逐字验收，目前应判定为**部分满足，不能关闭 PRD**。
 
-另有一处非阻断说明偏差：`backend/core/browser/mcp.go` 的 `capture/open` Tool 描述仍写着 Desktop 默认内嵌页面，实际默认行为已经统一为外部 Chrome/Edge 独立窗口。运行行为由在线扩展决定，不会因此重新启用内嵌原型，但该说明应在后续修正以免误导模型。
+Browser MCP 的 `capture/open` Tool 描述已同步为外部 Chrome/Edge 独立窗口，不再向模型描述默认内嵌页面。
 
 ### 2026-08-31 Local 联调修复
 
@@ -193,7 +203,7 @@ Local Runtime 已实现：
    docker compose up --build
    ```
 
-2. 打开 `chrome://extensions`，启用开发者模式，加载 `LazyMind/browser-extension/`。
+2. Chrome 打开 `chrome://extensions`，Edge 打开 `edge://extensions`，启用开发者模式并加载 `LazyMind/browser-extension/`。
 3. 在 LazyMind“设置 → 依赖安装 → 浏览器控制扩展”中生成 5 分钟有效的配对码。
 4. 在扩展弹窗中填写 `http://127.0.0.1:8090` 和配对码。
 5. 抓取当前页前点击“授权当前站点”。
@@ -205,7 +215,7 @@ Local Runtime 已实现：
 ### 2.2 Desktop 开发版（外部 Chrome/Edge）
 
 1. 正常启动 LazyMind Desktop 并登录；打开“设置 → 依赖安装 → 浏览器控制扩展”，安装并打开扩展目录。
-2. 在 `chrome://extensions` 开启开发者模式并“加载已解压的扩展程序”；Chrome 的确认和授权不能由 Desktop 静默代替。
+2. 在 Chrome 的 `chrome://extensions` 或 Edge 的 `edge://extensions` 开启开发者模式并“加载已解压的扩展程序”；浏览器确认和授权不能由 Desktop 静默代替。
 3. 回到同一个设置弹窗生成 5 分钟有效的配对码；在扩展弹窗填写 Desktop 地址与配对码，等待显示连接成功。
 4. 在普通对话中说“打开 `https://example.com`，告诉我页面上有哪些链接”。扩展会创建独立有头窗口，Agent 和用户都可以在该窗口继续操作。
 
@@ -228,7 +238,7 @@ LAZYMIND_BROWSER_EXTENSION_BUNDLE_SHA256=<64位SHA256>
 
 `make local-up` 的必要前提：
 
-1. 执行“设置 → 依赖安装 → 浏览器控制扩展”，或直接在 `chrome://extensions` 的开发者模式中加载仓库根目录的 `browser-extension/`。
+1. 执行“设置 → 依赖安装 → 浏览器控制扩展”，或直接在 Chrome 的 `chrome://extensions` / Edge 的 `edge://extensions` 开发者模式中加载仓库根目录的 `browser-extension/`。
 2. 在“设置 → 依赖安装 → 浏览器控制扩展”生成当前登录用户的一次性配对码，在扩展弹窗填写 `http://127.0.0.1:8090` 和配对码，等待状态显示在线。
 3. 只有扩展在线后，“打开某 URL”才会新建扩展管理的独立有头 Chrome 窗口。仅运行 `make local-up`、未加载扩展时，后端没有实际浏览器设备可控制。
 
@@ -274,7 +284,7 @@ LAZYMIND_BROWSER_EXTENSION_BUNDLE_SHA256=<64位SHA256>
 12. **生产级审计/限流**：尚未实现持久化动作审计、每用户并发限制、设备速率限制和告警。
 13. **独立 Gateway 进程**：MVP 内置在 Core；需要独立扩缩容时再拆为 `backend/browser-gateway`，协议无需改变。
 14. **扩展后台恢复**：受控 session 当前保存在 MV3 Service Worker 内存中；扩展后台重启或 debugger 脱离后，需要重新 `open`。
-15. **Chrome 自动启用**：Desktop 可以下载、校验并打开扩展目录，但普通 Chrome 扩展不能被应用静默启用；正式体验需发布 Chrome Web Store，或在受管设备使用企业策略。
+15. **浏览器自动启用**：Desktop 可以下载、校验并打开扩展目录，但普通 Chrome/Edge 扩展不能被应用静默启用；正式体验需发布 Chrome Web Store/Edge Add-ons，或在受管设备使用企业策略。
 16. **默认远程制品**：代码已支持 URL + SHA256 下载，但当前仓库尚未发布默认远程扩展 ZIP；Desktop 安装包目前复用随包携带的扩展源。
 17. **扩展升级/卸载 UI**：当前安装后按钮置为已安装，尚未实现版本比较、覆盖升级和清理安装目录。
 18. **Desktop 真实 E2E**：尚未在打包后的 macOS/Windows 应用中覆盖扩展安装目录打开、配对、独立窗口创建、登录态持久化、导航和模型控制的自动化验收。
