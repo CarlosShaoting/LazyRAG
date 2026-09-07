@@ -49,6 +49,33 @@ func TestPairingIsOneTimeAndDevicesAreUserScoped(t *testing.T) {
 	}
 }
 
+func TestEdgePairingPreservesBrowserAndExtensionVersions(t *testing.T) {
+	hub, err := NewHub()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pairing, err := hub.CreatePairing("user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = hub.PairExtension(PairExtensionInput{
+		Code: pairing.Code, DeviceName: "Windows Microsoft Edge", Browser: "Microsoft Edge",
+		BrowserVersion: "140.0.3485.54", ExtensionVersion: "0.2.0", Version: "0.1.1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices := hub.ListDevices("user-1")
+	if len(devices) != 1 {
+		t.Fatalf("devices = %#v", devices)
+	}
+	device := devices[0]
+	if device.Browser != "Microsoft Edge" || device.BrowserVersion != "140.0.3485.54" ||
+		device.ExtensionVersion != "0.2.0" || device.Version != "0.2.0" {
+		t.Fatalf("Edge metadata = %#v", device)
+	}
+}
+
 func TestExpiredPairingIsRejected(t *testing.T) {
 	hub, err := NewHub()
 	if err != nil {

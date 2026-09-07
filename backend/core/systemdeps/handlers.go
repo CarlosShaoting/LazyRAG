@@ -136,7 +136,8 @@ func InstallEditablePPTDependency(w http.ResponseWriter, r *http.Request) {
 func GetBrowserExtensionDependency(w http.ResponseWriter, r *http.Request) {
 	if !IsLocalRuntime() {
 		common.ReplyOK(w, BrowserExtensionStatus{
-			Installed: true, AffectedFeatures: browserExtensionFeatures(), BrowserSettingsURL: "chrome://extensions",
+			Installed: true, AffectedFeatures: browserExtensionFeatures(), BrowserApprovalRequired: true,
+			BrowserSettingsURL: "chrome://extensions", SupportedBrowsers: supportedBrowserExtensionTargets(),
 		})
 		return
 	}

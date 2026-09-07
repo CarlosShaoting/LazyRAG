@@ -31,12 +31,21 @@ export interface BrowserExtensionDependencyStatus {
   installDir?: string;
   manifestPath?: string;
   version?: string;
+  availableVersion?: string;
+  updateAvailable: boolean;
   affectedFeatures: string[];
   runtimeLocal: boolean;
   installSupported: boolean;
   browserApprovalRequired: boolean;
   browserSettingsUrl: string;
+  supportedBrowsers?: BrowserExtensionTarget[];
   message?: string;
+}
+
+export interface BrowserExtensionTarget {
+  id: "chrome" | "edge" | string;
+  name: string;
+  settingsUrl: string;
 }
 
 export interface BrowserPairingCode {

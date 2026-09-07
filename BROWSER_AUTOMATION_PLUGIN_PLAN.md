@@ -418,7 +418,7 @@ P1 先交付事件轨迹、截图关键帧和 Skill 草稿；P2 如确有复盘�
 ### 8.1 产品默认形态：外部 Chrome / Edge
 
 - Desktop 设置页下载并校验与 Docker/Local 相同的 MV3 扩展，安装到用户数据目录下的 `deps/browser-extension`。
-- Chrome 安全策略要求用户在 `chrome://extensions` 或商店页面确认安装、启用和站点权限；Desktop 不能静默加载普通用户扩展。
+- Chrome/Edge 安全策略要求用户在 `chrome://extensions`、`edge://extensions` 或对应商店页面确认安装、启用和站点权限；Desktop 不能静默加载普通用户扩展。
 - 设置页可以直接生成 5 分钟有效的一次性配对码。用户把地址和配对码粘贴到扩展弹窗，连接后即可抓取当前页或由 Agent 打开独立有头窗口。
 - Gateway 作为 `backend/core/browser/` 内置模块运行，Desktop 不增加独立进程；local-proxy 只对精确 `/api/browser/v1` 公开配对/WebSocket，其他 Route 继续执行普通 RBAC。
 - Desktop 不再注入内嵌设备偏好。扩展是唯一默认控制设备，因此 Docker、Local、Desktop 的 Agent 行为、页面登录态和问题定位路径一致。

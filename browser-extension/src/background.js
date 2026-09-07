@@ -1,10 +1,12 @@
 import {captureCurrentPage} from './capture.js';
 import {BrowserController} from './controller.js';
+import {detectBrowserIdentity} from './browser_identity.js';
 
 const DEFAULT_GATEWAY = 'http://127.0.0.1:8090';
 const RECONNECT_ALARM = 'lazymind-browser-reconnect';
 const SOCKET_KEEPALIVE_MS = 20_000;
 const controller = new BrowserController();
+const browserIdentity = detectBrowserIdentity();
 
 let socket = null;
 let reconnectTimer = null;
@@ -61,6 +63,8 @@ async function getState() {
     paired: Boolean(stored.device_id && stored.device_token),
     device_id: stored.device_id || '',
     device_name: stored.device_name || '',
+    browser_name: browserIdentity.name,
+    browser_version: browserIdentity.version,
     connection_state: connectionState,
     last_error: lastError,
   };
@@ -83,8 +87,10 @@ async function pair(rawCode, rawGatewayURL) {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({
       code,
-      device_name: `${navigator.platform || 'Desktop'} Chrome`,
-      browser: navigator.userAgentData?.brands?.map((item) => item.brand).join(', ') || 'Chromium',
+      device_name: browserIdentity.deviceName,
+      browser: browserIdentity.name,
+      browser_version: browserIdentity.version,
+      extension_version: chrome.runtime.getManifest().version,
       version: chrome.runtime.getManifest().version,
     }),
   });
@@ -99,7 +105,7 @@ async function pair(rawCode, rawGatewayURL) {
     gateway_url: gatewayURL,
     device_id: body.device_id,
     device_token: body.device_token,
-    device_name: `${navigator.platform || 'Desktop'} Chrome`,
+    device_name: browserIdentity.deviceName,
   });
   closeSocket();
   await connect(true);

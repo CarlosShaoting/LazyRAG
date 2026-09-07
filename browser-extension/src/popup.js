@@ -8,6 +8,7 @@ const elements = {
   connected: document.querySelector('#connected'),
   deviceId: document.querySelector('#deviceId'),
   message: document.querySelector('#message'),
+  browserName: document.querySelector('#browserName'),
 };
 
 let currentSite = null;
@@ -88,6 +89,9 @@ async function refresh() {
     : null;
   if (!response?.ok) return;
   const state = response.result;
+  elements.browserName.textContent = state.browser_version
+    ? `${state.browser_name} ${state.browser_version}`
+    : state.browser_name;
   elements.gateway.value = state.gateway_url;
   elements.pairing.hidden = state.paired;
   elements.connected.hidden = !state.paired;

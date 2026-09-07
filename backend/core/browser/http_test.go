@@ -99,3 +99,16 @@ func TestExtensionWebSocketRejectsWebOrigin(t *testing.T) {
 		t.Fatalf("connection=%v status=%v err=%v", connection, response, err)
 	}
 }
+
+func TestExtensionOriginsIncludeChromeAndEdge(t *testing.T) {
+	for _, origin := range []string{
+		"chrome-extension://abcdefghijklmnop",
+		"edge-extension://abcdefghijklmnop",
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/connect", nil)
+		req.Header.Set("Origin", origin)
+		if !validExtensionOrigin(req) {
+			t.Fatalf("extension origin rejected: %s", origin)
+		}
+	}
+}

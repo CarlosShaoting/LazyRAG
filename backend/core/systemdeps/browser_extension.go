@@ -30,16 +30,25 @@ type browserExtensionBundleConfig struct {
 }
 
 type BrowserExtensionStatus struct {
-	Installed               bool     `json:"installed"`
-	InstallDir              string   `json:"installDir,omitempty"`
-	ManifestPath            string   `json:"manifestPath,omitempty"`
-	Version                 string   `json:"version,omitempty"`
-	AffectedFeatures        []string `json:"affectedFeatures"`
-	RuntimeLocal            bool     `json:"runtimeLocal"`
-	InstallSupported        bool     `json:"installSupported"`
-	BrowserApprovalRequired bool     `json:"browserApprovalRequired"`
-	BrowserSettingsURL      string   `json:"browserSettingsUrl"`
-	Message                 string   `json:"message,omitempty"`
+	Installed               bool                     `json:"installed"`
+	InstallDir              string                   `json:"installDir,omitempty"`
+	ManifestPath            string                   `json:"manifestPath,omitempty"`
+	Version                 string                   `json:"version,omitempty"`
+	AvailableVersion        string                   `json:"availableVersion,omitempty"`
+	UpdateAvailable         bool                     `json:"updateAvailable"`
+	AffectedFeatures        []string                 `json:"affectedFeatures"`
+	RuntimeLocal            bool                     `json:"runtimeLocal"`
+	InstallSupported        bool                     `json:"installSupported"`
+	BrowserApprovalRequired bool                     `json:"browserApprovalRequired"`
+	BrowserSettingsURL      string                   `json:"browserSettingsUrl"`
+	SupportedBrowsers       []BrowserExtensionTarget `json:"supportedBrowsers"`
+	Message                 string                   `json:"message,omitempty"`
+}
+
+type BrowserExtensionTarget struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	SettingsURL string `json:"settingsUrl"`
 }
 
 type browserExtensionManifest struct {
@@ -58,7 +67,8 @@ func DetectBrowserExtension(runtimeRoot string) (BrowserExtensionStatus, error) 
 	if !IsLocalRuntime() {
 		return BrowserExtensionStatus{
 			Installed: true, AffectedFeatures: browserExtensionFeatures(),
-			BrowserSettingsURL: "chrome://extensions",
+			BrowserApprovalRequired: true, BrowserSettingsURL: "chrome://extensions",
+			SupportedBrowsers: supportedBrowserExtensionTargets(),
 		}, nil
 	}
 	cfg, err := LoadConfig(runtimeRoot)
@@ -70,12 +80,14 @@ func DetectBrowserExtension(runtimeRoot string) (BrowserExtensionStatus, error) 
 
 func buildBrowserExtensionStatus(cfg BrowserExtensionConfig) BrowserExtensionStatus {
 	installDir := filepath.Clean(cfg.InstalledDir)
+	bundle := currentBrowserExtensionBundleConfig()
 	status := BrowserExtensionStatus{
 		InstallDir: installDir, ManifestPath: filepath.Join(installDir, "manifest.json"),
 		AffectedFeatures: browserExtensionFeatures(), RuntimeLocal: true,
-		InstallSupported: browserExtensionBundleConfigured(), BrowserApprovalRequired: true,
-		BrowserSettingsURL: "chrome://extensions",
+		InstallSupported: bundle.configured(), BrowserApprovalRequired: true,
+		BrowserSettingsURL: "chrome://extensions", SupportedBrowsers: supportedBrowserExtensionTargets(),
 	}
+	status.AvailableVersion = browserExtensionAvailableVersion(bundle)
 	manifest, err := validateBrowserExtension(installDir)
 	if err != nil {
 		if !status.InstallSupported {
@@ -87,7 +99,8 @@ func buildBrowserExtensionStatus(cfg BrowserExtensionConfig) BrowserExtensionSta
 	}
 	status.Installed = true
 	status.Version = manifest.Version
-	status.Message = "Load this directory from chrome://extensions and confirm browser permissions"
+	status.UpdateAvailable = status.AvailableVersion != "" && status.AvailableVersion != status.Version
+	status.Message = "Load this directory from chrome://extensions or edge://extensions and confirm browser permissions"
 	return status
 }
 
@@ -161,6 +174,13 @@ func browserExtensionFeatures() []string {
 	return []string{"browser_current_page_capture", "browser_managed_page_control"}
 }
 
+func supportedBrowserExtensionTargets() []BrowserExtensionTarget {
+	return []BrowserExtensionTarget{
+		{ID: "chrome", Name: "Google Chrome", SettingsURL: "chrome://extensions"},
+		{ID: "edge", Name: "Microsoft Edge", SettingsURL: "edge://extensions"},
+	}
+}
+
 func currentBrowserExtensionBundleConfig() browserExtensionBundleConfig {
 	return browserExtensionBundleConfig{
 		ArchivePath: strings.TrimSpace(os.Getenv(browserExtensionBundlePathEnv)),
@@ -180,8 +200,15 @@ func (cfg browserExtensionBundleConfig) configured() bool {
 	return cfg.SourceDir != ""
 }
 
-func browserExtensionBundleConfigured() bool {
-	return currentBrowserExtensionBundleConfig().configured()
+func browserExtensionAvailableVersion(cfg browserExtensionBundleConfig) string {
+	if cfg.SourceDir == "" || cfg.ArchivePath != "" || cfg.URL != "" {
+		return ""
+	}
+	manifest, err := validateBrowserExtension(cfg.SourceDir)
+	if err != nil {
+		return ""
+	}
+	return manifest.Version
 }
 
 func acquireBrowserExtensionBundle(ctx context.Context, destination string, cfg browserExtensionBundleConfig) error {

@@ -45,12 +45,12 @@ func NewMCPHandler(hub *Hub) http.Handler {
 func newMCPServer(hub *Hub) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "lazymind-browser", Version: ProtocolVersion}, nil)
 	addBrowserTool(server, hub, "browser.capture_current_page", "Capture current browser page",
-		"Capture the authenticated user's active managed page as untrusted structured content. The external Chrome extension requires explicit site permission; Desktop captures its isolated embedded page.", readOnlyAnnotations(),
+		"Capture the authenticated user's active Chrome or Edge page as untrusted structured content. The external browser extension requires explicit site permission.", readOnlyAnnotations(),
 		func(ctx context.Context, userID string, input DeviceInput) (json.RawMessage, error) {
 			return hub.Call(ctx, userID, input.DeviceID, "capture_current_page", input)
 		})
 	addBrowserTool(server, hub, "browser.open", "Open a managed browser page",
-		"Open an http/https URL in a LazyMind-managed visible page and return its session and first snapshot. Desktop embeds the page in chat; the Chrome extension opens a separate headed window.", writeAnnotations(),
+		"Open an http/https URL in a separate visible Chrome or Edge window managed by the LazyMind Browser extension, then return its session and first snapshot.", writeAnnotations(),
 		func(ctx context.Context, userID string, input OpenInput) (json.RawMessage, error) {
 			return hub.Call(ctx, userID, input.DeviceID, "open", input)
 		})
