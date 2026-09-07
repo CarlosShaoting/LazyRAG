@@ -1,8 +1,35 @@
 # LazyMind 浏览器插件实施状态
 
-> 更新时间：2026-09-01  
+> 更新时间：2026-09-07
 > 分支：`cst/browswer_plugin`  
-> 当前结论：PRD 没有要求嵌入网页。Docker、Local 和 Desktop 已统一为“Chrome/Edge 扩展打开独立有头窗口”；外部 Chrome 已完成真实打开、输入和快照联调，Desktop 打包版扩展 E2E 与商店发布仍未验收。已有 Electron 内嵌代码保留但默认关闭。
+> 当前结论：PRD 没有要求嵌入网页。Docker、Local 和 Desktop 已统一为“Chrome/Edge 扩展打开独立有头窗口”；页面感知和浏览器控制 MVP 已形成完整代码链路，但按 PRD 的严格文字仍不能判定全部验收通过，主要缺口是超长正文完整传输、产品内授权/设备撤销闭环和无登录态边界验收。已有 Electron 内嵌代码保留但默认关闭。
+
+### 2026-09-07 主分支合并、Local 启动与 PRD 审计
+
+- 已将 `upstream/main@4d71affc` 合并到 `cst/browswer_plugin`，合并提交为 `8fab7e58`。
+- 合并处理了 Chat Runtime 配置、Core 工具注入、错误目录和 Chat Layout 4 处冲突；同时保留主分支 SideChat/模型选择改动，以及浏览器 `system_mcp_config` 和默认关闭的 Desktop 内嵌实验代码。
+- `algorithm/lazyllm` 已从分支记录的旧指针对齐到主分支的 `a48b3a37`，子模块内部无未提交文件。
+- 合并回归已通过：Frontend 3 个文件 20 条用例、Core `chat/common/browser/systemdeps`、local-runtime-manager 全量 Go 用例、Python MCP/Runtime Event 24 条用例。
+- 已先停止占用 `8090` 的旧 Docker 栈，再执行 `make local-down` 和 `make local-up`。Local Runtime 当前为 `ready`，入口是 `http://localhost:8090`；认证、Core、Chat、Local Proxy、Frontend 等服务均为 `running`。
+- 在线检查通过：登录会话、5 分钟配对码、设备列表、非法配对拒绝，以及扩展依赖检测；Local Runtime 已识别 `LazyMind Browser v0.1.1`。
+- 本次 Core 重启后，内存中的已配对设备会丢失。真实 Chrome 再次联调前，需要在设置页重新生成配对码并连接扩展。
+
+#### PRD 逐项结论
+
+| PRD 项 | 结论 | 代码现状与严格验收差距 |
+|---|---|---|
+| 当前页 URL、标题、正文、图片 alt、链接 | 部分满足 | 字段均已实现；正文最多 200 万字符、图片最多 1000 个、链接最多 2000 个，超限会明确标记但仍不满足“正文全文、无明显截断”的严格表述；跨域 iframe 也只能报告限制。 |
+| 对话指令自动抓取当前激活页 | 基本满足 | 普通 Chat 会获得第一方 `browser_capture_current_page` 等工具，扩展执行当前激活页抓取；绑定 Workflow/SubAgent 回合仍按现有隔离规则隐藏 Browser Tool。 |
+| 首次明确授权、授权后默认开启 | 基本满足 | 当前站点权限必须在扩展弹窗中由用户点击授予，Chrome 会记住 origin 权限；没有安装时的全站静默读取。 |
+| 随时撤销授权 | 部分满足 | 用户可在 Chrome 站点权限中撤销，扩展可“断开并清除凭证”，后端也有设备撤销 API；LazyMind 设置页尚无授权站点列表、设备列表和单设备撤销按钮。 |
+| 无登录态或未授权时不抓取 | 部分满足 | 生成配对码和设备管理需要登录，远程命令按用户绑定并在无站点权限时拒绝；但扩展本地“测试抓取”未检查配对/登录状态，且前端退出登录不会主动吊销已配对设备凭证，需要补充产品级注销联动和 E2E。 |
+| Chrome 优先、Edge 后续 | Chrome 基本满足，Edge 待验收 | Chrome MV3 开发版已真实联调；代码接受 `edge-extension://` 且使用 Chromium API，但尚无 Edge 真机 E2E、Edge Add-ons 包和商店审核。 |
+| 打开 URL、截图、操作页面 | 已实现 MVP | 13 个 Browser MCP Tool 覆盖打开、导航、快照、点击、输入、选择、按键、滚动、等待、截图、标签页和关闭；`open` 创建最大化的独立有头窗口。当前页只读，控制范围限于扩展自己创建的 managed window。 |
+| 录屏转 Skill | 未实现 | 语义事件录制、视频/截图轨迹和 Skill 草稿生成仍属于 P1/P2 待办。 |
+
+综合判断：如果本期验收口径是普通 HTML 页面、正文不超过 200 万字符、Chrome 开发者模式安装、普通 Chat 触发，则核心流程具备提测条件；如果完全按 PRD 的“正文全文”和“无登录态不执行任何抓取”逐字验收，目前应判定为**部分满足，不能关闭 PRD**。
+
+另有一处非阻断说明偏差：`backend/core/browser/mcp.go` 的 `capture/open` Tool 描述仍写着 Desktop 默认内嵌页面，实际默认行为已经统一为外部 Chrome/Edge 独立窗口。运行行为由在线扩展决定，不会因此重新启用内嵌原型，但该说明应在后续修正以免误导模型。
 
 ### 2026-08-31 Local 联调修复
 
