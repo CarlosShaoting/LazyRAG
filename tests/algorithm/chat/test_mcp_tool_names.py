@@ -1,4 +1,5 @@
 from lazymind.chat.service.chat_service import (
+    _add_browser_visual_tools,
     _mcp_model_tool_name,
     _normalize_mcp_tool_names,
 )
@@ -37,3 +38,19 @@ def test_mcp_model_tool_name_caps_model_function_limit():
 
     assert len(alias) == 64
     assert '.' not in alias
+
+
+def test_add_browser_visual_tools_only_when_vlm_and_browser_screenshot_exist():
+    screenshot = _tool('browser.screenshot')
+    normalized = _normalize_mcp_tool_names([screenshot], 'lazymind-browser')
+
+    augmented = _add_browser_visual_tools(normalized, vlm_available=True)
+
+    assert [tool.__name__ for tool in augmented] == [
+        'browser_screenshot',
+        'browser_visual_locate',
+    ]
+    assert _add_browser_visual_tools(
+        [_tool('other')], vlm_available=True,
+    )[0].__name__ == 'other'
+    assert _add_browser_visual_tools(normalized, vlm_available=False) == normalized

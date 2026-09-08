@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -131,6 +132,37 @@ func TestCallRoutesCommandAndResultToOwnedOnlineDevice(t *testing.T) {
 	}
 }
 
+func TestSummarizeBrowserCommandResultUsesExtensionMetrics(t *testing.T) {
+	raw := json.RawMessage(`{
+		"revision": 7,
+		"elements": [{"role":"button"},{"role":"StaticText"}],
+		"limitations": ["snapshot_element_limit_reached"],
+		"snapshot_metrics": {
+			"raw_ax_nodes": 900,
+			"included_elements": 2,
+			"invisible_text_nodes": 304,
+			"role_counts": {"button":1,"StaticText":1},
+			"snapshot_ms": 42
+		}
+	}`)
+	summary := summarizeBrowserCommandResult(raw)
+	if summary.ResponseBytes != len(raw) || summary.Revision != 7 || summary.ElementCount != 2 ||
+		summary.RawAXNodeCount != 900 || summary.InvisibleTextNodes != 304 || summary.SnapshotMS != 42 {
+		t.Fatalf("summary = %#v", summary)
+	}
+	if got := formatBrowserRoleCounts(summary.RoleCounts); got != "StaticText:1,button:1" {
+		t.Fatalf("role counts = %q", got)
+	}
+}
+
+func TestSummarizeBrowserCommandResultFallsBackToElements(t *testing.T) {
+	raw := json.RawMessage(`{"revision":2,"elements":[{"role":"button"},{"role":"button"},{"role":"textbox"}]}`)
+	summary := summarizeBrowserCommandResult(raw)
+	if summary.ElementCount != 3 || summary.RoleCounts["button"] != 2 || summary.RoleCounts["textbox"] != 1 {
+		t.Fatalf("summary = %#v", summary)
+	}
+}
+
 func TestOnlineDevicePrefersConfiguredDesktopBrowser(t *testing.T) {
 	t.Setenv("LAZYMIND_BROWSER_PREFERRED_DEVICE_BROWSER", "Electron WebContentsView")
 	hub, err := NewHub()
@@ -155,6 +187,18 @@ func TestOnlineDevicePrefersConfiguredDesktopBrowser(t *testing.T) {
 	}
 	if selected != desktopConnection {
 		t.Fatalf("selected %#v, want Desktop embedded browser", selected)
+	}
+}
+
+func TestAllowedActionIncludesEveryPublishedBrowserAction(t *testing.T) {
+	for _, name := range ToolNames {
+		action := strings.TrimPrefix(name, "browser.")
+		if !allowedAction(action) {
+			t.Fatalf("published tool action %q is blocked by the hub allowlist", action)
+		}
+	}
+	if allowedAction("raw_cdp") {
+		t.Fatal("raw CDP action must remain blocked")
 	}
 }
 

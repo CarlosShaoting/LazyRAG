@@ -73,3 +73,43 @@ func TestMCPRejectsMissingBearerToken(t *testing.T) {
 		t.Fatalf("status = %d, want 401", response.StatusCode)
 	}
 }
+
+func TestAnnotateBrowserPageStateMarksVisibleFeishuEditMode(t *testing.T) {
+	result := map[string]any{
+		"url": "https://sensetime.feishu.cn/wiki/Ua4Fw8ShmiJcRQk1GyVcRTnVngg",
+		"elements": []any{
+			map[string]any{"role": "textbox", "state": []any{"readonly"}},
+			map[string]any{"role": "button", "name": "编辑"},
+		},
+	}
+
+	annotateBrowserPageState(result)
+
+	state, ok := result["page_state"].(map[string]any)
+	if !ok || state["editor_mode"] != "editable" || state["editable"] != true {
+		t.Fatalf("page_state = %#v", result["page_state"])
+	}
+	instruction, _ := state["instruction"].(string)
+	if !strings.Contains(instruction, "不要点击") || !strings.Contains(instruction, "readonly") {
+		t.Fatalf("instruction = %q", instruction)
+	}
+}
+
+func TestAnnotateBrowserPageStateDoesNotGuessOtherPages(t *testing.T) {
+	tests := []map[string]any{
+		{
+			"url":      "https://example.com/wiki/document",
+			"elements": []any{map[string]any{"role": "button", "name": "编辑"}},
+		},
+		{
+			"url":      "https://example.feishu.cn/wiki/document",
+			"elements": []any{map[string]any{"role": "button", "name": "编辑历史"}},
+		},
+	}
+	for _, result := range tests {
+		annotateBrowserPageState(result)
+		if _, exists := result["page_state"]; exists {
+			t.Fatalf("unexpected page_state for %#v", result)
+		}
+	}
+}

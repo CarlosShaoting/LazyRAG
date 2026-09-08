@@ -39,7 +39,10 @@ class EmbeddedBrowserController {
       case "capture_current_page":
       case "snapshot": return this.snapshot(this.requireSession(payload.session_id));
       case "click": return this.click(payload);
+      case "click_at": return this.clickAt(payload);
+      case "click_intersection": return this.clickIntersection(payload);
       case "type": return this.type(payload);
+      case "type_focused": return this.typeFocused(payload);
       case "select": return this.select(payload);
       case "press": return this.press(payload);
       case "scroll": return this.scroll(payload);
@@ -228,6 +231,47 @@ class EmbeddedBrowserController {
     return this.snapshot(session);
   }
 
+  async clickAt(payload) {
+    const session = this.requireSession(payload.session_id);
+    const viewport = await this.viewportSize();
+    const point = normalizeViewportPoint(payload.x, payload.y, viewport);
+    await this.dispatchClick(point.x, point.y);
+    await delay(300);
+    return this.snapshot(session);
+  }
+
+  async clickIntersection(payload) {
+    const session = this.requireSession(payload.session_id);
+    const rowTarget = this.resolveRef(session, payload.row_ref, payload.expected_revision);
+    const columnTarget = this.resolveRef(session, payload.column_ref, payload.expected_revision);
+    if (rowTarget.backendNodeId === columnTarget.backendNodeId) {
+      throw browserError("INVALID_INTERSECTION", "行标签和列标题必须是两个不同的元素引用");
+    }
+
+    await this.elementRect(columnTarget);
+    await this.elementRect(rowTarget);
+    const rowRect = await this.elementRect(rowTarget, { scroll: false });
+    const columnRect = await this.elementRect(columnTarget, { scroll: false });
+    const viewport = await this.viewportSize();
+    const point = intersectionPoint(rowRect, columnRect, viewport);
+    const before = await this.inspectPoint(point);
+    await this.dispatchClick(point.x, point.y);
+    await delay(300);
+    const after = await this.inspectPoint(point);
+    const snapshot = await this.snapshot(session);
+    return {
+      ...snapshot,
+      interaction: {
+        kind: "intersection_click",
+        row: { ref: payload.row_ref, name: rowTarget.name, rect: rowRect },
+        column: { ref: payload.column_ref, name: columnTarget.name, rect: columnRect },
+        point,
+        before,
+        after,
+      },
+    };
+  }
+
   async type(payload) {
     const session = this.requireSession(payload.session_id);
     const target = this.resolveRef(session, payload.ref, payload.expected_revision);
@@ -253,6 +297,18 @@ class EmbeddedBrowserController {
     }
     await this.send("Input.insertText", { text: String(payload.text || "") });
     await delay(150);
+    await this.verifyVisibleText(payload.verify_text);
+    return this.snapshot(session);
+  }
+
+  async typeFocused(payload) {
+    const session = this.requireSession(payload.session_id);
+    if (payload.replace) {
+      await this.clearFocusedElement();
+    }
+    await this.send("Input.insertText", { text: String(payload.text || "") });
+    await delay(150);
+    await this.verifyVisibleText(payload.verify_text);
     return this.snapshot(session);
   }
 
@@ -334,12 +390,15 @@ class EmbeddedBrowserController {
   async screenshot(payload) {
     const session = this.requireSession(payload.session_id);
     const image = await this.requireContents().capturePage();
+    const imageSize = image.getSize();
     return {
       session_id: session.id,
       url: this.contents().getURL() || "",
       title: this.contents().getTitle() || "",
       mime_type: "image/jpeg",
       data_base64: image.toJPEG(75).toString("base64"),
+      viewport: await this.viewportSize(),
+      image: { width: imageSize.width, height: imageSize.height },
     };
   }
 
@@ -423,15 +482,47 @@ class EmbeddedBrowserController {
     return target;
   }
 
-  async elementRect(target) {
+  async elementRect(target, options = {}) {
+    if (options.scroll !== false) {
+      try {
+        await this.send("DOM.scrollIntoViewIfNeeded", { backendNodeId: target.backendNodeId });
+      } catch {}
+    }
+
+    try {
+      const response = await this.send("DOM.getContentQuads", { backendNodeId: target.backendNodeId });
+      const rect = rectFromQuads(response.quads);
+      if (rect) return rect;
+    } catch {}
+
     const objectId = await this.resolveObject(target.backendNodeId);
     const response = await this.send("Runtime.callFunctionOn", {
       objectId,
-      functionDeclaration: `function () {
-        this.scrollIntoView({block: "center", inline: "center", behavior: "instant"});
-        const rect = this.getBoundingClientRect();
-        return {x: rect.x, y: rect.y, width: rect.width, height: rect.height};
+      functionDeclaration: `function (shouldScroll) {
+        const visibleRect = (rect) => rect && rect.width > 0 && rect.height > 0
+          ? {x: rect.x, y: rect.y, width: rect.width, height: rect.height}
+          : null;
+        const scrollTarget = this && this.nodeType === 1 ? this : this?.parentElement;
+        if (shouldScroll) {
+          scrollTarget?.scrollIntoView({block: "center", inline: "center", behavior: "instant"});
+        }
+
+        if (this && this.nodeType === 3) {
+          const range = document.createRange();
+          range.selectNodeContents(this);
+          const textRect = visibleRect(range.getBoundingClientRect());
+          range.detach?.();
+          if (textRect) return textRect;
+        }
+
+        let candidate = this && this.nodeType === 1 ? this : this?.parentElement;
+        for (let depth = 0; candidate && depth < 5; depth += 1, candidate = candidate.parentElement) {
+          const rect = visibleRect(candidate.getBoundingClientRect?.());
+          if (rect) return rect;
+        }
+        return null;
       }`,
+      arguments: [{ value: options.scroll !== false }],
       returnByValue: true,
     });
     const rect = response.result?.value;
@@ -439,6 +530,90 @@ class EmbeddedBrowserController {
       throw browserError("ELEMENT_NOT_VISIBLE", "目标元素不可见或没有可点击区域");
     }
     return rect;
+  }
+
+  async viewportSize() {
+    const metrics = await this.send("Page.getLayoutMetrics");
+    const viewport = metrics.cssVisualViewport || metrics.cssLayoutViewport ||
+      metrics.visualViewport || metrics.layoutViewport || {};
+    const width = Number(viewport.clientWidth || viewport.width);
+    const height = Number(viewport.clientHeight || viewport.height);
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+      throw browserError("VIEWPORT_UNAVAILABLE", "无法获取浏览器视口尺寸");
+    }
+    return { width, height };
+  }
+
+  async dispatchClick(x, y) {
+    await this.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
+    await this.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
+    await this.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+  }
+
+  async inspectPoint(point) {
+    const response = await this.send("Runtime.evaluate", {
+      expression: `(() => {
+        const describe = (element) => {
+          if (!element) return null;
+          return {
+            tag: String(element.tagName || "").toLowerCase(),
+            role: element.getAttribute?.("role") || "",
+            aria_label: element.getAttribute?.("aria-label") || "",
+            contenteditable: element.getAttribute?.("contenteditable") || "",
+            editable: Boolean(element.isContentEditable),
+            readonly: Boolean(element.readOnly),
+          };
+        };
+        return {
+          hit_target: describe(document.elementFromPoint(${JSON.stringify(point.x)}, ${JSON.stringify(point.y)})),
+          focused: describe(document.activeElement),
+        };
+      })()`,
+      returnByValue: true,
+      silent: true,
+    });
+    return response.result?.value || {};
+  }
+
+  async clearFocusedElement() {
+    await this.send("Runtime.evaluate", {
+      expression: `(() => {
+        const element = document.activeElement;
+        if (!element) return false;
+        if ("value" in element) {
+          const prototype = Object.getPrototypeOf(element);
+          const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
+          if (setter) setter.call(element, ""); else element.value = "";
+          element.dispatchEvent(new Event("input", {bubbles: true}));
+          element.dispatchEvent(new Event("change", {bubbles: true}));
+          return true;
+        }
+        if (element.isContentEditable) {
+          document.execCommand("selectAll", false, null);
+          document.execCommand("delete", false, null);
+          return true;
+        }
+        return false;
+      })()`,
+      returnByValue: true,
+      silent: true,
+    });
+  }
+
+  async verifyVisibleText(rawText) {
+    const text = String(rawText || "");
+    if (!text) return;
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline) {
+      const response = await this.send("Runtime.evaluate", {
+        expression: `(() => (document.body?.innerText || "").includes(${JSON.stringify(text)}))()`,
+        returnByValue: true,
+        silent: true,
+      });
+      if (response.result?.value) return;
+      await delay(100);
+    }
+    throw browserError("TYPE_NOT_APPLIED", `输入完成后页面未出现校验文本“${text.slice(0, 80)}”`);
   }
 
   async resolveObject(backendNodeId) {
@@ -601,6 +776,47 @@ function finiteNumber(value) {
   return Number.isFinite(number) ? number : 0;
 }
 
+function normalizeViewportPoint(rawX, rawY, viewport) {
+  const x = Number(rawX);
+  const y = Number(rawY);
+  const width = Number(viewport?.width);
+  const height = Number(viewport?.height);
+  if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) {
+    throw browserError("INVALID_COORDINATES", "坐标或视口尺寸无效");
+  }
+  if (x < 0 || y < 0 || x >= width || y >= height) {
+    throw browserError(
+      "COORDINATE_OUT_OF_BOUNDS",
+      `坐标 (${x}, ${y}) 超出视口 ${width}x${height}`,
+    );
+  }
+  return { x, y };
+}
+
+function intersectionPoint(rowRect, columnRect, viewport) {
+  const rowY = Number(rowRect?.y) + Number(rowRect?.height) / 2;
+  const columnX = Number(columnRect?.x) + Number(columnRect?.width) / 2;
+  if (![rowY, columnX].every(Number.isFinite)) {
+    throw browserError("INVALID_INTERSECTION", "无法从行标签和列标题计算交点");
+  }
+  return normalizeViewportPoint(columnX, rowY, viewport);
+}
+
+function rectFromQuads(quads) {
+  for (const quad of quads || []) {
+    if (!Array.isArray(quad) || quad.length < 8) continue;
+    const xs = [Number(quad[0]), Number(quad[2]), Number(quad[4]), Number(quad[6])];
+    const ys = [Number(quad[1]), Number(quad[3]), Number(quad[5]), Number(quad[7])];
+    if (![...xs, ...ys].every(Number.isFinite)) continue;
+    const x = Math.min(...xs);
+    const y = Math.min(...ys);
+    const width = Math.max(...xs) - x;
+    const height = Math.max(...ys) - y;
+    if (width > 0 && height > 0) return { x, y, width, height };
+  }
+  return null;
+}
+
 function normalizeText(value) {
   return String(value || "").replace(/\s+/g, " ").trim().slice(0, 500);
 }
@@ -667,6 +883,9 @@ function normalizeError(error, fallbackCode) {
 
 module.exports = {
   EmbeddedBrowserController,
+  intersectionPoint,
   isPrivateHost,
+  normalizeViewportPoint,
+  rectFromQuads,
   validateTargetURL,
 };

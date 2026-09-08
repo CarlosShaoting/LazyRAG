@@ -28,6 +28,12 @@ Chrome/Edge 安全策略不允许 Desktop 在普通个人浏览器中静默启�
 
 Edge 开发版不需要单独复制一套源码。用于 Edge Add-ons 提交的 ZIP 也从本目录生成，避免 Chrome/Edge 两套控制器产生行为差异。
 
+## 快照诊断
+
+- 扩展 Service Worker 控制台会输出 `[LazyMind Browser] snapshot`，包含原始 AX 节点数、返回元素数、零宽文本节点数、角色分布、快照耗时和响应字节数。
+- Core 日志会输出 `[Browser] [COMMAND]`，包含动作名称、端到端耗时、请求/响应字节数、快照 revision、元素数和角色分布；不记录页面正文。
+- 纯零宽字符等无可见内容的可访问性节点会被过滤，避免复杂表格用无效 `StaticText` 填满 500 个元素上限。
+
 ## 当前自动化边界
 
 - 当前标签页仅支持读取，不能被 Agent 静默控制。
@@ -37,6 +43,10 @@ Edge 开发版不需要单独复制一套源码。用于 Edge Add-ons 提交的 
 - 原高风险、敏感字段和按键白名单判断保留为代码注释，后续需要审批模式时可恢复。
 - 仅允许 `http/https` URL；本地和内网 URL 需要工具调用明确设置 `allow_private_network`。
 - 页面文本和 Accessibility 快照一律作为不可信内容返回。
+- 普通 DOM/Accessibility 引用无法定位目标且当前请求配置了 `vlm` 时，Chat 侧才会注入 `browser_visual_locate`。它会把当前截图写入临时文件并调用 VLM；主模型只接收定位结果，不接收截图 Base64。没有 VLM 时不会暴露该工具，基础浏览器读取和 DOM/Accessibility 控制不受影响。
+- VLM 返回的截图像素坐标会换算为 CSS 视口坐标，再由 `browser_click_at` 点击；点击富文本正文后可用 `browser_type_focused` 输入，并用 `verify_text` 检查文字确实出现在页面中。
+- 对“人员行 × 日期列”这类空单元格没有 Accessibility ref 的网格页面，可用 `browser_click_intersection` 传入唯一的行标签 ref 和列标题 ref。扩展读取两者现场几何位置并点击交点，不依赖 VLM；结果会返回行列名称、矩形、交点及点击前后的命中/焦点摘要。
+- VLM 定位属于复杂页面的兜底能力，仍应先使用 Accessibility `ref`。Canvas、跨域 iframe、遮挡/动画状态及视觉歧义仍可能需要重试或人工接管。
 
 ## 尚未包含
 

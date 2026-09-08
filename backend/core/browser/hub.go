@@ -17,6 +17,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+
+	corelog "lazymind/core/log"
 )
 
 const (
@@ -41,6 +43,17 @@ type deviceRecord struct {
 type commandResponse struct {
 	result json.RawMessage
 	err    error
+}
+
+type browserCommandResultSummary struct {
+	ResponseBytes      int
+	Revision           int64
+	ElementCount       int
+	RawAXNodeCount     int
+	InvisibleTextNodes int
+	SnapshotMS         int64
+	RoleCounts         map[string]int
+	Limitations        []string
 }
 
 type deviceConnection struct {
@@ -282,6 +295,7 @@ func (h *Hub) RevokeDevice(userID, deviceID string) error {
 }
 
 func (h *Hub) Call(ctx context.Context, userID, deviceID, action string, value any) (json.RawMessage, error) {
+	startedAt := time.Now()
 	userID = strings.TrimSpace(userID)
 	action = strings.TrimSpace(action)
 	if userID == "" {
@@ -321,26 +335,122 @@ func (h *Hub) Call(ctx context.Context, userID, deviceID, action string, value a
 	case connection.send <- command:
 	case <-connection.done:
 		connection.forget(id)
+		logBrowserCommand(action, deviceID, len(raw), nil, ErrDeviceOffline, time.Since(startedAt))
 		return nil, ErrDeviceOffline
 	case <-ctx.Done():
 		connection.forget(id)
+		logBrowserCommand(action, deviceID, len(raw), nil, ctx.Err(), time.Since(startedAt))
 		return nil, ctx.Err()
 	}
 	timer := time.NewTimer(ttl)
 	defer timer.Stop()
 	select {
 	case result := <-response:
+		logBrowserCommand(action, deviceID, len(raw), result.result, result.err, time.Since(startedAt))
 		return result.result, result.err
 	case <-timer.C:
 		connection.forget(id)
-		return nil, fmt.Errorf("browser command %s timed out", action)
+		err := fmt.Errorf("browser command %s timed out", action)
+		logBrowserCommand(action, deviceID, len(raw), nil, err, time.Since(startedAt))
+		return nil, err
 	case <-ctx.Done():
 		connection.forget(id)
+		logBrowserCommand(action, deviceID, len(raw), nil, ctx.Err(), time.Since(startedAt))
 		return nil, ctx.Err()
 	case <-connection.done:
 		connection.forget(id)
+		logBrowserCommand(action, deviceID, len(raw), nil, ErrDeviceOffline, time.Since(startedAt))
 		return nil, ErrDeviceOffline
 	}
+}
+
+func logBrowserCommand(action, deviceID string, requestBytes int, raw json.RawMessage, commandErr error, elapsed time.Duration) {
+	summary := summarizeBrowserCommandResult(raw)
+	status := "ok"
+	errorMessage := ""
+	if commandErr != nil {
+		status = "error"
+		errorMessage = commandErr.Error()
+	}
+	event := corelog.Logger.Info()
+	if commandErr != nil {
+		event = corelog.Logger.Warn()
+	}
+	event.
+		Str("component", "browser").
+		Str("event", "browser.command.completed").
+		Str("action", action).
+		Str("status", status).
+		Str("device_id", strings.TrimSpace(deviceID)).
+		Int64("elapsed_ms", elapsed.Milliseconds()).
+		Int("request_bytes", requestBytes).
+		Int("response_bytes", summary.ResponseBytes).
+		Int64("revision", summary.Revision).
+		Int("elements", summary.ElementCount).
+		Int("raw_ax_nodes", summary.RawAXNodeCount).
+		Int("invisible_text_nodes", summary.InvisibleTextNodes).
+		Int64("snapshot_ms", summary.SnapshotMS).
+		Str("role_counts", formatBrowserRoleCounts(summary.RoleCounts)).
+		Str("limitations", strings.Join(summary.Limitations, ",")).
+		Str("error", errorMessage).
+		Msg("browser command completed")
+}
+
+func summarizeBrowserCommandResult(raw json.RawMessage) browserCommandResultSummary {
+	summary := browserCommandResultSummary{ResponseBytes: len(raw), RoleCounts: make(map[string]int)}
+	if len(raw) == 0 {
+		return summary
+	}
+	var response struct {
+		Revision int64 `json:"revision"`
+		Elements []struct {
+			Role string `json:"role"`
+		} `json:"elements"`
+		Limitations     []string `json:"limitations"`
+		SnapshotMetrics struct {
+			RawAXNodes         int            `json:"raw_ax_nodes"`
+			IncludedElements   int            `json:"included_elements"`
+			InvisibleTextNodes int            `json:"invisible_text_nodes"`
+			RoleCounts         map[string]int `json:"role_counts"`
+			SnapshotMS         int64          `json:"snapshot_ms"`
+		} `json:"snapshot_metrics"`
+	}
+	if err := json.Unmarshal(raw, &response); err != nil {
+		return summary
+	}
+	summary.Revision = response.Revision
+	summary.ElementCount = response.SnapshotMetrics.IncludedElements
+	if summary.ElementCount == 0 {
+		summary.ElementCount = len(response.Elements)
+	}
+	summary.RawAXNodeCount = response.SnapshotMetrics.RawAXNodes
+	summary.InvisibleTextNodes = response.SnapshotMetrics.InvisibleTextNodes
+	summary.SnapshotMS = response.SnapshotMetrics.SnapshotMS
+	if len(response.SnapshotMetrics.RoleCounts) > 0 {
+		summary.RoleCounts = response.SnapshotMetrics.RoleCounts
+	} else {
+		for _, element := range response.Elements {
+			summary.RoleCounts[element.Role]++
+		}
+	}
+	summary.Limitations = response.Limitations
+	return summary
+}
+
+func formatBrowserRoleCounts(counts map[string]int) string {
+	if len(counts) == 0 {
+		return "-"
+	}
+	roles := make([]string, 0, len(counts))
+	for role := range counts {
+		roles = append(roles, role)
+	}
+	sort.Strings(roles)
+	parts := make([]string, 0, len(roles))
+	for _, role := range roles {
+		parts = append(parts, fmt.Sprintf("%s:%d", role, counts[role]))
+	}
+	return strings.Join(parts, ",")
 }
 
 func (h *Hub) onlineDevice(userID, deviceID string) (*deviceConnection, error) {
@@ -422,7 +532,7 @@ func randomToken() (string, error) {
 
 func allowedAction(action string) bool {
 	switch action {
-	case "capture_current_page", "open", "navigate", "snapshot", "click", "type", "select", "press", "scroll", "wait", "screenshot", "tabs", "close":
+	case "capture_current_page", "open", "navigate", "snapshot", "click", "click_at", "click_intersection", "type", "type_focused", "select", "press", "scroll", "wait", "screenshot", "tabs", "close":
 		return true
 	default:
 		return false
