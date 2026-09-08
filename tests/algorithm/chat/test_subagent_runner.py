@@ -125,7 +125,11 @@ async def _collect(gen) -> str:
 
 def _install_fake_db(monkeypatch, task=None):
     db = FakeDB(task or {**_DEFAULT_TASK})
-    monkeypatch.setattr(runner_mod, 'SubAgentDB', lambda dsn: db)
+    monkeypatch.setattr(
+        runner_mod,
+        'MemorySubAgentStore',
+        lambda task_spec, initial_steps=None, artifacts=None: db,
+    )
     return db
 
 
@@ -314,10 +318,16 @@ def test_workflow_step_keeps_skill_runtime_isolated(tmp_path):
 
 def test_run_subagent_stream_task_not_found(monkeypatch):
     db = FakeDB(task=None)
-    monkeypatch.setattr(runner_mod, 'SubAgentDB', lambda dsn: db)
+    monkeypatch.setattr(
+        runner_mod,
+        'MemorySubAgentStore',
+        lambda task_spec, initial_steps=None, artifacts=None: db,
+    )
 
     async def run():
-        return await _collect(runner_mod.run_subagent_stream('bad-id', 'dsn://'))
+        return await _collect(runner_mod.run_subagent_stream(
+            'bad-id', task_spec={**_DEFAULT_TASK},
+        ))
 
     raw = asyncio.run(run())
     events = _sse_to_events(raw)
@@ -361,7 +371,9 @@ def test_run_subagent_stream_happy_path(monkeypatch):
     monkeypatch.setattr(runner_mod, 'set_context', capturing_set_context)
 
     async def run():
-        return await _collect(runner_mod.run_subagent_stream(_DEFAULT_TASK_ID, 'dsn://'))
+        return await _collect(runner_mod.run_subagent_stream(
+            _DEFAULT_TASK_ID, task_spec={**_DEFAULT_TASK},
+        ))
 
     raw = asyncio.run(run())
     events_out = _sse_to_events(raw)
@@ -388,7 +400,9 @@ def test_run_subagent_stream_missing_artifact_emits_error(monkeypatch):
     # set_context does NOT pre-populate saved keys → completeness check fails
 
     async def run():
-        return await _collect(runner_mod.run_subagent_stream(_DEFAULT_TASK_ID, 'dsn://'))
+        return await _collect(runner_mod.run_subagent_stream(
+            _DEFAULT_TASK_ID, task_spec={**_DEFAULT_TASK},
+        ))
 
     raw = asyncio.run(run())
     events_out = _sse_to_events(raw)
@@ -416,7 +430,9 @@ def test_run_subagent_stream_agent_exception_emits_error(monkeypatch):
     monkeypatch.setattr(runner_mod, 'AgentExecutor', ExplodingExecutor)
 
     async def run():
-        return await _collect(runner_mod.run_subagent_stream(_DEFAULT_TASK_ID, 'dsn://'))
+        return await _collect(runner_mod.run_subagent_stream(
+            _DEFAULT_TASK_ID, task_spec={**_DEFAULT_TASK},
+        ))
 
     raw = asyncio.run(run())
     events_out = _sse_to_events(raw)
@@ -447,7 +463,9 @@ def test_run_subagent_stream_text_think_events(monkeypatch):
     monkeypatch.setattr(runner_mod, 'set_context', pre_save_ctx)
 
     async def run():
-        return await _collect(runner_mod.run_subagent_stream(_DEFAULT_TASK_ID, 'dsn://'))
+        return await _collect(runner_mod.run_subagent_stream(
+            _DEFAULT_TASK_ID, task_spec={**_DEFAULT_TASK},
+        ))
 
     raw = asyncio.run(run())
     events_out = _sse_to_events(raw)
@@ -470,7 +488,9 @@ def test_run_subagent_stream_coalesces_tiny_text_deltas(monkeypatch):
     monkeypatch.setattr(runner_mod, 'set_context', pre_save_ctx)
 
     async def run():
-        return await _collect(runner_mod.run_subagent_stream(_DEFAULT_TASK_ID, 'dsn://'))
+        return await _collect(runner_mod.run_subagent_stream(
+            _DEFAULT_TASK_ID, task_spec={**_DEFAULT_TASK},
+        ))
 
     events_out = _sse_to_events(asyncio.run(run()))
     text_events = [event for event in events_out if event.get('type') == 'text']
@@ -506,7 +526,9 @@ def test_workflow_tool_internal_text_is_not_forwarded(monkeypatch):
     monkeypatch.setattr(runner_mod, 'set_context', pre_save_ctx)
 
     async def run():
-        return await _collect(runner_mod.run_subagent_stream(_DEFAULT_TASK_ID, 'dsn://'))
+        return await _collect(runner_mod.run_subagent_stream(
+            _DEFAULT_TASK_ID, task_spec=workflow_task,
+        ))
 
     events_out = _sse_to_events(asyncio.run(run()))
     visible_text = ''.join(
@@ -559,7 +581,9 @@ def test_workflow_tool_artifact_is_streamed_before_tool_returns(monkeypatch):
     monkeypatch.setattr(runner_mod, 'AgentExecutor', ProgressiveArtifactExecutor)
 
     async def run():
-        return await _collect(runner_mod.run_subagent_stream(_DEFAULT_TASK_ID, 'dsn://'))
+        return await _collect(runner_mod.run_subagent_stream(
+            _DEFAULT_TASK_ID, task_spec=workflow_task,
+        ))
 
     events_out = _sse_to_events(asyncio.run(run()))
     event_types = [event.get('type') for event in events_out]
@@ -601,7 +625,9 @@ def test_run_subagent_stream_emits_task_scoped_source_snapshot(monkeypatch):
     monkeypatch.setattr(runner_mod, 'set_context', pre_save_ctx)
 
     async def run():
-        return await _collect(runner_mod.run_subagent_stream(_DEFAULT_TASK_ID, 'dsn://'))
+        return await _collect(runner_mod.run_subagent_stream(
+            _DEFAULT_TASK_ID, task_spec={**_DEFAULT_TASK},
+        ))
 
     events_out = _sse_to_events(asyncio.run(run()))
     source_events = [event for event in events_out if event.get('type') == 'sources']
