@@ -1,3 +1,6 @@
+DROP TABLE IF EXISTS conversation_fork_requests;
+DROP TABLE IF EXISTS conversation_fork_origins;
+
 -- +migrate Dialect postgres
 DROP TABLE IF EXISTS public.workflow_approval_preferences;
 ALTER TABLE public.task_center_tasks DROP CONSTRAINT IF EXISTS chk_tct_task_type;
@@ -58,6 +61,7 @@ ALTER TABLE conversations
     DROP COLUMN IF EXISTS thinking_depth,
     DROP COLUMN IF EXISTS chat_executor;
 ALTER TABLE user_ui_preferences
+    DROP COLUMN IF EXISTS performance_stats_enabled,
     DROP COLUMN IF EXISTS sensitive_word_filter_enabled,
     DROP COLUMN IF EXISTS document_parsing_enabled,
     DROP COLUMN IF EXISTS workflows_enabled,
@@ -65,6 +69,7 @@ ALTER TABLE user_ui_preferences
     DROP COLUMN IF EXISTS skills_enabled,
     DROP COLUMN IF EXISTS schedules_enabled,
     DROP COLUMN IF EXISTS task_center_enabled;
+ALTER TABLE sub_agent_tasks DROP COLUMN IF EXISTS writing_subtasks;
 ALTER TABLE sub_agent_tasks DROP COLUMN IF EXISTS sources;
 ALTER TABLE plugin_transition_commands DROP COLUMN IF EXISTS retry_origin;
 DROP TABLE IF EXISTS external_agent_operations;
@@ -221,6 +226,7 @@ DROP INDEX IF EXISTS idx_chat_histories_conversation_seq;
 DROP TABLE IF EXISTS agent_invocations;
 ALTER TABLE conversations DROP COLUMN thinking_depth;
 ALTER TABLE conversations DROP COLUMN chat_executor;
+ALTER TABLE user_ui_preferences DROP COLUMN performance_stats_enabled;
 ALTER TABLE user_ui_preferences DROP COLUMN sensitive_word_filter_enabled;
 ALTER TABLE user_ui_preferences DROP COLUMN document_parsing_enabled;
 ALTER TABLE user_ui_preferences DROP COLUMN workflows_enabled;
@@ -228,6 +234,7 @@ ALTER TABLE user_ui_preferences DROP COLUMN mcp_enabled;
 ALTER TABLE user_ui_preferences DROP COLUMN skills_enabled;
 ALTER TABLE user_ui_preferences DROP COLUMN schedules_enabled;
 ALTER TABLE user_ui_preferences DROP COLUMN task_center_enabled;
+ALTER TABLE sub_agent_tasks DROP COLUMN writing_subtasks;
 ALTER TABLE sub_agent_tasks DROP COLUMN sources;
 ALTER TABLE plugin_transition_commands DROP COLUMN retry_origin;
 DROP TABLE IF EXISTS external_agent_operations;
@@ -426,3 +433,9 @@ ALTER TABLE resource_update_tasks DROP COLUMN lane_priority;
 ALTER TABLE resource_update_tasks DROP COLUMN run_id;
 ALTER TABLE resource_update_tasks DROP COLUMN lane_key;
 ALTER TABLE resource_update_tasks DROP COLUMN result_json;
+
+-- +migrate Dialect postgres
+DROP TABLE IF EXISTS chat_run_performance;
+
+-- +migrate Dialect sqlite
+DROP TABLE IF EXISTS chat_run_performance;
