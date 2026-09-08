@@ -79,3 +79,32 @@ func TestRouteEventPersistsStreamedStepInCore(t *testing.T) {
 		t.Fatalf("steps=%#v err=%v", steps, err)
 	}
 }
+
+func TestHydrationFailureMarksExistingTaskFailed(t *testing.T) {
+	db := newTestDB(t)
+	now := time.Now().UTC()
+	task := &orm.SubAgentTask{ID: "task-hydration-error", ConversationID: "conv-1",
+		AgentType: "research", Title: "Research", Objective: "Investigate", Mode: "auto",
+		Status: StatusRunning, Params: json.RawMessage(`{}`), InputSlots: json.RawMessage(`[]`),
+		OutputSlots: json.RawMessage(`[]`), LastHeartbeat: now, CreatedAt: now, UpdatedAt: now}
+	if err := db.Create(task).Error; err != nil {
+		t.Fatal(err)
+	}
+	// Break only the hydration read; the task table remains available so the
+	// runner can persist its terminal failure state.
+	if err := db.Exec("DROP TABLE sub_agent_steps").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	err := RunObserved(context.Background(), db.DB, nil, RunRequest{TaskID: task.ID}, nil)
+	if err == nil || !strings.Contains(err.Error(), "prepare subagent run") {
+		t.Fatalf("error=%v", err)
+	}
+	stored, err := GetTask(context.Background(), db.DB, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != StatusFailed || !strings.Contains(stored.Summary, "prepare subagent run") {
+		t.Fatalf("task was left non-terminal after hydration failure: %#v", stored)
+	}
+}

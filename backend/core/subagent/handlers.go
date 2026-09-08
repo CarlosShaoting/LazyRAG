@@ -122,6 +122,7 @@ func InternalIngestTaskEvent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	event.DurableToolResults = nil
 	// Artifacts are committed through the fenced remote Workflow API. Terminal
 	// hooks remain enabled after Runtime terminal commit so LazyMind conversation
 	// handoff/synthetic-turn behavior remains identical to the in-process path.
@@ -168,7 +169,11 @@ func remoteStepContent(event TaskEvent) (string, json.RawMessage) {
 		role, value = "assistant", map[string]any{"text": "", "tool_calls": calls}
 	case "tool_results":
 		var incoming []map[string]any
-		if json.Unmarshal(event.ToolResults, &incoming) != nil {
+		persistedResults := event.DurableToolResults
+		if len(persistedResults) == 0 {
+			persistedResults = event.ToolResults
+		}
+		if json.Unmarshal(persistedResults, &incoming) != nil {
 			incoming = []map[string]any{}
 		}
 		results := make([]map[string]any, 0, len(incoming))

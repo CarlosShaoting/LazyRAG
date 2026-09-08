@@ -71,6 +71,9 @@ type TaskEvent struct {
 	// Tool step events forwarded from SubAgent runner for frontend display.
 	ToolCalls   json.RawMessage `json:"tool_calls,omitempty"`
 	ToolResults json.RawMessage `json:"tool_results,omitempty"`
+	// DurableToolResults carries the resume-safe (bounded or offloaded) result.
+	// Core persists it, then removes it before publishing the compact live event.
+	DurableToolResults json.RawMessage `json:"durable_tool_results,omitempty"`
 	// Text / think streaming content.
 	Text  string `json:"text,omitempty"`
 	Think string `json:"think,omitempty"`
@@ -103,15 +106,19 @@ func RunObserved(ctx context.Context, db *gorm.DB, stateStore state.Store, req R
 	defer cancel()
 
 	if err := hydrateRunRequest(runCtx, db, &req); err != nil {
-		return fmt.Errorf("prepare subagent run task=%s: %w", req.TaskID, err)
+		wrapped := fmt.Errorf("prepare subagent run task=%s: %w", req.TaskID, err)
+		routeError(runCtx, db, stateStore, req.TaskID, wrapped.Error())
+		return wrapped
 	}
 	bodyBytes, err := json.Marshal(req)
 	if err != nil {
+		routeError(runCtx, db, stateStore, req.TaskID, fmt.Sprintf("encode subagent run request failed: %v", err))
 		return err
 	}
 	url := algoServiceURL() + runPath
 	httpReq, err := http.NewRequestWithContext(runCtx, http.MethodPost, url, bytes.NewReader(bodyBytes))
 	if err != nil {
+		routeError(runCtx, db, stateStore, req.TaskID, fmt.Sprintf("create subagent run request failed: %v", err))
 		return err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -171,6 +178,7 @@ func routeEvent(ctx context.Context, db *gorm.DB, stateStore state.Store, ev Tas
 			return fmt.Errorf("append task step task=%s role=%s: %w", ev.TaskID, role, err)
 		}
 	}
+	ev.DurableToolResults = nil
 	return routeEventWithWorkflowHooks(ctx, db, stateStore, ev, true, true)
 }
 

@@ -812,7 +812,10 @@ def _commit_prompt_only_text_output(
     return True
 
 
-def _persist_step(ctx: SubAgentContext, seq: int, event: Dict[str, Any]) -> None:
+def _persist_step(
+    ctx: SubAgentContext, seq: int, event: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """Store and return the resume-safe representation of a tool step."""
     tag = event.get('tag')
     if tag == 'tool_calls':
         tool_calls = []
@@ -824,7 +827,9 @@ def _persist_step(ctx: SubAgentContext, seq: int, event: Dict[str, Any]) -> None
                 'name': tc.get('name') or (tc.get('function') or {}).get('name', ''),
                 'args': tc.get('args') or (tc.get('function') or {}).get('arguments', {}),
             })
-        ctx.db.append_step(ctx.task_id, seq, 'assistant', {'text': '', 'tool_calls': tool_calls})
+        content = {'text': '', 'tool_calls': tool_calls}
+        ctx.db.append_step(ctx.task_id, seq, 'assistant', content)
+        return content
     elif tag == 'tool_results':
         results = []
         for tr in event.get('tool_results', []) or []:
@@ -837,7 +842,10 @@ def _persist_step(ctx: SubAgentContext, seq: int, event: Dict[str, Any]) -> None
                 'name': tool_name,
                 'result': _truncate_tool_result(ctx, raw_result, tool_name),
             })
-        ctx.db.append_step(ctx.task_id, seq, 'tool', {'tool_results': results})
+        content = {'tool_results': results}
+        ctx.db.append_step(ctx.task_id, seq, 'tool', content)
+        return content
+    return None
 
 
 def _workflow_control_from_tool_results(
@@ -1190,7 +1198,7 @@ async def run_subagent_stream(
                         ctx.db.append_step(task_id, step_seq, 'text', {'content': _pending_text})
                         step_seq += 1
                         _pending_text = ''
-                    _persist_step(ctx, step_seq, item)
+                    durable_step = _persist_step(ctx, step_seq, item)
                     step_seq += 1
                     if effective_agent_type == 'workflow_step' and tag == 'tool_results':
                         terminal_error = _terminal_tool_failure(
@@ -1236,7 +1244,17 @@ async def run_subagent_stream(
                             if isinstance(tr, dict)
                         ]
                         if results:
-                            yield _sse({'type': 'tool_results', 'task_id': task_id, 'tool_results': results})
+                            # Keep the small result for live UI rendering and send
+                            # Core the separately bounded/offloaded representation
+                            # used to reconstruct a resumed agent conversation.
+                            yield _sse({
+                                'type': 'tool_results',
+                                'task_id': task_id,
+                                'tool_results': results,
+                                'durable_tool_results': (
+                                    (durable_step or {}).get('tool_results') or []
+                                ),
+                            })
                         workflow_tool_in_flight = False
                         source_event = _sources_event()
                         if source_event is not None:

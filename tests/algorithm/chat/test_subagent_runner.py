@@ -387,6 +387,34 @@ def test_run_subagent_stream_happy_path(monkeypatch):
     assert raw.endswith('data: [DONE]\n\n')
 
 
+def test_tool_result_sends_separate_resume_safe_payload(monkeypatch):
+    db = _install_fake_db(monkeypatch)
+    _install_fake_lazyllm(monkeypatch)
+    _install_fake_build(monkeypatch)
+    _install_fake_translator(monkeypatch)
+    full_result = 'x' * 3000
+    _install_fake_drive(monkeypatch, [{
+        'tag': 'tool_results',
+        'tool_results': [{'id': 'c1', 'name': 'read_file', 'result': full_result}],
+    }])
+
+    def pre_save_ctx(ctx):
+        ctx._artifact_counts['result'] = 1
+
+    monkeypatch.setattr(runner_mod, 'set_context', pre_save_ctx)
+
+    async def run():
+        return await _collect(runner_mod.run_subagent_stream(
+            _DEFAULT_TASK_ID, task_spec={**_DEFAULT_TASK},
+        ))
+
+    events = _sse_to_events(asyncio.run(run()))
+    result_event = next(event for event in events if event.get('type') == 'tool_results')
+    assert result_event['tool_results'][0]['result'] == full_result[:2000]
+    assert result_event['durable_tool_results'][0]['result'] == full_result
+    assert db.steps[0]['content']['tool_results'][0]['result'] == full_result
+
+
 # ---------------------------------------------------------------------------
 # Test: missing artifact → error frame
 # ---------------------------------------------------------------------------

@@ -19,7 +19,11 @@ Lite 实际运行的是 Milvus 协议服务并持有自己的数据目录；它�
 | --- | --- | --- | --- |
 | `core` | `stores/sqlite/core/core.db` | Core 业务、账号权限、聊天和任务等结构化数据 | Core、迁移、Chat/Review 的只读或业务访问 |
 | `lazyllm` | `stores/sqlite/lazyllm/app.db` | 文档处理任务、知识库和 LazyLLM 管理表 | Doc Server、Processor、Worker、Core 只读查询 |
-| `segments` | `homes/lazymind/sqlite/segment-store.db` | chunk/line 原文、元数据和 FTS 索引 | Parser、RAG segment store |
+| `segments` | `homes/lazymind/sqlite/segment-store.db` | chunk/line 原文、元数据和 FTS 索引 | Parser、RAG segment store（仅 `SQLiteStore` 模式注册） |
+
+当 `LAZYMIND_SEGMENT_STORE_TYPE=opensearch` 时不注册 `segments` SQLite 别名，
+`LAZYMIND_SEGMENT_STORE_URI_OR_PATH` 的 HTTP(S) 地址只交给 OpenSearch 客户端，
+不会被 SQLite Server 当成本地文件名打开。
 
 只被一个进程使用的库不进入 SQLite Server，例如 auth-service、channel-gateway、
 scan-control-plane、file-watcher 和各模块私有状态库。它们继续直接使用自己的文件，
@@ -74,7 +78,13 @@ Python 解释器启动时自动安装适配；只有检测到 `sqliteproxy://` �
 
 HTTP 接口只监听回环地址，除健康检查外都校验 Bearer token。服务端支持
 `begin`、`execute`、`executemany`、`query`、`commit` 和 `rollback`；参数使用
-带类型 JSON 编码，避免 JavaScript 数字精度破坏 SQLite `int64`。
+带类型 JSON 编码，避免 JavaScript 数字精度破坏 SQLite `int64`。客户端的批量
+`executemany` 会按实际 JSON 字节数拆分到 16 MiB 服务端上限以内；各拆分请求仍使用
+同一个事务 ID，因此批量写的事务边界不变。
+
+Core 的立即事务在直接 SQLite 模式仍使用 `BEGIN IMMEDIATE`；在代理模式必须调用
+驱动的 `BeginTx`，取得事务 ID 后再执行 SQL。禁止把裸 `BEGIN IMMEDIATE` 当作普通
+`execute` 请求发送，否则单次请求结束时服务端会提前释放数据库队列。
 
 ## 设计取舍
 
@@ -96,7 +106,9 @@ HTTP 接口只监听回环地址，除健康检查外都校验 Bearer token。�
 3. `commit` 后同库等待请求继续执行；
 4. 客户端遗留事务超过 TTL 后自动回滚并释放队列；
 5. Python DBAPI 的建表、提交、回滚，以及 SQLAlchemy `INSERT ... RETURNING`
-   可以通过真实 SQLite Server 工作。
+   可以通过真实 SQLite Server 工作；
+6. 中文大批量 `executemany` 会按编码后字节拆包，OpenSearch 配置不会注册
+   `segments` SQLite 文件。
 
 升级后的现有运行实例需要重新执行 `make local-down && make local-up` 才会切换连接；
 只替换代码而不重启时，旧进程仍保持旧的直接文件连接。

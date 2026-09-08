@@ -75,9 +75,13 @@ func transactionWithSQLiteBusyRetry(
 
 	for attempt := 0; attempt < sqliteTransactionAttempts; attempt++ {
 		var err error
-		if immediate {
+		if immediate && !usesSQLiteProxy(db) {
 			err = sqliteImmediateTransaction(ctx, db, fn)
 		} else {
+			// Proxy transactions must begin via database/sql so the driver obtains
+			// a server transaction ID and the server keeps the database gate until
+			// Commit or Rollback. A raw BEGIN IMMEDIATE would release the gate as
+			// soon as that single /v1/execute request returned.
 			err = db.WithContext(ctx).Transaction(fn)
 		}
 		if err == nil || !IsSQLiteBusy(err) || attempt == sqliteTransactionAttempts-1 {
@@ -96,6 +100,14 @@ func transactionWithSQLiteBusyRetry(
 		}
 	}
 	return nil
+}
+
+func usesSQLiteProxy(db *gorm.DB) bool {
+	type proxyDialector interface {
+		IsSQLiteProxy() bool
+	}
+	dialector, ok := db.Dialector.(proxyDialector)
+	return ok && dialector.IsSQLiteProxy()
 }
 
 // sqliteImmediateTransaction reserves SQLite's only writer before the callback

@@ -89,11 +89,9 @@ func (m *SQLiteServerManager) Run(ctx context.Context, cfg RuntimeConfig, paths 
 	if err != nil {
 		return err
 	}
-	server, err := newSQLiteHTTPServer(token, map[string]string{
-		"core":     paths.CoreDBPath,
-		"lazyllm":  paths.LazyLLMDBPath,
-		"segments": localSegmentStoreBackingPath(paths),
-	}, sqliteServerTransactionTTL)
+	server, err := newSQLiteHTTPServer(
+		token, sqliteServerDatabaseAliases(paths), sqliteServerTransactionTTL,
+	)
 	if err != nil {
 		return err
 	}
@@ -128,6 +126,19 @@ func (m *SQLiteServerManager) Run(ctx context.Context, cfg RuntimeConfig, paths 
 		return nil
 	}
 	return err
+}
+
+func sqliteServerDatabaseAliases(paths RuntimePaths) map[string]string {
+	aliases := map[string]string{
+		"core":    paths.CoreDBPath,
+		"lazyllm": paths.LazyLLMDBPath,
+	}
+	// OpenSearch owns segments in that supported mode. Its HTTP(S) endpoint is
+	// not a SQLite filename and must never be passed to sql.Open.
+	if !strings.EqualFold(localSegmentStoreType(), "opensearch") {
+		aliases["segments"] = localSegmentStoreBackingPath(paths)
+	}
+	return aliases
 }
 
 func (m *SQLiteServerManager) Down(ctx context.Context, cfg RuntimeConfig, paths RuntimePaths) error {

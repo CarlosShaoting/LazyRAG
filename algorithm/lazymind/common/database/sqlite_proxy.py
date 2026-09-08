@@ -12,6 +12,9 @@ from collections import defaultdict
 _SERVER_URL_ENV = 'LAZYMIND_SQLITE_SERVER_URL'
 _TOKEN_FILE_ENV = 'LAZYMIND_SQLITE_SERVER_TOKEN_FILE'
 _WRITE_KEYWORDS = frozenset({'INSERT', 'UPDATE', 'DELETE', 'REPLACE'})
+# The Go server accepts 16 MiB. Keep headroom for protocol evolution while
+# sizing the actual JSON bytes (including ensure_ascii expansion for CJK).
+_MAX_REQUEST_BODY_BYTES = 15 << 20
 
 
 def _database_alias(value):
@@ -119,14 +122,50 @@ class Cursor:
 
     def executemany(self, operation, seq_of_parameters):
         self._check_open()
-        batches = []
-        for parameters in seq_of_parameters:
-            if isinstance(parameters, dict):
-                raise sqlite3.NotSupportedError('sqlite proxy supports positional parameters only')
-            batches.append([_encode_value(value) for value in parameters])
-        self.connection._begin_if_needed(operation)
-        result = self.connection._call('/v1/executemany', {'sql': operation, 'batches': batches})
-        self._apply_result(result)
+        with self.connection._lock:
+            self.connection._begin_if_needed(operation)
+            empty_values = {'sql': operation, 'batches': []}
+            empty_size = len(self.connection._encoded_payload(empty_values))
+            if empty_size > _MAX_REQUEST_BODY_BYTES:
+                raise sqlite3.DataError('sqlite proxy SQL exceeds request body limit')
+
+            batches = []
+            batches_size = 0
+            total_rows_affected = 0
+            last_insert_id = 0
+
+            def flush():
+                nonlocal batches, batches_size, total_rows_affected, last_insert_id
+                if not batches:
+                    return
+                result = self.connection._call(
+                    '/v1/executemany', {'sql': operation, 'batches': batches},
+                )
+                total_rows_affected += int(result.get('rowsAffected', 0))
+                last_insert_id = result.get('lastInsertId', last_insert_id)
+                batches = []
+                batches_size = 0
+
+            for parameters in seq_of_parameters:
+                if isinstance(parameters, dict):
+                    raise sqlite3.NotSupportedError(
+                        'sqlite proxy supports positional parameters only',
+                    )
+                batch = [_encode_value(value) for value in parameters]
+                batch_size = len(json.dumps(batch, separators=(',', ':')).encode('utf-8'))
+                separator_size = 1 if batches else 0
+                if empty_size + batch_size > _MAX_REQUEST_BODY_BYTES:
+                    raise sqlite3.DataError('sqlite proxy parameter row exceeds request body limit')
+                if empty_size + batches_size + separator_size + batch_size > _MAX_REQUEST_BODY_BYTES:
+                    flush()
+                    separator_size = 0
+                batches.append(batch)
+                batches_size += separator_size + batch_size
+            flush()
+            self._apply_result({
+                'rowsAffected': total_rows_affected,
+                'lastInsertId': last_insert_id,
+            })
         return self
 
     def executescript(self, script):
@@ -303,14 +342,9 @@ class Connection:
     def _call(self, path, values=None):
         with self._lock:
             self._check_open()
-            payload = {'db': self._database}
-            if self._tx_id is not None:
-                payload['txId'] = self._tx_id
-            if values:
-                payload.update(values)
             request = urllib.request.Request(
                 self._base_url + path,
-                data=json.dumps(payload, separators=(',', ':')).encode('utf-8'),
+                data=self._encoded_payload(values),
                 headers={
                     'Authorization': 'Bearer ' + self._token,
                     'Content-Type': 'application/json',
@@ -331,6 +365,14 @@ class Connection:
             if result.get('error'):
                 raise sqlite3.OperationalError(result['error'])
             return result
+
+    def _encoded_payload(self, values=None):
+        payload = {'db': self._database}
+        if self._tx_id is not None:
+            payload['txId'] = self._tx_id
+        if values:
+            payload.update(values)
+        return json.dumps(payload, separators=(',', ':')).encode('utf-8')
 
     def _check_open(self):
         if self._closed:
@@ -379,11 +421,6 @@ def install_lazyllm_sqlite_proxy():
                     poolclass=sqlalchemy.pool.QueuePool,
                     echo=False,
                 )
-                with manager._engine.connect() as connection:
-                    connection.execute(sqlalchemy.text('PRAGMA journal_mode=WAL'))
-                    connection.execute(sqlalchemy.text('PRAGMA synchronous=NORMAL'))
-                    connection.execute(sqlalchemy.text('PRAGMA busy_timeout=30000'))
-                    connection.commit()
             return manager._engine
 
         def proxied_sqlite_store_open(store):
@@ -392,10 +429,6 @@ def install_lazyllm_sqlite_proxy():
             if connection := getattr(store._local, 'conn', None):
                 return connection
             connection = connect(store._db_path, timeout=5.0)
-            connection.execute('PRAGMA journal_mode = WAL;')
-            connection.execute('PRAGMA synchronous = NORMAL;')
-            connection.execute('PRAGMA busy_timeout = 5000;')
-            connection.commit()
             store._local.conn = connection
             return connection
 
@@ -410,10 +443,6 @@ def install_lazyllm_sqlite_proxy():
             if store._conn:
                 return store._conn
             connection = connect(store._uri, timeout=5.0, check_same_thread=False)
-            connection.execute('PRAGMA journal_mode = WAL;')
-            connection.execute('PRAGMA synchronous = NORMAL;')
-            connection.execute('PRAGMA busy_timeout = 5000;')
-            connection.commit()
             store._conn = connection
             return connection
 

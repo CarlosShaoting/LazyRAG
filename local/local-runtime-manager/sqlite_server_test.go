@@ -99,6 +99,39 @@ func TestSQLiteServerExpiresAbandonedTransaction(t *testing.T) {
 	}
 }
 
+func TestSQLiteServerDoesNotOpenOpenSearchEndpointAsSegmentsDatabase(t *testing.T) {
+	t.Setenv("LAZYMIND_SEGMENT_STORE_TYPE", "OpenSearch")
+	t.Setenv("LAZYMIND_SEGMENT_STORE_URI_OR_PATH", "https://127.0.0.1:19200")
+	paths := RuntimePaths{
+		CoreDBPath:    filepath.Join(t.TempDir(), "core.db"),
+		LazyLLMDBPath: filepath.Join(t.TempDir(), "lazyllm.db"),
+	}
+
+	aliases := sqliteServerDatabaseAliases(paths)
+	if _, exists := aliases["segments"]; exists {
+		t.Fatalf("OpenSearch mode unexpectedly registered SQLite segments alias: %#v", aliases)
+	}
+	if len(aliases) != 2 {
+		t.Fatalf("aliases=%#v", aliases)
+	}
+}
+
+func TestSQLiteServerRegistersSegmentsAliasForSQLiteStore(t *testing.T) {
+	t.Setenv("LAZYMIND_SEGMENT_STORE_TYPE", "SQLiteStore")
+	t.Setenv("LAZYMIND_SEGMENT_STORE_URI_OR_PATH", "")
+	algorithmHome := t.TempDir()
+	paths := RuntimePaths{
+		AlgorithmHome: algorithmHome,
+		CoreDBPath:    filepath.Join(t.TempDir(), "core.db"),
+		LazyLLMDBPath: filepath.Join(t.TempDir(), "lazyllm.db"),
+	}
+
+	aliases := sqliteServerDatabaseAliases(paths)
+	if aliases["segments"] != filepath.Join(algorithmHome, "sqlite", "segment-store.db") {
+		t.Fatalf("aliases=%#v", aliases)
+	}
+}
+
 func postSQLiteTestRequest(t *testing.T, baseURL, path string, request sqliteRequest) sqliteResponse {
 	t.Helper()
 	response, err := doSQLiteTestRequest(baseURL, path, request)

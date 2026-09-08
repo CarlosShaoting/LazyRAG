@@ -7,12 +7,13 @@
 
 ## 设计结论
 
-Desktop 模式使用现有的 Go Core 进程统一管理 `core.db`，不再额外实现一个
-可以执行任意 SQL 的通用代理服务。通用 SQL 代理只是把锁冲突藏到 HTTP
-服务后面，各调用方仍然会依赖 Core 的表结构。
+Desktop 模式现在分成两层所有权：`sqlite-server` 统一持有共享 SQLite 文件的
+物理连接并处理同库串行、异库并行；Go Core 仍然是 `core.db` 的逻辑和业务所有者。
+SQL 代理解决物理连接与事务冲突，但不代替业务 API，也不允许客户端指定任意文件。
 
-正确的边界是由 Core 提供面向具体业务的内部 API，并且只有 Core 负责把
-这些业务操作转换成 SQL。
+新增或迁移 Core 业务能力时，正确边界仍然是由 Core 提供面向具体业务的内部 API，
+而不是让 Algorithm 新增对 Core 表结构的依赖。现存尚未迁移的 SQL 虽通过代理避免
+跨进程锁冲突，后续仍应逐步收口到 Core API。
 
 本次首先迁移 SubAgent 的任务执行与任务上下文查询链路。这是本地并发任务
 运行期间最频繁的跨进程写入链路，也是 SQLite 锁冲突风险最高的部分。
@@ -42,10 +43,10 @@ Desktop 模式使用现有的 Go Core 进程统一管理 `core.db`，不再额�
 并竞争 SQLite 唯一的写入槽位。增加 busy timeout 和重试只能缓解症状，
 无法协调不同进程之间的事务。
 
-迁移后，SubAgent 的数据库写入全部进入 Core 的既有写入路径，消除了
-SubAgent 链路中的跨进程写竞争。Core 内部不同 goroutine 仍可能并发写入，
-因此继续保留 `ImmediateTransactionWithSQLiteBusyRetry`，作为 Core 内部
-并发时的最后一层保护。
+迁移后，SubAgent 的数据库写入全部进入 Core 的既有业务路径。Desktop 的所有
+`core.db` 物理访问再统一经过 SQLite Server；事务必须通过代理的 `begin` 协议建立，
+服务端从开始到提交/回滚持续持有 `core` 队列。Core 内部仍保留事务重试，防御旧进程
+残留访问或底层忙状态。
 
 这项修改主要提升稳定性，不保证按相同比例缩短任务总耗时。完整任务的主要
 耗时通常仍然来自模型请求和工具执行。
@@ -73,6 +74,8 @@ SQL 语句。
 - Algorithm SubAgent 使用内存存储保存本次执行状态，不再创建 Core
   数据库连接。
 - text、think、tool call 和 tool result 步骤统一由 Core 持久化。
+- tool result 的实时事件保持紧凑；Core 另行持久化最多 16 KiB 的恢复表示，超限内容
+  使用工作区文件引用，避免断点恢复使用被 UI 截断的文本。
 - Artifact 和任务状态继续通过 Core 的事件处理路径持久化。
 - 恢复执行所需的历史步骤和 Artifact 版本由 Core 提供。
 - TaskQueryDB 已经改为通过 Core API 查询任务和 Artifact。
@@ -91,8 +94,8 @@ SQL 语句。
 - Vocabulary：会读取聊天历史和词汇分组。
 - Router：启用后会读写进程和路由元数据；目前 Desktop 默认关闭 Router。
 
-这些模块的授权规则和一致性要求不同，应分别设计对应的业务 API，而不是
-共用通用 SQL 接口。
+这些模块当前通过 SQLite Server 访问，因此不会再各自打开 `core.db` 文件；但其
+授权规则和一致性要求不同，仍应分别设计对应的 Core 业务 API，消除对表结构的耦合。
 
 全部迁移完成后，应执行以下收尾工作：
 

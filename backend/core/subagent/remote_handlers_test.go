@@ -231,7 +231,9 @@ func TestRemoteTaskEventsPersistStreamStateAndInvalidatePanel(t *testing.T) {
 		{"type": "text", "text": "hello"},
 		{"type": "think", "think": "reason"},
 		{"type": "tool_calls", "tool_calls": []map[string]any{{"id": "1", "name": "read"}}},
-		{"type": "tool_results", "tool_results": []map[string]any{{"id": "1", "result": "ok"}}},
+		{"type": "tool_results",
+			"tool_results":         []map[string]any{{"id": "1", "result": "compact"}},
+			"durable_tool_results": []map[string]any{{"id": "1", "result": "complete resume result"}}},
 		{"type": "progress", "progress": 42, "current_phase": "working"},
 		{"type": "artifact_stream_start", "slot": "draft_document", "content_type": "text/markdown",
 			"stream_id": "stream-1", "chunk_index": 1},
@@ -265,6 +267,9 @@ func TestRemoteTaskEventsPersistStreamStateAndInvalidatePanel(t *testing.T) {
 	}
 	if toolContent["tool_results"][0]["tool_call_id"] != "1" {
 		t.Fatalf("tool result was not normalized for resume: %s", steps[3].Content)
+	}
+	if toolContent["tool_results"][0]["result"] != "complete resume result" {
+		t.Fatalf("compact UI result was persisted instead of durable result: %s", steps[3].Content)
 	}
 	task, _ := GetTask(context.Background(), db.DB, "task-remote")
 	if task.Status != StatusRunning || task.ProgressPct != 42 || task.CurrentPhase != "working" {
