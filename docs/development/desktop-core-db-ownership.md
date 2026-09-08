@@ -1,5 +1,10 @@
 # Desktop 模式下 Core SQLite 的归属设计
 
+> 说明：共享 SQLite 文件的物理连接现已统一交给
+> [Desktop SQLite Server](./desktop-sqlite-server.md)。本文描述的 Core 业务 API
+> 仍用于保持业务边界；Core 是 `core.db` 的逻辑所有者，SQLite Server 是共享文件
+> 的物理连接所有者。
+
 ## 设计结论
 
 Desktop 模式使用现有的 Go Core 进程统一管理 `core.db`，不再额外实现一个

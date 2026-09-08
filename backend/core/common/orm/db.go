@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
 
+	"lazymind/core/common/sqliteproxy"
 	"lazymind/core/log"
 )
 
@@ -36,7 +37,15 @@ func Connect(driver, dsn string) (*DB, error) {
 	case DriverPostgres:
 		dialector = postgres.Open(dsn)
 	case DriverSQLite:
-		dialector = sqlite.Open(dsn)
+		if strings.HasPrefix(strings.TrimSpace(dsn), "sqliteproxy://") {
+			sqlDB, err := sqliteproxy.Open(dsn)
+			if err != nil {
+				return nil, err
+			}
+			dialector = sqlite.Dialector{Conn: sqlDB}
+		} else {
+			dialector = sqlite.Open(dsn)
+		}
 	case DriverMySQL:
 		dialector = mysql.Open(dsn)
 	default:

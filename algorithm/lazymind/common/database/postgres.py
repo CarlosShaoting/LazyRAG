@@ -4,10 +4,26 @@ import shlex
 from typing import Any, Dict, Optional
 from urllib.parse import unquote, urlparse, urlsplit, urlunsplit
 
-from sqlalchemy.engine import URL
+import sqlalchemy
+from sqlalchemy.engine import Engine, URL
 
 
 DEFAULT_SQLALCHEMY_POSTGRES_DRIVER = 'psycopg2'
+
+
+def create_database_engine(url: str, **kwargs: Any) -> Engine:
+    if not url.strip().startswith('sqliteproxy://'):
+        return sqlalchemy.create_engine(url, **kwargs)
+
+    from lazymind.common.database.sqlite_proxy import connect
+
+    options = dict(kwargs)
+    options.pop('connect_args', None)
+    return sqlalchemy.create_engine(
+        'sqlite://',
+        creator=lambda: connect(url, check_same_thread=False),
+        **options,
+    )
 
 
 def sqlalchemy_engine_options(url: str) -> Dict[str, Any]:
