@@ -26,7 +26,10 @@ export class BrowserController {
       case 'navigate': return this.navigate(payload);
       case 'snapshot': return this.snapshot(this.requireSession(payload.session_id));
       case 'click': return this.click(payload);
+      case 'click_at': return this.clickAt(payload);
+      case 'click_intersection': return this.clickIntersection(payload);
       case 'type': return this.type(payload);
+      case 'type_focused': return this.typeFocused(payload);
       case 'select': return this.select(payload);
       case 'press': return this.press(payload);
       case 'scroll': return this.scroll(payload);
@@ -87,20 +90,57 @@ export class BrowserController {
 
   async snapshot(session) {
     this.ensureAttached(session);
-    const [tree, tab] = await Promise.all([
+    const startedAt = Date.now();
+    const [tree, tab, pageMetadata] = await Promise.all([
       this.send(session.tabId, 'Accessibility.getFullAXTree'),
       chrome.tabs.get(session.tabId),
+      this.send(session.tabId, 'Runtime.evaluate', {
+        expression: '({url: location.href, title: document.title})',
+        returnByValue: true,
+        silent: true,
+      }),
     ]);
     session.revision += 1;
     session.refs = new Map();
     const elements = [];
-    for (const node of tree.nodes || []) {
+    const nodes = tree.nodes || [];
+    const metrics = {
+      raw_ax_nodes: nodes.length,
+      included_elements: 0,
+      ignored_nodes: 0,
+      missing_backend_node_id_nodes: 0,
+      unsupported_role_nodes: 0,
+      empty_text_nodes: 0,
+      invisible_text_nodes: 0,
+      role_counts: {},
+      snapshot_ms: 0,
+    };
+    for (const node of nodes) {
       const role = String(node.role?.value || '');
       const backendNodeId = node.backendDOMNodeId;
-      if (node.ignored || !backendNodeId || !INTERACTIVE_ROLES.has(role)) continue;
-      const name = normalizeText(node.name?.value || '');
-      const value = normalizeText(node.value?.value || '');
-      if (!name && !value && role !== 'textbox') continue;
+      if (node.ignored) {
+        metrics.ignored_nodes += 1;
+        continue;
+      }
+      if (!backendNodeId) {
+        metrics.missing_backend_node_id_nodes += 1;
+        continue;
+      }
+      if (!INTERACTIVE_ROLES.has(role)) {
+        metrics.unsupported_role_nodes += 1;
+        continue;
+      }
+      const rawName = String(node.name?.value || '');
+      const rawValue = String(node.value?.value || '');
+      const name = normalizeText(rawName);
+      const value = normalizeText(rawValue);
+      if (!name && !value && role !== 'textbox') {
+        metrics.empty_text_nodes += 1;
+        if (isInvisibleOnlyText(rawName) || isInvisibleOnlyText(rawValue)) {
+          metrics.invisible_text_nodes += 1;
+        }
+        continue;
+      }
       const ref = `e_${backendNodeId}`;
       const properties = Object.fromEntries((node.properties || []).map((property) => [
         property.name,
@@ -118,17 +158,30 @@ export class BrowserController {
           .map(([propertyName]) => propertyName),
         sensitive,
       });
+      metrics.role_counts[role] = (metrics.role_counts[role] || 0) + 1;
       if (elements.length >= MAX_SNAPSHOT_ELEMENTS) break;
     }
-    return {
+    metrics.included_elements = elements.length;
+    metrics.snapshot_ms = Date.now() - startedAt;
+    const metadata = pageMetadata.result?.value || {};
+    const result = {
       untrusted_browser_content: true,
       session_id: session.id,
       revision: session.revision,
-      url: tab.url || '',
-      title: tab.title || '',
+      url: metadata.url || tab.url || '',
+      title: metadata.title || tab.title || '',
       elements,
       limitations: elements.length >= MAX_SNAPSHOT_ELEMENTS ? ['snapshot_element_limit_reached'] : [],
+      snapshot_metrics: metrics,
     };
+    const responseBytes = new TextEncoder().encode(JSON.stringify(result)).byteLength;
+    console.info('[LazyMind Browser] snapshot', {
+      session_id: session.id,
+      revision: session.revision,
+      response_bytes: responseBytes,
+      ...metrics,
+    });
+    return result;
   }
 
   async click(payload) {
@@ -149,6 +202,47 @@ export class BrowserController {
     await this.send(session.tabId, 'Input.dispatchMouseEvent', {type: 'mouseReleased', x, y, button: 'left', clickCount: 1});
     await delay(300);
     return this.snapshot(session);
+  }
+
+  async clickAt(payload) {
+    const session = this.requireSession(payload.session_id);
+    const viewport = await this.viewportSize(session);
+    const point = normalizeViewportPoint(payload.x, payload.y, viewport);
+    await this.dispatchClick(session.tabId, point.x, point.y);
+    await delay(300);
+    return this.snapshot(session);
+  }
+
+  async clickIntersection(payload) {
+    const session = this.requireSession(payload.session_id);
+    const rowTarget = this.resolveRef(session, payload.row_ref, payload.expected_revision);
+    const columnTarget = this.resolveRef(session, payload.column_ref, payload.expected_revision);
+    if (rowTarget.backendNodeId === columnTarget.backendNodeId) {
+      throw browserError('INVALID_INTERSECTION', '行标签和列标题必须是两个不同的元素引用');
+    }
+
+    await this.elementRect(session, columnTarget);
+    await this.elementRect(session, rowTarget);
+    const rowRect = await this.elementRect(session, rowTarget, {scroll: false});
+    const columnRect = await this.elementRect(session, columnTarget, {scroll: false});
+    const viewport = await this.viewportSize(session);
+    const point = intersectionPoint(rowRect, columnRect, viewport);
+    const before = await this.inspectPoint(session, point);
+    await this.dispatchClick(session.tabId, point.x, point.y);
+    await delay(300);
+    const after = await this.inspectPoint(session, point);
+    const snapshot = await this.snapshot(session);
+    return {
+      ...snapshot,
+      interaction: {
+        kind: 'intersection_click',
+        row: {ref: payload.row_ref, name: rowTarget.name, rect: rowRect},
+        column: {ref: payload.column_ref, name: columnTarget.name, rect: columnRect},
+        point,
+        before,
+        after,
+      },
+    };
   }
 
   async type(payload) {
@@ -176,6 +270,18 @@ export class BrowserController {
     }
     await this.send(session.tabId, 'Input.insertText', {text: String(payload.text || '')});
     await delay(150);
+    await this.verifyVisibleText(session, payload.verify_text);
+    return this.snapshot(session);
+  }
+
+  async typeFocused(payload) {
+    const session = this.requireSession(payload.session_id);
+    if (payload.replace) {
+      await this.clearFocusedElement(session);
+    }
+    await this.send(session.tabId, 'Input.insertText', {text: String(payload.text || '')});
+    await delay(150);
+    await this.verifyVisibleText(session, payload.verify_text);
     return this.snapshot(session);
   }
 
@@ -256,9 +362,12 @@ export class BrowserController {
 
   async screenshot(payload) {
     const session = this.requireSession(payload.session_id);
-    const shot = await this.send(session.tabId, 'Page.captureScreenshot', {
-      format: 'jpeg', quality: 75, fromSurface: true, captureBeyondViewport: false,
-    });
+    const [shot, viewport] = await Promise.all([
+      this.send(session.tabId, 'Page.captureScreenshot', {
+        format: 'jpeg', quality: 75, fromSurface: true, captureBeyondViewport: false,
+      }),
+      this.viewportSize(session),
+    ]);
     const tab = await chrome.tabs.get(session.tabId);
     return {
       session_id: session.id,
@@ -266,6 +375,7 @@ export class BrowserController {
       title: tab.title || '',
       mime_type: 'image/jpeg',
       data_base64: shot.data,
+      viewport,
     };
   }
 
@@ -309,15 +419,51 @@ export class BrowserController {
     return target;
   }
 
-  async elementRect(session, target) {
+  async elementRect(session, target, options = {}) {
+    if (options.scroll !== false) {
+      try {
+        await this.send(session.tabId, 'DOM.scrollIntoViewIfNeeded', {
+          backendNodeId: target.backendNodeId,
+        });
+      } catch {}
+    }
+
+    try {
+      const response = await this.send(session.tabId, 'DOM.getContentQuads', {
+        backendNodeId: target.backendNodeId,
+      });
+      const rect = rectFromQuads(response.quads);
+      if (rect) return rect;
+    } catch {}
+
     const objectId = await this.resolveObject(session.tabId, target.backendNodeId);
     const response = await this.send(session.tabId, 'Runtime.callFunctionOn', {
       objectId,
-      functionDeclaration: `function () {
-        this.scrollIntoView({block: 'center', inline: 'center', behavior: 'instant'});
-        const rect = this.getBoundingClientRect();
-        return {x: rect.x, y: rect.y, width: rect.width, height: rect.height};
+      functionDeclaration: `function (shouldScroll) {
+        const visibleRect = (rect) => rect && rect.width > 0 && rect.height > 0
+          ? {x: rect.x, y: rect.y, width: rect.width, height: rect.height}
+          : null;
+        const scrollTarget = this && this.nodeType === 1 ? this : this?.parentElement;
+        if (shouldScroll) {
+          scrollTarget?.scrollIntoView({block: 'center', inline: 'center', behavior: 'instant'});
+        }
+
+        if (this && this.nodeType === 3) {
+          const range = document.createRange();
+          range.selectNodeContents(this);
+          const textRect = visibleRect(range.getBoundingClientRect());
+          range.detach?.();
+          if (textRect) return textRect;
+        }
+
+        let candidate = this && this.nodeType === 1 ? this : this?.parentElement;
+        for (let depth = 0; candidate && depth < 5; depth += 1, candidate = candidate.parentElement) {
+          const rect = visibleRect(candidate.getBoundingClientRect?.());
+          if (rect) return rect;
+        }
+        return null;
       }`,
+      arguments: [{value: options.scroll !== false}],
       returnByValue: true,
     });
     const rect = response.result?.value;
@@ -325,6 +471,90 @@ export class BrowserController {
       throw browserError('ELEMENT_NOT_VISIBLE', '目标元素不可见或没有可点击区域');
     }
     return rect;
+  }
+
+  async viewportSize(session) {
+    const metrics = await this.send(session.tabId, 'Page.getLayoutMetrics');
+    const viewport = metrics.cssVisualViewport || metrics.cssLayoutViewport ||
+      metrics.visualViewport || metrics.layoutViewport || {};
+    const width = Number(viewport.clientWidth || viewport.width);
+    const height = Number(viewport.clientHeight || viewport.height);
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+      throw browserError('VIEWPORT_UNAVAILABLE', '无法获取浏览器视口尺寸');
+    }
+    return {width, height};
+  }
+
+  async dispatchClick(tabId, x, y) {
+    await this.send(tabId, 'Input.dispatchMouseEvent', {type: 'mouseMoved', x, y});
+    await this.send(tabId, 'Input.dispatchMouseEvent', {type: 'mousePressed', x, y, button: 'left', clickCount: 1});
+    await this.send(tabId, 'Input.dispatchMouseEvent', {type: 'mouseReleased', x, y, button: 'left', clickCount: 1});
+  }
+
+  async inspectPoint(session, point) {
+    const response = await this.send(session.tabId, 'Runtime.evaluate', {
+      expression: `(() => {
+        const describe = (element) => {
+          if (!element) return null;
+          return {
+            tag: String(element.tagName || '').toLowerCase(),
+            role: element.getAttribute?.('role') || '',
+            aria_label: element.getAttribute?.('aria-label') || '',
+            contenteditable: element.getAttribute?.('contenteditable') || '',
+            editable: Boolean(element.isContentEditable),
+            readonly: Boolean(element.readOnly),
+          };
+        };
+        return {
+          hit_target: describe(document.elementFromPoint(${JSON.stringify(point.x)}, ${JSON.stringify(point.y)})),
+          focused: describe(document.activeElement),
+        };
+      })()`,
+      returnByValue: true,
+      silent: true,
+    });
+    return response.result?.value || {};
+  }
+
+  async clearFocusedElement(session) {
+    await this.send(session.tabId, 'Runtime.evaluate', {
+      expression: `(() => {
+        const element = document.activeElement;
+        if (!element) return false;
+        if ('value' in element) {
+          const prototype = Object.getPrototypeOf(element);
+          const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+          if (setter) setter.call(element, ''); else element.value = '';
+          element.dispatchEvent(new Event('input', {bubbles: true}));
+          element.dispatchEvent(new Event('change', {bubbles: true}));
+          return true;
+        }
+        if (element.isContentEditable) {
+          document.execCommand('selectAll', false, null);
+          document.execCommand('delete', false, null);
+          return true;
+        }
+        return false;
+      })()`,
+      returnByValue: true,
+      silent: true,
+    });
+  }
+
+  async verifyVisibleText(session, rawText) {
+    const text = String(rawText || '');
+    if (!text) return;
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline) {
+      const response = await this.send(session.tabId, 'Runtime.evaluate', {
+        expression: `(() => (document.body?.innerText || '').includes(${JSON.stringify(text)}))()`,
+        returnByValue: true,
+        silent: true,
+      });
+      if (response.result?.value) return;
+      await delay(100);
+    }
+    throw browserError('TYPE_NOT_APPLIED', `输入完成后页面未出现校验文本“${text.slice(0, 80)}”`);
   }
 
   async resolveObject(tabId, backendNodeId) {
@@ -398,8 +628,63 @@ function finiteNumber(value) {
   return Number.isFinite(number) ? number : 0;
 }
 
-function normalizeText(value) {
-  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, 500);
+export function normalizeViewportPoint(rawX, rawY, viewport) {
+  const x = Number(rawX);
+  const y = Number(rawY);
+  const width = Number(viewport?.width);
+  const height = Number(viewport?.height);
+  if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) {
+    throw browserError('INVALID_COORDINATES', '坐标或视口尺寸无效');
+  }
+  if (x < 0 || y < 0 || x >= width || y >= height) {
+    throw browserError(
+      'COORDINATE_OUT_OF_BOUNDS',
+      `坐标 (${x}, ${y}) 超出视口 ${width}x${height}`,
+    );
+  }
+  return {x, y};
+}
+
+export function intersectionPoint(rowRect, columnRect, viewport) {
+  const rowY = Number(rowRect?.y) + Number(rowRect?.height) / 2;
+  const columnX = Number(columnRect?.x) + Number(columnRect?.width) / 2;
+  if (![rowY, columnX].every(Number.isFinite)) {
+    throw browserError('INVALID_INTERSECTION', '无法从行标签和列标题计算交点');
+  }
+  return normalizeViewportPoint(columnX, rowY, viewport);
+}
+
+export function rectFromQuads(quads) {
+  for (const quad of quads || []) {
+    if (!Array.isArray(quad) || quad.length < 8) continue;
+    const xs = [Number(quad[0]), Number(quad[2]), Number(quad[4]), Number(quad[6])];
+    const ys = [Number(quad[1]), Number(quad[3]), Number(quad[5]), Number(quad[7])];
+    if (![...xs, ...ys].every(Number.isFinite)) continue;
+    const x = Math.min(...xs);
+    const y = Math.min(...ys);
+    const width = Math.max(...xs) - x;
+    const height = Math.max(...ys) - y;
+    if (width > 0 && height > 0) return {x, y, width, height};
+  }
+  return null;
+}
+
+const INVISIBLE_ONLY_TEXT_PATTERN = /[\s\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]/g;
+const SAFE_REMOVABLE_INVISIBLE_TEXT_PATTERN = /[\u200B\u2060\uFEFF]/g;
+
+export function normalizeText(value) {
+  const text = String(value || '');
+  if (!text || text.replace(INVISIBLE_ONLY_TEXT_PATTERN, '') === '') return '';
+  return text
+    .replace(SAFE_REMOVABLE_INVISIBLE_TEXT_PATTERN, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 500);
+}
+
+function isInvisibleOnlyText(value) {
+  const text = String(value || '');
+  return Boolean(text) && text.replace(INVISIBLE_ONLY_TEXT_PATTERN, '') === '';
 }
 
 function waitForTabComplete(tabId, timeout) {

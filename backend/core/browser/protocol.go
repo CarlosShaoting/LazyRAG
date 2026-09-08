@@ -135,6 +135,21 @@ type ClickInput struct {
 	ExpectedRevision int64  `json:"expected_revision,omitempty" jsonschema:"snapshot revision; stale references are rejected"`
 }
 
+type ClickAtInput struct {
+	DeviceID  string  `json:"device_id,omitempty"`
+	SessionID string  `json:"session_id"`
+	X         float64 `json:"x" jsonschema:"horizontal CSS viewport coordinate returned by browser_visual_locate"`
+	Y         float64 `json:"y" jsonschema:"vertical CSS viewport coordinate returned by browser_visual_locate"`
+}
+
+type ClickIntersectionInput struct {
+	DeviceID         string `json:"device_id,omitempty"`
+	SessionID        string `json:"session_id"`
+	RowRef           string `json:"row_ref" jsonschema:"element reference identifying the target row, such as a person name"`
+	ColumnRef        string `json:"column_ref" jsonschema:"element reference identifying the target column, such as a date header"`
+	ExpectedRevision int64  `json:"expected_revision,omitempty" jsonschema:"snapshot revision; stale references are rejected"`
+}
+
 type TypeInput struct {
 	DeviceID         string `json:"device_id,omitempty"`
 	SessionID        string `json:"session_id"`
@@ -142,6 +157,15 @@ type TypeInput struct {
 	Text             string `json:"text"`
 	ExpectedRevision int64  `json:"expected_revision,omitempty"`
 	Replace          bool   `json:"replace,omitempty" jsonschema:"replace existing text instead of appending"`
+	VerifyText       string `json:"verify_text,omitempty" jsonschema:"optional visible text that must appear after typing; use this for document edits"`
+}
+
+type TypeFocusedInput struct {
+	DeviceID   string `json:"device_id,omitempty"`
+	SessionID  string `json:"session_id"`
+	Text       string `json:"text"`
+	Replace    bool   `json:"replace,omitempty" jsonschema:"replace text in the currently focused editable element before typing"`
+	VerifyText string `json:"verify_text,omitempty" jsonschema:"optional visible text that must appear after typing; use this for document edits"`
 }
 
 type SelectInput struct {

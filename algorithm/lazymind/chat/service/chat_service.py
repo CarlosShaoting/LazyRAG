@@ -72,6 +72,7 @@ from lazymind.chat.engine.tools.intent_writer import (
     build_intentwrite_tool,
     render_intent_section,
 )
+from lazymind.chat.engine.tools.browser_vision import build_browser_visual_locate_tool
 from lazymind.chat.engine.tools.skill_listing import build_list_skills_tool
 from lazymind.chat.service.utils import (
     SensitiveFilter,
@@ -84,7 +85,11 @@ from lazymind.chat.service.utils import (
     validate_and_resolve_files,
 )
 from lazyllm.tools.fs.client import FS
-from lazymind.model_config import inject_model_config, summarize_model_config_for_log
+from lazymind.model_config import (
+    inject_model_config,
+    is_model_role_available,
+    summarize_model_config_for_log,
+)
 from lazyllm.tools import inject_env_vars
 from lazymind.chat.engine.tool_auth import inject_tool_config
 from lazyllm import AutoModel
@@ -381,6 +386,26 @@ def _normalize_mcp_tool_names(tools: list, server_name: str) -> list:
     return normalized
 
 
+def _add_browser_visual_tools(tools: list, *, vlm_available: bool) -> list:
+    if not vlm_available:
+        if any(
+            getattr(tool, '_lazymind_mcp_original_name', '') == 'browser.screenshot'
+            for tool in tools
+        ):
+            LOG.info('[BrowserVision] visual locate tool hidden: vlm role unavailable')
+        return tools
+    screenshot_tool = next((
+        tool for tool in tools
+        if getattr(tool, '_lazymind_mcp_original_name', '') == 'browser.screenshot'
+    ), None)
+    if screenshot_tool is None:
+        return tools
+    visual_locate = build_browser_visual_locate_tool(screenshot_tool)
+    visual_locate.__name__ = 'browser_visual_locate'
+    LOG.info('[BrowserVision] visual locate tool exposed: vlm role available')
+    return [*tools, visual_locate]
+
+
 def _load_mcp_server_tools(server: Dict[str, Any]) -> list:
     url = server.get('url')
     if not url:
@@ -402,7 +427,8 @@ def _load_mcp_server_tools(server: Dict[str, Any]) -> list:
         )
         allowed = server.get('allowed_tools') or None
         mcp_tools = client.get_tools(allowed_tools=allowed)
-        mcp_tools = _normalize_mcp_tool_names(mcp_tools, str(server.get('name') or 'mcp'))
+        server_name = str(server.get('name') or 'mcp')
+        mcp_tools = _normalize_mcp_tool_names(mcp_tools, server_name)
         with _mcp_tool_cache_lock:
             _mcp_tool_cache[cache_key] = (time.monotonic(), list(mcp_tools))
         LOG.info(f"[MCP] loaded {len(mcp_tools)} tools from {server.get('name')}")
@@ -1296,6 +1322,10 @@ async def _handle_chat_impl(
         system_mcp_tools = (
             await _build_mcp_tools(runtime.system_mcp_config)
             if runtime.system_mcp_config and not workflow_turn_is_bound else []
+        )
+        system_mcp_tools = _add_browser_visual_tools(
+            system_mcp_tools,
+            vlm_available=is_model_role_available('vlm'),
         )
         user_mcp_tools = (
             await _build_mcp_tools(runtime.mcp_config)
