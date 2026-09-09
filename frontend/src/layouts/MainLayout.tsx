@@ -64,6 +64,7 @@ import UserAgreementConsentModal, {
   useUserAgreementConsentGate,
 } from "@/components/UserAgreementConsentModal";
 import TerminalConnectionQuickPanel from "@/modules/channelGateway/components/TerminalConnectionQuickPanel";
+import WelcomeOnboardingGate from "@/modules/onboarding/WelcomeOnboardingGate";
 import "./index.scss";
 
 const { Content, Sider } = Layout;
@@ -784,7 +785,7 @@ export default function MainLayout() {
     );
   }
 
-  return (
+  const mainLayout = (
     <Layout hasSider className="main-layout">
       <Sider
         width={252}
@@ -1253,5 +1254,14 @@ export default function MainLayout() {
         onAccepted={markAccepted}
       />
     </Layout>
+  );
+
+  return (
+    <WelcomeOnboardingGate
+      enabled={isChatPage && !needsConsent}
+      userKey={userInfo?.userId || userName}
+    >
+      {mainLayout}
+    </WelcomeOnboardingGate>
   );
 }

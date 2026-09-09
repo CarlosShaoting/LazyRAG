@@ -15,6 +15,9 @@ type UserUIPreferences struct {
 	MCPEnabled                    bool      `gorm:"column:mcp_enabled;not null;default:true"`
 	DocumentParsingEnabled        bool      `gorm:"column:document_parsing_enabled;not null;default:true"`
 	PerformanceStatsEnabled       bool      `gorm:"column:performance_stats_enabled;not null;default:false"`
+	WelcomeOnboardingCompleted    bool      `gorm:"column:welcome_onboarding_completed;not null;default:false"`
+	WelcomeIdentity               string    `gorm:"column:welcome_identity;type:varchar(64);not null;default:''"`
+	WelcomeTasks                  RawJSON   `gorm:"column:welcome_tasks;type:json;not null;default:'[]'"`
 	CreatedAt                     time.Time `gorm:"column:created_at;not null"`
 	UpdatedAt                     time.Time `gorm:"column:updated_at;not null"`
 }

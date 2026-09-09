@@ -43,6 +43,15 @@ func TestUserConfigModelsAutoMigrate(t *testing.T) {
 	if !db.Migrator().HasColumn(&UserUIPreferences{}, "performance_stats_enabled") {
 		t.Fatal("expected user_ui_preferences.performance_stats_enabled column")
 	}
+	if !db.Migrator().HasColumn(&UserUIPreferences{}, "welcome_onboarding_completed") {
+		t.Fatal("expected user_ui_preferences.welcome_onboarding_completed column")
+	}
+	if !db.Migrator().HasColumn(&UserUIPreferences{}, "welcome_identity") {
+		t.Fatal("expected user_ui_preferences.welcome_identity column")
+	}
+	if !db.Migrator().HasColumn(&UserUIPreferences{}, "welcome_tasks") {
+		t.Fatal("expected user_ui_preferences.welcome_tasks column")
+	}
 }
 
 func TestConversationThinkingDepthAutoMigrate(t *testing.T) {

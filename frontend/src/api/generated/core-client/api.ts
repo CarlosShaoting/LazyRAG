@@ -3747,6 +3747,9 @@ export interface UserUIPreferencesOpenAPIResponse {
     'document_parsing_enabled': boolean;
     'mcp_enabled': boolean;
     'performance_stats_enabled': boolean;
+    'welcome_onboarding_completed': boolean;
+    'welcome_identity': string;
+    'welcome_tasks'?: Array<string>;
     'schedules_enabled': boolean;
     'sensitive_word_filter_enabled': boolean;
     'skills_enabled': boolean;
@@ -3762,6 +3765,12 @@ export interface UserUIPreferencesPatchOpenAPIRequest {
     'document_parsing_enabled'?: boolean;
     'mcp_enabled'?: boolean;
     'performance_stats_enabled'?: boolean;
+    'welcome_onboarding_completed'?: boolean;
+    /**
+     * Optional onboarding identity key; accepted values are validated by the endpoint
+     */
+    'welcome_identity'?: string;
+    'welcome_tasks'?: Array<string>;
     'schedules_enabled'?: boolean;
     'sensitive_word_filter_enabled'?: boolean;
     'skills_enabled'?: boolean;

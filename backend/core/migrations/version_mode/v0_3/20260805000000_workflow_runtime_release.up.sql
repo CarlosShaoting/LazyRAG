@@ -47,6 +47,13 @@ ALTER TABLE user_ui_preferences
     ADD COLUMN IF NOT EXISTS sensitive_word_filter_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE user_ui_preferences
     ADD COLUMN IF NOT EXISTS performance_stats_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE user_ui_preferences
+    ADD COLUMN IF NOT EXISTS welcome_onboarding_completed BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE user_ui_preferences
+    ADD COLUMN IF NOT EXISTS welcome_identity VARCHAR(64) NOT NULL DEFAULT '';
+ALTER TABLE user_ui_preferences
+    ADD COLUMN IF NOT EXISTS welcome_tasks JSONB NOT NULL DEFAULT '[]'::jsonb;
+UPDATE user_ui_preferences SET welcome_onboarding_completed = TRUE;
 ALTER TABLE sub_agent_tasks
     ADD COLUMN IF NOT EXISTS sources JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE sub_agent_tasks
@@ -73,6 +80,10 @@ UPDATE user_ui_preferences SET workflows_enabled = skills_enabled;
 ALTER TABLE user_ui_preferences ADD COLUMN document_parsing_enabled BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE user_ui_preferences ADD COLUMN sensitive_word_filter_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE user_ui_preferences ADD COLUMN performance_stats_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE user_ui_preferences ADD COLUMN welcome_onboarding_completed BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE user_ui_preferences ADD COLUMN welcome_identity VARCHAR(64) NOT NULL DEFAULT '';
+ALTER TABLE user_ui_preferences ADD COLUMN welcome_tasks JSON NOT NULL DEFAULT '[]';
+UPDATE user_ui_preferences SET welcome_onboarding_completed = TRUE;
 ALTER TABLE sub_agent_tasks ADD COLUMN sources JSON NOT NULL DEFAULT '[]';
 ALTER TABLE sub_agent_tasks ADD COLUMN writing_subtasks JSON NOT NULL DEFAULT '[]';
 

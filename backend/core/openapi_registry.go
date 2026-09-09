@@ -2212,33 +2212,39 @@ type userChatSettingsOpenAPIResponse struct {
 }
 
 type userUIPreferencesPatchOpenAPIRequest struct {
-	ChatPreferenceNoticeDismissed *bool   `json:"chat_preference_notice_dismissed,omitempty"`
-	DeveloperModeActive           *bool   `json:"developer_mode_active,omitempty"`
-	SensitiveWordFilterEnabled    *bool   `json:"sensitive_word_filter_enabled,omitempty"`
-	AcceptedUserAgreementVersion  *string `json:"accepted_user_agreement_version,omitempty"`
-	TaskCenterEnabled             *bool   `json:"task_center_enabled,omitempty"`
-	SchedulesEnabled              *bool   `json:"schedules_enabled,omitempty"`
-	SkillsEnabled                 *bool   `json:"skills_enabled,omitempty"`
-	WorkflowsEnabled              *bool   `json:"workflows_enabled,omitempty"`
-	MCPEnabled                    *bool   `json:"mcp_enabled,omitempty"`
-	DocumentParsingEnabled        *bool   `json:"document_parsing_enabled,omitempty"`
-	PerformanceStatsEnabled       *bool   `json:"performance_stats_enabled,omitempty"`
+	ChatPreferenceNoticeDismissed *bool     `json:"chat_preference_notice_dismissed,omitempty"`
+	DeveloperModeActive           *bool     `json:"developer_mode_active,omitempty"`
+	SensitiveWordFilterEnabled    *bool     `json:"sensitive_word_filter_enabled,omitempty"`
+	AcceptedUserAgreementVersion  *string   `json:"accepted_user_agreement_version,omitempty"`
+	TaskCenterEnabled             *bool     `json:"task_center_enabled,omitempty"`
+	SchedulesEnabled              *bool     `json:"schedules_enabled,omitempty"`
+	SkillsEnabled                 *bool     `json:"skills_enabled,omitempty"`
+	WorkflowsEnabled              *bool     `json:"workflows_enabled,omitempty"`
+	MCPEnabled                    *bool     `json:"mcp_enabled,omitempty"`
+	DocumentParsingEnabled        *bool     `json:"document_parsing_enabled,omitempty"`
+	PerformanceStatsEnabled       *bool     `json:"performance_stats_enabled,omitempty"`
+	WelcomeOnboardingCompleted    *bool     `json:"welcome_onboarding_completed,omitempty"`
+	WelcomeIdentity               *string   `json:"welcome_identity,omitempty" desc:"Optional onboarding identity key; accepted values are validated by the endpoint"`
+	WelcomeTasks                  *[]string `json:"welcome_tasks,omitempty"`
 }
 
 type userUIPreferencesOpenAPIResponse struct {
-	ChatPreferenceNoticeDismissed bool   `json:"chat_preference_notice_dismissed"`
-	DeveloperModeActive           bool   `json:"developer_mode_active"`
-	SensitiveWordFilterEnabled    bool   `json:"sensitive_word_filter_enabled"`
-	AcceptedUserAgreementVersion  string `json:"accepted_user_agreement_version"`
-	TaskCenterEnabled             bool   `json:"task_center_enabled"`
-	SchedulesEnabled              bool   `json:"schedules_enabled"`
-	SkillsEnabled                 bool   `json:"skills_enabled"`
-	WorkflowsEnabled              bool   `json:"workflows_enabled"`
-	MCPEnabled                    bool   `json:"mcp_enabled"`
-	DocumentParsingEnabled        bool   `json:"document_parsing_enabled"`
-	PerformanceStatsEnabled       bool   `json:"performance_stats_enabled"`
-	UserPreferenceConfigured      bool   `json:"user_preference_configured"`
-	UpdatedAt                     string `json:"updated_at"`
+	ChatPreferenceNoticeDismissed bool     `json:"chat_preference_notice_dismissed"`
+	DeveloperModeActive           bool     `json:"developer_mode_active"`
+	SensitiveWordFilterEnabled    bool     `json:"sensitive_word_filter_enabled"`
+	AcceptedUserAgreementVersion  string   `json:"accepted_user_agreement_version"`
+	TaskCenterEnabled             bool     `json:"task_center_enabled"`
+	SchedulesEnabled              bool     `json:"schedules_enabled"`
+	SkillsEnabled                 bool     `json:"skills_enabled"`
+	WorkflowsEnabled              bool     `json:"workflows_enabled"`
+	MCPEnabled                    bool     `json:"mcp_enabled"`
+	DocumentParsingEnabled        bool     `json:"document_parsing_enabled"`
+	PerformanceStatsEnabled       bool     `json:"performance_stats_enabled"`
+	WelcomeOnboardingCompleted    bool     `json:"welcome_onboarding_completed"`
+	WelcomeIdentity               string   `json:"welcome_identity"`
+	WelcomeTasks                  []string `json:"welcome_tasks"`
+	UserPreferenceConfigured      bool     `json:"user_preference_configured"`
+	UpdatedAt                     string   `json:"updated_at"`
 }
 
 type settingsFeatureControlsOpenAPIResponse struct {

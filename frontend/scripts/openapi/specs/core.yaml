@@ -8188,6 +8188,14 @@ components:
                     type: boolean
                 performance_stats_enabled:
                     type: boolean
+                welcome_onboarding_completed:
+                    type: boolean
+                welcome_identity:
+                    type: string
+                welcome_tasks:
+                    items:
+                        type: string
+                    type: array
                 schedules_enabled:
                     type: boolean
                 sensitive_word_filter_enabled:
@@ -8209,6 +8217,8 @@ components:
                 - document_parsing_enabled
                 - mcp_enabled
                 - performance_stats_enabled
+                - welcome_onboarding_completed
+                - welcome_identity
                 - schedules_enabled
                 - sensitive_word_filter_enabled
                 - skills_enabled
@@ -8231,6 +8241,15 @@ components:
                     type: boolean
                 performance_stats_enabled:
                     type: boolean
+                welcome_onboarding_completed:
+                    type: boolean
+                welcome_identity:
+                    description: Optional onboarding identity key; accepted values are validated by the endpoint
+                    type: string
+                welcome_tasks:
+                    items:
+                        type: string
+                    type: array
                 schedules_enabled:
                     type: boolean
                 sensitive_word_filter_enabled:

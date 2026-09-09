@@ -1,4 +1,5 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -83,6 +84,10 @@ vi.mock("@/components/UserAgreementConsentModal", () => ({
 
 vi.mock("@/modules/channelGateway/components/TerminalConnectionQuickPanel", () => ({
   default: () => null,
+}));
+
+vi.mock("@/modules/onboarding/WelcomeOnboardingGate", () => ({
+  default: ({ children }: { children: ReactNode }) => children,
 }));
 
 vi.mock("@/modules/chat/components/RecordList", async () => {

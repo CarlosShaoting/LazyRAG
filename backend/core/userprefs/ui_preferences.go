@@ -21,33 +21,64 @@ import (
 )
 
 type uiPreferencesResponse struct {
-	ChatPreferenceNoticeDismissed bool   `json:"chat_preference_notice_dismissed"`
-	DeveloperModeActive           bool   `json:"developer_mode_active"`
-	SensitiveWordFilterEnabled    bool   `json:"sensitive_word_filter_enabled"`
-	AcceptedUserAgreementVersion  string `json:"accepted_user_agreement_version"`
-	TaskCenterEnabled             bool   `json:"task_center_enabled"`
-	SchedulesEnabled              bool   `json:"schedules_enabled"`
-	SkillsEnabled                 bool   `json:"skills_enabled"`
-	WorkflowsEnabled              bool   `json:"workflows_enabled"`
-	MCPEnabled                    bool   `json:"mcp_enabled"`
-	DocumentParsingEnabled        bool   `json:"document_parsing_enabled"`
-	PerformanceStatsEnabled       bool   `json:"performance_stats_enabled"`
-	UserPreferenceConfigured      bool   `json:"user_preference_configured"`
-	UpdatedAt                     string `json:"updated_at"`
+	ChatPreferenceNoticeDismissed bool     `json:"chat_preference_notice_dismissed"`
+	DeveloperModeActive           bool     `json:"developer_mode_active"`
+	SensitiveWordFilterEnabled    bool     `json:"sensitive_word_filter_enabled"`
+	AcceptedUserAgreementVersion  string   `json:"accepted_user_agreement_version"`
+	TaskCenterEnabled             bool     `json:"task_center_enabled"`
+	SchedulesEnabled              bool     `json:"schedules_enabled"`
+	SkillsEnabled                 bool     `json:"skills_enabled"`
+	WorkflowsEnabled              bool     `json:"workflows_enabled"`
+	MCPEnabled                    bool     `json:"mcp_enabled"`
+	DocumentParsingEnabled        bool     `json:"document_parsing_enabled"`
+	PerformanceStatsEnabled       bool     `json:"performance_stats_enabled"`
+	WelcomeOnboardingCompleted    bool     `json:"welcome_onboarding_completed"`
+	WelcomeIdentity               string   `json:"welcome_identity"`
+	WelcomeTasks                  []string `json:"welcome_tasks"`
+	UserPreferenceConfigured      bool     `json:"user_preference_configured"`
+	UpdatedAt                     string   `json:"updated_at"`
 }
 
 type uiPreferencesPatchRequest struct {
-	ChatPreferenceNoticeDismissed *bool   `json:"chat_preference_notice_dismissed"`
-	DeveloperModeActive           *bool   `json:"developer_mode_active"`
-	SensitiveWordFilterEnabled    *bool   `json:"sensitive_word_filter_enabled"`
-	AcceptedUserAgreementVersion  *string `json:"accepted_user_agreement_version"`
-	TaskCenterEnabled             *bool   `json:"task_center_enabled"`
-	SchedulesEnabled              *bool   `json:"schedules_enabled"`
-	SkillsEnabled                 *bool   `json:"skills_enabled"`
-	WorkflowsEnabled              *bool   `json:"workflows_enabled"`
-	MCPEnabled                    *bool   `json:"mcp_enabled"`
-	DocumentParsingEnabled        *bool   `json:"document_parsing_enabled"`
-	PerformanceStatsEnabled       *bool   `json:"performance_stats_enabled"`
+	ChatPreferenceNoticeDismissed *bool     `json:"chat_preference_notice_dismissed"`
+	DeveloperModeActive           *bool     `json:"developer_mode_active"`
+	SensitiveWordFilterEnabled    *bool     `json:"sensitive_word_filter_enabled"`
+	AcceptedUserAgreementVersion  *string   `json:"accepted_user_agreement_version"`
+	TaskCenterEnabled             *bool     `json:"task_center_enabled"`
+	SchedulesEnabled              *bool     `json:"schedules_enabled"`
+	SkillsEnabled                 *bool     `json:"skills_enabled"`
+	WorkflowsEnabled              *bool     `json:"workflows_enabled"`
+	MCPEnabled                    *bool     `json:"mcp_enabled"`
+	DocumentParsingEnabled        *bool     `json:"document_parsing_enabled"`
+	PerformanceStatsEnabled       *bool     `json:"performance_stats_enabled"`
+	WelcomeOnboardingCompleted    *bool     `json:"welcome_onboarding_completed"`
+	WelcomeIdentity               *string   `json:"welcome_identity"`
+	WelcomeTasks                  *[]string `json:"welcome_tasks"`
+}
+
+var allowedWelcomeIdentities = map[string]struct{}{
+	"":                       {},
+	"product_operations":     {},
+	"engineering_technology": {},
+	"design_creative":        {},
+	"marketing_content":      {},
+	"sales_customer_service": {},
+	"management_function":    {},
+	"student_researcher":     {},
+	"general_office":         {},
+	"other":                  {},
+	"prefer_not_to_say":      {},
+}
+
+var allowedWelcomeTasks = map[string]struct{}{
+	"daily_qa_writing":                     {},
+	"summary_translation":                  {},
+	"deep_analysis_research":               {},
+	"documents_presentations_spreadsheets": {},
+	"data_analysis_processing":             {},
+	"image_generation_design":              {},
+	"knowledge_enterprise_qa":              {},
+	"other":                                {},
 }
 
 func GetUIPreferences(w http.ResponseWriter, r *http.Request) {
@@ -102,9 +133,37 @@ func PatchUIPreferences(w http.ResponseWriter, r *http.Request) {
 		req.WorkflowsEnabled == nil &&
 		req.MCPEnabled == nil &&
 		req.DocumentParsingEnabled == nil &&
-		req.PerformanceStatsEnabled == nil {
+		req.PerformanceStatsEnabled == nil &&
+		req.WelcomeOnboardingCompleted == nil &&
+		req.WelcomeIdentity == nil &&
+		req.WelcomeTasks == nil {
 		common.ReplyErr(w, "no valid fields to update", http.StatusBadRequest)
 		return
+	}
+	if req.WelcomeIdentity != nil {
+		identity := strings.TrimSpace(*req.WelcomeIdentity)
+		if _, ok := allowedWelcomeIdentities[identity]; !ok {
+			common.ReplyErr(w, "invalid body", http.StatusBadRequest)
+			return
+		}
+		*req.WelcomeIdentity = identity
+	}
+	if req.WelcomeTasks != nil {
+		seen := make(map[string]struct{}, len(*req.WelcomeTasks))
+		normalized := make([]string, 0, len(*req.WelcomeTasks))
+		for _, task := range *req.WelcomeTasks {
+			task = strings.TrimSpace(task)
+			if _, ok := allowedWelcomeTasks[task]; !ok {
+				common.ReplyErr(w, "invalid body", http.StatusBadRequest)
+				return
+			}
+			if _, duplicate := seen[task]; duplicate {
+				continue
+			}
+			seen[task] = struct{}{}
+			normalized = append(normalized, task)
+		}
+		*req.WelcomeTasks = normalized
 	}
 
 	currentControls, err := settings.LoadFeatureControls(r.Context(), db, userID)
@@ -206,6 +265,7 @@ func LoadUserUIPreferences(ctx context.Context, db *gorm.DB, userID string) (orm
 			MCPEnabled:              true,
 			DocumentParsingEnabled:  true,
 			PerformanceStatsEnabled: false,
+			WelcomeTasks:            orm.RawJSON("[]"),
 		}, nil
 	}
 	return row, err
@@ -227,6 +287,7 @@ func UpsertUserUIPreferences(ctx context.Context, db *gorm.DB, userID string, re
 			MCPEnabled:              true,
 			DocumentParsingEnabled:  true,
 			PerformanceStatsEnabled: false,
+			WelcomeTasks:            orm.RawJSON("[]"),
 			CreatedAt:               now,
 			UpdatedAt:               now,
 		}
@@ -263,6 +324,16 @@ func UpsertUserUIPreferences(ctx context.Context, db *gorm.DB, userID string, re
 		if req.PerformanceStatsEnabled != nil {
 			row.PerformanceStatsEnabled = *req.PerformanceStatsEnabled
 		}
+		if req.WelcomeOnboardingCompleted != nil {
+			row.WelcomeOnboardingCompleted = *req.WelcomeOnboardingCompleted
+		}
+		if req.WelcomeIdentity != nil {
+			row.WelcomeIdentity = *req.WelcomeIdentity
+		}
+		if req.WelcomeTasks != nil {
+			encoded, _ := json.Marshal(*req.WelcomeTasks)
+			row.WelcomeTasks = orm.RawJSON(encoded)
+		}
 		// Feature controls default to true. Map-based create preserves an explicit
 		// false from a first-time user instead of applying GORM's model default.
 		if err := db.WithContext(ctx).Model(&orm.UserUIPreferences{}).Create(map[string]any{
@@ -278,6 +349,9 @@ func UpsertUserUIPreferences(ctx context.Context, db *gorm.DB, userID string, re
 			"mcp_enabled":                      row.MCPEnabled,
 			"document_parsing_enabled":         row.DocumentParsingEnabled,
 			"performance_stats_enabled":        row.PerformanceStatsEnabled,
+			"welcome_onboarding_completed":     row.WelcomeOnboardingCompleted,
+			"welcome_identity":                 row.WelcomeIdentity,
+			"welcome_tasks":                    row.WelcomeTasks,
 			"created_at":                       row.CreatedAt,
 			"updated_at":                       row.UpdatedAt,
 		}).Error; err != nil {
@@ -335,6 +409,19 @@ func UpsertUserUIPreferences(ctx context.Context, db *gorm.DB, userID string, re
 		updates["performance_stats_enabled"] = *req.PerformanceStatsEnabled
 		row.PerformanceStatsEnabled = *req.PerformanceStatsEnabled
 	}
+	if req.WelcomeOnboardingCompleted != nil {
+		updates["welcome_onboarding_completed"] = *req.WelcomeOnboardingCompleted
+		row.WelcomeOnboardingCompleted = *req.WelcomeOnboardingCompleted
+	}
+	if req.WelcomeIdentity != nil {
+		updates["welcome_identity"] = *req.WelcomeIdentity
+		row.WelcomeIdentity = *req.WelcomeIdentity
+	}
+	if req.WelcomeTasks != nil {
+		encoded, _ := json.Marshal(*req.WelcomeTasks)
+		updates["welcome_tasks"] = orm.RawJSON(encoded)
+		row.WelcomeTasks = orm.RawJSON(encoded)
+	}
 	if err := db.WithContext(ctx).Model(&orm.UserUIPreferences{}).
 		Where("user_id = ?", userID).
 		Updates(updates).Error; err != nil {
@@ -368,6 +455,10 @@ func buildUIPreferencesResponse(row orm.UserUIPreferences, userPreferenceConfigu
 	if !row.UpdatedAt.IsZero() {
 		updatedAt = row.UpdatedAt.Format(time.RFC3339Nano)
 	}
+	welcomeTasks := make([]string, 0)
+	if len(row.WelcomeTasks) > 0 {
+		_ = json.Unmarshal(row.WelcomeTasks, &welcomeTasks)
+	}
 	return uiPreferencesResponse{
 		ChatPreferenceNoticeDismissed: row.ChatPreferenceNoticeDismissed,
 		DeveloperModeActive:           row.DeveloperModeActive,
@@ -380,6 +471,9 @@ func buildUIPreferencesResponse(row orm.UserUIPreferences, userPreferenceConfigu
 		MCPEnabled:                    row.MCPEnabled,
 		DocumentParsingEnabled:        row.DocumentParsingEnabled,
 		PerformanceStatsEnabled:       row.PerformanceStatsEnabled,
+		WelcomeOnboardingCompleted:    row.WelcomeOnboardingCompleted,
+		WelcomeIdentity:               row.WelcomeIdentity,
+		WelcomeTasks:                  welcomeTasks,
 		UserPreferenceConfigured:      userPreferenceConfigured,
 		UpdatedAt:                     updatedAt,
 	}

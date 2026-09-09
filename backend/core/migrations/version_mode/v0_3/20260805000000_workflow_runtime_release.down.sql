@@ -61,6 +61,9 @@ ALTER TABLE conversations
     DROP COLUMN IF EXISTS thinking_depth,
     DROP COLUMN IF EXISTS chat_executor;
 ALTER TABLE user_ui_preferences
+    DROP COLUMN IF EXISTS welcome_tasks,
+    DROP COLUMN IF EXISTS welcome_identity,
+    DROP COLUMN IF EXISTS welcome_onboarding_completed,
     DROP COLUMN IF EXISTS performance_stats_enabled,
     DROP COLUMN IF EXISTS sensitive_word_filter_enabled,
     DROP COLUMN IF EXISTS document_parsing_enabled,
@@ -227,6 +230,9 @@ DROP TABLE IF EXISTS agent_invocations;
 ALTER TABLE conversations DROP COLUMN thinking_depth;
 ALTER TABLE conversations DROP COLUMN chat_executor;
 ALTER TABLE user_ui_preferences DROP COLUMN performance_stats_enabled;
+ALTER TABLE user_ui_preferences DROP COLUMN welcome_tasks;
+ALTER TABLE user_ui_preferences DROP COLUMN welcome_identity;
+ALTER TABLE user_ui_preferences DROP COLUMN welcome_onboarding_completed;
 ALTER TABLE user_ui_preferences DROP COLUMN sensitive_word_filter_enabled;
 ALTER TABLE user_ui_preferences DROP COLUMN document_parsing_enabled;
 ALTER TABLE user_ui_preferences DROP COLUMN workflows_enabled;

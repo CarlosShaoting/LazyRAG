@@ -17,19 +17,22 @@ type uiPreferencesAPITestResponse struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 	Data    struct {
-		ChatPreferenceNoticeDismissed bool   `json:"chat_preference_notice_dismissed"`
-		DeveloperModeActive           bool   `json:"developer_mode_active"`
-		SensitiveWordFilterEnabled    bool   `json:"sensitive_word_filter_enabled"`
-		AcceptedUserAgreementVersion  string `json:"accepted_user_agreement_version"`
-		TaskCenterEnabled             bool   `json:"task_center_enabled"`
-		SchedulesEnabled              bool   `json:"schedules_enabled"`
-		SkillsEnabled                 bool   `json:"skills_enabled"`
-		WorkflowsEnabled              bool   `json:"workflows_enabled"`
-		MCPEnabled                    bool   `json:"mcp_enabled"`
-		DocumentParsingEnabled        bool   `json:"document_parsing_enabled"`
-		PerformanceStatsEnabled       bool   `json:"performance_stats_enabled"`
-		UserPreferenceConfigured      bool   `json:"user_preference_configured"`
-		UpdatedAt                     string `json:"updated_at"`
+		ChatPreferenceNoticeDismissed bool     `json:"chat_preference_notice_dismissed"`
+		DeveloperModeActive           bool     `json:"developer_mode_active"`
+		SensitiveWordFilterEnabled    bool     `json:"sensitive_word_filter_enabled"`
+		AcceptedUserAgreementVersion  string   `json:"accepted_user_agreement_version"`
+		TaskCenterEnabled             bool     `json:"task_center_enabled"`
+		SchedulesEnabled              bool     `json:"schedules_enabled"`
+		SkillsEnabled                 bool     `json:"skills_enabled"`
+		WorkflowsEnabled              bool     `json:"workflows_enabled"`
+		MCPEnabled                    bool     `json:"mcp_enabled"`
+		DocumentParsingEnabled        bool     `json:"document_parsing_enabled"`
+		PerformanceStatsEnabled       bool     `json:"performance_stats_enabled"`
+		WelcomeOnboardingCompleted    bool     `json:"welcome_onboarding_completed"`
+		WelcomeIdentity               string   `json:"welcome_identity"`
+		WelcomeTasks                  []string `json:"welcome_tasks"`
+		UserPreferenceConfigured      bool     `json:"user_preference_configured"`
+		UpdatedAt                     string   `json:"updated_at"`
 	} `json:"data"`
 }
 
@@ -134,6 +137,67 @@ func TestPatchUIPreferencesPreservesOtherFeatureControls(t *testing.T) {
 	if thirdRec.Code != http.StatusOK || thirdResp.Data.TaskCenterEnabled || thirdResp.Data.SchedulesEnabled || thirdResp.Data.MCPEnabled || thirdResp.Data.SkillsEnabled ||
 		!thirdResp.Data.WorkflowsEnabled || !thirdResp.Data.DocumentParsingEnabled {
 		t.Fatalf("schedules control should patch independently, got %#v status=%d", thirdResp.Data, thirdRec.Code)
+	}
+}
+
+func TestWelcomeOnboardingPreferencesRoundTrip(t *testing.T) {
+	db := newUIPreferencesTestDB(t)
+	store.Init(db.DB, nil, nil)
+	t.Cleanup(func() { store.Init(nil, nil, nil) })
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/core/user/ui-preferences", nil)
+	getReq.Header.Set("X-User-Id", "new-user")
+	getRec := httptest.NewRecorder()
+	GetUIPreferences(getRec, getReq)
+	defaults := decodeUIPreferencesResponse(t, getRec)
+	if getRec.Code != http.StatusOK || defaults.Data.WelcomeOnboardingCompleted || defaults.Data.WelcomeIdentity != "" || len(defaults.Data.WelcomeTasks) != 0 {
+		t.Fatalf("unexpected welcome defaults: status=%d data=%#v", getRec.Code, defaults.Data)
+	}
+
+	patchReq := httptest.NewRequest(
+		http.MethodPatch,
+		"/api/core/user/ui-preferences",
+		strings.NewReader(`{"welcome_onboarding_completed":true,"welcome_identity":"engineering_technology","welcome_tasks":["deep_analysis_research","data_analysis_processing","deep_analysis_research"]}`),
+	)
+	patchReq.Header.Set("Content-Type", "application/json")
+	patchReq.Header.Set("X-User-Id", "new-user")
+	patchRec := httptest.NewRecorder()
+	PatchUIPreferences(patchRec, patchReq)
+	updated := decodeUIPreferencesResponse(t, patchRec)
+	if patchRec.Code != http.StatusOK || !updated.Data.WelcomeOnboardingCompleted || updated.Data.WelcomeIdentity != "engineering_technology" {
+		t.Fatalf("unexpected welcome patch response: status=%d data=%#v", patchRec.Code, updated.Data)
+	}
+	wantTasks := []string{"deep_analysis_research", "data_analysis_processing"}
+	if len(updated.Data.WelcomeTasks) != len(wantTasks) || updated.Data.WelcomeTasks[0] != wantTasks[0] || updated.Data.WelcomeTasks[1] != wantTasks[1] {
+		t.Fatalf("welcome tasks = %#v, want %#v", updated.Data.WelcomeTasks, wantTasks)
+	}
+
+	var row orm.UserUIPreferences
+	if err := db.Where("user_id = ?", "new-user").Take(&row).Error; err != nil {
+		t.Fatalf("load persisted welcome preferences: %v", err)
+	}
+	if string(row.WelcomeTasks) != `["deep_analysis_research","data_analysis_processing"]` {
+		t.Fatalf("persisted welcome tasks = %s", row.WelcomeTasks)
+	}
+}
+
+func TestWelcomeOnboardingPreferencesRejectInvalidValues(t *testing.T) {
+	db := newUIPreferencesTestDB(t)
+	store.Init(db.DB, nil, nil)
+	t.Cleanup(func() { store.Init(nil, nil, nil) })
+
+	for _, body := range []string{
+		`{"welcome_identity":"unknown_role"}`,
+		`{"welcome_tasks":["unknown_task"]}`,
+	} {
+		req := httptest.NewRequest(http.MethodPatch, "/api/core/user/ui-preferences", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-User-Id", "new-user")
+		rec := httptest.NewRecorder()
+		PatchUIPreferences(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("patch %s: status=%d body=%s", body, rec.Code, rec.Body.String())
+		}
 	}
 }
 
