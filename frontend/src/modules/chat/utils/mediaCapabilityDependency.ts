@@ -15,6 +15,44 @@ export interface MediaCapabilityDependencyDetail {
   required: string[];
   missing: MissingMediaCapability[];
   message: string;
+  failure_id?: string;
+  conversation_id?: string;
+}
+
+const MODEL_CAPABILITY_TARGETS: Record<string, string> = {
+  image_generator: "image_generator",
+  image_editor: "image_editor",
+  video_generator: "video_generator",
+};
+
+export function buildCapabilitySettingsUrl(
+  capability: Pick<MissingMediaCapability, "id" | "settings_url">,
+  returnTo?: string,
+): string {
+  const url = new URL(capability.settings_url, window.location.origin);
+  if (
+    url.pathname === "/settings" &&
+    url.searchParams.get("section") === "models" &&
+    !url.searchParams.has("target")
+  ) {
+    const target = MODEL_CAPABILITY_TARGETS[capability.id];
+    if (target) url.searchParams.set("target", target);
+  }
+  if (returnTo?.startsWith("/") && !returnTo.startsWith("//")) {
+    url.searchParams.set("return_to", returnTo);
+  }
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
+export function mediaCapabilityDependencySignature(
+  detail: MediaCapabilityDependencyDetail,
+): string {
+  if (detail.failure_id) return detail.failure_id;
+  return [
+    detail.conversation_id || "",
+    detail.workflow,
+    ...detail.missing.map((item) => item.id).sort(),
+  ].join("|");
 }
 
 function objectFromMarker(text: string): Record<string, unknown> | null {
@@ -111,6 +149,12 @@ export function parseMediaCapabilityDependency(
         : [],
       missing,
       message: String(payload.message || ""),
+      failure_id: typeof payload.failure_id === "string"
+        ? payload.failure_id
+        : undefined,
+      conversation_id: typeof payload.conversation_id === "string"
+        ? payload.conversation_id
+        : undefined,
     };
   }
   return null;

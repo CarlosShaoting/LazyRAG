@@ -931,7 +931,30 @@ _CAPABILITY_ALLOW_CUES = re.compile(
 )
 _TOOL_CAPABILITY_TERMS: dict[str, tuple[str, ...]] = {
     'kb': ('知识库', '资料库', 'knowledge base'),
+    'image_generator': (
+        '生成图片', '生成一张', '生成照片', '画一张', '绘图', '文生图',
+        'generate an image', 'generate a photo', 'create an image', 'draw a',
+    ),
+    'image_editor': (
+        '编辑图片', '修改图片', '改图', '图片编辑',
+        'edit an image', 'edit the image', 'modify the image',
+    ),
+    'video_generator': (
+        '生成视频', '文生视频', '做一个视频',
+        'generate a video', 'create a video',
+    ),
 }
+
+_ON_DEMAND_MODEL_TOOLS = frozenset({
+    'image_generator',
+    'image_editor',
+    'video_generator',
+})
+
+
+def _capability_is_mentioned(query: str, terms: tuple[str, ...]) -> bool:
+    lowered = query.lower()
+    return any(term.lower() in lowered for term in terms)
 
 
 def _capability_is_denied(query: str, terms: tuple[str, ...]) -> bool:
@@ -964,7 +987,12 @@ def filter_tools(
         if terms and user_query and _capability_is_denied(user_query, terms):
             continue
         if not tool_is_active(cfg):
-            continue
+            if not (
+                cfg.name in _ON_DEMAND_MODEL_TOOLS
+                and terms
+                and _capability_is_mentioned(user_query, terms)
+            ):
+                continue
         result.append(cfg)
     return result
 

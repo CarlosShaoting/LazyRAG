@@ -102,6 +102,7 @@ interface MessageListProps {
   forkPending?: boolean;
   messageList: any[];
   initialCard?: React.ReactNode;
+  capabilityConfigCard?: React.ReactNode;
   sendMessage: (
     text: string,
     clearInput?: boolean,
@@ -263,6 +264,7 @@ const MessageList: React.FC<MessageListProps> = ({
   forkPending,
   messageList,
   initialCard,
+  capabilityConfigCard,
   sendMessage,
   regenerate,
   regenerateDisabled = false,
@@ -563,6 +565,8 @@ const MessageList: React.FC<MessageListProps> = ({
             </div>
           );
         })}
+
+      {capabilityConfigCard}
 
       {messageList.length === 0 && initialCard}
       {footer}

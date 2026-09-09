@@ -27,6 +27,7 @@ import ChatMessageContent from "./components/ChatMessageContent";
 import ScrollToBottomButton from "./components/ScrollToBottomButton";
 import ConversationTrail from "./components/ConversationTrail";
 import StreamRecoveryBanner from "./components/StreamRecoveryBanner";
+import CapabilityConfigCard from "../CapabilityConfigCard";
 import { useChatConversation } from "./hooks/useChatConversation";
 import { useCiteMessagesInput } from "./hooks/useCiteMessagesInput";
 import { useThinkingCollapse } from "./hooks/useThinkingCollapse";
@@ -520,6 +521,22 @@ const ChatContainerComponent = forwardRef<ChatImperativeProps, ChatContainerProp
               forkPending={props.forkPending}
               messageList={conversation.messageList}
               initialCard={initialCard}
+              capabilityConfigCard={(
+                <CapabilityConfigCard
+                  detail={conversation.mediaCapabilityDependency}
+                  continueDisabled={
+                    !canChat ||
+                    conversation.loading ||
+                    conversation.isStreaming ||
+                    conversation.runtimeWaiting ||
+                    modelSelectionSaving
+                  }
+                  onContinue={() => {
+                    setSourcePanelSources([]);
+                    void conversation.continueAfterMediaCapabilityConfiguration();
+                  }}
+                />
+              )}
               sendMessage={(text, clearInput, extras) => {
                 return sendMessage({ text, clearInput, ...(extras ?? {}) });
               }}

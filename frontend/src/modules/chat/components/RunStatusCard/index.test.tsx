@@ -50,8 +50,14 @@ describe("RunStatusCard", () => {
       partial_output: false,
     }} />);
 
-    expect(screen.getByText("chat.runStatus.failed")).toBeInTheDocument();
-    expect(screen.getByText(new RegExp(`chat\\.runStatus\\.codes\\.${code}`))).toBeInTheDocument();
+    const isCredentialFailure = code === "authentication_failed"
+      || code === "permission_denied";
+    expect(screen.getByText(isCredentialFailure
+      ? "chat.apiKeyUnavailableTitle"
+      : "chat.runStatus.failed")).toBeInTheDocument();
+    expect(screen.getByText(isCredentialFailure
+      ? /chat\.apiKeyUnavailableDescription/
+      : new RegExp(`chat\\.runStatus\\.codes\\.${code}`))).toBeInTheDocument();
     expect(screen.getByText(/chat\.runStatus\.noOutput/)).toBeInTheDocument();
   });
 
@@ -143,15 +149,24 @@ describe("RunStatusCard", () => {
     window.removeEventListener(CHAT_OPEN_MODEL_SELECTOR_EVENT, listener);
   });
 
-  it("links credential failures to model settings", () => {
+  it("links credential failures to model settings and waits for manual continuation", () => {
+    const onRetry = vi.fn();
     render(<RunStatusCard terminal={{
       status: "failed",
       reason: "model_failure",
       code: "authentication_failed",
       partial_output: false,
-    }} />);
+    }} conversationId="conversation-1" providerId="openai" providerName="OpenAI" onRetry={onRetry} />);
 
+    expect(screen.getByText("chat.apiKeyUnavailableTitle")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "chat.checkModelSettings" }))
-      .toHaveAttribute("href", "/settings?section=models");
+      .toHaveAttribute(
+        "href",
+        "/settings?section=models&view=providers&return_to=%2Fagent%2Fchat%2Fhome%2Fconversation-1&provider_id=openai",
+      );
+    fireEvent.click(
+      screen.getByRole("button", { name: "chat.continueAfterConfiguration" }),
+    );
+    expect(onRetry).toHaveBeenCalledTimes(1);
   });
 });

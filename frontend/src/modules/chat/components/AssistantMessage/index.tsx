@@ -1508,6 +1508,8 @@ const AssistantMessage = (props: any) => {
             <RunStatusCard
               terminal={item.run_terminal}
               conversationId={sessionId}
+              providerId={item.model_route?.provider_id}
+              providerName={item.model_route?.provider_name}
               onRetry={runRetryable ? regenerate : undefined}
               retryDisabled={regenerateDisabled}
             />
@@ -1592,6 +1594,8 @@ const AssistantMessage = (props: any) => {
           <RunStatusCard
             terminal={item.run_terminal}
             conversationId={sessionId}
+            providerId={item.model_route?.provider_id}
+            providerName={item.model_route?.provider_name}
             onRetry={runRetryable ? regenerate : undefined}
             retryDisabled={regenerateDisabled}
           />

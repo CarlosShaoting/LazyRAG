@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { parseMediaCapabilityDependency } from "./mediaCapabilityDependency";
+import {
+  buildCapabilitySettingsUrl,
+  parseMediaCapabilityDependency,
+} from "./mediaCapabilityDependency";
 
 const payload = {
   status: "blocked",
@@ -57,5 +60,23 @@ describe("parseMediaCapabilityDependency", () => {
         `MEDIA_CAPABILITY_DEPENDENCY_MISSING ${JSON.stringify(invalid)}`,
       ),
     ).toBeNull();
+  });
+
+  it("adds the exact model target and conversation return route", () => {
+    expect(buildCapabilitySettingsUrl(
+      payload.missing[0],
+      "/agent/chat/home/conversation-1",
+    )).toBe(
+      "/settings?section=models&target=video_generator&return_to=%2Fagent%2Fchat%2Fhome%2Fconversation-1",
+    );
+  });
+
+  it("preserves dependency anchors when adding the conversation return route", () => {
+    expect(buildCapabilitySettingsUrl(
+      payload.missing[1],
+      "/agent/chat/home/conversation-1",
+    )).toBe(
+      "/settings?section=system_tools&return_to=%2Fagent%2Fchat%2Fhome%2Fconversation-1#ffmpeg-dependency",
+    );
   });
 });

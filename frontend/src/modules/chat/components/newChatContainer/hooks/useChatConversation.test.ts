@@ -356,8 +356,8 @@ describe("useChatConversation regeneration recovery", () => {
     await waitFor(() => expect(onOpenSSE).toHaveBeenCalledTimes(2));
   });
 
-  it("shows a setup card when a persisted workflow task contains a capability failure", async () => {
-    renderHook(() =>
+  it("exposes a persistent setup card when a workflow task contains a capability failure", async () => {
+    const { result } = renderHook(() =>
       useChatConversation({
         canChat: true,
         onOpenSSE: vi.fn(),
@@ -402,9 +402,91 @@ describe("useChatConversation regeneration recovery", () => {
       });
     });
 
-    await waitFor(() => expect(Modal.confirm).toHaveBeenCalledTimes(1));
-    expect(vi.mocked(Modal.confirm).mock.calls[0]?.[0]?.title)
-      .toBe("chat.mediaCapabilitiesRequiredTitle");
+    await waitFor(() => {
+      expect(result.current.mediaCapabilityDependency).toMatchObject({
+        failure_id: "task-capability",
+        conversation_id: "conversation-capability",
+        missing: [expect.objectContaining({ id: "video_generator" })],
+      });
+    });
+  });
+
+  it("only retries a capability-blocked turn after the user continues", async () => {
+    const { stream } = createMockStream();
+    const onOpenSSE = vi.fn(() => stream);
+    const firstRender = renderConversation({ onOpenSSE });
+    act(() => {
+      firstRender.result.current.replaceMessageList("conversation-capability", [
+        {
+          role: RoleTypes.USER,
+          delta: "生成一张小狗的照片",
+          inputs: [{ input_type: "text", text: "生成一张小狗的照片" }],
+        },
+        {
+          role: RoleTypes.ASSISTANT,
+          delta: "尚未配置文生图模型。",
+          finish_reason:
+            ChatConversationsResponseFinishReasonEnum.FinishReasonStop,
+        },
+      ]);
+      window.dispatchEvent(new CustomEvent(
+        "lazymind:chat-media-capability-missing",
+        {
+          detail: {
+            status: "blocked",
+            workflow: "CREATE_NEW",
+            required: ["image_generator"],
+            missing: [{
+              id: "image_generator",
+              label: "文生图模型",
+              available: false,
+              settings_url: "/settings?section=models",
+              reason: "尚未配置文生图模型。",
+            }],
+            message: "缺少文生图模型。",
+            conversation_id: "conversation-capability",
+            failure_id: "task-capability",
+          },
+        },
+      ));
+    });
+
+    await waitFor(() => {
+      expect(firstRender.result.current.mediaCapabilityDependency).not.toBeNull();
+    });
+    expect(onOpenSSE).not.toHaveBeenCalled();
+    firstRender.unmount();
+
+    const { result } = renderConversation({ onOpenSSE });
+    act(() => {
+      result.current.replaceMessageList("conversation-capability", [
+        {
+          role: RoleTypes.USER,
+          delta: "生成一张小狗的照片",
+          inputs: [{ input_type: "text", text: "生成一张小狗的照片" }],
+        },
+      ]);
+    });
+    expect(result.current.mediaCapabilityDependency).toMatchObject({
+      failure_id: "task-capability",
+      conversation_id: "conversation-capability",
+    });
+
+    await act(async () => {
+      await result.current.continueAfterMediaCapabilityConfiguration();
+    });
+
+    expect(onOpenSSE).toHaveBeenCalledWith(
+      [{ input_type: "text", text: "生成一张小狗的照片" }],
+      ChatConversationsRequestActionEnum.ChatActionRegeneration,
+      {},
+      expect.objectContaining({
+        __prepareClientConversationId: expect.any(Function),
+      }),
+    );
+    expect(result.current.mediaCapabilityDependency).toBeNull();
+    expect(sessionStorage.getItem("chat-capability-pending:conversation-capability"))
+      .toBeNull();
   });
 
   it("does not open parallel regeneration requests", async () => {
@@ -436,7 +518,7 @@ describe("useChatConversation regeneration recovery", () => {
       result.current.replaceMessageList("conversation-1", messages);
     });
 
-    let firstRequest: Promise<void> | undefined;
+    let firstRequest: Promise<boolean> | undefined;
     act(() => {
       firstRequest = result.current.regenerate();
       void result.current.regenerate();
