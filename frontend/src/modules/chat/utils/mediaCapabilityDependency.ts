@@ -117,45 +117,74 @@ function candidateStrings(value: unknown, depth = 0): string[] {
   return [];
 }
 
+function candidatePayloads(
+  value: unknown,
+  depth = 0,
+): Array<Record<string, unknown>> {
+  if (depth > 5 || value == null || typeof value !== "object") return [];
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => candidatePayloads(item, depth + 1));
+  }
+  const payload = value as Record<string, unknown>;
+  const direct = payload.status === "blocked" && Array.isArray(payload.missing)
+    ? [payload]
+    : [];
+  return [
+    ...direct,
+    ...Object.values(payload).flatMap((item) => candidatePayloads(item, depth + 1)),
+  ];
+}
+
+function detailFromPayload(
+  payload: Record<string, unknown>,
+): MediaCapabilityDependencyDetail | null {
+  const rawMissing = Array.isArray(payload.missing) ? payload.missing : [];
+  const missing = rawMissing.flatMap((item): MissingMediaCapability[] => {
+    if (!item || typeof item !== "object") return [];
+    const row = item as Record<string, unknown>;
+    const id = String(row.id || "").trim();
+    const label = String(row.label || "").trim();
+    const settingsUrl = String(row.settings_url || "").trim();
+    const reason = String(row.reason || "").trim();
+    const safeSettingsUrl =
+      settingsUrl === "/settings" ||
+      settingsUrl.startsWith("/settings?") ||
+      settingsUrl.startsWith("/settings#");
+    if (!id || !label || !safeSettingsUrl) {
+      return [];
+    }
+    return [{ id, label, available: false, settings_url: settingsUrl, reason }];
+  });
+  if (missing.length === 0) return null;
+  return {
+    status: "blocked",
+    workflow: String(payload.workflow || ""),
+    required: Array.isArray(payload.required)
+      ? payload.required.map((item) => String(item))
+      : [],
+    missing,
+    message: String(payload.message || ""),
+    failure_id: typeof payload.failure_id === "string"
+      ? payload.failure_id
+      : undefined,
+    conversation_id: typeof payload.conversation_id === "string"
+      ? payload.conversation_id
+      : undefined,
+  };
+}
+
 export function parseMediaCapabilityDependency(
   value: unknown,
 ): MediaCapabilityDependencyDetail | null {
+  for (const payload of candidatePayloads(value)) {
+    const detail = detailFromPayload(payload);
+    if (detail) return detail;
+  }
   for (const candidate of candidateStrings(value)) {
     const payload = objectFromMarker(candidate);
     if (!payload) continue;
-    const rawMissing = Array.isArray(payload.missing) ? payload.missing : [];
-    const missing = rawMissing.flatMap((item): MissingMediaCapability[] => {
-      if (!item || typeof item !== "object") return [];
-      const row = item as Record<string, unknown>;
-      const id = String(row.id || "").trim();
-      const label = String(row.label || "").trim();
-      const settingsUrl = String(row.settings_url || "").trim();
-      const reason = String(row.reason || "").trim();
-      const safeSettingsUrl =
-        settingsUrl === "/settings" ||
-        settingsUrl.startsWith("/settings?") ||
-        settingsUrl.startsWith("/settings#");
-      if (!id || !label || !safeSettingsUrl) {
-        return [];
-      }
-      return [{ id, label, available: false, settings_url: settingsUrl, reason }];
-    });
-    if (missing.length === 0) return null;
-    return {
-      status: "blocked",
-      workflow: String(payload.workflow || ""),
-      required: Array.isArray(payload.required)
-        ? payload.required.map((item) => String(item))
-        : [],
-      missing,
-      message: String(payload.message || ""),
-      failure_id: typeof payload.failure_id === "string"
-        ? payload.failure_id
-        : undefined,
-      conversation_id: typeof payload.conversation_id === "string"
-        ? payload.conversation_id
-        : undefined,
-    };
+    const detail = detailFromPayload(payload);
+    if (detail) return detail;
   }
   return null;
 }

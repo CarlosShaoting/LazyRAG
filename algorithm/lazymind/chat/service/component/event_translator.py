@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import time
 from typing import Any, Optional
@@ -22,6 +23,41 @@ from lazymind.chat.service.component.tool_rendering import (
 )
 
 _STREAM_CHUNK_SIZE = 24
+_CAPABILITY_DEPENDENCY_MARKER = 'MEDIA_CAPABILITY_DEPENDENCY_MISSING'
+
+
+def _capability_dependency_from_value(value: Any, depth: int = 0) -> Optional[dict[str, Any]]:
+    if depth > 6 or value is None:
+        return None
+    if isinstance(value, dict):
+        if value.get('status') == 'blocked' and isinstance(value.get('missing'), list):
+            return dict(value)
+        for nested in value.values():
+            dependency = _capability_dependency_from_value(nested, depth + 1)
+            if dependency is not None:
+                return dependency
+        return None
+    if isinstance(value, (list, tuple)):
+        for nested in value:
+            dependency = _capability_dependency_from_value(nested, depth + 1)
+            if dependency is not None:
+                return dependency
+        return None
+    if not isinstance(value, str):
+        return None
+    marker_index = value.find(_CAPABILITY_DEPENDENCY_MARKER)
+    if marker_index < 0:
+        return None
+    payload_text = value[marker_index + len(_CAPABILITY_DEPENDENCY_MARKER):].lstrip()
+    try:
+        payload, _ = json.JSONDecoder().raw_decode(payload_text)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if payload.get('status') != 'blocked' or not isinstance(payload.get('missing'), list):
+        return None
+    return payload
 
 
 def _stream_frame(
@@ -224,7 +260,14 @@ class AgentEventFrameTranslator:
                     )
                     for tr in tool_results
                 ]
-                frames.append(_stream_frame(text=''.join(parts)))
+                dependency = _capability_dependency_from_value(tool_results)
+                frames.append(_stream_frame(
+                    text=''.join(parts),
+                    extra=(
+                        {'capability_dependency': dependency}
+                        if dependency is not None else None
+                    ),
+                ))
 
         if event_type == 'subagent_think':
             think = str(event.get('think') or '')

@@ -411,6 +411,41 @@ describe("useChatConversation regeneration recovery", () => {
     });
   });
 
+  it("shows a setup card from the structured direct-chat stream field", async () => {
+    const { stream, listeners } = createMockStream();
+    const { result } = renderConversation({ onOpenSSE: vi.fn(() => stream) });
+    await act(async () => {
+      await result.current.sendMessage({ text: "生成一张柯基犬" });
+    });
+
+    act(() => listeners.get("message")?.({
+      data: JSON.stringify({
+        result: {
+          conversation_id: "conversation-capability",
+          capability_dependency: {
+            status: "blocked",
+            workflow: "DIRECT_CHAT",
+            required: ["image_generator"],
+            missing: [{
+              id: "image_generator",
+              label: "文生图模型",
+              available: false,
+              settings_url: "/settings?section=models&target=image_generator",
+              reason: "尚未配置文生图模型。",
+            }],
+            message: "当前任务缺少：文生图模型。",
+          },
+        },
+      }),
+    }));
+
+    expect(result.current.mediaCapabilityDependency).toMatchObject({
+      conversation_id: "conversation-capability",
+      workflow: "DIRECT_CHAT",
+      missing: [expect.objectContaining({ id: "image_generator" })],
+    });
+  });
+
   it("only retries a capability-blocked turn after the user continues", async () => {
     const { stream } = createMockStream();
     const onOpenSSE = vi.fn(() => stream);

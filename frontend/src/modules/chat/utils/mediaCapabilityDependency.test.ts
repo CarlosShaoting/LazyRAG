@@ -50,6 +50,19 @@ describe("parseMediaCapabilityDependency", () => {
     expect(parseMediaCapabilityDependency(nested)?.missing).toHaveLength(2);
   });
 
+  it("reads a structured capability dependency stream field", () => {
+    expect(parseMediaCapabilityDependency({
+      conversation_id: "conversation-1",
+      capability_dependency: payload,
+    })).toMatchObject({
+      workflow: "CREATE_ANIMATED",
+      missing: [
+        expect.objectContaining({ id: "video_generator" }),
+        expect.objectContaining({ id: "ffmpeg" }),
+      ],
+    });
+  });
+
   it("ignores malformed or unsafe jump targets", () => {
     const invalid = {
       ...payload,
