@@ -2328,6 +2328,8 @@ const zhCN = {
     configureThisCapability: "前往配置",
     configureRequiredCapability: "前往配置",
     continueAfterConfiguration: "继续",
+    mediaCapabilityStillMissing: "配置尚未生效，请完成当前模型配置后再继续。",
+    mediaCapabilityCheckFailed: "暂时无法确认模型配置状态，请稍后重试。",
     editablePptRequiredTitle: "缺少可编辑 PPTX 导出依赖",
     editablePptRequiredDesc: "当前环境未安装可编辑 PPTX 导出组件或 Chromium。请先配置或下载安装依赖，也可以改选图片版 PPTX。",
     configureEditablePpt: "配置或下载导出依赖",

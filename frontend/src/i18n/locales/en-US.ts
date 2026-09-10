@@ -2391,6 +2391,8 @@ const enUS = {
     configureThisCapability: "Open settings",
     configureRequiredCapability: "Open settings",
     continueAfterConfiguration: "Continue",
+    mediaCapabilityStillMissing: "The setup is not active yet. Complete the required model setup before continuing.",
+    mediaCapabilityCheckFailed: "Unable to verify the model setup right now. Try again shortly.",
     editablePptRequiredTitle: "Editable PPTX export dependency is missing",
     editablePptRequiredDesc: "The editable PPTX exporter or Chromium is not installed. Configure the dependency first, or choose raster PPTX instead.",
     configureEditablePpt: "Configure export dependency",

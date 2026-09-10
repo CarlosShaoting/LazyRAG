@@ -532,6 +532,7 @@ const ChatContainerComponent = forwardRef<ChatImperativeProps, ChatContainerProp
                     conversation.runtimeWaiting ||
                     modelSelectionSaving
                   }
+                  continueLoading={conversation.mediaCapabilityChecking}
                   onContinue={() => {
                     setSourcePanelSources([]);
                     void conversation.continueAfterMediaCapabilityConfiguration();

@@ -64,6 +64,7 @@ import {
 } from "@/modules/chat/utils/mediaCapabilityDependency";
 import { useTaskCenterStore } from "@/modules/chat/store/taskCenter";
 import { useWorkflowStore } from "@/modules/chat/store/workflowPanel";
+import { listToolAssets } from "@/modules/memory/toolApi";
 import {
   applyChatStreamFailure,
   parseCoreChatStreamError,
@@ -127,6 +128,7 @@ export function useChatConversation({
   const runtimeWaitAbortRef = useRef<AbortController | null>(null);
   const runtimeWaitInProgressRef = useRef(false);
   const regenerateInProgressRef = useRef(false);
+  const mediaCapabilityCheckInProgressRef = useRef(false);
   const pendingClientConversationIdRef = useRef("");
   const streamRecoveryRegistryRef = useRef(new StreamRecoveryRegistry());
   const streamRecoverySuccessTimerRef = useRef<
@@ -145,6 +147,7 @@ export function useChatConversation({
     useState<StreamRecoveryViewState>(idleStreamRecoveryState());
   const [mediaCapabilityDependency, setMediaCapabilityDependency] =
     useState<MediaCapabilityDependencyDetail | null>(null);
+  const [mediaCapabilityChecking, setMediaCapabilityChecking] = useState(false);
 
   const scroll = useChatScroll({
     chatInputRef,
@@ -1970,30 +1973,55 @@ export function useChatConversation({
 
   async function continueAfterMediaCapabilityConfiguration() {
     const dependency = mediaCapabilityDependency;
-    if (!dependency) return false;
-    const signature = mediaCapabilityDependencySignature(dependency);
-    const started = await regenerate();
-    if (!started) return false;
+    if (!dependency || mediaCapabilityCheckInProgressRef.current) return false;
 
-    if (dependency.failure_id) {
-      continuedMediaCapabilityFailuresRef.current.add(signature);
-      try {
-        sessionStorage.setItem(`chat-capability-continued:${signature}`, "1");
-      } catch {
-        // The in-memory guard is sufficient for this page lifetime.
+    mediaCapabilityCheckInProgressRef.current = true;
+    setMediaCapabilityChecking(true);
+    try {
+      // The tools endpoint reloads the user's current model configuration from
+      // Core before asking the chat service for live capability availability.
+      const tools = await listToolAssets({ silentError: true });
+      const availability = new Map(
+        tools.map((tool) => [tool.id, tool.isAvailable]),
+      );
+      const isStillMissing = dependency.missing.some(
+        (item) => availability.get(item.id) !== true,
+      );
+      if (isStillMissing) {
+        message.warning(t("chat.mediaCapabilityStillMissing"));
+        return false;
       }
-    }
-    if (dependency.conversation_id) {
-      try {
-        sessionStorage.removeItem(
-          pendingMediaCapabilityStorageKey(dependency.conversation_id),
-        );
-      } catch {
-        // The in-memory card can still be cleared below.
+
+      const signature = mediaCapabilityDependencySignature(dependency);
+      const started = await regenerate();
+      if (!started) return false;
+
+      if (dependency.failure_id) {
+        continuedMediaCapabilityFailuresRef.current.add(signature);
+        try {
+          sessionStorage.setItem(`chat-capability-continued:${signature}`, "1");
+        } catch {
+          // The in-memory guard is sufficient for this page lifetime.
+        }
       }
+      if (dependency.conversation_id) {
+        try {
+          sessionStorage.removeItem(
+            pendingMediaCapabilityStorageKey(dependency.conversation_id),
+          );
+        } catch {
+          // The in-memory card can still be cleared below.
+        }
+      }
+      setMediaCapabilityDependency(null);
+      return true;
+    } catch {
+      message.error(t("chat.mediaCapabilityCheckFailed"));
+      return false;
+    } finally {
+      mediaCapabilityCheckInProgressRef.current = false;
+      setMediaCapabilityChecking(false);
     }
-    setMediaCapabilityDependency(null);
-    return true;
   }
 
   async function retryStreamRecovery() {
@@ -2039,6 +2067,7 @@ export function useChatConversation({
     stopGeneration,
     regenerate,
     mediaCapabilityDependency,
+    mediaCapabilityChecking,
     continueAfterMediaCapabilityConfiguration,
     retryStreamRecovery,
     updateAssistantMessage,

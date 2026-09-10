@@ -10,12 +10,14 @@ import "./index.scss";
 interface CapabilityConfigCardProps {
   detail?: MediaCapabilityDependencyDetail | null;
   continueDisabled?: boolean;
+  continueLoading?: boolean;
   onContinue: () => void;
 }
 
 export default function CapabilityConfigCard({
   detail,
   continueDisabled = false,
+  continueLoading = false,
   onContinue,
 }: CapabilityConfigCardProps) {
   const { t } = useTranslation();
@@ -60,6 +62,7 @@ export default function CapabilityConfigCard({
               size="small"
               type="primary"
               disabled={continueDisabled}
+              loading={continueLoading}
               onClick={onContinue}
             >
               {t("chat.continueAfterConfiguration")}

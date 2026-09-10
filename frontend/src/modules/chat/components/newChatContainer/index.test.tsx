@@ -111,6 +111,7 @@ vi.mock("./hooks/useChatConversation", () => ({
     openSSE: vi.fn(),
     regenerate: mocks.regenerate,
     mediaCapabilityDependency: null,
+    mediaCapabilityChecking: false,
     continueAfterMediaCapabilityConfiguration: vi.fn(),
     replaceMessageList: vi.fn(),
     retryStreamRecovery: vi.fn(),
