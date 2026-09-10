@@ -1621,6 +1621,7 @@ const zhCN = {
   },
 
   chat: {
+    knowledgeSearchDisabled: "知识库检索已在设置中停用",
     fork: {
       title: "从此处创建对话分支", selectAnswerFirst: "请先选定回答，再创建分支对话",
       creating: "正在创建分支对话…", retryCreate: "重试创建", noModels: "暂无可用模型，请配置模型后重新读取。",
@@ -3092,6 +3093,7 @@ const zhCN = {
     translationOriginal: "原文",
     translationResult: "译文",
     translationFailed: "翻译失败，请检查腾讯翻译凭据和服务状态",
+    dictionaryNotFound: "内置词典中未找到该单词，且尚未配置翻译服务",
     askWholeSegment: "对该切片提问",
     askSelectedSegmentText: "询问选中内容",
     pdfChatPanelLabel: "文档临时对话",
@@ -7769,6 +7771,23 @@ const zhCN = {
     },
   },
 
+  vocabulary: {
+    reviewTitle: "单词复习",
+    cardTypes: { wordToMeaning: "看词选义", meaningToWord: "看义回忆单词", sentenceCloze: "例句填空", anki: "Anki 卡片" },
+    document: {
+      empty: "本文档还没有添加生词",
+      removeTitle: "从本文档移除 {{term}}？",
+      removeDescription: "只移除当前文档来源；单词、其他来源和复习记录都会保留。",
+      removeSource: "移除来源",
+      deleteTitle: "彻底删除 {{term}}？",
+      deleteDescription: "这是该单词的最后一个来源。删除后，相关例句和复习数据也会删除。",
+      deleteWord: "删除单词",
+      sourceCount: "{{count}} 个来源",
+      sourceLocation: "来源位置：{{location}}",
+      page: "第 {{page}} 页",
+      document: "文档",
+    },
+  },
   errors: zhCNErrorMessages,
 };
 

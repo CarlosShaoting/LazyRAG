@@ -648,5 +648,5 @@ func init() {
 	registerAdditionalError("create preference organizer task failed", http.StatusInternalServerError, 2002362)
 	registerAdditionalError("query preference organizer task failed", http.StatusInternalServerError, 2002363)
 	registerAdditionalError("preference organizer task lease was lost", http.StatusInternalServerError, 2002364)
-	registerAdditionalError("async job lease lost", http.StatusInternalServerError, 2002384)
+	registerAdditionalError("async job lease lost", http.StatusInternalServerError, 2002503)
 }

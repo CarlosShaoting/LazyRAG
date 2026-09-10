@@ -102,8 +102,26 @@ func TestRepositoryStructuredMigrationCatalogLoads(t *testing.T) {
 		v03.Aggregate == nil || v03.Aggregate.Version != 20260805000000 {
 		t.Fatalf("unexpected v0_3 mode: %#v", v03)
 	}
-	if len(v03.Dev) != 60 {
-		t.Fatalf("v0_3 dev migration count=%d, want 60", len(v03.Dev))
+	if len(v03.Dev) != 66 {
+		t.Fatalf("v0_3 dev migration count=%d, want 66", len(v03.Dev))
+	}
+	if !containsMigrationFileVersion(v03.Dev, 20260908090000) {
+		t.Fatal("v0_3 dev migrations are missing vocabulary Anki tables")
+	}
+	if !containsMigrationFileVersion(v03.Dev, 20260908091500) {
+		t.Fatal("v0_3 dev migrations are missing vocabulary review sessions")
+	}
+	if !containsMigrationFileVersion(v03.Dev, 20260908100000) {
+		t.Fatal("v0_3 dev migrations are missing vocabulary review tables")
+	}
+	if !containsMigrationFileVersion(v03.Dev, 20260908110000) {
+		t.Fatal("v0_3 dev migrations are missing complete vocabulary domain")
+	}
+	if !containsMigrationFileVersion(v03.Dev, 20260909133000) {
+		t.Fatal("v0_3 dev migrations are missing vocabulary session state")
+	}
+	if !containsMigrationFileVersion(v03.Dev, 20260909173000) {
+		t.Fatal("v0_3 dev migrations are missing vocabulary session lifecycle")
 	}
 	if !containsMigrationFileVersion(v03.Dev, 20260908084250) {
 		t.Fatal("v0_3 dev migrations are missing conversation history order")
@@ -116,6 +134,11 @@ func TestRepositoryStructuredMigrationCatalogLoads(t *testing.T) {
 	v03Up, err := os.ReadFile(v03.Aggregate.UpPath)
 	if err != nil {
 		t.Fatalf("read v0_3 aggregate up: %v", err)
+	}
+	for _, token := range []string{"vocabulary_provider_settings", "vocabulary_words", "vocabulary_source_refs"} {
+		if !strings.Contains(string(v03Up), token) {
+			t.Fatalf("v0_3 aggregate up is missing %s", token)
+		}
 	}
 	for _, token := range []string{"workflow_preparations", "workflow_outbox", "workflow_input_resources", "driver_content", "chat_executor", "thinking_depth VARCHAR(16)", "conversation_policy_snapshot_backups", "conversation.enable_plugin IS NULL", "external_chat_run_events", "external_chat_hosts", "external_agent_bindings", "managed_by_lazymind", "conversation_archive_folders", "idx_conversations_user_pinned_history", "lease_token", "sub_agent_tasks", "sources", "writing_subtasks", "plugin_step_intents", "run_id", "run_status", "run_terminal", "chat_run_performance", "conversation_fork_origins", "conversation_fork_requests", "cache_input_tokens", "context_input_tokens", "schedules_enabled", "quick_question_defaults", "new_task_defaults", "skill_distribution_artifacts", "workflow_run", "free_auto_select_priority", "free_auto_select_base_urls", "chat_model_mode", "chat_model_id", "chat_model_snapshot", "chat_model_version", "parent_conversation_id", "relation_type", "source_history_id", "source_seq", "source_selected_text", "source_context", "idx_conversations_parent_relation", "ON public.skills(owner_user_id, category, skill_name)", "ON public.skills(owner_user_id, relative_root)", "performance_stats_enabled"} {
 		if !strings.Contains(string(v03Up), token) {

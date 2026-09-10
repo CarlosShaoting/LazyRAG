@@ -1666,6 +1666,7 @@ const enUS = {
 
   // Chat
   chat: {
+    knowledgeSearchDisabled: "Knowledge-base search is disabled in settings",
     fork: {
       title: "Branch the conversation from here", selectAnswerFirst: "Select an answer before creating a branch conversation",
       creating: "Creating a branch conversation…", retryCreate: "Retry creation", noModels: "No models are available. Configure a model, then reload.",
@@ -3165,6 +3166,7 @@ const enUS = {
     translationOriginal: "Original",
     translationResult: "Translation",
     translationFailed: "Translation failed. Check the Tencent Translation credentials and service status.",
+    dictionaryNotFound: "The word was not found in the built-in dictionary, and no translation service is configured.",
     askWholeSegment: "Ask about this segment",
     askSelectedSegmentText: "Ask about selection",
     pdfChatPanelLabel: "Temporary document chat",
@@ -8014,6 +8016,23 @@ const enUS = {
     },
   },
 
+  vocabulary: {
+    reviewTitle: "Vocabulary review",
+    cardTypes: { wordToMeaning: "Word to meaning", meaningToWord: "Meaning to word", sentenceCloze: "Sentence cloze", anki: "Anki card" },
+    document: {
+      empty: "No vocabulary has been added from this document",
+      removeTitle: "Remove {{term}} from this document?",
+      removeDescription: "Only this document source will be removed. The word, its other sources, and review history will be preserved.",
+      removeSource: "Remove source",
+      deleteTitle: "Delete {{term}} permanently?",
+      deleteDescription: "This is the word's last source. Its examples and review data will also be deleted.",
+      deleteWord: "Delete word",
+      sourceCount: "{{count}} sources",
+      sourceLocation: "Source: {{location}}",
+      page: "Page {{page}}",
+      document: "Document",
+    },
+  },
   errors: enUSErrorMessages,
 };
 
