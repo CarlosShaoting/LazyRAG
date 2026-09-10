@@ -1840,6 +1840,7 @@ func GetConversationDetail(w http.ResponseWriter, r *http.Request) {
 		"update_time":           c.UpdatedAt.UTC().Format(time.RFC3339),
 		"pinned_at":             c.PinnedAt,
 		"is_pinned":             c.PinnedAt != nil,
+		"history_order":         c.HistoryOrder,
 		"models":                models,
 		"enable_workflow":       c.EnableWorkflow,
 		"workflow_mode":         c.WorkflowMode,
@@ -2025,31 +2026,12 @@ func setConversationPinned(w http.ResponseWriter, r *http.Request, pinned bool) 
 		userID = "0"
 	}
 
-	var pinnedAt any
-	if pinned {
-		pinnedAt = time.Now().UTC()
-	}
-	result := store.DB().WithContext(r.Context()).Model(&orm.Conversation{}).
-		Where(
-			"id = ? AND create_user_id = ? AND deleted_at IS NULL AND archived_at IS NULL",
-			conversationID,
-			userID,
-		).
-		UpdateColumn("pinned_at", pinnedAt)
-	if result.Error != nil {
-		common.ReplyErr(w, result.Error.Error(), http.StatusInternalServerError)
+	result, err := updateConversationPin(r.Context(), store.DB(), userID, conversationID, pinned)
+	if err != nil {
+		replyConversationOrderError(w, r, err)
 		return
 	}
-	if result.RowsAffected == 0 {
-		common.ReplyErr(w, "conversation not found", http.StatusNotFound)
-		return
-	}
-
-	writeConversationJSON(w, http.StatusOK, map[string]any{
-		"conversation_id": conversationID,
-		"is_pinned":       pinned,
-		"pinned_at":       pinnedAt,
-	})
+	writeConversationJSON(w, http.StatusOK, result)
 }
 
 func archiveConversation(
@@ -2277,9 +2259,28 @@ func ListConversations(w http.ResponseWriter, r *http.Request) {
 	var total int64
 	q.Count(&total)
 	var list []orm.Conversation
-	q.Order("CASE WHEN pinned_at IS NULL THEN 1 ELSE 0 END ASC").
-		Order("pinned_at DESC").
+	// Keep flat pagination, but place retained children immediately after their
+	// parent instead of letting their unset rank precede all manually sorted roots.
+	parents := db.Model(&orm.Conversation{}).
+		Select("id AS history_parent_id, pinned_at AS history_parent_pin, history_order AS history_parent_order, updated_at AS history_parent_updated").
+		Where("create_user_id = ? AND deleted_at IS NULL AND archived_at IS NULL", userID)
+	if !strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("include_ephemeral")), "true") {
+		parents = parents.Where("is_ephemeral = ?", false)
+	}
+	rootPin := "CASE WHEN history_parent_id IS NULL THEN pinned_at ELSE history_parent_pin END"
+	rootOrder := "CASE WHEN history_parent_id IS NULL THEN history_order ELSE history_parent_order END"
+	rootUpdated := "CASE WHEN history_parent_id IS NULL THEN updated_at ELSE history_parent_updated END"
+	q.Select("conversations.*").
+		Joins("LEFT JOIN (?) AS history_parent ON history_parent_id = conversations.parent_conversation_id", parents).
+		Order("CASE WHEN (" + rootPin + ") IS NULL THEN 1 ELSE 0 END ASC").
+		Order("CASE WHEN (" + rootOrder + ") IS NULL THEN 0 ELSE 1 END ASC").
+		Order(rootOrder + " ASC").
+		Order(rootPin + " DESC").
+		Order(rootUpdated + " DESC").
+		Order("COALESCE(history_parent_id, conversations.id) ASC").
+		Order("CASE WHEN history_parent_id IS NULL THEN 0 ELSE 1 END ASC").
 		Order("updated_at DESC").
+		Order("conversations.id ASC").
 		Offset(offset).
 		Limit(pageSize).
 		Find(&list)
@@ -2342,6 +2343,7 @@ func ListConversations(w http.ResponseWriter, r *http.Request) {
 			"update_time":           c.UpdatedAt.UTC().Format(time.RFC3339),
 			"pinned_at":             c.PinnedAt,
 			"is_pinned":             c.PinnedAt != nil,
+			"history_order":         c.HistoryOrder,
 			"models":                models,
 			"is_task_conv":          c.IsTaskConv,
 			"chat_executor":         c.ChatExecutor,
