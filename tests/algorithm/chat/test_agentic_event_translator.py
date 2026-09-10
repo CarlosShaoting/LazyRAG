@@ -211,6 +211,47 @@ def test_translator_forwards_media_capability_failure_as_structured_frame():
     assert frames[0]['capability_dependency'] == dependency
 
 
+def test_translator_suppresses_ask_after_media_capability_failure():
+    translator = AgentEventFrameTranslator(query='生成一张柯基犬')
+    dependency = {
+        'status': 'blocked',
+        'workflow': 'DIRECT_CHAT',
+        'required': ['image_generator'],
+        'missing': [{
+            'id': 'image_generator',
+            'label': '文生图模型',
+            'available': False,
+            'settings_url': '/settings?section=models&target=image_generator',
+            'reason': '尚未配置文生图模型。',
+        }],
+        'message': '当前任务缺少：文生图模型。',
+    }
+    marker = (
+        'MEDIA_CAPABILITY_DEPENDENCY_MISSING '
+        + json.dumps(dependency, ensure_ascii=False)
+    )
+
+    translator.feed({
+        'tag': 'tool_results',
+        'tool_results': [{
+            'id': 'call-image',
+            'name': 'image_generator',
+            'result': {
+                **dependency,
+                '_agent_control': {'stop': True, 'final_text': marker},
+            },
+        }],
+    })
+
+    assert translator.feed({
+        'tag': 'ask_pending',
+        'ask_id': 'redundant-ask',
+        'questions': [{'text': '你希望怎么处理？', 'type': 'single'}],
+    }) == []
+    assert translator.ask_pending_emitted is False
+    assert translator.finish(marker) == []
+
+
 def test_translator_renders_every_parallel_tool_call_and_result():
     translator = AgentEventFrameTranslator(query='批量读取这些网页')
     calls = [

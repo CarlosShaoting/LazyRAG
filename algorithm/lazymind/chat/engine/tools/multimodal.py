@@ -49,9 +49,9 @@ _MEDIA_MODEL_DEPENDENCIES = {
 }
 
 
-def _require_media_model(role: str) -> None:
+def _missing_media_model_result(role: str) -> Optional[Dict[str, Any]]:
     if is_model_role_available(role):
-        return
+        return None
     metadata = _MEDIA_MODEL_DEPENDENCIES[role]
     missing = {
         'id': role,
@@ -67,10 +67,17 @@ def _require_media_model(role: str) -> None:
         'missing': [missing],
         'message': f"当前任务缺少：{metadata['label']}。",
     }
-    raise ToolExecutionError(
+    marker = (
         'MEDIA_CAPABILITY_DEPENDENCY_MISSING '
         + json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
     )
+    return {
+        **payload,
+        '_agent_control': {
+            'stop': True,
+            'final_text': marker,
+        },
+    }
 
 
 def _coerce_url_list(urls: Optional[Union[str, List[str]]]) -> Optional[List[str]]:
@@ -178,7 +185,8 @@ def image_generator(
         Copy ``image_markdown`` verbatim when answering; never rewrite signed
         ``/static-files/`` paths or expose bare local filesystem paths.
     """
-    _require_media_model('image_generator')
+    if missing := _missing_media_model_result('image_generator'):
+        return missing
     return run_image_model(
         'image_generator',
         prompt,
@@ -211,7 +219,8 @@ def image_editor(
         Same shape and rendering contract as ``image_generator``; copy
         ``image_markdown`` verbatim when it is present.
     """
-    _require_media_model('image_editor')
+    if missing := _missing_media_model_result('image_editor'):
+        return missing
     source_files = _resolve_source_image_paths(urls)
     return run_image_model(
         'image_editor',
@@ -290,7 +299,8 @@ def video_generator(
         ``video_url`` if markdown is absent); do not invent or rewrite
         ``/static-files/`` paths.
     """
-    _require_media_model('video_generator')
+    if missing := _missing_media_model_result('video_generator'):
+        return missing
     normalized_references = _coerce_url_list(reference_urls) or []
     normalized_legacy = _coerce_url_list(urls) or []
     has_first_frame = bool(str(first_frame_url or '').strip())

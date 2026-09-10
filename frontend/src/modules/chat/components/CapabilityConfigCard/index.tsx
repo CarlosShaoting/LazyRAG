@@ -1,6 +1,5 @@
 import { SettingOutlined } from "@ant-design/icons";
 import { Alert, Button, Space } from "antd";
-import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate } from "react-router-dom";
 import type { MediaCapabilityDependencyDetail } from "@/modules/chat/utils/mediaCapabilityDependency";
@@ -24,12 +23,6 @@ export default function CapabilityConfigCard({
   const navigate = useNavigate();
   const returnTo = `${location.pathname}${location.search}`;
   const missing = detail?.missing ?? [];
-  const firstSettingsUrl = useMemo(
-    () => missing[0]
-      ? buildCapabilitySettingsUrl(missing[0], returnTo)
-      : "/settings?section=models",
-    [missing, returnTo],
-  );
 
   if (!detail || missing.length === 0) {
     return null;
@@ -63,13 +56,6 @@ export default function CapabilityConfigCard({
             ))}
           </div>
           <Space className="chat-capability-config-card__actions" size={8} wrap>
-            <Button
-              size="small"
-              icon={<SettingOutlined />}
-              onClick={() => navigate(firstSettingsUrl)}
-            >
-              {t("chat.configureRequiredCapability")}
-            </Button>
             <Button
               size="small"
               type="primary"

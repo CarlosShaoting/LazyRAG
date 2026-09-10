@@ -2,9 +2,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
-from lazyllm.tools.agent import ToolExecutionError
-
 from lazymind.chat.engine.tools import multimodal
 from lazymind.chat.service.component import tool_registry
 
@@ -33,13 +30,14 @@ def test_explicit_image_request_keeps_unconfigured_tool_visible(monkeypatch):
 def test_unconfigured_image_tool_returns_structured_dependency(monkeypatch):
     monkeypatch.setattr(multimodal, 'is_model_role_available', lambda _role: False)
 
-    with pytest.raises(ToolExecutionError) as captured:
-        multimodal.image_generator('一只在草地上的小狗')
+    result = multimodal.image_generator('一只在草地上的小狗')
 
-    message = str(captured.value)
+    message = result['_agent_control']['final_text']
     marker = 'MEDIA_CAPABILITY_DEPENDENCY_MISSING '
     assert marker in message
     payload = json.loads(message.split(marker, 1)[1])
+    assert result['_agent_control']['stop'] is True
+    assert result['status'] == 'blocked'
     assert payload['workflow'] == 'DIRECT_CHAT'
     assert payload['missing'][0]['id'] == 'image_generator'
     assert payload['missing'][0]['settings_url'].endswith(

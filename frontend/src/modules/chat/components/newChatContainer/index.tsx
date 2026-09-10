@@ -521,6 +521,7 @@ const ChatContainerComponent = forwardRef<ChatImperativeProps, ChatContainerProp
               forkPending={props.forkPending}
               messageList={conversation.messageList}
               initialCard={initialCard}
+              suppressAskPending={Boolean(conversation.mediaCapabilityDependency)}
               capabilityConfigCard={(
                 <CapabilityConfigCard
                   detail={conversation.mediaCapabilityDependency}

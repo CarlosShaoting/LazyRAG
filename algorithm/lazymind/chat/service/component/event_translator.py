@@ -121,6 +121,7 @@ class AgentEventFrameTranslator:
         self._mail_drafts: dict[str, dict[str, Any]] = {}
         self.streamed_text = False
         self.ask_pending_emitted = False
+        self.capability_dependency_emitted = False
         self.tool_call_turns = 0
         self.metrics = RunMetricsTracker(clock or time.monotonic, started_at=started_at)
         self.model_events: list[dict[str, Any]] = []
@@ -169,6 +170,8 @@ class AgentEventFrameTranslator:
             frames.append(_stream_frame(extra={'artifact_created': artifact}))
             return frames
         if event_type == 'ask_pending':
+            if self.capability_dependency_emitted:
+                return frames
             ask_data = {k: v for k, v in event.items() if k != 'tag'}
             mail_draft = ask_data.get('mail_draft')
             if isinstance(mail_draft, dict) and mail_draft.get('draft_id'):
@@ -261,6 +264,8 @@ class AgentEventFrameTranslator:
                     for tr in tool_results
                 ]
                 dependency = _capability_dependency_from_value(tool_results)
+                if dependency is not None:
+                    self.capability_dependency_emitted = True
                 frames.append(_stream_frame(
                     text=''.join(parts),
                     extra=(
@@ -329,7 +334,7 @@ class AgentEventFrameTranslator:
         # ask_user is a stop tool. Its return value is an internal execution
         # receipt, while the preceding ask_pending event is the user-facing
         # response. Never stream that receipt as ordinary assistant text.
-        if self.ask_pending_emitted:
+        if self.ask_pending_emitted or self.capability_dependency_emitted:
             return frames
         output = _format_final_result(final_result, self.citation_state)
         chunk_size = int(_cfg['agentic_stream_chunk_size'] or _STREAM_CHUNK_SIZE)

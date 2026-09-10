@@ -44,6 +44,9 @@ describe("CapabilityConfigCard", () => {
     );
 
     expect(screen.getByText("文生图模型")).toBeInTheDocument();
+    expect(screen.queryByRole("button", {
+      name: "chat.configureRequiredCapability",
+    })).not.toBeInTheDocument();
     expect(onContinue).not.toHaveBeenCalled();
 
     fireEvent.click(

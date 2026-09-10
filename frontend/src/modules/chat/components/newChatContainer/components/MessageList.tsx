@@ -103,6 +103,7 @@ interface MessageListProps {
   messageList: any[];
   initialCard?: React.ReactNode;
   capabilityConfigCard?: React.ReactNode;
+  suppressAskPending?: boolean;
   sendMessage: (
     text: string,
     clearInput?: boolean,
@@ -265,6 +266,7 @@ const MessageList: React.FC<MessageListProps> = ({
   messageList,
   initialCard,
   capabilityConfigCard,
+  suppressAskPending = false,
   sendMessage,
   regenerate,
   regenerateDisabled = false,
@@ -512,6 +514,12 @@ const MessageList: React.FC<MessageListProps> = ({
       {messageList.length > 0 &&
         messageList.map((item, index) => {
           const historyId = item.history_id || item.id;
+          const visibleItem =
+            suppressAskPending &&
+            item.role === RoleTypes.ASSISTANT &&
+            item.ask_pending
+              ? { ...item, ask_pending: undefined }
+              : item;
           return (
             <div
               className="chat-item"
@@ -524,7 +532,7 @@ const MessageList: React.FC<MessageListProps> = ({
                 <AssistantMessage
                   onFork={onFork}
                   forkPending={forkPending}
-                  item={item}
+                  item={visibleItem}
                   index={index}
                   length={messageList.length}
                   sendMessage={sendMessage}
