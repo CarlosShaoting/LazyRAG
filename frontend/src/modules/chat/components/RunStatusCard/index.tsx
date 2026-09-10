@@ -89,6 +89,7 @@ export default function RunStatusCard({
   conversationId,
   providerId,
   providerName,
+  modelName,
   onRetry,
   retryDisabled = false,
 }: {
@@ -96,6 +97,7 @@ export default function RunStatusCard({
   conversationId?: string;
   providerId?: string;
   providerName?: string;
+  modelName?: string;
   onRetry?: () => void;
   retryDisabled?: boolean;
 }) {
@@ -104,6 +106,7 @@ export default function RunStatusCard({
     return null;
   }
   const isCredentialFailure = API_CREDENTIAL_CODES.has(terminal.code || "");
+  const isModelUnavailable = terminal.code === "not_found";
   const description = isCredentialFailure
     ? [
         t("chat.apiKeyUnavailableDescription", {
@@ -113,7 +116,17 @@ export default function RunStatusCard({
           ? t("chat.runStatus.partialOutput")
           : t("chat.runStatus.noOutput"),
       ].join(" ")
-    : runStatusDescription(terminal, t);
+    : isModelUnavailable
+      ? [
+          t("chat.modelUnavailableDescription", {
+            provider: providerName || t("chat.modelServiceFallback"),
+            model: modelName || t("chat.currentModelFallback"),
+          }),
+          terminal.partial_output
+            ? t("chat.runStatus.partialOutput")
+            : t("chat.runStatus.noOutput"),
+        ].join(" ")
+      : runStatusDescription(terminal, t);
   const isCancelled = isUserCancelledTerminal(terminal);
   const className = isCancelled
     ? "chat-run-status-card chat-run-status-card--cancelled"
@@ -174,6 +187,8 @@ export default function RunStatusCard({
       icon={isCancelled ? <StopOutlined aria-hidden="true" /> : undefined}
       message={t(isCredentialFailure
         ? "chat.apiKeyUnavailableTitle"
+        : isModelUnavailable
+          ? "chat.modelUnavailableTitle"
         : runStatusTitleKey(terminal))}
       description={description}
       action={actions}

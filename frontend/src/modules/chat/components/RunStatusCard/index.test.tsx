@@ -52,12 +52,21 @@ describe("RunStatusCard", () => {
 
     const isCredentialFailure = code === "authentication_failed"
       || code === "permission_denied";
-    expect(screen.getByText(isCredentialFailure
-      ? "chat.apiKeyUnavailableTitle"
-      : "chat.runStatus.failed")).toBeInTheDocument();
-    expect(screen.getByText(isCredentialFailure
-      ? /chat\.apiKeyUnavailableDescription/
-      : new RegExp(`chat\\.runStatus\\.codes\\.${code}`))).toBeInTheDocument();
+    const isModelUnavailable = code === "not_found";
+    expect(screen.getByText(
+      isCredentialFailure
+        ? "chat.apiKeyUnavailableTitle"
+        : isModelUnavailable
+          ? "chat.modelUnavailableTitle"
+          : "chat.runStatus.failed",
+    )).toBeInTheDocument();
+    expect(screen.getByText(
+      isCredentialFailure
+        ? /chat\.apiKeyUnavailableDescription/
+        : isModelUnavailable
+          ? /chat\.modelUnavailableDescription/
+          : new RegExp(`chat\\.runStatus\\.codes\\.${code}`),
+    )).toBeInTheDocument();
     expect(screen.getByText(/chat\.runStatus\.noOutput/)).toBeInTheDocument();
   });
 
@@ -167,6 +176,24 @@ describe("RunStatusCard", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "chat.continueAfterConfiguration" }),
     );
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a retired model card with settings, model switch, and manual continuation", () => {
+    const onRetry = vi.fn();
+    render(<RunStatusCard terminal={{
+      status: "failed",
+      reason: "model_failure",
+      code: "not_found",
+      partial_output: false,
+    }} conversationId="conversation-1" providerId="deepseek" providerName="DeepSeek" modelName="fake" onRetry={onRetry} />);
+
+    expect(screen.getByText("chat.modelUnavailableTitle")).toBeInTheDocument();
+    expect(screen.getByText(/chat\.modelUnavailableDescription/)).toHaveTextContent("DeepSeek");
+    expect(screen.getByText(/chat\.modelUnavailableDescription/)).toHaveTextContent("fake");
+    expect(screen.getByRole("link", { name: "chat.checkModelSettings" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "chat.changeModel" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "chat.continueAfterConfiguration" }));
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 });

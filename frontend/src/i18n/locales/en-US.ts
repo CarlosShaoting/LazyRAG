@@ -2057,6 +2057,9 @@ const enUS = {
     checkModelSettings: "Check settings",
     apiKeyUnavailableTitle: "API key unavailable",
     apiKeyUnavailableDescription: "{{provider}} rejected authentication. The API key may be invalid, expired, or lack permission for the current model. Check it and try again.",
+    modelUnavailableTitle: "Model not found or retired",
+    modelUnavailableDescription: "{{model}} is currently unavailable from {{provider}}. It may not exist, may have been retired, or may no longer be accessible to this account. Check the configuration or choose an available model.",
+    currentModelFallback: "Current model",
     modelServiceFallback: "The model service",
     editAndResend: "Edit and resend",
     regenerateInputMissing:
@@ -2120,7 +2123,7 @@ const enUS = {
         invalid_request: "The model request is malformed or missing required parameters.",
         authentication_failed: "Model service authentication failed. Check the API key, organization or project membership, and IP allowlist settings.",
         permission_denied: "The request cannot access the model service. Check access permissions or regional restrictions.",
-        not_found: "The requested model or resource was not found.",
+        not_found: "The current model does not exist, has been retired, or is no longer offered by the provider.",
         conflict: "A concurrent model service resource update caused a conflict.",
         unprocessable_entity: "The request format is valid, but the model service cannot process it.",
         rate_limited: "Requests are too frequent and the model service rate limit was reached.",
