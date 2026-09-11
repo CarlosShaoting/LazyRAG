@@ -343,22 +343,6 @@ def _pressure_rearm_tokens(after_total: int, budget: ContextBudget) -> int:
     return max(budget.trigger_tokens, after_total + hysteresis)
 
 
-def _summary_reclaim_is_possible(
-    *,
-    summary_input_total: int,
-    non_history_tokens: int,
-    summary_input_tokens: int,
-    tail_tokens: int,
-    budget: ContextBudget,
-) -> bool:
-    """Return whether even an empty summary could pass overshoot validation."""
-    if non_history_tokens + tail_tokens < budget.target_tokens:
-        return True
-    overshoot = max(1, int(summary_input_total) - int(budget.target_tokens))
-    required = overshoot * float(config['context_summary_required_overshoot_reclaim_ratio'])
-    return int(summary_input_tokens) >= required
-
-
 def _candidate_acceptance(
     metrics: dict[str, Any],
     *,
@@ -507,20 +491,9 @@ def make_history_compactor(
             budget.trigger_tokens,
             int(state.get('next_pressure_tokens') or 0),
         )
-        # Once a projection has already been compressed, honour its hysteresis
-        # even when fixed model context (system prompt, tool schemas, Skills)
-        # keeps the estimate above the nominal input budget. Re-summarizing the
-        # same history cannot shrink that fixed prefix; doing it after every
-        # tool call only adds another slow LLM request. A newly initialized
-        # projection still takes the normal context-safety path because its
-        # next_pressure_tokens value is zero.
-        projection_rearmed = int(state.get('next_pressure_tokens') or 0) > 0
         if (
             before_total < pressure_at
-            and (
-                before_total <= budget.effective_input_budget
-                or projection_rearmed
-            )
+            and before_total <= budget.effective_input_budget
         ):
             mark_projection_sent(state)
             return split_projection(state['entries'], prior_len)
@@ -602,7 +575,6 @@ def make_history_compactor(
         summary_input = accepted_entries or temporary_entries
         summary_input_total = non_history_tokens + projection_tokens(summary_input)
         summary_succeeded = False
-        summary_rearmed = False
         final_entries: Optional[list[dict[str, Any]]] = None
         if (
             config['context_summary_compression_enabled']
@@ -619,69 +591,44 @@ def make_history_compactor(
                 min_recent_user_turns=int(config['context_summary_min_recent_user_turns']),
             )
             if selected is not None:
-                if not _summary_reclaim_is_possible(
-                    summary_input_total=summary_input_total,
-                    non_history_tokens=non_history_tokens,
-                    summary_input_tokens=selected.summary_input_tokens,
-                    tail_tokens=selected.tail_tokens,
+                summarized, summary_event = apply_summary_compression(
+                    summary_history,
                     budget=budget,
-                ):
-                    # Tool schemas and other fixed context can dominate the
-                    # budget. In that case even a zero-token summary could not
-                    # satisfy validation, so do not spend an LLM call that is
-                    # guaranteed to be abandoned. Rearm before trying again.
-                    summary_rearmed = True
+                    trigger=trigger,
+                    llm=llm,
+                    summarizer=summarizer,
+                    force=True,
+                    estimated_total_tokens=summary_input_total,
+                )
+                if summary_event.decision == 'summarized':
+                    replaced = summary_input[selected.replace_start:selected.replace_end]
+                    summary_entry = {
+                        'source_start': min(entry['source_start'] for entry in replaced),
+                        'source_end': max(entry['source_end'] for entry in replaced),
+                        'message': summarized[selected.replace_start],
+                        'kind': 'summary',
+                        'model_visible': False,
+                    }
+                    final_entries = (
+                        clone_entries(summary_input[:selected.replace_start])
+                        + [summary_entry]
+                        + clone_entries(summary_input[selected.replace_end:])
+                    )
+                    final_total = non_history_tokens + projection_tokens(final_entries)
+                    metrics = transition_metrics(
+                        stable,
+                        final_entries,
+                        before_total=before_total,
+                        after_total=final_total,
+                    )
                     _record_candidate(
                         stage='summary',
-                        decision='rejected',
-                        reason='maximum_reclaim_insufficient',
-                        metrics=transition_metrics(
-                            stable,
-                            stable,
-                            before_total=before_total,
-                            after_total=before_total,
-                        ),
-                        changed_entries=0,
+                        decision='accepted',
+                        reason=summary_event.reason,
+                        metrics=metrics,
+                        changed_entries=metrics['changed_messages'],
                     )
-                else:
-                    summarized, summary_event = apply_summary_compression(
-                        summary_history,
-                        budget=budget,
-                        trigger=trigger,
-                        llm=llm,
-                        summarizer=summarizer,
-                        force=True,
-                        estimated_total_tokens=summary_input_total,
-                    )
-                    if summary_event.decision == 'summarized':
-                        replaced = summary_input[selected.replace_start:selected.replace_end]
-                        summary_entry = {
-                            'source_start': min(entry['source_start'] for entry in replaced),
-                            'source_end': max(entry['source_end'] for entry in replaced),
-                            'message': summarized[selected.replace_start],
-                            'kind': 'summary',
-                            'model_visible': False,
-                        }
-                        final_entries = (
-                            clone_entries(summary_input[:selected.replace_start])
-                            + [summary_entry]
-                            + clone_entries(summary_input[selected.replace_end:])
-                        )
-                        final_total = non_history_tokens + projection_tokens(final_entries)
-                        metrics = transition_metrics(
-                            stable,
-                            final_entries,
-                            before_total=before_total,
-                            after_total=final_total,
-                        )
-                        _record_candidate(
-                            stage='summary',
-                            decision='accepted',
-                            reason=summary_event.reason,
-                            metrics=metrics,
-                            changed_entries=metrics['changed_messages'],
-                        )
-                        summary_succeeded = True
+                    summary_succeeded = True
 
         if summary_succeeded and final_entries is not None:
             final_entries = _commit_surviving_spills(
@@ -732,12 +679,6 @@ def make_history_compactor(
                 state,
                 accepted_entries,
                 next_pressure_tokens=_pressure_rearm_tokens(accepted_total, budget),
-            )
-        elif summary_rearmed:
-            commit_entries(
-                state,
-                stable,
-                next_pressure_tokens=_pressure_rearm_tokens(before_total, budget),
             )
 
         mark_projection_sent(state)

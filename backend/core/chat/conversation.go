@@ -425,10 +425,6 @@ func ChatConversations(w http.ResponseWriter, r *http.Request) {
 	target := resolvePersistTarget(histories, raw, seq)
 	upstreamHistories := historiesForUpstream(histories, target)
 	sessionID := upstreamSessionID(convID)
-	if err := autoConfigureChatSkills(r.Context(), db, userID, userName, query); err != nil {
-		common.ReplyErr(w, fmt.Sprintf("auto-configure chat Skill failed: %v", err), http.StatusInternalServerError)
-		return
-	}
 	resourceContext, err := evolution.BuildChatResourceContext(r.Context(), db, userID, userName, sessionID)
 	if err != nil {
 		common.ReplyErr(w, fmt.Sprintf("%s: %v", "build chat resource context failed", err), http.StatusInternalServerError)

@@ -417,6 +417,7 @@ def _normalize_mcp_tool_names(tools: list, server_name: str) -> list:
         try:
             tool.__name__ = alias
             tool._lazymind_mcp_original_name = original_name
+            tool._lazymind_mcp_server_name = server_name
         except (AttributeError, TypeError):
             LOG.warning(
                 f'[MCP] kept immutable tool name from {server_name}: {original_name}'
@@ -430,29 +431,45 @@ def _normalize_mcp_tool_names(tools: list, server_name: str) -> list:
     return normalized
 
 
+def _browser_tool_name(tool: Any) -> str:
+    """Recognize browser tools before or after LazyLLM normalizes their names.
+
+    Callers supply only Core's system MCP tools, not user-configured MCP tools.
+    Keep protocol identity separate from the callable name used by the registry.
+    """
+    if getattr(tool, '_lazymind_mcp_server_name', '') != 'lazymind-browser':
+        return ''
+    name = str(getattr(tool, '_lazymind_mcp_original_name', '') or '')
+    if name.startswith('browser.'):
+        return name
+    if name.startswith('browser_'):
+        return 'browser.' + name[len('browser_'):]
+    return ''
+
+
 def _agent_max_retries_for_mcp_tools(default_max_retries: int, tools: list) -> int:
     """Raise the ReAct budget when the LazyMind browser plugin is available."""
     browser_extension_active = any(
-        str(getattr(tool, '_lazymind_mcp_original_name', '') or '').startswith('browser.')
+        _browser_tool_name(tool)
         for tool in tools
     )
     if browser_extension_active:
         # FunctionCall exposes max_retries + the initial attempt as round_limit.
-        return _BROWSER_AGENT_ROUND_LIMIT - 1
+        return max(default_max_retries, _BROWSER_AGENT_ROUND_LIMIT - 1)
     return default_max_retries
 
 
 def _add_browser_visual_tools(tools: list, *, vlm_available: bool) -> list:
     if not vlm_available:
         if any(
-            getattr(tool, '_lazymind_mcp_original_name', '') == 'browser.screenshot'
+            _browser_tool_name(tool) == 'browser.screenshot'
             for tool in tools
         ):
             LOG.info('[BrowserVision] visual inspect tool hidden: vlm role unavailable')
         return tools
     screenshot_tool = next((
         tool for tool in tools
-        if getattr(tool, '_lazymind_mcp_original_name', '') == 'browser.screenshot'
+        if _browser_tool_name(tool) == 'browser.screenshot'
     ), None)
     if screenshot_tool is None:
         return tools
@@ -1351,6 +1368,7 @@ async def _handle_chat_impl(
     # Sidechat deliberately skips MCP loading, but later prompt and retry-budget
     # assembly still inspect this collection.
     mcp_tools = []
+    system_mcp_tools = []
     if sidechat_readonly:
         active_configs = build_sidechat_tool_configs(
             [cfg for cfg in [*DEFAULT_TOOLS, *(USER_ATTACHMENT_TOOL_CONFIGS if files_map else ())]
@@ -1799,8 +1817,8 @@ async def _handle_chat_impl(
         placement='after_input',
     )
     if any(
-        str(getattr(tool, '_lazymind_mcp_original_name', '') or '').startswith('browser.')
-        for tool in mcp_tools
+        _browser_tool_name(tool)
+        for tool in system_mcp_tools
     ):
         prompt_builder.runtime(
             'browser_ui_execution', 'Browser UI execution',
@@ -1842,7 +1860,7 @@ async def _handle_chat_impl(
         'high': _cfg['agentic_max_rounds_high'],
         'max': max(1, int(_cfg['agentic_expanded_max_rounds']) - 1),
     }.get(thinking_depth, _cfg['agentic_max_rounds_medium'])
-    max_retries = _agent_max_retries_for_mcp_tools(default_max_retries, mcp_tools)
+    max_retries = _agent_max_retries_for_mcp_tools(default_max_retries, system_mcp_tools)
     if max_retries != default_max_retries:
         LOG.info(
             f'[Browser] agent round limit elevated [sid={conversation.session_id}] '

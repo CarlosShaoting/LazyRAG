@@ -696,13 +696,6 @@ func init() {
 	registerAdditionalErrorAlias("invalid external Agent attachment content", "invalid external Agent attachment", http.StatusBadRequest, 2002367)
 	registerAdditionalError("create external Agent attachment reference", http.StatusInternalServerError, 2002368)
 	registerAdditionalError("external Agent attachment event conflicts with existing content", http.StatusConflict, 2002369)
-	// Intent-triggered builtin Skill provisioning.
-	registerAdditionalError("auto-configure chat Skill failed", http.StatusInternalServerError, 2002642)
-	registerAdditionalError("auto-configure builtin Skill requires database, user and Skill identity", http.StatusInternalServerError, 2002643)
-	registerAdditionalErrorPattern("builtin Skill %s was not found", "Built-in Skill package was not found", http.StatusInternalServerError, 2002644)
-	registerAdditionalErrorPattern("builtin Skill %s has no bundled archive", "Built-in Skill package archive is unavailable", http.StatusInternalServerError, 2002645)
-	registerAdditionalErrorPattern("install builtin Skill %s", "Failed to install the built-in Skill", http.StatusInternalServerError, 2002646)
-
 	registerAdditionalError("invalid history selection", http.StatusBadRequest, 2002370)
 	registerAdditionalError("failed to start history run", http.StatusConflict, 2002371)
 	registerAdditionalError("editable block unavailable or changed; refresh and retry", http.StatusConflict, 2002372)

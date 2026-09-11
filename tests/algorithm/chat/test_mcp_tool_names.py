@@ -1,6 +1,13 @@
+from types import SimpleNamespace
+
+import pytest
+
+from lazyllm.tools.mcp.tool_adaptor import generate_lazyllm_tool
+
 from lazymind.chat.service.chat_service import (
     _add_browser_visual_tools,
     _agent_max_retries_for_mcp_tools,
+    _browser_tool_name,
     _mcp_model_tool_name,
     _normalize_mcp_tool_names,
 )
@@ -71,3 +78,30 @@ def test_non_browser_mcp_tools_keep_configured_agent_round_limit():
 
     assert _agent_max_retries_for_mcp_tools(20, normalized) == 20
     assert _agent_max_retries_for_mcp_tools(20, []) == 20
+
+
+@pytest.mark.parametrize('wire_name', ['browser.open', 'browser.screenshot', 'browser.click_intersection'])
+def test_browser_identity_survives_real_lazyllm_adapter(wire_name):
+    tool = generate_lazyllm_tool(None, SimpleNamespace(
+        name=wire_name, description='Browser regression test.',
+        inputSchema={'type': 'object', 'properties': {}},
+    ))
+    assert '.' not in tool.__name__
+    tools = _normalize_mcp_tool_names([tool], 'lazymind-browser')
+
+    assert _browser_tool_name(tool) == wire_name
+    assert _agent_max_retries_for_mcp_tools(20, tools) == 199
+    assert _agent_max_retries_for_mcp_tools(299, tools) == 299
+    augmented = _add_browser_visual_tools(tools, vlm_available=True)
+    assert ('browser_visual_inspect' in [t.__name__ for t in augmented]) == (
+        wire_name == 'browser.screenshot'
+    )
+    assert _add_browser_visual_tools(tools, vlm_available=False) == tools
+
+
+def test_unrelated_mcp_browser_names_do_not_activate_browser_policy():
+    tools = _normalize_mcp_tool_names([_tool('browser.screenshot')], 'other-server')
+
+    assert _browser_tool_name(tools[0]) == ''
+    assert _agent_max_retries_for_mcp_tools(20, tools) == 20
+    assert _add_browser_visual_tools(tools, vlm_available=True) == tools
