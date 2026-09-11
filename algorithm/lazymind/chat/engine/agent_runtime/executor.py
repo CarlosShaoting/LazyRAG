@@ -243,6 +243,8 @@ class AgentExecutor:
             )
         helper = _sh.StreamCallHelper(agent, init_sid=False)
         kwargs = {'llm_chat_history': history} if history is not None else {}
+        execution_options = getattr(plan, 'execution_options', None)
+        llm_config = getattr(execution_options, 'llm_config', None)
         finished_model_calls: set[str] = set()
         failed = False
         try:
@@ -251,7 +253,7 @@ class AgentExecutor:
                     item = await asyncio.to_thread(
                         refine_unavailable_model_event,
                         item,
-                        plan.execution_options.llm_config,
+                        llm_config,
                     )
                 self._record_finished_model_call(item, finished_model_calls)
                 yield 'event', item
@@ -265,7 +267,7 @@ class AgentExecutor:
                     terminal = await asyncio.to_thread(
                         refine_unavailable_model_terminal,
                         terminal,
-                        plan.execution_options.llm_config,
+                        llm_config,
                     )
                     yield 'event', {
                         'tag': 'runtime_event',

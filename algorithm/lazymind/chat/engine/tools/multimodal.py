@@ -50,6 +50,12 @@ _MEDIA_MODEL_DEPENDENCIES = {
 
 
 def _missing_media_model_result(role: str) -> Optional[Dict[str, Any]]:
+    # This guard is authoritative only after Chat has injected the current
+    # request's model configuration. Direct library calls and focused unit
+    # tests have no request context and must remain usable independently.
+    dynamic_configs = lazyllm.globals['config'].get('dynamic_model_configs')
+    if dynamic_configs is None:
+        return None
     if is_model_role_available(role):
         return None
     metadata = _MEDIA_MODEL_DEPENDENCIES[role]

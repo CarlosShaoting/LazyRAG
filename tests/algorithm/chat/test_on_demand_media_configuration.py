@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import lazyllm
+
 from lazymind.chat.engine.tools import multimodal
 from lazymind.chat.service.component import tool_registry
 
@@ -64,6 +66,7 @@ def test_media_prompt_requires_requested_tool_and_forbids_fallback():
 
 
 def test_unconfigured_image_tool_returns_structured_dependency(monkeypatch):
+    monkeypatch.setitem(lazyllm.globals['config'], 'dynamic_model_configs', {})
     monkeypatch.setattr(multimodal, 'is_model_role_available', lambda _role: False)
 
     result = multimodal.image_generator('一只在草地上的小狗')
