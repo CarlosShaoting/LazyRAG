@@ -58,7 +58,6 @@ interface ProviderModel {
   capability: ModelCapability;
   builtIn: boolean;
   enabled: boolean;
-  maxInputTokens?: string;
 }
 
 interface ProviderOption {
@@ -105,14 +104,13 @@ interface ApiModel {
   name: string;
   model_type?: string;
   is_default?: boolean;
-  max_input_tokens?: string;
 }
 
 interface SelectedModelApiItem {
   base_url?: string;
   group_name: string;
+  is_default?: boolean;
   is_editable?: boolean;
-  max_input_tokens?: string;
   model_id: string;
   model_key: string;
   name: string;
@@ -123,9 +121,6 @@ interface SelectedModelApiItem {
 }
 
 type SelectedModels = Partial<Record<ModelCapability, string>>;
-type SelectedModelMaxInputTokens = Partial<
-  Record<ModelCapability, string>
->;
 
 export type CloudServiceSlotKey = "cloudParsing" | "searchEngine";
 type CloudServiceCategory = "ocr" | "search";
@@ -600,8 +595,6 @@ export default function DefaultModelConfigPanel({
   const currentLanguage = i18n.resolvedLanguage || i18n.language || "zh-CN";
   const [providerOptions, setProviderOptions] = useState<ProviderOption[]>([]);
   const [selectedModels, setSelectedModels] = useState<SelectedModels>({});
-  const [selectedModelMaxInputTokens, setSelectedModelMaxInputTokens] =
-    useState<SelectedModelMaxInputTokens>({});
   const [selectedCloudServices, setSelectedCloudServices] =
     useState<SelectedCloudServices>({});
   const [cloudServiceShareStatus, setCloudServiceShareStatus] = useState<
@@ -683,7 +676,6 @@ export default function DefaultModelConfigPanel({
       const selectedResponse = await modelProvidersApi.apiCoreModelProvidersSelectedModelsGet();
       const selectedData = unwrapModelProviderData<{ selections?: SelectedModelApiItem[] }>(selectedResponse.data);
       const nextSelectedModels: SelectedModels = {};
-      const nextSelectedModelMaxInputTokens: SelectedModelMaxInputTokens = {};
       const selectedOptions: Partial<
         Record<ModelCapability, ModelOptionItem[]>
       > = {};
@@ -728,9 +720,8 @@ export default function DefaultModelConfigPanel({
           id: selection.model_id,
           name: selection.name,
           capability,
-          builtIn: true,
+          builtIn: Boolean(selection.is_default),
           enabled: true,
-          maxInputTokens: selection.max_input_tokens,
         };
         const option: ModelOptionItem = {
           provider,
@@ -740,10 +731,6 @@ export default function DefaultModelConfigPanel({
           isEditable,
         };
         nextSelectedModels[capability] = option.value;
-        if (selection.max_input_tokens?.trim()) {
-          nextSelectedModelMaxInputTokens[capability] =
-            selection.max_input_tokens;
-        }
         selectedOptions[capability] = [
           option,
           ...(selectedOptions[capability] || []).filter(
@@ -753,7 +740,6 @@ export default function DefaultModelConfigPanel({
       });
 
       setSelectedModels(nextSelectedModels);
-      setSelectedModelMaxInputTokens(nextSelectedModelMaxInputTokens);
       setModuleModelOptions((current) => ({ ...selectedOptions, ...current }));
 
       const nextShareStatus: Partial<Record<ModelCapability, boolean>> = {};
@@ -945,7 +931,6 @@ export default function DefaultModelConfigPanel({
               capability,
               builtIn: Boolean(model.is_default),
               enabled: true,
-              maxInputTokens: model.max_input_tokens,
             };
             const value = getModelValue(
               provider.id,
@@ -1089,18 +1074,9 @@ export default function DefaultModelConfigPanel({
   };
 
   const applyModelSelection = (capability: ModelCapability, value?: string) => {
-    const maxInputTokens = value
-      ? moduleModelOptions[capability]?.find(
-          (option) => option.value === value,
-        )?.model.maxInputTokens
-      : undefined;
     setSelectedModels((current) => ({
       ...current,
       [capability]: value,
-    }));
-    setSelectedModelMaxInputTokens((current) => ({
-      ...current,
-      [capability]: maxInputTokens?.trim() ? maxInputTokens : undefined,
     }));
     if (!value) {
       setShareStatus((current) => ({ ...current, [capability]: false }));
@@ -1119,13 +1095,6 @@ export default function DefaultModelConfigPanel({
           setShareStatus((current) => ({
             ...current,
             [selectedCapability]: !!selection.share,
-          }));
-          setSelectedModelMaxInputTokens((current) => ({
-            ...current,
-            [selectedCapability]:
-              selection.max_input_tokens?.trim()
-                ? selection.max_input_tokens
-                : undefined,
           }));
         });
         void onModelSelectionChanged();
@@ -1373,8 +1342,6 @@ export default function DefaultModelConfigPanel({
           const optionLoading = Boolean(moduleModelLoading[module.key]);
           const moduleTitle = t(module.titleKey);
           const moduleSubtitle = t(module.subtitleKey);
-          const maxInputTokens = selectedModelMaxInputTokens[module.key];
-          const shouldShowMaxInputTokens = Boolean(maxInputTokens?.trim());
 
           return (
             <div
@@ -1393,13 +1360,6 @@ export default function DefaultModelConfigPanel({
                   ) : null}
                   <span>{moduleTitle}</span>
                 </label>
-                {shouldShowMaxInputTokens ? (
-                  <span className="model-provider-max-input-tokens">
-                    {t("modelProvider.maxInputTokens", {
-                      value: maxInputTokens,
-                    })}
-                  </span>
-                ) : null}
                 <Tooltip placement="top" title={moduleSubtitle}>
                   <button
                     aria-label={t("modelProvider.moduleHelpAria", {
