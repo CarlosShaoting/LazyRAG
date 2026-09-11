@@ -5,6 +5,7 @@ import {
   Empty,
   Input,
   Modal,
+  Popconfirm,
   Segmented,
   Space,
   Spin,
@@ -15,6 +16,7 @@ import {
 import {
   DownloadOutlined,
   CopyOutlined,
+  DeleteOutlined,
   FolderOpenOutlined,
   GlobalOutlined,
   RightOutlined,
@@ -29,15 +31,18 @@ import {
   checkEditablePPTDependency,
   checkBrowserExtensionDependency,
   createBrowserPairingCode,
+  getBrowserDevices,
   getFFmpegDependencyStatus,
   getEditablePPTDependencyStatus,
   getBrowserExtensionDependencyStatus,
   installFFmpegDependency,
   installEditablePPTDependency,
   installBrowserExtensionDependency,
+  revokeBrowserDevice,
   updateFFmpegDependency,
   type EditablePPTDependencyStatus,
   type BrowserExtensionDependencyStatus,
+  type BrowserDeviceInfo,
   type BrowserPairingCode,
   type FFmpegDependencyStatus,
 } from "../api/systemDependencies";
@@ -76,6 +81,10 @@ export default function DependencyInstallSection() {
   const [browserChecking, setBrowserChecking] = useState(false);
   const [browserPairing, setBrowserPairing] = useState<BrowserPairingCode | null>(null);
   const [browserPairingCreating, setBrowserPairingCreating] = useState(false);
+  const [browserDevices, setBrowserDevices] = useState<BrowserDeviceInfo[]>([]);
+  const [browserDevicesLoading, setBrowserDevicesLoading] = useState(false);
+  const [browserDevicesError, setBrowserDevicesError] = useState("");
+  const [browserDeviceRevoking, setBrowserDeviceRevoking] = useState("");
   const [browserTargetID, setBrowserTargetID] = useState<BrowserExtensionTargetID>(
     detectPreferredBrowserExtensionTarget,
   );
@@ -313,6 +322,39 @@ export default function DependencyInstallSection() {
       }));
     } catch {
       message.error(t("modelProvider.external.dependencyBrowserSettingsCopyFailed"));
+    }
+  };
+
+  const refreshBrowserDevices = useCallback(async () => {
+    setBrowserDevicesLoading(true);
+    setBrowserDevicesError("");
+    try {
+      setBrowserDevices(await getBrowserDevices());
+    } catch (error) {
+      setBrowserDevicesError(
+        getLocalizedErrorMessage(error) || t("modelProvider.external.dependencyBrowserDevicesLoadFailed"),
+      );
+    } finally {
+      setBrowserDevicesLoading(false);
+    }
+  }, [t]);
+
+  useEffect(() => {
+    if (browserModalOpen) void refreshBrowserDevices();
+  }, [browserModalOpen, refreshBrowserDevices]);
+
+  const handleRevokeBrowserDevice = async (deviceID: string) => {
+    setBrowserDeviceRevoking(deviceID);
+    try {
+      await revokeBrowserDevice(deviceID);
+      setBrowserDevices((devices) => devices.filter((device) => device.id !== deviceID));
+      message.success(t("modelProvider.external.dependencyBrowserDeviceRevoked"));
+    } catch (error) {
+      message.error(
+        getLocalizedErrorMessage(error) || t("modelProvider.external.dependencyBrowserDeviceRevokeFailed"),
+      );
+    } finally {
+      setBrowserDeviceRevoking("");
     }
   };
 
@@ -695,6 +737,103 @@ export default function DependencyInstallSection() {
             >
               {t("modelProvider.external.dependencyBrowserPairingCreateAction")}
             </Button>
+          </div>
+          <div>
+            <Space align="center" style={{ display: "flex", justifyContent: "space-between" }}>
+              <div>
+                <h4 style={{ marginBottom: 4 }}>
+                  {t("modelProvider.external.dependencyBrowserDevicesTitle")}
+                </h4>
+                <p style={{ marginBottom: 0 }}>
+                  {t("modelProvider.external.dependencyBrowserDevicesDesc")}
+                </p>
+              </div>
+              <Button
+                icon={<SyncOutlined />}
+                loading={browserDevicesLoading}
+                onClick={() => void refreshBrowserDevices()}
+                size="small"
+              >
+                {t("common.refresh")}
+              </Button>
+            </Space>
+            {browserDevicesError ? (
+              <Alert
+                action={(
+                  <Button onClick={() => void refreshBrowserDevices()} size="small">
+                    {t("common.retry")}
+                  </Button>
+                )}
+                message={browserDevicesError}
+                showIcon
+                style={{ marginTop: 12 }}
+                type="error"
+              />
+            ) : null}
+            <Spin spinning={browserDevicesLoading}>
+              {!browserDevicesLoading && browserDevices.length === 0 ? (
+                <Empty
+                  description={t("modelProvider.external.dependencyBrowserDevicesEmpty")}
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  style={{ marginBlock: 16 }}
+                />
+              ) : (
+                <Space direction="vertical" size={8} style={{ marginTop: 12, width: "100%" }}>
+                  {browserDevices.map((device) => (
+                    <div
+                      key={device.id}
+                      style={{
+                        alignItems: "center",
+                        border: "1px solid var(--ant-color-border-secondary, #f0f0f0)",
+                        borderRadius: 8,
+                        display: "flex",
+                        gap: 12,
+                        justifyContent: "space-between",
+                        padding: "10px 12px",
+                      }}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <Space size={8} wrap>
+                          <strong>{device.name || device.browser || t("modelProvider.external.dependencyBrowserDeviceFallback")}</strong>
+                          <Tag color={device.online ? "success" : "default"}>
+                            {t(device.online
+                              ? "modelProvider.external.dependencyBrowserDeviceOnline"
+                              : "modelProvider.external.dependencyBrowserDeviceOffline")}
+                          </Tag>
+                        </Space>
+                        <div style={{ color: "var(--ant-color-text-secondary, #8c8c8c)", fontSize: 12 }}>
+                          {[device.browser, device.browser_version, device.extension_version && `Extension ${device.extension_version}`]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </div>
+                        <div style={{ color: "var(--ant-color-text-tertiary, #bfbfbf)", fontSize: 12 }}>
+                          {t("modelProvider.external.dependencyBrowserDeviceLastSeen", {
+                            time: new Date(device.last_seen_at).toLocaleString(),
+                          })}
+                        </div>
+                      </div>
+                      <Popconfirm
+                        cancelText={t("common.cancel")}
+                        description={t("modelProvider.external.dependencyBrowserDeviceRevokeConfirm")}
+                        okButtonProps={{ danger: true }}
+                        okText={t("modelProvider.external.dependencyBrowserDeviceRevokeAction")}
+                        onConfirm={() => void handleRevokeBrowserDevice(device.id)}
+                        title={t("modelProvider.external.dependencyBrowserDeviceRevokeTitle")}
+                      >
+                        <Button
+                          danger
+                          icon={<DeleteOutlined />}
+                          loading={browserDeviceRevoking === device.id}
+                          size="small"
+                        >
+                          {t("modelProvider.external.dependencyBrowserDeviceRevokeAction")}
+                        </Button>
+                      </Popconfirm>
+                    </div>
+                  ))}
+                </Space>
+              )}
+            </Spin>
           </div>
         </Space>
       </Modal>

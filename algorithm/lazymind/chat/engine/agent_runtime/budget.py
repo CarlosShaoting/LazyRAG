@@ -39,9 +39,10 @@ def _llm_config_max_input_tokens(llm_config: Optional[dict[str, Any]]) -> Option
     if not isinstance(llm_config, dict):
         return None
     for role in ('llm', 'vlm', 'chat'):
-        parsed = _role_max_input_tokens(llm_config.get(role))
-        if parsed:
-            return parsed
+        if isinstance(llm_config.get(role), dict):
+            # An unknown window for the primary model must not borrow the
+            # window of another configured model (for example a 32K VLM).
+            return _role_max_input_tokens(llm_config[role])
     return parse_token_limit(llm_config.get('max_input_tokens'))
 
 

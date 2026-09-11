@@ -53,6 +53,18 @@ export interface BrowserPairingCode {
   expires_at: string;
 }
 
+export interface BrowserDeviceInfo {
+  id: string;
+  name: string;
+  browser: string;
+  browser_version?: string;
+  extension_version?: string;
+  version?: string;
+  online: boolean;
+  created_at: string;
+  last_seen_at: string;
+}
+
 interface ApiEnvelope<T> {
   data?: T;
 }
@@ -149,4 +161,18 @@ export async function createBrowserPairingCode() {
     ApiEnvelope<BrowserPairingCode> | BrowserPairingCode
   >(`${basePath}/api/core/browser/manage/pairings`);
   return unwrapApiData<BrowserPairingCode>(response.data);
+}
+
+export async function getBrowserDevices() {
+  const response = await axiosInstance.get<
+    ApiEnvelope<{ devices: BrowserDeviceInfo[] }> | { devices: BrowserDeviceInfo[] }
+  >(`${basePath}/api/core/browser/manage/devices`);
+  const result = unwrapApiData<{ devices: BrowserDeviceInfo[] }>(response.data);
+  return result.devices || [];
+}
+
+export async function revokeBrowserDevice(deviceID: string) {
+  await axiosInstance.delete(
+    `${basePath}/api/core/browser/manage/devices/${encodeURIComponent(deviceID)}`,
+  );
 }

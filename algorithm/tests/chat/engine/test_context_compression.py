@@ -82,13 +82,24 @@ def test_resolve_max_input_tokens_explicit_arg_beats_catalog() -> None:
     assert resolve_max_input_tokens('8K', llm_config={'llm': {'max_input_tokens': '128K'}}) == 8_000
 
 
-def test_resolve_max_input_tokens_uses_64k_fallback() -> None:
+def test_resolve_max_input_tokens_uses_262k_default_fallback() -> None:
     from lazymind.config import config
 
-    with config.temp('context_compression_default_max_input_tokens', 64_000):
-        budget = build_context_budget(llm_config={'llm': {'max_input_tokens': None}})
-    assert budget.max_input_tokens == 64_000
+    budget = build_context_budget(llm_config={'llm': {'max_input_tokens': None}})
+    assert config['context_compression_default_max_input_tokens'] == 262_144
+    assert budget.max_input_tokens == 262_144
     assert budget.source == 'fallback'
+
+
+def test_unknown_primary_window_does_not_borrow_vlm_window() -> None:
+    budget = build_context_budget(llm_config={
+        'llm': {'model': 'Qwen/Qwen3.8-Flash-Next'},
+        'vlm': {'model': 'Qwen/Qwen3.5-4B', 'max_input_tokens': '32K'},
+    })
+    assert budget.max_input_tokens == 262_144
+    assert budget.effective_input_budget == 253_952
+    assert budget.source == 'fallback'
+    assert resolve_max_input_tokens(llm_config={'vlm': {'max_input_tokens': '32K'}}) == 32_000
 
 
 def test_enrich_role_types_preserves_catalog_window(monkeypatch) -> None:
@@ -516,9 +527,11 @@ def test_function_call_passes_live_prefix_and_current_input() -> None:
     class FunctionCallState:
         _history_compactor = staticmethod(compactor)
         _keep_full_turns = 0
+        _model_context_provider = None
         _system_prompt = 'live system'
         _tools_manager = ToolManager()
         _skill_manager = None
+        _model_context_provider = None
 
     history = [{'role': 'user', 'content': 'old'}]
     workspace = {}
@@ -611,6 +624,17 @@ def test_executor_does_not_replace_authoritative_history_with_projection(monkeyp
         AgentExecutor().create_agent(object(), plan)
     assert plan.history is history
     assert plan.history == [{'role': 'tool', 'content': 'history'}]
+
+
+def test_executor_resolves_function_call_llm_after_react_agent_build() -> None:
+    created_shared_llm = object()
+    function_call_llm = object()
+    agent = type('Agent', (), {
+        '_runtime_llm': created_shared_llm,
+        '_fc': type('FunctionCall', (), {'_llm': function_call_llm})(),
+    })()
+
+    assert AgentExecutor.runtime_llm(agent) is function_call_llm
 
 
 def test_compact_tool_result_routes_by_tool_name() -> None:
@@ -748,6 +772,49 @@ def test_spill_stays_internal_and_uses_stable_content_path(tmp_path, monkeypatch
     assert 'offloaded to workspace' in notice
     assert calls == []
     assert len(list((tmp_path / 'tool_spills').glob('*.txt'))) == 1
+
+
+def test_browser_spill_exposes_metadata_and_writes_searchable_json(tmp_path) -> None:
+    from lazymind.chat.engine.agent_runtime.compactors import compact_or_spill_tool_result
+    from lazymind.config import config
+
+    payload = {
+        'result': {
+            'session_id': 'bs_test',
+            'revision': 7,
+            'scroll': {'moved': False, 'at_boundary': True},
+            'url': 'https://example.feishu.cn/wiki/test',
+            'title': '日报',
+            'elements': [
+                {'name': '9/9', 'ref': 'e_1', 'role': 'StaticText'},
+                {'name': '崔绍庭', 'ref': 'e_2', 'role': 'StaticText'},
+            ],
+            'page_state': {'site': 'feishu', 'editor_mode': 'editable'},
+        },
+    }
+    content = '\n'.join([
+        'Tool call result:',
+        'Received text message:',
+        json.dumps(payload, ensure_ascii=False, separators=(',', ':')),
+        '[Internal runtime notice] Internal ReAct rounds left: 196.',
+    ])
+
+    with config.temp('context_compression_spill_bytes', 128):
+        notice, compactor, _before, _after, path, _size = compact_or_spill_tool_result(
+            'browser_open', content, workspace=str(tmp_path),
+        )
+
+    assert compactor == 'spill'
+    assert '- session_id: bs_test' in notice
+    assert '- revision: 7' in notice
+    assert '- element_count: 2' in notice
+    assert '"moved": false' in notice
+    spilled = (tmp_path / path).read_text(encoding='utf-8')
+    assert '"session_id": "bs_test"' in spilled
+    element_line = next(line for line in spilled.splitlines() if '崔绍庭' in line)
+    assert '"name":"崔绍庭"' in element_line
+    assert '"ref":"e_2"' in element_line
+    assert json.JSONDecoder().raw_decode(spilled[spilled.index('{'):])[0] == payload
 
 
 def test_current_round_projection_is_what_llm_input_would_see(tmp_path) -> None:

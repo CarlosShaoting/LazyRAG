@@ -30,7 +30,7 @@ Stop the development shell without stopping Local Runtime:
 make desktop-dev-down
 ```
 
-Logs are written under `local/build/desktop-dev/`. Override the defaults with `LAZYMIND_DESKTOP_DEV_PORT` and `LAZYMIND_DESKTOP_EXTERNAL_RUNTIME_URL`. Both renderer and runtime URLs are restricted to loopback hosts because the renderer receives the privileged Desktop preload bridge. Browser actions use the same external Chrome/Edge extension as Docker and Local, opening an independent visible window. The retained `Electron WebContentsView` prototype is disabled by default and is only mounted when `VITE_DESKTOP_EMBEDDED_BROWSER=true` is set explicitly for lab testing.
+Logs are written under `local/build/desktop-dev/`. Override the defaults with `LAZYMIND_DESKTOP_DEV_PORT` and `LAZYMIND_DESKTOP_EXTERNAL_RUNTIME_URL`. Both renderer and runtime URLs are restricted to loopback hosts because the renderer receives the privileged Desktop preload bridge. Browser actions use the same external Chrome/Edge extension as Docker and Local, opening an independent visible window.
 
 Platform-maintained Skill directories and installable Skill links are declared together in `skills/builtin-sources.yaml`; curated experiences keep their schema, locales, and images under `skills/featured/<id>/`. Desktop builds package or download every source into the same locked ZIP catalog under `resources/runtime/builtin-skills`, and compile the curated catalog plus content-hashed assets under `resources/runtime/featured-skills`. Bundled Caddy serves those assets through `/showcase-assets/` on both macOS and Windows. Release builds use the lock in frozen mode; users only unpack a Skill into their personal revision store when they click Install or Try.
 

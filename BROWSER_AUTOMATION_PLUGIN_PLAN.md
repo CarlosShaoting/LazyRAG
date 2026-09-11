@@ -2,7 +2,7 @@
 
 > 2026-09-01 产品决策：当前测试版采用完全自动化，点击发送/提交、Enter、敏感字段输入和任意按键不再要求人工接管。扩展与 Desktop 中原有的本地安全判断已注释保留，本文后续审批设计作为未来可选模式保留。
 >
-> 2026-09-01 形态决策：PRD 没有要求把网页嵌入 LazyMind。Docker、`make local-up` 和 Desktop 统一使用 Chrome/Edge 扩展打开独立可见浏览器窗口；已经实现的 Electron `WebContentsView` 驱动保留为默认关闭的实验能力，不进入当前 PRD 验收。
+> 2026-09-11 形态决策：PRD 没有要求把网页嵌入 LazyMind。Docker、`make local-up` 和 Desktop 统一使用 Chrome/Edge 扩展打开独立可见浏览器窗口；Desktop 内嵌浏览器实现已移除。
 
 部署命令: LazyMind/build_command.txt
 
@@ -22,8 +22,7 @@
 - 浏览器扩展运行在用户的 Chrome / Edge 中。页面感知使用标准 DOM；浏览器控制负责创建由 LazyMind 管理的新窗口或标签页，并通过 `chrome.debugger` 使用 Chrome DevTools Protocol（CDP）操作页面。
 - `browser-gateway` 负责设备配对、在线连接、会话路由、命令超时、审批和审计，并同时向 LazyMind Agent 暴露浏览器工具。
 - Docker 侧由扩展主动通过 WebSocket 连接容器中的 Gateway。容器不能直接访问宿主机浏览器，这个边界不能靠 `host.docker.internal` 解决。
-- Desktop 与 Docker/Local 使用同一个扩展和控制驱动：模型打开 URL 时，扩展创建独立有头窗口；读取当前 Chrome 页时由用户授权当前站点。Native Messaging 只作为后续动态端口发现优化。
-- 已完成的 Electron `WebContentsView` + `webContents.debugger` 驱动不删除，但前端默认不挂载、Desktop Core 默认不偏好该设备；设置 `VITE_DESKTOP_EMBEDDED_BROWSER=true` 时才挂载实验 UI，如需模型在多设备在线时固定选择它，再显式设置 `LAZYMIND_BROWSER_PREFERRED_DEVICE_BROWSER=Electron WebContentsView`。
+- Desktop 与 Docker/Local 使用同一个扩展和控制驱动：模型打开 URL 时，扩展创建独立有头窗口；读取当前 Chrome/Edge 页时在配对阶段一次性明确授权网页读取，后续无需逐站点授权。Native Messaging 只作为后续动态端口发现优化。
 - Docker 中的 Playwright Chromium 仅作为自动化测试环境，以及后续可选的“托管无头浏览器”驱动，不代替产品态扩展。
 - 页面由 React、Vue、Angular、Svelte 或传统服务端模板实现时，**不需要分别适配框架**。通用层操作 DOM、可访问性树和真实输入事件；只为富文本编辑器、Canvas 或特殊网站增加能力适配器。
 - 对 Agent 框架也不做 LangChain、LlamaIndex、LazyLLM 等多套实现。内部统一使用一套工具协议，并通过 MCP / LazyMind Tool Provider 暴露。
@@ -192,9 +191,9 @@ P0 只需三个第一方工具：
 | 仅 content script | 权限提示较轻，开发简单 | 合成事件不一定可信；跨域 iframe、复杂编辑器、Shadow DOM 和动态页面稳定性不足 | 不作为通用控制主驱动 |
 | MV3 扩展 + `chrome.debugger` / CDP | 可访问 DOM、Accessibility、Input、Page、Runtime 等域，可产生真实鼠标键盘事件 | `debugger` 是高权限且不能声明为 optional；需要明确安装告知和严格审批 | **产品态主方案** |
 | Docker Playwright 浏览器 | 自动化稳定、适合 CI 和无人值守 | 是容器里的独立浏览器，拿不到用户宿主机 Chrome 的登录态，用户不易接管 | 测试与后续无头模式 |
-| Electron `webContents.debugger` / WebContentsView | 可在 Desktop 内嵌且不受 iframe 策略限制 | Desktop 独占，增加第二套驱动与 E2E 成本，且 PRD 未要求 | **实验代码保留，默认关闭，不作为产品主驱动** |
+| Electron `webContents.debugger` / WebContentsView | 可在 Desktop 内嵌且不受 iframe 策略限制 | Desktop 独占，增加第二套驱动与 E2E 成本，且 PRD 未要求 | **不实现，统一使用扩展驱动** |
 
-V1 建议最低支持 Chromium 125，以使用较完整的 CDP Target / iframe 会话能力；Chrome 和 Edge 使用同一套扩展代码、分别发布商店包。Firefox 不进入 V1，因为其调试接口和 CDP 行为不能直接等价复用。
+V1 最低支持 Chromium 124；当前使用的 MV3、`chrome.debugger`、`chrome.scripting` 与 CDP 1.3 控制链已在该版本覆盖。Chrome 和 Edge 使用同一套扩展代码、分别发布商店包。Firefox 不进入 V1，因为其调试接口和 CDP 行为不能直接等价复用。
 
 ### 4.1 扩展权限建议
 
@@ -203,7 +202,7 @@ Manifest V3 的必需权限控制在：
 ```json
 {
   "manifest_version": 3,
-  "minimum_chrome_version": "125",
+  "minimum_chrome_version": "124",
   "permissions": [
     "activeTab",
     "scripting",
@@ -423,11 +422,7 @@ P1 先交付事件轨迹、截图关键帧和 Skill 草稿；P2 如确有复盘�
 - Gateway 作为 `backend/core/browser/` 内置模块运行，Desktop 不增加独立进程；local-proxy 只对精确 `/api/browser/v1` 公开配对/WebSocket，其他 Route 继续执行普通 RBAC。
 - Desktop 不再注入内嵌设备偏好。扩展是唯一默认控制设备，因此 Docker、Local、Desktop 的 Agent 行为、页面登录态和问题定位路径一致。
 
-### 8.2 已保留但默认关闭：Electron 内嵌实验驱动
-
-已有的 `desktop/electron/src/embedded-browser.js`、preload IPC 和聊天右侧面板代码继续保留，避免丢失已经完成的工作。但默认构建不会挂载面板，也不会自动创建或优先选择 Electron 浏览器设备。仅在研究内嵌体验时显式设置 `VITE_DESKTOP_EMBEDDED_BROWSER=true`；若有多个浏览器设备同时在线，再设置 `LAZYMIND_BROWSER_PREFERRED_DEVICE_BROWSER=Electron WebContentsView`。该模式不属于当前 PRD 的交付或验收前提。
-
-### 8.3 未来可选：Native Messaging
+### 8.2 未来可选：Native Messaging
 
 若要免去 Desktop 动态端口的手工配置，可后续增加 Native Host。它只负责端口发现和协议转发，页面抓取与 CDP 控制仍在扩展内；Chrome/Edge 注册必须使用精确扩展 ID，并由用户显式安装/移除。
 
@@ -622,8 +617,6 @@ E2E 必须使用 Playwright 自带 Chromium 和 persistent context 加载扩展�
 
 ### 13.3 Desktop 测试
 
-- 前端单测覆盖 Desktop 默认不挂载内嵌浏览器；实验开关只能在 Desktop profile 显式启用。
-- local-runtime-manager 测试覆盖 Desktop profile 不注入内嵌设备偏好。
 - macOS arm64 与 Windows x64 各跑一次真实打包应用 E2E：安装目录打开、生成配对码、扩展连接、模型打开独立窗口、点击/输入/截图和登录态恢复。
 - Docker、Local 与 Desktop 使用同一动作 transcript 验证扩展 CDP 结果一致。
 - 若后续实现 Native Messaging，再补 Windows/macOS 路径、HKCU/用户目录登记、升级保留和清理合同测试。
@@ -633,7 +626,7 @@ E2E 必须使用 Playwright 自带 Chromium 和 persistent context 加载扩展�
 ### Phase 0：协议与安全基线（工程前置）
 
 - 冻结 Capture、Control、Recording 三类 schema、扩展命令协议、错误码和审批准则。
-- 完成登录/配对/site permission、origin policy、managed tab 和多用户隔离设计。
+- 完成登录/配对、一次性 page-reading permission、origin policy、managed tab 和多用户隔离设计。
 - 建立 HTML、React、Vue、iframe、Shadow DOM 测试夹具。
 
 验收：协议合同测试完成，禁止项有确定性测试，不依赖 LLM 判断。

@@ -24,7 +24,7 @@ import (
 const (
 	defaultPairingTTL = 5 * time.Minute
 	defaultCommandTTL = 30 * time.Second
-	maxMessageBytes   = 4 << 20
+	maxMessageBytes   = 16 << 20
 )
 
 type deviceRecord struct {
@@ -294,6 +294,31 @@ func (h *Hub) RevokeDevice(userID, deviceID string) error {
 	return nil
 }
 
+func (h *Hub) RevokeAllDevices(userID string) int {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return 0
+	}
+	h.mu.Lock()
+	connections := make([]*deviceConnection, 0)
+	revoked := 0
+	for deviceID, device := range h.devices {
+		if device.UserID != userID {
+			continue
+		}
+		delete(h.devices, deviceID)
+		revoked++
+		if device.Connection != nil {
+			connections = append(connections, device.Connection)
+		}
+	}
+	h.mu.Unlock()
+	for _, connection := range connections {
+		connection.close(errors.New("browser device was revoked"))
+	}
+	return revoked
+}
+
 func (h *Hub) Call(ctx context.Context, userID, deviceID, action string, value any) (json.RawMessage, error) {
 	startedAt := time.Now()
 	userID = strings.TrimSpace(userID)
@@ -532,7 +557,7 @@ func randomToken() (string, error) {
 
 func allowedAction(action string) bool {
 	switch action {
-	case "capture_current_page", "open", "navigate", "snapshot", "click", "click_at", "click_intersection", "type", "type_focused", "select", "press", "scroll", "wait", "screenshot", "tabs", "close":
+	case "capture_current_page", "open", "navigate", "snapshot", "click", "click_intersection", "type", "type_focused", "select", "press", "scroll", "wait", "screenshot", "tabs", "close":
 		return true
 	default:
 		return false

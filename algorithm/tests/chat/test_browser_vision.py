@@ -26,7 +26,7 @@ def _screenshot_result(width: int = 1000, height: int = 500) -> str:
     )
 
 
-def test_browser_visual_locate_calls_vlm_and_scales_to_css_viewport(tmp_path, monkeypatch):
+def test_browser_visual_inspect_calls_vlm_without_returning_coordinates(tmp_path, monkeypatch):
     observed = {}
 
     def screenshot_tool(**kwargs):
@@ -40,60 +40,53 @@ def test_browser_visual_locate_calls_vlm_and_scales_to_css_viewport(tmp_path, mo
         return {
             'description': (
                 '```json\n'
-                '{"found":true,"target":"blank editor","x":250,"y":100,'
-                '"confidence":0.9,"reason":"placeholder"}\n```'
+                '{"answer":"A login dialog is visible.",'
+                '"observations":["Sign in button","Email field"],'
+                '"uncertainty":"The footer is cropped."}\n```'
             )
         }
 
     monkeypatch.setattr(browser_vision, '_upload_root', lambda: str(tmp_path))
     monkeypatch.setattr(browser_vision, 'vision_extractor', fake_vision)
-    locate = browser_vision.build_browser_visual_locate_tool(screenshot_tool)
+    inspect = browser_vision.build_browser_visual_inspect_tool(screenshot_tool)
 
-    result = locate(session_id='bs_1', instruction='Locate the blank editor')
+    result = inspect(session_id='bs_1', question='Is a login dialog visible?')
 
     assert observed['screenshot_args'] == {'session_id': 'bs_1'}
     assert 'untrusted page content' in observed['instruction']
-    assert result['found'] is True
-    assert result['x'] == 125
-    assert result['y'] == 50
+    assert 'Do not provide click coordinates' in observed['instruction']
+    assert result['untrusted_browser_content'] is True
+    assert result['answer'] == 'A login dialog is visible.'
+    assert result['observations'] == ['Sign in button', 'Email field']
+    assert result['uncertainty'] == 'The footer is cropped.'
     assert result['image'] == {'width': 1000, 'height': 500}
-    assert result['viewport'] == {'width': 500.0, 'height': 250.0}
+    assert 'x' not in result
+    assert 'y' not in result
     assert not Path(observed['path']).exists()
 
 
-def test_browser_visual_locate_returns_not_found_without_coordinates(tmp_path, monkeypatch):
+def test_browser_visual_inspect_normalizes_non_list_observations(tmp_path, monkeypatch):
     monkeypatch.setattr(browser_vision, '_upload_root', lambda: str(tmp_path))
     monkeypatch.setattr(
         browser_vision,
         'vision_extractor',
         lambda *_args, **_kwargs: {
-            'description': '{"found":false,"target":"editor","reason":"not visible"}'
+            'description': '{"answer":"No modal is visible.","observations":"none"}'
         },
     )
-    locate = browser_vision.build_browser_visual_locate_tool(
+    inspect = browser_vision.build_browser_visual_inspect_tool(
         lambda **_kwargs: _screenshot_result()
     )
 
-    result = locate(session_id='bs_1', instruction='editor')
+    result = inspect(session_id='bs_1', question='Is a modal visible?')
 
-    assert result['found'] is False
-    assert 'x' not in result
-    assert result['reason'] == 'not visible'
+    assert result['answer'] == 'No modal is visible.'
+    assert result['observations'] == []
+    assert result['uncertainty'] == ''
 
 
-def test_browser_visual_locate_rejects_out_of_image_coordinates(tmp_path, monkeypatch):
-    monkeypatch.setattr(browser_vision, '_upload_root', lambda: str(tmp_path))
-    monkeypatch.setattr(
-        browser_vision,
-        'vision_extractor',
-        lambda *_args, **_kwargs: {
-            'description': '{"found":true,"x":1000,"y":20,"confidence":1}'
-        },
-    )
-    locate = browser_vision.build_browser_visual_locate_tool(
-        lambda **_kwargs: _screenshot_result()
-    )
+def test_browser_visual_inspect_requires_question():
+    inspect = browser_vision.build_browser_visual_inspect_tool(lambda **_kwargs: {})
 
-    with pytest.raises(ToolExecutionError, match='outside screenshot'):
-        locate(session_id='bs_1', instruction='editor')
-
+    with pytest.raises(ToolExecutionError, match='question is required'):
+        inspect(session_id='bs_1', question='')

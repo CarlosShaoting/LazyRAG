@@ -25,7 +25,7 @@
 - 行标签或列标题存在多个同名节点时，不得随意选择；先结合附近可见文本消歧。仍无法唯一定位时停止写入，避免写错人员或日期。
 - 用户要求追加且正文非空时，先用最新快照唯一定位末尾正文块；点击该块后用 `browser_press` 的 `End`、必要时 `Enter` 建立追加位置，再用 `browser_type_focused`。无法唯一判断正文末尾时不要冒险覆盖，改用可唯一定位的飞书块 API，或说明需要用户给出插入位置。
 - 页面结构变化后旧 ref 会失效；遇到 `STALE_SNAPSHOT` 时重新 `browser_snapshot`，只使用新 revision 的 ref。
-- 遇到 `ELEMENT_NOT_VISIBLE` 时先重新 snapshot 并再尝试一次正文文字 ref。只有当前回合实际暴露 `browser_visual_locate` 时，才可用它定位正文并接 `browser_click_at`；没有 VLM 时不要调用或假设该工具存在。
+- 遇到 `ELEMENT_NOT_VISIBLE` 时先重新 snapshot、滚动或尝试正文文字 ref。`browser_visual_inspect` 仅用于只读确认当前画面中的弹窗、错误或编辑状态，不能提供或替代点击坐标；所有操作仍必须使用 DOM ref 或 `browser_click_intersection`。
 - `TYPE_NOT_APPLIED` 表示文字没有出现在页面，不得声称成功。重新检查是否误聚焦标题、评论框、搜索框或 readonly 辅助输入节点；最多换一种明确定位方式重试一次。
 - `browser_type_focused` 未携带 `verify_text` 时，不能仅凭工具调用成功判断写入完成；此时只补一次有针对性的可见文本检查，不要组合截图、快照和多轮 grep 进行重复验收。
 - 工具输出被保存到 `tool_spills` 时，成功状态仍由工具调用结果决定。若确实需要从 spill 中提取会话 ID、revision 或交点信息，把所需字段合并为一次检索并最多读取一次相关片段；不要对同一 spill 逐字段反复 grep/read。

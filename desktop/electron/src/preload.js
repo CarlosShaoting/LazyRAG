@@ -4,18 +4,13 @@ function createDesktopBridge(ipcRenderer) {
     openLogsDir: () => ipcRenderer.invoke("lazymind:openLogsDir"),
     openDataDir: () => ipcRenderer.invoke("lazymind:openDataDir"),
     openBrowserExtensionDir: () => ipcRenderer.invoke("lazymind:openBrowserExtensionDir"),
-    embeddedBrowserState: () => ipcRenderer.invoke("lazymind:embeddedBrowserState"),
-    embeddedBrowserBounds: (payload) => ipcRenderer.invoke("lazymind:embeddedBrowserBounds", payload),
-    embeddedBrowserCommand: (action, payload) => ipcRenderer.invoke(
-      "lazymind:embeddedBrowserCommand",
-      action,
-      payload,
-    ),
     runtimeStatus: () => ipcRenderer.invoke("lazymind:runtimeStatus"),
     agentIntegrationStatuses: () => ipcRenderer.invoke("lazymind:agentIntegrationStatuses"),
     agentIntegrationAction: (agent, action) => ipcRenderer.invoke("lazymind:agentIntegrationAction", agent, action),
     executorIntegrationPolicies: () => ipcRenderer.invoke("lazymind:executorIntegrationPolicies"),
     executorIntegrationAction: (provider, action) => ipcRenderer.invoke("lazymind:executorIntegrationAction", provider, action),
+    ankiIntegrationStatus: () => ipcRenderer.invoke("lazymind:ankiIntegrationStatus"),
+    openAnki: () => ipcRenderer.invoke("lazymind:openAnki"),
     agentExecutableBindings: () => ipcRenderer.invoke("lazymind:agentExecutableBindings"),
     agentExecutableBind: (target, executablePath) => ipcRenderer.invoke("lazymind:agentExecutableBind", target, executablePath),
     agentExecutableClear: (target) => ipcRenderer.invoke("lazymind:agentExecutableClear", target),
@@ -41,12 +36,6 @@ function createDesktopBridge(ipcRenderer) {
       const listener = (_event, payload) => handler(payload);
       ipcRenderer.on("lazymind:startupDiagnosticsUpdate", listener);
       return () => ipcRenderer.removeListener("lazymind:startupDiagnosticsUpdate", listener);
-    },
-    onEmbeddedBrowserState: (handler) => {
-      if (typeof handler !== "function") return () => {};
-      const listener = (_event, payload) => handler(payload);
-      ipcRenderer.on("lazymind:embeddedBrowserState", listener);
-      return () => ipcRenderer.removeListener("lazymind:embeddedBrowserState", listener);
     },
   };
 }

@@ -1,4 +1,5 @@
 import {captureCurrentPage} from './capture.js';
+import {assertCaptureAuthorized} from './capture_authorization.js';
 import {BrowserController} from './controller.js';
 import {detectBrowserIdentity} from './browser_identity.js';
 
@@ -24,7 +25,7 @@ chrome.runtime.onInstalled.addListener(async () => {
 
 chrome.runtime.onStartup.addListener(() => void connect());
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === RECONNECT_ALARM && connectionState !== 'connected') void connect();
+  if (alarm.name === RECONNECT_ALARM && connectionState === 'disconnected') void connect();
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -45,7 +46,9 @@ async function handlePopupMessage(message = {}) {
     case 'save_gateway': return saveGateway(message.gateway_url);
     case 'pair': return pair(message.code, message.gateway_url);
     case 'disconnect': return disconnectAndForget();
-    case 'capture_now': return captureCurrentPage();
+    case 'capture_now':
+      await assertPopupCaptureAuthorized();
+      return captureCurrentPage();
     case 'reconnect':
       await connect(true);
       return getState();
@@ -115,9 +118,18 @@ async function pair(rawCode, rawGatewayURL) {
 async function disconnectAndForget() {
   closeSocket();
   await chrome.storage.local.remove(['device_id', 'device_token', 'device_name']);
-  connectionState = 'disconnected';
+  connectionState = 'unpaired';
   lastError = '';
   return getState();
+}
+
+async function assertPopupCaptureAuthorized() {
+  const stored = await chrome.storage.local.get(['device_id', 'device_token']);
+  assertCaptureAuthorized({
+    deviceId: stored.device_id,
+    deviceToken: stored.device_token,
+    connectionState,
+  });
 }
 
 async function connect(force = false) {
@@ -149,6 +161,7 @@ async function connect(force = false) {
     if (socket !== currentSocket) return;
     stopSocketKeepalive();
     socket = null;
+    if (connectionState === 'unauthorized') return;
     connectionState = 'disconnected';
     scheduleReconnect();
   });
@@ -170,7 +183,7 @@ async function handleSocketMessage(currentSocket, rawMessage) {
   }
   if (message.type === 'hello_error') {
     connectionState = 'unauthorized';
-    lastError = message.code || '设备认证失败';
+    lastError = '设备授权已失效。请先登录 LazyMind，断开当前设备后使用新的配对码重新连接。';
     currentSocket.close();
     return;
   }
@@ -181,7 +194,7 @@ async function handleSocketMessage(currentSocket, rawMessage) {
   }
   try {
     const result = message.action === 'capture_current_page'
-      ? await captureCurrentPage()
+      ? await captureCurrentPage(message.payload || {})
       : await controller.dispatch(message.action, message.payload || {});
     sendResult(currentSocket, message.id, result, null);
   } catch (error) {

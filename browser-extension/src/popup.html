@@ -37,11 +37,13 @@
       <section id="connected" hidden>
         <div class="device"><span>设备</span><code id="deviceId"></code></div>
         <div class="actions">
-          <button id="grant">授权当前站点</button>
+          <button id="grant">开启网页读取</button>
+          <button id="revokeSite" class="danger" hidden>关闭网页读取授权</button>
           <button id="capture" class="secondary">测试抓取</button>
           <button id="reconnect" class="secondary">重新连接</button>
           <button id="disconnect" class="danger">断开并清除凭证</button>
         </div>
+        <p class="hint">网页读取只需首次明确授权一次，之后默认开启；可随时在这里撤销。对话里提供 URL 时，LazyMind 会自动打开受管窗口，无需逐站点授权。</p>
       </section>
 
       <output id="message" aria-live="polite"></output>

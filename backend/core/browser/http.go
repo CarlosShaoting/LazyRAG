@@ -66,6 +66,15 @@ func (h *HTTPHandler) RevokeDevice(w http.ResponseWriter, r *http.Request) {
 	common.ReplyOK(w, map[string]any{"revoked": true})
 }
 
+func (h *HTTPHandler) RevokeAllDevices(w http.ResponseWriter, r *http.Request) {
+	userID := strings.TrimSpace(store.UserID(r))
+	if userID == "" {
+		common.ReplyErr(w, "browser device revoke requires an authenticated user", http.StatusUnauthorized)
+		return
+	}
+	common.ReplyOK(w, map[string]any{"revoked": h.Hub.RevokeAllDevices(userID)})
+}
+
 func (h *HTTPHandler) PairExtension(w http.ResponseWriter, r *http.Request) {
 	var input PairExtensionInput
 	if err := decodeJSONBody(w, r, &input); err != nil {

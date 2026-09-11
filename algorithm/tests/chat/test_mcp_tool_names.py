@@ -1,5 +1,6 @@
 from lazymind.chat.service.chat_service import (
     _add_browser_visual_tools,
+    _agent_max_retries_for_mcp_tools,
     _mcp_model_tool_name,
     _normalize_mcp_tool_names,
 )
@@ -48,9 +49,25 @@ def test_add_browser_visual_tools_only_when_vlm_and_browser_screenshot_exist():
 
     assert [tool.__name__ for tool in augmented] == [
         'browser_screenshot',
-        'browser_visual_locate',
+        'browser_visual_inspect',
     ]
     assert _add_browser_visual_tools(
         [_tool('other')], vlm_available=True,
     )[0].__name__ == 'other'
     assert _add_browser_visual_tools(normalized, vlm_available=False) == normalized
+
+
+def test_browser_mcp_tools_raise_agent_round_limit_to_200():
+    browser_open = _tool('browser.open')
+    normalized = _normalize_mcp_tool_names([browser_open], 'lazymind-browser')
+
+    # ReactAgent adds the initial attempt to max_retries when reporting round_limit.
+    assert _agent_max_retries_for_mcp_tools(20, normalized) == 199
+
+
+def test_non_browser_mcp_tools_keep_configured_agent_round_limit():
+    other = _tool('filesystem.read')
+    normalized = _normalize_mcp_tool_names([other], 'filesystem')
+
+    assert _agent_max_retries_for_mcp_tools(20, normalized) == 20
+    assert _agent_max_retries_for_mcp_tools(20, []) == 20

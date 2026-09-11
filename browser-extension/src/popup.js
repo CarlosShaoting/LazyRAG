@@ -1,4 +1,4 @@
-import {isSupportedPageURL, originPattern} from './capture.js';
+import {isSupportedPageURL} from './capture.js';
 
 const elements = {
   state: document.querySelector('#state'),
@@ -10,18 +10,25 @@ const elements = {
   message: document.querySelector('#message'),
   browserName: document.querySelector('#browserName'),
   pairingBrowserName: document.querySelector('#pairingBrowserName'),
+  grant: document.querySelector('#grant'),
+  revokeSite: document.querySelector('#revokeSite'),
+  capture: document.querySelector('#capture'),
 };
 
 let currentSite = null;
+let pageReadingGranted = false;
+let currentConnectionState = 'disconnected';
+let busy = false;
 
 document.querySelector('#saveGateway').addEventListener('click', () => runGatewayAction('save_gateway', {
   gateway_url: elements.gateway.value,
-}, '地址已保存'));
+}, '地址已保存', false));
 document.querySelector('#pair').addEventListener('click', () => runGatewayAction('pair', {
   code: elements.pairingCode.value,
   gateway_url: elements.gateway.value,
-}, '配对成功'));
-document.querySelector('#grant').addEventListener('click', () => grantCurrentSite());
+}, '配对成功', true));
+document.querySelector('#grant').addEventListener('click', () => grantPageReading());
+document.querySelector('#revokeSite').addEventListener('click', () => revokePageReading());
 document.querySelector('#capture').addEventListener('click', async () => {
   const result = await run('capture_now', {}, '');
   if (result) showMessage(`抓取成功：${result.content?.returned_chars || 0} 字符`, false);
@@ -48,14 +55,20 @@ async function run(type, payload, successMessage) {
   }
 }
 
-async function runGatewayAction(type, payload, successMessage) {
+async function runGatewayAction(type, payload, successMessage, includePageReading) {
   try {
     const gateway = new URL(elements.gateway.value.trim());
     if (gateway.protocol !== 'http:' && gateway.protocol !== 'https:') {
       throw new Error('LazyMind 地址必须使用 http 或 https');
     }
-    const granted = await chrome.permissions.request({origins: [`${gateway.origin}/*`]});
-    if (!granted) throw new Error('需要授权扩展访问该 LazyMind 地址');
+    const origins = [`${gateway.origin}/*`];
+    if (includePageReading) origins.push('http://*/*', 'https://*/*');
+    const granted = await chrome.permissions.request({origins});
+    if (!granted) {
+      throw new Error(includePageReading
+        ? '配对需要允许扩展连接 LazyMind 并读取网页'
+        : '需要授权扩展访问该 LazyMind 地址');
+    }
   } catch (error) {
     showMessage(String(error?.message || 'LazyMind 地址格式无效'), true);
     return null;
@@ -63,15 +76,29 @@ async function runGatewayAction(type, payload, successMessage) {
   return run(type, payload, successMessage);
 }
 
-async function grantCurrentSite() {
+async function grantPageReading() {
   setBusy(true);
   try {
-    if (!currentSite) throw new Error('当前页面不支持授权');
     // chrome.permissions.request must be invoked directly from the popup click
     // handler. Forwarding it to the service worker loses the user gesture.
-    const granted = await chrome.permissions.request({origins: [currentSite.pattern]});
-    if (!granted) throw new Error('用户未授予当前站点读取权限');
-    showMessage(`当前站点已授权：${currentSite.origin}`, false);
+    const granted = await chrome.permissions.request({origins: ['http://*/*', 'https://*/*']});
+    if (!granted) throw new Error('用户未授予网页读取权限');
+    showMessage('网页读取已开启，后续无需逐站点授权', false);
+    await refresh();
+  } catch (error) {
+    showMessage(String(error?.message || error), true);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function revokePageReading() {
+  setBusy(true);
+  try {
+    const removed = await chrome.permissions.remove({origins: ['http://*/*', 'https://*/*']});
+    if (!removed) throw new Error('网页读取权限尚未开启');
+    showMessage('网页读取授权已关闭；对话仍可按 URL 打开受管窗口', false);
+    await refresh();
   } catch (error) {
     showMessage(String(error?.message || error), true);
   } finally {
@@ -85,9 +112,10 @@ async function refresh() {
     chrome.tabs.query({active: true, lastFocusedWindow: true}),
   ]);
   const tabURL = tabs[0]?.url || '';
-  currentSite = isSupportedPageURL(tabURL)
-    ? {pattern: originPattern(tabURL), origin: new URL(tabURL).origin}
-    : null;
+  currentSite = isSupportedPageURL(tabURL) ? {url: tabURL} : null;
+  pageReadingGranted = await chrome.permissions.contains({
+    origins: ['http://*/*', 'https://*/*'],
+  });
   if (!response?.ok) return;
   const state = response.result;
   elements.browserName.textContent = state.browser_version
@@ -98,8 +126,10 @@ async function refresh() {
   elements.pairing.hidden = state.paired;
   elements.connected.hidden = !state.paired;
   elements.deviceId.textContent = state.device_id || '';
+  currentConnectionState = state.connection_state;
   elements.state.textContent = stateLabel(state.connection_state);
   elements.state.dataset.status = state.connection_state;
+  renderCaptureControls();
   if (state.last_error) showMessage(state.last_error, true);
 }
 
@@ -115,6 +145,19 @@ function showMessage(message, error) {
   elements.message.classList.toggle('error', error);
 }
 
-function setBusy(busy) {
-  document.querySelectorAll('button').forEach((button) => { button.disabled = busy; });
+function setBusy(nextBusy) {
+  busy = nextBusy;
+  document.querySelectorAll('button').forEach((button) => { button.disabled = nextBusy; });
+  if (!nextBusy) renderCaptureControls();
+}
+
+function renderCaptureControls() {
+  elements.grant.hidden = pageReadingGranted;
+  elements.revokeSite.hidden = !pageReadingGranted;
+  if (busy) return;
+  elements.grant.disabled = false;
+  elements.revokeSite.disabled = !pageReadingGranted;
+  elements.capture.disabled = !currentSite
+    || !pageReadingGranted
+    || currentConnectionState !== 'connected';
 }

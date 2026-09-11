@@ -156,6 +156,17 @@ func AddGroupModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var maxInputTokens *string
+	if group.IsVerified && (modelType == "llm" || modelType == "vlm" || modelType == "embed") {
+		if apiKey, resolveErr := ResolveAPIKey(group.APIKey, group.APIKeyCiphertext); resolveErr == nil {
+			// Provider metadata is optional. Keep model creation compatible with
+			// endpoints that implement completions but not GET /models metadata.
+			maxInputTokens, _ = discoverModelMaxInputTokens(
+				r.Context(), parent.Name, group.BaseURL, apiKey, name,
+			)
+		}
+	}
+
 	now := time.Now()
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		row = orm.UserModelProviderGroupModel{
@@ -165,6 +176,7 @@ func AddGroupModel(w http.ResponseWriter, r *http.Request) {
 			ProviderName:             parent.Name,
 			Name:                     name,
 			ModelType:                modelType,
+			MaxInputTokens:           maxInputTokens,
 			IsDefault:                false,
 			BaseModel: orm.BaseModel{
 				CreateUserID:   userID,
@@ -179,16 +191,20 @@ func AddGroupModel(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
+		updates := map[string]interface{}{
+			"user_model_provider_id": parent.ID,
+			"provider_name":          parent.Name,
+			"model_type":             modelType,
+			"is_default":             false,
+			"updated_at":             now,
+			"deleted_at":             nil,
+		}
+		if maxInputTokens != nil {
+			updates["max_input_tokens"] = *maxInputTokens
+		}
 		result := db.WithContext(r.Context()).Model(&orm.UserModelProviderGroupModel{}).
 			Where("id = ? AND create_user_id = ? AND deleted_at IS NOT NULL", row.ID, userID).
-			Updates(map[string]interface{}{
-				"user_model_provider_id": parent.ID,
-				"provider_name":          parent.Name,
-				"model_type":             modelType,
-				"is_default":             false,
-				"updated_at":             now,
-				"deleted_at":             nil,
-			})
+			Updates(updates)
 		if result.Error != nil {
 			common.ReplyErr(w, "restore model failed", http.StatusInternalServerError)
 			return
@@ -200,6 +216,9 @@ func AddGroupModel(w http.ResponseWriter, r *http.Request) {
 		row.UserModelProviderID = parent.ID
 		row.ProviderName = parent.Name
 		row.ModelType = modelType
+		if maxInputTokens != nil {
+			row.MaxInputTokens = maxInputTokens
+		}
 		row.IsDefault = false
 		row.UpdatedAt = now
 		row.DeletedAt = nil

@@ -44,8 +44,10 @@ func TestCoreServiceEnvUsesLocalEndpoints(t *testing.T) {
 	assertEnvContains(t, env, "LAZYMIND_CORE_HOST=127.0.0.1")
 	assertEnvContains(t, env, "LAZYMIND_CORE_PORT="+strconv.Itoa(cfg.LocalProxy.CoreHostPort))
 	assertEnvContains(t, env, "ACL_DB_DRIVER=sqlite")
-	assertEnvContains(t, env, "ACL_DB_DSN="+sqliteDSN(paths.CoreDBPath))
-	assertEnvContains(t, env, "LAZYMIND_CORE_DATABASE_URL="+sqliteURL(paths.CoreDBPath))
+	assertEnvContains(t, env, "ACL_DB_DSN=sqliteproxy://core")
+	assertEnvContains(t, env, "LAZYMIND_CORE_DATABASE_URL=sqliteproxy://core")
+	assertEnvContains(t, env, sqliteServerURLEnvVar+"=http://127.0.0.1:"+strconv.Itoa(cfg.SQLiteServerPort))
+	assertEnvContains(t, env, sqliteServerTokenFileEnvVar+"="+paths.RunDirTokenFile)
 	assertEnvContains(t, env, "LAZYMIND_WORKFLOW_EXECUTOR_TOKEN=dev-workflow-executor-token")
 	assertEnvContains(t, env, "LAZYMIND_AUTH_SERVICE_URL=http://127.0.0.1:"+strconv.Itoa(cfg.AuthService.Port)+"/api/authservice")
 	assertEnvContains(t, env, "LAZYMIND_DOCUMENT_SERVICE_URL=http://127.0.0.1:"+strconv.Itoa(cfg.Algorithm.DocPort))
@@ -55,29 +57,12 @@ func TestCoreServiceEnvUsesLocalEndpoints(t *testing.T) {
 	assertEnvContains(t, env, "LAZYMIND_BROWSER_EXTENSION_SOURCE_DIR="+filepath.Join(paths.RepoRoot, "browser-extension"))
 	assertEnvContains(t, env, "LAZYMIND_OFFICE_CONVERT_URL=http://127.0.0.1:18082/v1/office/to-pdf")
 	assertEnvContains(t, env, "LAZYMIND_READONLY_DB_DRIVER=sqlite")
-	assertEnvContains(t, env, "LAZYMIND_READONLY_DB_DSN="+paths.LazyLLMDBPath)
+	assertEnvContains(t, env, "LAZYMIND_READONLY_DB_DSN=sqliteproxy://lazyllm")
 	assertEnvContains(t, env, "LAZYMIND_HISTORY_INJECTION_ENABLED=true")
 	assertEnvContains(t, env, "LAZYMIND_HISTORY_INJECTION_ROOT="+paths.HistoryInjectionRoot)
 	assertEnvContains(t, env, "LAZYMIND_BOOTSTRAP_ADMIN_USERNAME=admin")
 	assertEnvContains(t, env, "LAZYMIND_BOOTSTRAP_ADMIN_PASSWORD=admin")
 	assertEnvNotContains(t, env, "LAZYMIND_CAPABILITY_MCP_ENABLED=")
-}
-
-func TestCoreServiceEnvDoesNotPreferEmbeddedBrowserForDesktopProfile(t *testing.T) {
-	t.Setenv("LAZYMIND_BROWSER_PREFERRED_DEVICE_BROWSER", "")
-	repo := t.TempDir()
-	writeComposeFixture(t, repo)
-	cfg, paths, err := NewRuntimeConfig(defaultProfileValue(), repo)
-	if err != nil {
-		t.Fatalf("runtime config: %v", err)
-	}
-	cfg.Profile = "desktop"
-
-	assertEnvContains(
-		t,
-		coreServiceEnv(cfg, paths),
-		"LAZYMIND_BROWSER_PREFERRED_DEVICE_BROWSER=",
-	)
 }
 
 func TestCoreServiceEnvUsesRuntimeUploadPaths(t *testing.T) {

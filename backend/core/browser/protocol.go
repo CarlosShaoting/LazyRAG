@@ -110,6 +110,12 @@ type DeviceInput struct {
 	DeviceID string `json:"device_id,omitempty" jsonschema:"optional device ID; omit to use the most recently seen online browser"`
 }
 
+type CaptureInput struct {
+	DeviceID string `json:"device_id,omitempty" jsonschema:"optional device ID; omit to use the most recently seen online browser"`
+	Offset   int    `json:"offset,omitempty" jsonschema:"UTF-16 character offset for the next page; use content.next_offset from the previous result"`
+	MaxChars int    `json:"max_chars,omitempty" jsonschema:"maximum characters to return in this page; defaults to 200000 and is capped at 400000"`
+}
+
 type OpenInput struct {
 	DeviceID            string `json:"device_id,omitempty" jsonschema:"optional device ID"`
 	URL                 string `json:"url" jsonschema:"http or https URL to open in a visible LazyMind-managed Chrome or Edge window"`
@@ -133,13 +139,6 @@ type ClickInput struct {
 	SessionID        string `json:"session_id"`
 	Ref              string `json:"ref" jsonschema:"element reference from the latest browser.snapshot"`
 	ExpectedRevision int64  `json:"expected_revision,omitempty" jsonschema:"snapshot revision; stale references are rejected"`
-}
-
-type ClickAtInput struct {
-	DeviceID  string  `json:"device_id,omitempty"`
-	SessionID string  `json:"session_id"`
-	X         float64 `json:"x" jsonschema:"horizontal CSS viewport coordinate returned by browser_visual_locate"`
-	Y         float64 `json:"y" jsonschema:"vertical CSS viewport coordinate returned by browser_visual_locate"`
 }
 
 type ClickIntersectionInput struct {

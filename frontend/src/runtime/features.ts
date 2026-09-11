@@ -6,7 +6,6 @@ import {
 
 export interface RuntimeFeatureEnv extends RuntimeEnv {
   VITE_HIDE_EVO?: string;
-  VITE_DESKTOP_EMBEDDED_BROWSER?: string;
 }
 
 export interface RuntimeFeatures {
@@ -19,7 +18,6 @@ export interface RuntimeFeatures {
   allowFolderPicker: boolean;
   allowOpenLogDir: boolean;
   useLocalGateway: boolean;
-  desktopEmbeddedBrowser: boolean;
 }
 
 function readRuntimeFeatureEnv(): RuntimeFeatureEnv {
@@ -51,7 +49,6 @@ export function resolveRuntimeFeatures(
   const isLocalLike = isLocalLikeRuntimeMode(mode);
   const isDesktop = mode === "desktop";
   const explicitHideEvo = parseBooleanFlag(env.VITE_HIDE_EVO);
-  const embeddedBrowser = parseBooleanFlag(env.VITE_DESKTOP_EMBEDDED_BROWSER);
 
   return {
     hideEvo: explicitHideEvo ?? isLocalLike,
@@ -63,7 +60,6 @@ export function resolveRuntimeFeatures(
     allowFolderPicker: isDesktop,
     allowOpenLogDir: isDesktop,
     useLocalGateway: isLocalLike,
-    desktopEmbeddedBrowser: isDesktop && (embeddedBrowser ?? false),
   };
 }
 

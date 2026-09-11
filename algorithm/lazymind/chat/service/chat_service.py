@@ -46,6 +46,7 @@ from lazymind.chat.service.component import (
     DEFAULT_TOOLS,
     USER_ATTACHMENT_TOOL_CONFIGS,
     collect_query_appendices,
+    apply_tool_supersession,
     collect_system_prompt_appendices,
     filter_tools,
     is_workflow_rewind_action,
@@ -55,6 +56,7 @@ from lazymind.chat.service.component import (
 from lazymind.chat.engine.agent_runtime import (
     AgentExecutionOptions,
     AgentExecutor,
+    AgentInvocation,
     AgentRole,
     AgentRunPlan,
     UserCancelledError,
@@ -67,12 +69,14 @@ from lazymind.chat.engine.agent_runtime import (
     attach_window_budget,
     render_attachment_content,
 )
+from lazymind.chat.engine.agent_runtime.budget import resolve_max_input_tokens
+from lazymind.chat.service.local_observation import LocalObservationWriter
 from lazymind.chat.engine.tools.local_file.workspace import build_resource_read_tools, chat_agent_workspace
 from lazymind.chat.engine.tools.intent_writer import (
     build_intentwrite_tool,
     render_intent_section,
 )
-from lazymind.chat.engine.tools.browser_vision import build_browser_visual_locate_tool
+from lazymind.chat.engine.tools.browser_vision import build_browser_visual_inspect_tool
 from lazymind.chat.engine.tools.skill_listing import build_list_skills_tool
 from lazymind.chat.service.utils import (
     SensitiveFilter,
@@ -107,6 +111,28 @@ sensitive_filter = SensitiveFilter(
 # Used by task-cancel endpoint to cancel ChatAgent by conversation_id.
 _active_sessions: dict[str, str] = {}
 _conversation_env_vars: dict[str, dict[str, str]] = {}
+_observation_writer: Optional[LocalObservationWriter] = None
+_observation_writer_lock = threading.Lock()
+
+
+def _local_observation_writer() -> LocalObservationWriter:
+    global _observation_writer
+    if _observation_writer is None:
+        with _observation_writer_lock:
+            if _observation_writer is None:
+                explicit_directory = os.environ.get('LAZYMIND_OBSERVABILITY_DIR')
+                if explicit_directory:
+                    directory = explicit_directory
+                else:
+                    configured_data_dir = os.environ.get('LAZYMIND_DATA_DIR')
+                    if configured_data_dir:
+                        data_dir = Path(configured_data_dir)
+                    else:
+                        temp_dir = Path(str(_cfg['temp_dir']))
+                        data_dir = temp_dir.parent / 'data'
+                    directory = str(data_dir / 'observability')
+                _observation_writer = LocalObservationWriter(directory)
+    return _observation_writer
 
 
 def _unregister_active_session(conversation_id: str, session_id: str) -> None:
@@ -313,8 +339,11 @@ def _active_skills_from_history(
     activated = set()
     for message in history:
         for tool_call in message.get('tool_calls') or []:
-            function = tool_call.get('function') if isinstance(tool_call, dict) else None
-            if not isinstance(function, dict) or function.get('name') != 'get_skill':
+            if not isinstance(tool_call, dict):
+                continue
+            function = tool_call.get('function')
+            function = function if isinstance(function, dict) else tool_call
+            if function.get('name') != 'get_skill':
                 continue
             arguments = function.get('arguments', {})
             if isinstance(arguments, str):
@@ -324,7 +353,10 @@ def _active_skills_from_history(
                     continue
             if isinstance(arguments, dict) and isinstance(arguments.get('name'), str):
                 activated.add(arguments['name'].strip())
-    return [skill for skill in available if skill in activated]
+    return [
+        skill for skill in available
+        if skill in activated or skill.rsplit('/', 1)[-1] in activated
+    ]
 
 
 def check_sensitive_content(query: str) -> Optional[SensitiveMatch]:
@@ -349,6 +381,7 @@ def _mcp_server_cache_key(server: Dict[str, Any]) -> str:
 
 
 _MCP_MODEL_TOOL_NAME_MAX_LENGTH = 64
+_BROWSER_AGENT_ROUND_LIMIT = 200
 
 
 def _mcp_model_tool_name(original_name: str) -> str:
@@ -370,20 +403,43 @@ def _normalize_mcp_tool_names(tools: list, server_name: str) -> list:
     normalized = list(tools)
     for index, tool in enumerate(normalized):
         original_name = str(getattr(tool, '__name__', '') or '').strip()
+        # MCPClient returns callables in production, while tests and third-party
+        # adapters may use opaque schema objects. Keep those objects cacheable and
+        # unchanged instead of failing the entire server load during normalization.
+        if not original_name:
+            continue
         alias = _mcp_model_tool_name(original_name)
         if alias in used:
             digest = hashlib.sha256(
                 f'{server_name}\0{original_name}\0{index}'.encode()
             ).hexdigest()[:8]
             alias = f'{alias[:_MCP_MODEL_TOOL_NAME_MAX_LENGTH - len(digest) - 1]}_{digest}'
+        try:
+            tool.__name__ = alias
+            tool._lazymind_mcp_original_name = original_name
+        except (AttributeError, TypeError):
+            LOG.warning(
+                f'[MCP] kept immutable tool name from {server_name}: {original_name}'
+            )
+            continue
         used.add(alias)
-        setattr(tool, '_lazymind_mcp_original_name', original_name)
-        tool.__name__ = alias
         if alias != original_name:
             aliases.append((original_name, alias))
     if aliases:
         LOG.info(f'[MCP] normalized tool names from {server_name}: {aliases}')
     return normalized
+
+
+def _agent_max_retries_for_mcp_tools(default_max_retries: int, tools: list) -> int:
+    """Raise the ReAct budget when the LazyMind browser plugin is available."""
+    browser_extension_active = any(
+        str(getattr(tool, '_lazymind_mcp_original_name', '') or '').startswith('browser.')
+        for tool in tools
+    )
+    if browser_extension_active:
+        # FunctionCall exposes max_retries + the initial attempt as round_limit.
+        return _BROWSER_AGENT_ROUND_LIMIT - 1
+    return default_max_retries
 
 
 def _add_browser_visual_tools(tools: list, *, vlm_available: bool) -> list:
@@ -392,7 +448,7 @@ def _add_browser_visual_tools(tools: list, *, vlm_available: bool) -> list:
             getattr(tool, '_lazymind_mcp_original_name', '') == 'browser.screenshot'
             for tool in tools
         ):
-            LOG.info('[BrowserVision] visual locate tool hidden: vlm role unavailable')
+            LOG.info('[BrowserVision] visual inspect tool hidden: vlm role unavailable')
         return tools
     screenshot_tool = next((
         tool for tool in tools
@@ -400,10 +456,10 @@ def _add_browser_visual_tools(tools: list, *, vlm_available: bool) -> list:
     ), None)
     if screenshot_tool is None:
         return tools
-    visual_locate = build_browser_visual_locate_tool(screenshot_tool)
-    visual_locate.__name__ = 'browser_visual_locate'
-    LOG.info('[BrowserVision] visual locate tool exposed: vlm role available')
-    return [*tools, visual_locate]
+    visual_inspect = build_browser_visual_inspect_tool(screenshot_tool)
+    visual_inspect.__name__ = 'browser_visual_inspect'
+    LOG.info('[BrowserVision] visual inspect tool exposed: vlm role available')
+    return [*tools, visual_inspect]
 
 
 def _load_mcp_server_tools(server: Dict[str, Any]) -> list:
@@ -419,11 +475,16 @@ def _load_mcp_server_tools(server: Dict[str, Any]) -> list:
             LOG.info(f"[MCP] reused cached tools from {server.get('name')}")
             return list(cached[1])
     try:
+        transport = server.get('transport', 'auto')
+        # Compatibility with older Core payloads. The MCP client otherwise
+        # treats the generic value as legacy SSE and sends an incompatible GET.
+        if transport == 'http':
+            transport = 'streamable-http'
         client = MCPClient(
             command_or_url=url,
             headers=server.get('headers'),
             timeout=server.get('timeout', 5),
-            transport=server.get('transport', 'auto'),
+            transport=transport,
         )
         allowed = server.get('allowed_tools') or None
         mcp_tools = client.get_tools(allowed_tools=allowed)
@@ -945,6 +1006,7 @@ async def _handle_chat_impl(
         f'[files_map_keys={sorted(message.files.keys()) if isinstance(message.files, dict) else None}]'
     )
     start_time = time.time()
+    metrics_started_at = time.monotonic()
     priority = runtime.priority or LAZYMIND_LLM_PRIORITY
     query, cited_message_context = _normalize_cite_message_query_for_agent(message.query)
     user_input, user_cited_context = _normalize_cite_message_query_for_agent(
@@ -1030,7 +1092,11 @@ async def _handle_chat_impl(
         raw_history,
         compact_workflow_receipts=compact_rewind_history,
     )
-    translator = AgentEventFrameTranslator(query=query, run_id=run_id)
+    translator = AgentEventFrameTranslator(
+        query=query,
+        run_id=run_id,
+        started_at=metrics_started_at,
+    )
 
     agentic_config = {
         'run_id': run_id,
@@ -1264,6 +1330,9 @@ async def _handle_chat_impl(
 
     disabled = set(agent.disabled_tools or [])
     workspace = chat_agent_workspace(user_id or '0', conversation_id)
+    # Sidechat deliberately skips MCP loading, but later prompt and retry-budget
+    # assembly still inspect this collection.
+    mcp_tools = []
     if sidechat_readonly:
         active_configs = build_sidechat_tool_configs(
             [cfg for cfg in [*DEFAULT_TOOLS, *(USER_ATTACHMENT_TOOL_CONFIGS if files_map else ())]
@@ -1332,6 +1401,15 @@ async def _handle_chat_impl(
             if runtime.mcp_config and not workflow_turn_is_bound else []
         )
         mcp_tools = [*system_mcp_tools, *user_mcp_tools]
+        from lazymind.chat.engine.tools.vocabulary_review import (
+            ask_words,
+            get_review_words,
+            register_review_words,
+        )
+        vocabulary_review_tools = (
+            [] if workflow_turn_is_bound
+            else [get_review_words, ask_words, register_review_words]
+        )
         # User attachment tools are only meaningful when the user has uploaded files.
         attachment_tools = (
             [] if workflow_turn_is_bound else _build_user_attachment_tools(bool(files_map))
@@ -1394,7 +1472,8 @@ async def _handle_chat_impl(
         intent_tools = [] if workflow_turn_is_bound else [intentwriter]
         all_tools = (intent_tools + agent_tools + artifact_tools + subagent_tools + attachment_tools
                      + skill_listing_tools + session_env_tools + ask_user_tools
-                     + workflow_tools + mcp_tools)
+                     + vocabulary_review_tools + workflow_tools + mcp_tools)
+        all_tools = apply_tool_supersession(all_tools)
         active_workflow_tool_isolation = bool(
             isinstance(effective_workflow_context, dict)
             and effective_workflow_context.get('session_id')
@@ -1439,6 +1518,12 @@ async def _handle_chat_impl(
                 *_active_skills_from_history(agent_history, agent.available_skills),
                 *(selected_skills or []),
             ]))
+            excluded_skill_names = set(task_profile.excluded_resources.skill_names)
+            if excluded_skill_names:
+                selected_skills = [
+                    skill for skill in selected_skills
+                    if skill not in excluded_skill_names
+                ]
             skill_config = selected_skills or False
         # create_subagent snapshots these trusted Host selections into its task. The
         # SubAgent then enables only this bounded list, not the whole installed catalog.
@@ -1674,12 +1759,51 @@ async def _handle_chat_impl(
         '\n\n'.join(collect_query_appendices(active_tool_configs, 'before')),
         'tool.registry', priority=90, authoritative=True, content_kind='instruction',
     )
+    domain_ask_tools = [
+        getattr(tool, '__name__', '') for tool in all_tools
+        if str(getattr(tool, '__name__', '')).startswith('ask_')
+        and getattr(tool, '__name__', '') != 'ask_user'
+    ]
+    prompt_builder.runtime(
+        'chat_domain_ask_preference', 'Interactive Tool Routing',
+        'When a user-facing interaction belongs to a domain for which a specialized ask_* '
+        'tool is available, use that specialized tool. The generic ask_user tool is only for '
+        'clarification when no domain-specific interaction tool applies. Specialized tools '
+        'own their validation, persistence, grading hooks, and continuation protocol. '
+        f'Available specialized interaction tools: {", ".join(domain_ask_tools)}.',
+        'tool.registry', priority=95, authoritative=True, content_kind='instruction',
+        skip_if=lambda: not domain_ask_tools,
+    )
     prompt_builder.runtime(
         'chat_tool_query_appendices_after', 'Active Tool Instructions',
         '\n\n'.join(collect_query_appendices(active_tool_configs, 'after')),
         'tool.registry', priority=90, authoritative=True, content_kind='instruction',
         placement='after_input',
     )
+    if any(
+        str(getattr(tool, '_lazymind_mcp_original_name', '') or '').startswith('browser.')
+        for tool in mcp_tools
+    ):
+        prompt_builder.runtime(
+            'browser_ui_execution', 'Browser UI execution',
+            'When the user requests browser/page/plugin interaction, preserve that execution method '
+            'through reading, editing and verification. Do not switch to database toolkits, direct '
+            'APIs or Writer workflows because a page element was not found. Use the latest snapshot '
+            'to click real controls with browser_click. For a person/date table, identify both labels '
+            'in the same snapshot, click with browser_click_intersection and expected_revision, check '
+            'interaction.row and interaction.column, then browser_type_focused with verify_text. '
+            'A missing label does not mean the row is absent and does not authorize creating a row. '
+            'Inspect visible expand/search controls or scroll the document and inspect the new snapshot. '
+            'If scroll reports moved=false, do not repeat identical scrolling. Prefer clicking a visible '
+            'search control over guessing keyboard shortcuts; only type a search query after confirming '
+            'the search field is focused. Never type into an unconfirmed focus. If browser tooling cannot '
+            'locate the target, report the specific obstacle instead of changing execution methods. '
+            'DOM refs and intersection clicks work without VLM. browser_visual_inspect is read-only: '
+            'use it only to understand visible charts, canvas content, images, dialogs, or error states, '
+            'never to choose click coordinates. A screenshot timeout does not justify repeated screenshots '
+            'or abandoning the available DOM path.',
+            'browser.runtime', priority=90, authoritative=True, content_kind='instruction',
+        )
     prompt_bundle = prompt_builder.input(
         content=language_query,
         source='user',
@@ -1691,6 +1815,21 @@ async def _handle_chat_impl(
     stop_tools = list(workflow_contribution.stop_tools)
     if allow_ask_user and 'ask_user' not in stop_tools:
         stop_tools.append('ask_user')
+    if any(getattr(tool, '__name__', '') == 'ask_words' for tool in all_tools):
+        stop_tools.append('ask_words')
+
+    default_max_retries = {
+        'low': _cfg['agentic_max_rounds_low'],
+        'medium': _cfg['agentic_max_rounds_medium'],
+        'high': _cfg['agentic_max_rounds_high'],
+        'max': max(1, int(_cfg['agentic_expanded_max_rounds']) - 1),
+    }.get(thinking_depth, _cfg['agentic_max_rounds_medium'])
+    max_retries = _agent_max_retries_for_mcp_tools(default_max_retries, mcp_tools)
+    if max_retries != default_max_retries:
+        LOG.info(
+            f'[Browser] agent round limit elevated [sid={conversation.session_id}] '
+            f'round_limit={_BROWSER_AGENT_ROUND_LIMIT}'
+        )
 
     plan = AgentRunPlan(
         role=AgentRole.CHAT,
@@ -1711,12 +1850,7 @@ async def _handle_chat_impl(
             ),
             llm_config=runtime.llm_config or {},
 
-            max_retries={
-                'low': _cfg['agentic_max_rounds_low'],
-                'medium': _cfg['agentic_max_rounds_medium'],
-                'high': _cfg['agentic_max_rounds_high'],
-                'max': max(1, int(_cfg['agentic_expanded_max_rounds']) - 1),
-            }.get(thinking_depth, _cfg['agentic_max_rounds_medium']),
+            max_retries=max_retries,
             tool_failure_limits={
                 'url_fetch': 2,
                 'grep': 2,
@@ -1770,7 +1904,15 @@ async def _handle_chat_impl(
 
         try:
             async with rag_sem:
-                initial_agent_stream = executor.stream_agent(react_agent, plan)
+                initial_agent_stream = lazyllm.enable_trace(
+                    AgentInvocation(executor, react_agent, plan),
+                    # A trace represents one invocation.  Keep the stable
+                    # conversation identifier as semantic correlation data.
+                    trace_id=translator.run.run_id,
+                    session_id=conversation.session_id,
+                    request_tags=['handle_chat', 'agent'],
+                    debug_capture_payload=False,
+                )
                 guarded_agent_stream = guard_workflow_agent_stream(
                     initial_agent_stream,
                     all_tools=all_tools,
@@ -1831,8 +1973,38 @@ async def _handle_chat_impl(
                 _unregister_active_session(_conv_id_key, conversation.session_id)
 
         cost = round(time.time() - start_time, 3)
-        terminal_frame = translator.finish_run(outcome=outcome)
+        terminal_frame = translator.finish_run(
+            outcome=outcome,
+            usage_map=lazyllm.globals.get('usage') or {},
+            module_id=getattr(executor.runtime_llm(react_agent), '_module_id', None),
+            llm_config=runtime.llm_config or {},
+            turn_seq=message.current_turn_seq,
+            max_input_tokens=resolve_max_input_tokens(runtime.llm_config or {}),
+        )
         terminal_frame['tool_call_turns'] = translator.tool_call_turns
+        metrics = translator.last_metrics or terminal_frame.get('performance_metrics')
+        if isinstance(metrics, dict):
+            try:
+                writer = _local_observation_writer()
+                writer.write_summary({
+                    'run_id': translator.run.run_id,
+                    'status': outcome.value,
+                    'model': metrics.get('model'),
+                    'metrics': {
+                        key: value for key, value in metrics.items()
+                        if key != 'provider_usages'
+                    },
+                })
+                writer.write_full({
+                    'run_id': translator.run.run_id,
+                    'status': outcome.value,
+                    'observation': {
+                        'model_events': translator.model_events,
+                        'metrics': metrics,
+                    },
+                })
+            except Exception as exc:
+                LOG.warning(f'[ChatServer] local performance observation failed: {exc}')
         yield log_and_emit_frame(terminal_frame, cost, query, conversation.session_id, tag='RUN_FINISH')
 
         databases_str = json.dumps(retrieval.databases, ensure_ascii=False) if retrieval.databases else []

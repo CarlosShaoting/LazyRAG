@@ -13,13 +13,8 @@ import {
   agentExecutableBindings,
   agentIntegrationStatuses,
   bindAgentExecutable,
-  embeddedBrowserCommand,
-  embeddedBrowserState,
   executorIntegrationAction,
   executorIntegrationPolicies,
-  hasDesktopEmbeddedBrowser,
-  onEmbeddedBrowserState,
-  setEmbeddedBrowserBounds,
 } from "./desktopBridge";
 
 describe("browser Assistant Bridge session synchronization", () => {
@@ -132,6 +127,44 @@ describe("browser Assistant Bridge session synchronization", () => {
     expect(fetchMock.mock.calls[0][0]).toBe("http://127.0.0.1:19091/v1/executors");
   });
 
+  it("preserves a structured platform mismatch from the local Bridge", async () => {
+    mocks.user.mockReturnValue(null);
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify({
+      code: "platform_mismatch",
+      error: "LazyMind is open on windows, but Assistant Bridge is running on linux.",
+      client_platform: "windows",
+      bridge_platform: "linux",
+    }), { status: 409 }));
+
+    const result = await executorIntegrationPolicies();
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: "platform_mismatch",
+      error: {
+        message: "LazyMind is open on windows, but Assistant Bridge is running on linux.",
+        code: "platform_mismatch",
+        clientPlatform: "windows",
+        bridgePlatform: "linux",
+      },
+    });
+  });
+
+  it("does not synchronize credentials into a mismatched Bridge", async () => {
+    mocks.user.mockReturnValue({ token: "access", refreshToken: "refresh" });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify({
+      code: "platform_mismatch",
+      error: "Assistant Bridge platform mismatch",
+      client_platform: "windows",
+      bridge_platform: "linux",
+    }), { status: 409 }));
+
+    const result = await agentIntegrationStatuses();
+
+    expect(result).toMatchObject({ ok: false, reason: "platform_mismatch" });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("changes one executor permission through the local Bridge", async () => {
     mocks.user.mockReturnValue(null);
     const fetchMock = vi.spyOn(globalThis, "fetch")
@@ -183,42 +216,4 @@ describe("browser Assistant Bridge session synchronization", () => {
     expect(JSON.parse(String(init.body))).toEqual({ path: "D:\\Agents\\cursor-agent.exe" });
   });
 
-  it("forwards embedded browser commands, bounds, state, and subscriptions", async () => {
-    const state = {
-      open: true,
-      visible: true,
-      loading: false,
-      session_id: "bs_1",
-      url: "https://example.com/",
-      title: "Example",
-      can_go_back: false,
-      can_go_forward: false,
-    };
-    const command = vi.fn().mockResolvedValue({ ok: true, result: { session_id: "bs_1" } });
-    const bounds = vi.fn().mockResolvedValue(state);
-    const readState = vi.fn().mockResolvedValue(state);
-    const unsubscribe = vi.fn();
-    const subscribe = vi.fn().mockReturnValue(unsubscribe);
-    Object.defineProperty(window, "lazymindDesktop", {
-      configurable: true,
-      value: {
-        embeddedBrowserCommand: command,
-        embeddedBrowserBounds: bounds,
-        embeddedBrowserState: readState,
-        onEmbeddedBrowserState: subscribe,
-      },
-    });
-
-    expect(hasDesktopEmbeddedBrowser()).toBe(true);
-    await expect(embeddedBrowserState()).resolves.toEqual(state);
-    await expect(setEmbeddedBrowserBounds({ x: 10, y: 20, width: 600, height: 700 })).resolves.toEqual(state);
-    await expect(embeddedBrowserCommand("snapshot", { session_id: "bs_1" })).resolves.toEqual({
-      ok: true,
-      result: { session_id: "bs_1" },
-    });
-    const listener = vi.fn();
-    expect(onEmbeddedBrowserState(listener)).toBe(unsubscribe);
-    expect(subscribe).toHaveBeenCalledWith(listener);
-    expect(command).toHaveBeenCalledWith("snapshot", { session_id: "bs_1" });
-  });
 });

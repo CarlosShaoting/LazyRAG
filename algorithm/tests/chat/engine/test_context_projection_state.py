@@ -254,6 +254,54 @@ def test_summary_is_stable_until_context_reaches_trigger_again() -> None:
     assert '_lazymind_meta' not in first[0]
 
 
+def test_summary_hysteresis_applies_when_fixed_prefix_exceeds_budget() -> None:
+    history = [
+        {'role': 'user', 'content': 'old request\n' * 900},
+        {'role': 'assistant', 'content': 'old response\n' * 900},
+        {'role': 'user', 'content': 'current request'},
+    ]
+    state: dict[str, object] = {}
+    calls: list[str] = []
+
+    def summarize(_system: str, user: str) -> str:
+        calls.append(user)
+        return VALID_SUMMARY
+
+    # The fixed prefix alone is larger than the effective budget. No summary
+    # can reclaim enough to pass validation, so the compactor must avoid the
+    # guaranteed-to-fail LLM call and rearm before trying again.
+    prefix = {'system_prompt': 'S' * 20_000, 'tool_definitions': [], 'skills_prompt': ''}
+    with config.temp('context_compression_enabled', True), \
+            config.temp('context_summary_compression_enabled', True), \
+            config.temp('context_compression_reserved_output_tokens', 0), \
+            config.temp('context_compression_trigger_ratio', 0.90), \
+            config.temp('context_compression_target_ratio', 0.20), \
+            config.temp('context_summary_keep_recent_ratio', 0.05):
+        compact = make_history_compactor(
+            max_input_tokens=4_000,
+            keep_recent=0,
+            summarizer=summarize,
+        )
+        compact(history, runtime_state=state, prefix=prefix)
+        history.extend([
+            {
+                'role': 'assistant',
+                'content': '',
+                'tool_calls': [{'id': 'call-1', 'function': {'name': 'browser_snapshot'}}],
+            },
+            {
+                'role': 'tool',
+                'name': 'browser_snapshot',
+                'tool_call_id': 'call-1',
+                'content': 'small browser result',
+            },
+        ])
+        compact(history, runtime_state=state, prefix=prefix)
+
+    assert calls == []
+    assert int(state['next_pressure_tokens']) > 0
+
+
 def test_split_projection_keeps_spanning_summary_in_prior() -> None:
     entries = [
         {'source_start': 0, 'source_end': 4, 'message': {'role': 'user', 'content': 'summary'}},
