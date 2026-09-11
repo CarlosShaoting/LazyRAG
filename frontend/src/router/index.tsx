@@ -178,10 +178,10 @@ export default function AppRouter() {
           />
           <Route path="cloud-documents" element={<CloudDocumentsLayout />}>
             <Route index element={<CloudDocumentsPage />} />
+            <Route path="mail" element={<EmailConnectionPage />} />
             <Route path="local" element={<LocalDataSourcePage />} />
             <Route path="feishu" element={<FeishuAccountPage />} />
             <Route path="google-drive" element={<GoogleDriveConnectionPage />} />
-            <Route path="mail" element={<EmailConnectionPage />} />
             <Route path="docs/feishu-setup" element={<FeishuSetupGuide />} />
             <Route path="docs/notion-setup" element={<NotionSetupGuide />} />
             <Route path="docs/google-drive-setup" element={<GoogleDriveSetupGuide />} />
@@ -193,6 +193,7 @@ export default function AppRouter() {
           <Route path="model-providers/tools" element={<Navigate to="/settings?section=system_tools" replace />} />
           <Route path="model-providers/external-services" element={<Navigate to="/settings?section=system_tools" replace />} />
           <Route path="model-providers/cloud-documents" element={<Navigate to="/cloud-documents" replace />} />
+          <Route path="model-providers/cloud-documents/mail" element={<Navigate to="/cloud-documents/mail" replace />} />
           <Route path="model-providers/cloud-documents/local" element={<Navigate to="/cloud-documents/local" replace />} />
           <Route path="model-providers/cloud-documents/feishu" element={<Navigate to="/cloud-documents/feishu" replace />} />
           <Route path="model-providers/cloud-documents/google-drive" element={<Navigate to="/cloud-documents/google-drive" replace />} />
