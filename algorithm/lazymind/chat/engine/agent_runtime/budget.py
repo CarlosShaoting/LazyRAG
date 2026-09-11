@@ -24,7 +24,7 @@ def parse_token_limit(value: Any) -> Optional[int]:
         return None
     amount = float(match.group(1))
     suffix = (match.group(2) or '').upper()
-    multiplier = {'K': 1_000, 'M': 1_000_000}.get(suffix, 1)
+    multiplier = {'K': 1024, 'M': 1024 * 1024}.get(suffix, 1)
     parsed = int(amount * multiplier)
     return parsed if parsed > 0 else None
 
@@ -39,10 +39,9 @@ def _llm_config_max_input_tokens(llm_config: Optional[dict[str, Any]]) -> Option
     if not isinstance(llm_config, dict):
         return None
     for role in ('llm', 'vlm', 'chat'):
-        if isinstance(llm_config.get(role), dict):
-            # An unknown window for the primary model must not borrow the
-            # window of another configured model (for example a 32K VLM).
-            return _role_max_input_tokens(llm_config[role])
+        parsed = _role_max_input_tokens(llm_config.get(role))
+        if parsed:
+            return parsed
     return parse_token_limit(llm_config.get('max_input_tokens'))
 
 
