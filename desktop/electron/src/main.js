@@ -44,6 +44,7 @@ const {
 
 const { BrowserConnection } = require("./browser-connection");
 const { createBrowserAdapter, loadBrowserController, profilePartition } = require("./managed-browser");
+const { createEdgeAdapter, findEdge } = require("./edge-browser");
 const WebSocket = require("ws");
 
 const isWindows = process.platform === "win32";
@@ -2138,6 +2139,11 @@ ipcMain.handle("lazymind:openAnki", async () => {
 ipcMain.handle("lazymind:agentExecutableBindings", () => readAgentBindings());
 ipcMain.handle("lazymind:agentExecutableBind", (_event, target, executablePath) => runAgentBinding(target, "set", executablePath));
 ipcMain.handle("lazymind:agentExecutableClear", (_event, target) => runAgentBinding(target, "clear"));
+const browserPreferencePath = path.join(app.getPath("userData"), "browser-preference.json");
+let browserEngine = "builtin";
+try {
+  if (JSON.parse(fs.readFileSync(browserPreferencePath, "utf8")).engine === "edge") browserEngine = "edge";
+} catch {}
 const managedBrowser = new BrowserConnection({
   WebSocket,
   fetch: (...args) => net.fetch(...args),
@@ -2149,9 +2155,14 @@ const managedBrowser = new BrowserConnection({
       ? path.join(process.resourcesPath, "browser-controller")
       : path.join(repoRoot, "browser-extension");
     const { BrowserController, captureCurrentPage } = await loadBrowserController(root);
-    const adapter = createBrowserAdapter({ BrowserWindow, session, partition: profilePartition(serverURL, userID) });
+    const partition = profilePartition(serverURL, userID);
+    const adapter = browserEngine === "edge"
+      ? createEdgeAdapter({ profileDir: path.join(app.getPath("userData"), "edge-profiles", partition.slice(8)) })
+      : createBrowserAdapter({ BrowserWindow, session, partition });
     const controller = new BrowserController(adapter);
     return {
+      browserName: browserEngine === "edge" ? "Microsoft Edge" : "LazyMind Browser",
+      browserVersion: browserEngine === "edge" ? "" : process.versions.chrome,
       dispatch: (action, payload) => action === "capture_current_page"
         ? captureCurrentPage(payload, adapter)
         : controller.dispatch(action, payload),
@@ -2165,6 +2176,7 @@ function assertBrowserIPC(event) {
   }
 }
 let browserSessionUpdate = Promise.resolve();
+const browserStatus = () => ({ ...managedBrowser.status(), engine: browserEngine, edgeAvailable: Boolean(findEdge()) });
 ipcMain.handle("lazymind:browserSessionSet", (event, value) => {
   assertBrowserIPC(event);
   browserSessionUpdate = browserSessionUpdate.catch(() => {}).then(() => managedBrowser.setSession(value));
@@ -2172,7 +2184,24 @@ ipcMain.handle("lazymind:browserSessionSet", (event, value) => {
 });
 ipcMain.handle("lazymind:browserStatus", (event) => {
   assertBrowserIPC(event);
-  return managedBrowser.status();
+  return browserStatus();
+});
+ipcMain.handle("lazymind:browserSelect", (event, engine) => {
+  assertBrowserIPC(event);
+  browserSessionUpdate = browserSessionUpdate.catch(() => {}).then(async () => {
+    if (!["builtin", "edge"].includes(engine)) throw new Error("Unsupported browser");
+    if (engine === "edge" && !findEdge()) throw new Error("Microsoft Edge is not installed");
+    if (engine !== browserEngine) {
+      fs.mkdirSync(path.dirname(browserPreferencePath), { recursive: true });
+      fs.writeFileSync(browserPreferencePath, JSON.stringify({ engine }), { mode: 0o600 });
+      const auth = managedBrowser.auth;
+      await managedBrowser.clear();
+      browserEngine = engine;
+      if (auth) await managedBrowser.setSession(auth);
+    }
+    return browserStatus();
+  });
+  return browserSessionUpdate;
 });
 ipcMain.handle("lazymind:browserOpen", async (event, url) => {
   assertBrowserIPC(event);

@@ -563,7 +563,16 @@ export class BrowserController {
     const deadline = Date.now() + 3000;
     while (Date.now() < deadline) {
       const response = await this.send(session.tabId, 'Runtime.evaluate', {
-        expression: `(() => (document.body?.innerText || '').includes(${JSON.stringify(text)}))()`,
+        expression: `(() => {
+          const text = ${JSON.stringify(text)};
+          if ((document.body?.innerText || '').includes(text)) return true;
+          // Input values are not part of innerText. Check the focused editor
+          // as well, including editors inside an open shadow root.
+          let element = document.activeElement;
+          while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement;
+          if (!element || !element.getClientRects().length) return false;
+          return typeof element.value === 'string' && element.value.includes(text);
+        })()`,
         returnByValue: true,
         silent: true,
       });

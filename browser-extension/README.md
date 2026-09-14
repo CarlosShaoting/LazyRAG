@@ -4,9 +4,15 @@
 
 Desktop 现在自带 LazyMind 专用浏览器。登录 LazyMind 后，桌面主进程自动通过现有认证接口配对 Browser Gateway；无需加载扩展、填写地址或复制配对码。直接在对话中提供网址，或到“设置 → 系统工具 → 依赖安装 → LazyMind 专用浏览器”打开网站。
 
+同一设置中可以选择 Microsoft Edge。Desktop 自动检测电脑上已安装的 Edge，按需打开独立的 Edge 专用窗口，无需加载扩展或手工配置调试端口；此选择也用于 Chat 的浏览器工具。切换浏览器会关闭当前专用窗口，但保留网站登录数据。未安装 Edge 时该选项不可用，内置浏览器仍可直接使用。
+
+Edge 使用 Desktop 用户数据目录下的 `edge-profiles/<服务与用户摘要>` 保存独立登录状态，不读取日常 Edge 的配置目录。控制通过子进程继承的 CDP 管道进行，不开放调试 TCP 端口；退出 LazyMind 时关闭该专用 Edge 进程。复用系统已安装的 Edge 和现有控制器，没有增加浏览器下载或第三方运行依赖。这是 Chromium 版 Microsoft Edge 支持，不包含 Internet Explorer 或 Edge 的 IE 模式。
+
 专用窗口使用 Electron 的 Chromium 内核，首次需要登录网站。网站 Cookie 和本地存储保存在独立的持久化 profile 中，并按 LazyMind 服务地址和用户 ID 隔离。退出 LazyMind 会断开控制并关闭专用窗口，保留该用户的网站登录数据供下次使用；网站登录仍可能过期。不会继承日常 Chrome 的登录状态或读取其标签页。
 
 Desktop 复用本目录 `controller.js` 的 CDP 动作和 `capture.js` 的正文提取，通过 `desktop/electron/src/managed-browser.js` 适配 `webContents.debugger`。外部网页没有 Node.js 权限或 LazyMind preload。Core 重启造成设备凭证失效时，Desktop 会自动重新配对。
+
+Edge 接入位于 `desktop/electron/src/edge-browser.js`。真实窗口测试（需已安装 Edge）可在仓库根目录运行 `LAZYMIND_TEST_EDGE=1 node --test desktop/electron/tests/edge-browser.test.js`，使用临时独立配置目录和本地测试网页，验证打开、输入、点击、读取、截图、导航、关闭及重启后的 Cookie/本地存储保留。
 
 下面的 Chrome/Edge 扩展安装流程用于非 Desktop 部署，以及需要读取日常浏览器页面的场景。Electron 的网站兼容性与 Chrome 不完全相同，部分身份提供商可能限制嵌入式浏览器登录。
 

@@ -3,7 +3,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 const user = vi.hoisted(() => vi.fn());
 vi.mock('@/components/auth', () => ({ AgentAppsAuth: { getUserInfo: user }, AUTH_USER_CHANGE_EVENT: 'test-user-change' }));
 vi.mock('./apiBase', () => ({ getApiBaseUrl: () => 'http://127.0.0.1:8090' }));
-import { hasManagedBrowser, openManagedBrowser, startManagedBrowserSync, syncManagedBrowser } from './managedBrowser';
+import { hasManagedBrowser, openManagedBrowser, selectManagedBrowser, startManagedBrowserSync, syncManagedBrowser } from './managedBrowser';
 
 describe('Desktop browser connection', () => {
   beforeEach(() => { user.mockReset(); vi.useFakeTimers(); });
@@ -13,6 +13,7 @@ describe('Desktop browser connection', () => {
       browserSessionSet: vi.fn().mockResolvedValue({ state: 'connected' }),
       browserStatus: vi.fn().mockResolvedValue({ state: 'connected' }),
       browserOpen: vi.fn().mockResolvedValue({}),
+      browserSelect: vi.fn().mockResolvedValue({ state: 'connecting', engine: 'edge', edgeAvailable: true }),
     };
     Object.defineProperty(window, 'lazymindDesktop', { configurable: true, value: desktop });
     return desktop;
@@ -50,5 +51,16 @@ describe('Desktop browser connection', () => {
     await expect(openManagedBrowser('https://example.com')).rejects.toThrow('offline');
     expect(desktop.browserOpen).not.toHaveBeenCalled();
     await expect(syncManagedBrowser()).rejects.toThrow('offline');
+  });
+  it('synchronizes the account before selecting Edge and returns its status', async () => {
+    const desktop = install();
+    user.mockReturnValue({ userId: 'alice', token: 'token' });
+    expect(await selectManagedBrowser('edge')).toEqual({ state: 'connecting', engine: 'edge', edgeAvailable: true });
+    expect(desktop.browserSelect).toHaveBeenCalledWith('edge');
+    expect(desktop.browserSessionSet.mock.invocationCallOrder[0]).toBeLessThan(desktop.browserSelect.mock.invocationCallOrder[0]);
+    desktop.browserSessionSet.mockRejectedValue(new Error('offline'));
+    desktop.browserSelect.mockClear();
+    await expect(selectManagedBrowser('builtin')).rejects.toThrow('offline');
+    expect(desktop.browserSelect).not.toHaveBeenCalled();
   });
 });

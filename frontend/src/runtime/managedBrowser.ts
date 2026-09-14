@@ -5,11 +5,14 @@ export interface ManagedBrowserStatus {
   state: string;
   error?: string;
   deviceId?: string;
+  engine?: 'builtin' | 'edge';
+  edgeAvailable?: boolean;
 }
 
 interface ManagedBrowserBridge {
   browserSessionSet: (value: { server_url: string; user_id: string; access_token: string } | null) => Promise<ManagedBrowserStatus>;
   browserStatus: () => Promise<ManagedBrowserStatus>;
+  browserSelect?: (engine: 'builtin' | 'edge') => Promise<ManagedBrowserStatus>;
   browserOpen: (url: string) => Promise<unknown>;
 }
 
@@ -39,6 +42,13 @@ export async function managedBrowserStatus(): Promise<ManagedBrowserStatus> {
 export async function openManagedBrowser(url: string): Promise<void> {
   await syncManagedBrowser();
   await bridge()!.browserOpen(url);
+}
+
+export async function selectManagedBrowser(engine: 'builtin' | 'edge'): Promise<ManagedBrowserStatus> {
+  const desktop = bridge();
+  if (!desktop?.browserSelect) throw new Error('Browser selection is unavailable; restart the updated Desktop app');
+  await syncManagedBrowser();
+  return desktop.browserSelect(engine);
 }
 
 export function startManagedBrowserSync(): () => void {

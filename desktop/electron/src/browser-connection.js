@@ -93,8 +93,9 @@ class BrowserConnection {
         const pairing = await this.json('/api/core/browser/manage/pairings', {}, true, auth);
         if (generation !== this.generation) return;
         const device = await this.json('/api/browser/v1/pair', {
-          code: pairing.code, device_name: 'LazyMind Browser', browser: 'LazyMind Browser',
-          browser_version: this.browserVersion, version: this.version,
+          code: pairing.code, device_name: this.controller.browserName || 'LazyMind Browser',
+          browser: this.controller.browserName || 'LazyMind Browser',
+          browser_version: this.controller.browserVersion ?? this.browserVersion, version: this.version,
         }, false, auth);
         if (generation !== this.generation) return;
         if (!device.device_id || !device.device_token) throw new Error('Invalid browser device response');

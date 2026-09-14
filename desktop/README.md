@@ -30,7 +30,7 @@ Stop the development shell without stopping Local Runtime:
 make desktop-dev-down
 ```
 
-Logs are written under `local/build/desktop-dev/`. Override the defaults with `LAZYMIND_DESKTOP_DEV_PORT` and `LAZYMIND_DESKTOP_EXTERNAL_RUNTIME_URL`. Both renderer and runtime URLs are restricted to loopback hosts because the renderer receives the privileged Desktop preload bridge. Browser actions use the Chromium engine already included in Electron. Desktop connects automatically and opens dedicated windows with persistent website sessions; no Chrome/Edge extension setup is required. Docker and Local can still use the external Chrome/Edge extension.
+Logs are written under `local/build/desktop-dev/`. Override the defaults with `LAZYMIND_DESKTOP_DEV_PORT` and `LAZYMIND_DESKTOP_EXTERNAL_RUNTIME_URL`. Both renderer and runtime URLs are restricted to loopback hosts because the renderer receives the privileged Desktop preload bridge. Browser actions default to the Chromium engine already included in Electron. Users can also select their installed Microsoft Edge under Settings → System tools → Dependencies → LazyMind Browser. Desktop connects automatically and opens dedicated windows with persistent website sessions; no Chrome/Edge extension setup is required. Edge uses a separate profile and a private CDP pipe, with no additional runtime dependency or browser download. Docker and Local can still use the external Chrome/Edge extension.
 
 Run the dedicated browser connection and adapter tests with `node --test desktop/electron/tests/*.test.js` from the repository root.
 

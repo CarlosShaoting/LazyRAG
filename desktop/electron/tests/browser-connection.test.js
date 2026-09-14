@@ -29,6 +29,9 @@ test('automatically pairs, runs ordered commands, reconnects after Core restart,
       response.end(JSON.stringify({ data: { code: `pair-${++pairings}` } }));
     } else {
       assert.equal(JSON.parse(body).code, `pair-${pairings}`);
+      assert.equal(JSON.parse(body).browser, 'Microsoft Edge');
+      assert.equal(JSON.parse(body).device_name, 'Microsoft Edge');
+      assert.equal(JSON.parse(body).browser_version, '');
       response.end(JSON.stringify({ device_id: `device-${pairings}`, device_token: 'device-secret' }));
     }
   });
@@ -48,6 +51,7 @@ test('automatically pairs, runs ordered commands, reconnects after Core restart,
   const connection = new BrowserConnection({
     WebSocket, fetch, version: 'test', browserVersion: 'test',
     createController: async (_server, user) => ({
+      browserName: 'Microsoft Edge', browserVersion: '',
       async dispatch(action, payload) { calls.push(action); return { action, payload }; },
       async dispose() { disposed.push(user); },
     }),
