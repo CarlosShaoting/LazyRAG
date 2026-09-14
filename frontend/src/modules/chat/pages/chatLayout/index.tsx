@@ -74,8 +74,6 @@ import {
   useModelSelectionStore,
   type ChatModelSelectionRequest,
 } from "@/modules/chat/store/modelSelection";
-import DesktopEmbeddedBrowser from "@/modules/chat/components/DesktopEmbeddedBrowser";
-import { runtimeFeatures } from "@/runtime/features";
 
 // Stable empty reference to avoid returning a fresh array from the zustand
 // selector on every render, which (with useSyncExternalStore) would trigger an
@@ -163,7 +161,6 @@ const ChatLayout: FC<IChatLayoutProps> = (props) => {
   const [isTaskPanelCollapsed, setIsTaskPanelCollapsed] = useState(false);
   const [panelWidth, setPanelWidth] = useState<number>(0); // 0 = use CSS default
   const [workflowPanelExpanded, setWorkflowPanelExpanded] = useState(false);
-  const [desktopBrowserVisible, setDesktopBrowserVisible] = useState(false);
   const [expandedRailTab, setExpandedRailTab] = useState<"chat" | "tasks">("chat");
   const [developerModeActive, setDeveloperModeActiveState] = useState(
     isDeveloperModeActive,
@@ -889,7 +886,7 @@ const ChatLayout: FC<IChatLayoutProps> = (props) => {
   };
 
   const isTaskPanelRestoreVisible =
-    !desktopBrowserVisible && !workflowPanelExpanded && hasTaskPanelContent && isTaskPanelCollapsed;
+    !workflowPanelExpanded && hasTaskPanelContent && isTaskPanelCollapsed;
   const isRetainedSidechat =
     conversationRelation?.relationType === CONVERSATION_RELATION_SIDECHAT;
   const canOpenSideChat =
@@ -897,11 +894,10 @@ const ChatLayout: FC<IChatLayoutProps> = (props) => {
     Boolean(sessionId) &&
     !isRestoringConversation &&
     !conversationRelation;
-  const effectiveWorkflowPanelExpanded = workflowPanelExpanded && !desktopBrowserVisible;
 
   return (
     <div
-      className={`detail-container${effectiveWorkflowPanelExpanded ? " detail-container--workflow-expanded" : ""}`}
+      className={`detail-container${workflowPanelExpanded ? " detail-container--workflow-expanded" : ""}`}
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}
@@ -917,7 +913,7 @@ const ChatLayout: FC<IChatLayoutProps> = (props) => {
           </div>
         </div>
       )}
-      {effectiveWorkflowPanelExpanded && (
+      {workflowPanelExpanded && (
         <div className="expanded-rail-tabs" role="tablist">
           <button
             type="button"
@@ -942,7 +938,7 @@ const ChatLayout: FC<IChatLayoutProps> = (props) => {
           </button>
         </div>
       )}
-      <div className={`chat-conversation-pane${effectiveWorkflowPanelExpanded && expandedRailTab !== "chat" ? " chat-conversation-pane--hidden" : ""}${isTaskPanelRestoreVisible ? " chat-conversation-pane--task-restore-visible" : ""}`}>
+      <div className={`chat-conversation-pane${workflowPanelExpanded && expandedRailTab !== "chat" ? " chat-conversation-pane--hidden" : ""}${isTaskPanelRestoreVisible ? " chat-conversation-pane--task-restore-visible" : ""}`}>
         <ForkStatus fork={fork} source={sessionId} />
         <ConversationRelationBanner relation={conversationRelation} />
         {loadError && <Alert type="error" message={t("chat.fork.historyLoadFailed")} action={<Button onClick={() => loadConversation(routeConversationId || sessionId)}>{t("chat.fork.retryRead")}</Button>} />}
@@ -1030,9 +1026,6 @@ const ChatLayout: FC<IChatLayoutProps> = (props) => {
           returnFocusRef={sideChatReturnFocusRef}
         />
       ))}
-      {runtimeFeatures.desktopEmbeddedBrowser ? (
-        <DesktopEmbeddedBrowser onVisibilityChange={setDesktopBrowserVisible} />
-      ) : null}
       {isTaskPanelRestoreVisible && (
         <button
           type="button"
@@ -1048,7 +1041,7 @@ const ChatLayout: FC<IChatLayoutProps> = (props) => {
           </span>
           </button>
         )}
-        {!desktopBrowserVisible && ((hasTaskPanelContent && !workflowPanelExpanded && !isTaskPanelCollapsed) || workflowPanelExpanded) && (
+        {((hasTaskPanelContent && !workflowPanelExpanded && !isTaskPanelCollapsed) || workflowPanelExpanded) && (
         <div
           className={`right-box${!developerModeActive && !workflowPanelExpanded ? " right-box--ordinary" : ""}${workflowPanelExpanded ? " right-box--expanded-tab" : ""}${workflowPanelExpanded && expandedRailTab !== "tasks" ? " right-box--tab-hidden" : ""}`}
           style={!workflowPanelExpanded && panelWidth ? { width: panelWidth, minWidth: panelWidth } : undefined}

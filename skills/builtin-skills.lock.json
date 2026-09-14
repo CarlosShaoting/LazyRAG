@@ -150,9 +150,9 @@
       ],
       "provider": "GitHub",
       "market_visible": true,
-      "archive_sha256": "d6d330836f7dec2b59e41c7a7abb3441092522298de307ac2d602df297642a98",
-      "tree_sha256": "defb01abe5f4c3c75cbe43cb615633f81996e3ac96278cb063a836e4a01646fc",
-      "archive_size": 6291,
+      "archive_sha256": "50aed2b66ea4e8783247d2b43b7733ef9eb3efe5eb3e824efd517ff70770fc3a",
+      "tree_sha256": "c0cc1e88f957b89048965858f1683c559e93b8fc38cd739d2c3965e5fdb2f3d8",
+      "archive_size": 6322,
       "package_file": "packages/bsk_01M1FEISHUDOCS8R4K2V7Q9X0A.zip"
     },
     {

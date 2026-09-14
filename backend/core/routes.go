@@ -88,6 +88,7 @@ func registerAllRoutes(r *mux.Router) {
 	// Extension routes have their own one-time/device credential protocol.
 	handleAPI(r, "POST", "/browser/manage/pairings", []string{"qa.write"}, browserHandler.CreatePairing)
 	handleAPI(r, "GET", "/browser/manage/devices", []string{"qa.read"}, browserHandler.ListDevices)
+	handleAPI(r, "DELETE", "/browser/manage/devices", []string{"qa.write"}, browserHandler.RevokeAllDevices)
 	handleAPI(r, "DELETE", "/browser/manage/devices/{device_id}", []string{"qa.write"}, browserHandler.RevokeDevice)
 	r.HandleFunc("/browser/extension/pair", browserHandler.PairExtension).Methods(http.MethodPost)
 	r.HandleFunc("/browser/extension/connect", browserHandler.ConnectExtension).Methods(http.MethodGet)

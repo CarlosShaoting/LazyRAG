@@ -80,7 +80,7 @@ from lazymind.chat.engine.tools.intent_writer import (
     build_intentwrite_tool,
     render_intent_section,
 )
-from lazymind.chat.engine.tools.browser_vision import build_browser_visual_locate_tool
+from lazymind.chat.engine.tools.browser_vision import build_browser_visual_inspect_tool
 from lazymind.chat.engine.tools.skill_listing import build_list_skills_tool
 from lazymind.chat.service.utils import (
     SensitiveFilter,
@@ -385,6 +385,7 @@ def _mcp_server_cache_key(server: Dict[str, Any]) -> str:
 
 
 _MCP_MODEL_TOOL_NAME_MAX_LENGTH = 64
+_BROWSER_AGENT_ROUND_LIMIT = 200
 
 
 def _mcp_model_tool_name(original_name: str) -> str:
@@ -406,6 +407,11 @@ def _normalize_mcp_tool_names(tools: list, server_name: str) -> list:
     normalized = list(tools)
     for index, tool in enumerate(normalized):
         original_name = str(getattr(tool, '__name__', '') or '').strip()
+        # MCPClient returns callables in production, while tests and third-party
+        # adapters may use opaque schema objects. Keep those objects cacheable and
+        # unchanged instead of failing the entire server load during normalization.
+        if not original_name:
+            continue
         alias = _mcp_model_tool_name(original_name)
         if alias in used:
             digest = hashlib.sha256(
@@ -422,8 +428,6 @@ def _normalize_mcp_tool_names(tools: list, server_name: str) -> list:
             )
             continue
         used.add(alias)
-        setattr(tool, '_lazymind_mcp_original_name', original_name)
-        tool.__name__ = alias
         if alias != original_name:
             aliases.append((original_name, alias))
     if aliases:
@@ -465,7 +469,7 @@ def _add_browser_visual_tools(tools: list, *, vlm_available: bool) -> list:
             _browser_tool_name(tool) == 'browser.screenshot'
             for tool in tools
         ):
-            LOG.info('[BrowserVision] visual locate tool hidden: vlm role unavailable')
+            LOG.info('[BrowserVision] visual inspect tool hidden: vlm role unavailable')
         return tools
     screenshot_tool = next((
         tool for tool in tools
@@ -473,10 +477,10 @@ def _add_browser_visual_tools(tools: list, *, vlm_available: bool) -> list:
     ), None)
     if screenshot_tool is None:
         return tools
-    visual_locate = build_browser_visual_locate_tool(screenshot_tool)
-    visual_locate.__name__ = 'browser_visual_locate'
-    LOG.info('[BrowserVision] visual locate tool exposed: vlm role available')
-    return [*tools, visual_locate]
+    visual_inspect = build_browser_visual_inspect_tool(screenshot_tool)
+    visual_inspect.__name__ = 'browser_visual_inspect'
+    LOG.info('[BrowserVision] visual inspect tool exposed: vlm role available')
+    return [*tools, visual_inspect]
 
 
 def _load_mcp_server_tools(server: Dict[str, Any]) -> list:
@@ -1908,12 +1912,7 @@ async def _handle_chat_impl(
             ),
             llm_config=runtime.llm_config or {},
 
-            max_retries={
-                'low': _cfg['agentic_max_rounds_low'],
-                'medium': _cfg['agentic_max_rounds_medium'],
-                'high': _cfg['agentic_max_rounds_high'],
-                'max': max(1, int(_cfg['agentic_expanded_max_rounds']) - 1),
-            }.get(thinking_depth, _cfg['agentic_max_rounds_medium']),
+            max_retries=max_retries,
             tool_failure_limits={
                 'url_fetch': 2,
                 'grep': 2,

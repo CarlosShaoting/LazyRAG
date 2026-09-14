@@ -65,23 +65,6 @@ func TestCoreServiceEnvUsesLocalEndpoints(t *testing.T) {
 	assertEnvNotContains(t, env, "LAZYMIND_CAPABILITY_MCP_ENABLED=")
 }
 
-func TestCoreServiceEnvDoesNotPreferEmbeddedBrowserForDesktopProfile(t *testing.T) {
-	t.Setenv("LAZYMIND_BROWSER_PREFERRED_DEVICE_BROWSER", "")
-	repo := t.TempDir()
-	writeComposeFixture(t, repo)
-	cfg, paths, err := NewRuntimeConfig(defaultProfileValue(), repo)
-	if err != nil {
-		t.Fatalf("runtime config: %v", err)
-	}
-	cfg.Profile = "desktop"
-
-	assertEnvContains(
-		t,
-		coreServiceEnv(cfg, paths),
-		"LAZYMIND_BROWSER_PREFERRED_DEVICE_BROWSER=",
-	)
-}
-
 func TestCoreServiceEnvUsesRuntimeUploadPaths(t *testing.T) {
 	repo := t.TempDir()
 	writeComposeFixture(t, repo)

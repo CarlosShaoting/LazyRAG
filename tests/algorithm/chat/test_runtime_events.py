@@ -117,7 +117,7 @@ def test_run_accumulator_repairs_generic_http_429_classification():
         },
     })
 
-    data = accumulator.finish(succeeded=False)['data']
+    data = accumulator.finish(outcome=RunOutcome.FAILED)['data']
 
     assert data['status'] == 'failed'
     assert data['reason'] == 'model_failure'
@@ -135,7 +135,7 @@ def test_run_accumulator_keeps_specific_http_429_classification():
         },
     })
 
-    assert accumulator.finish(succeeded=False)['data']['code'] == 'quota_exhausted'
+    assert accumulator.finish(outcome=RunOutcome.FAILED)['data']['code'] == 'quota_exhausted'
 
 
 def test_run_accumulator_awaiting_user_input_is_completed():

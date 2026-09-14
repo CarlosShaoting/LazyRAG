@@ -24,51 +24,6 @@ export interface DesktopRuntimeStatus {
   services?: Record<string, DesktopRuntimeServiceStatus>;
 }
 
-export type DesktopEmbeddedBrowserAction =
-  | "open"
-  | "navigate"
-  | "capture_current_page"
-  | "snapshot"
-  | "click"
-  | "type"
-  | "select"
-  | "press"
-  | "scroll"
-  | "wait"
-  | "screenshot"
-  | "tabs"
-  | "close"
-  | "reload"
-  | "back"
-  | "forward";
-
-export interface DesktopEmbeddedBrowserState {
-  open: boolean;
-  visible: boolean;
-  loading: boolean;
-  session_id: string;
-  url: string;
-  title: string;
-  can_go_back: boolean;
-  can_go_forward: boolean;
-  error?: string;
-}
-
-export interface DesktopEmbeddedBrowserBounds {
-  x?: number;
-  y?: number;
-  width?: number;
-  height?: number;
-  visible?: boolean;
-}
-
-export type DesktopEmbeddedBrowserCommandResult =
-  | { ok: true; result: Record<string, unknown> }
-  | {
-      ok: false;
-      error: { code: string; message: string; details?: Record<string, unknown> };
-    };
-
 export interface DesktopLocalFolderRecommendation {
   key: string;
   value: string;
@@ -207,17 +162,6 @@ interface LazyMindDesktopBridge {
   openLogsDir?: () => Promise<void> | void;
   openDataDir?: () => Promise<void> | void;
   openBrowserExtensionDir?: () => Promise<void> | void;
-  embeddedBrowserState?: () => Promise<DesktopEmbeddedBrowserState> | DesktopEmbeddedBrowserState;
-  embeddedBrowserBounds?: (
-    payload: DesktopEmbeddedBrowserBounds,
-  ) => Promise<DesktopEmbeddedBrowserState> | DesktopEmbeddedBrowserState;
-  embeddedBrowserCommand?: (
-    action: DesktopEmbeddedBrowserAction,
-    payload?: Record<string, unknown>,
-  ) => Promise<DesktopEmbeddedBrowserCommandResult> | DesktopEmbeddedBrowserCommandResult;
-  onEmbeddedBrowserState?: (
-    handler: (state: DesktopEmbeddedBrowserState) => void,
-  ) => (() => void) | void;
   runtimeStatus?: () => Promise<unknown> | unknown;
   agentIntegrationStatuses?: () => Promise<unknown> | unknown;
   agentIntegrationAction?: (agent: DesktopAgent, action: DesktopAgentIntegrationAction) => Promise<unknown> | unknown;
@@ -300,51 +244,6 @@ export function openDataDir(): Promise<DesktopBridgeResult> {
 
 export function openBrowserExtensionDir(): Promise<DesktopBridgeResult> {
   return callDesktopBridge("openBrowserExtensionDir");
-}
-
-export function hasDesktopEmbeddedBrowser(): boolean {
-  const bridge = getDesktopBridge();
-  return Boolean(
-    bridge?.embeddedBrowserState &&
-      bridge?.embeddedBrowserBounds &&
-      bridge?.embeddedBrowserCommand,
-  );
-}
-
-export function embeddedBrowserState(): Promise<DesktopEmbeddedBrowserState | null> {
-  const bridge = getDesktopBridge();
-  if (!bridge?.embeddedBrowserState) return Promise.resolve(null);
-  return Promise.resolve(bridge.embeddedBrowserState());
-}
-
-export function setEmbeddedBrowserBounds(
-  payload: DesktopEmbeddedBrowserBounds,
-): Promise<DesktopEmbeddedBrowserState | null> {
-  const bridge = getDesktopBridge();
-  if (!bridge?.embeddedBrowserBounds) return Promise.resolve(null);
-  return Promise.resolve(bridge.embeddedBrowserBounds(payload));
-}
-
-export function embeddedBrowserCommand(
-  action: DesktopEmbeddedBrowserAction,
-  payload: Record<string, unknown> = {},
-): Promise<DesktopEmbeddedBrowserCommandResult> {
-  const bridge = getDesktopBridge();
-  if (!bridge?.embeddedBrowserCommand) {
-    return Promise.resolve({
-      ok: false,
-      error: { code: "DESKTOP_BRIDGE_UNAVAILABLE", message: "Desktop browser bridge is unavailable" },
-    });
-  }
-  return Promise.resolve(bridge.embeddedBrowserCommand(action, payload));
-}
-
-export function onEmbeddedBrowserState(
-  handler: (state: DesktopEmbeddedBrowserState) => void,
-): () => void {
-  const bridge = getDesktopBridge();
-  if (!bridge?.onEmbeddedBrowserState) return () => {};
-  return bridge.onEmbeddedBrowserState(handler) || (() => {});
 }
 
 export function runtimeStatus(): Promise<DesktopRuntimeStatusResult> {

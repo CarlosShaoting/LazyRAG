@@ -56,7 +56,7 @@ def test_add_browser_visual_tools_only_when_vlm_and_browser_screenshot_exist():
 
     assert [tool.__name__ for tool in augmented] == [
         'browser_screenshot',
-        'browser_visual_locate',
+        'browser_visual_inspect',
     ]
     assert _add_browser_visual_tools(
         [_tool('other')], vlm_available=True,

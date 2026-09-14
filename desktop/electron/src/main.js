@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, ipcMain, shell, dialog, clipboard, Menu, Tray, session, net } = require("electron");
+const { app, BrowserWindow, ipcMain, shell, dialog, clipboard, Menu, Tray, session, net } = require("electron");
 const { spawn, execFile } = require("node:child_process");
 const { createHmac, randomBytes, randomUUID } = require("node:crypto");
 const fs = require("node:fs");
@@ -26,7 +26,6 @@ const {
 const { clearFrontendCaches } = require("./frontend-cache");
 const { installExternalNavigationHandler } = require("./external-navigation");
 const { waitForRendererWithRuntimeRecovery } = require("./renderer-recovery");
-const { EmbeddedBrowserController } = require("./embedded-browser");
 const {
   desktopDevRendererURL,
   desktopDevRuntimeStatus,
@@ -173,29 +172,6 @@ let startupState = {
   startedAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
 };
-
-const embeddedBrowser = new EmbeddedBrowserController({
-  WebContentsView,
-  getHostWindow: () => mainWindow,
-  onState: (state) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("lazymind:embeddedBrowserState", state);
-    }
-  },
-  log: (message) => appendStartupLog("browser", message),
-});
-
-function trustedMainRenderer(event) {
-  return Boolean(mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents);
-}
-
-function browserIPCError(error) {
-  return {
-    code: error?.code || "ACTION_FAILED",
-    message: String(error?.message || error),
-    details: error?.details,
-  };
-}
 
 function loadEditablePptDependencyConfig() {
   try {
@@ -1213,7 +1189,6 @@ function beginFastQuit(reason = "quit") {
     spawnDetachedShutdownHelper(reason);
   }
   detachRuntimeMonitor();
-  void embeddedBrowser.dispose();
   rendererReadyWait?.cancel();
   rendererReadyWait = undefined;
   for (const window of [mainWindow, startupWindow]) {
@@ -1235,7 +1210,6 @@ function enterBackgroundMode(reason, { discoverable }) {
   finishStartupMetrics("cancelled", "frontend-closed-to-background");
   rendererReadyWait?.cancel();
   rendererReadyWait = undefined;
-  void embeddedBrowser.dispose();
   const windows = [mainWindow, startupWindow];
   mainWindow = undefined;
   startupWindow = undefined;
@@ -1913,7 +1887,6 @@ function createHiddenRendererAttempt(frontendPort) {
   mainWindow = window;
   window.once("closed", () => {
     if (mainWindow === window) {
-      void embeddedBrowser.dispose();
       mainWindow = undefined;
     }
   });
@@ -1953,7 +1926,6 @@ async function createDesktopDevWindow() {
   mainWindow = window;
   window.once("closed", () => {
     if (mainWindow === window) {
-      void embeddedBrowser.dispose();
       mainWindow = undefined;
     }
   });
@@ -2084,30 +2056,6 @@ ipcMain.on("lazymind:renderer-ready", (event) => {
 });
 
 ipcMain.handle("lazymind:runtimeStatus", () => readStatus());
-ipcMain.handle("lazymind:embeddedBrowserState", (event) => {
-  if (!trustedMainRenderer(event)) {
-    return { open: false, visible: false, error: "Desktop renderer is not authorized" };
-  }
-  return embeddedBrowser.state();
-});
-ipcMain.handle("lazymind:embeddedBrowserBounds", (event, payload) => {
-  if (!trustedMainRenderer(event)) {
-    return { open: false, visible: false, error: "Desktop renderer is not authorized" };
-  }
-  return embeddedBrowser.setBounds(payload || {});
-});
-ipcMain.handle("lazymind:embeddedBrowserCommand", async (event, action, payload) => {
-  if (!trustedMainRenderer(event)) {
-    return { ok: false, error: { code: "UNAUTHORIZED", message: "Desktop renderer is not authorized" } };
-  }
-  try {
-    const result = await embeddedBrowser.dispatch(action, payload || {});
-    return { ok: true, result };
-  } catch (error) {
-    appendStartupLog("browser", `${String(action || "unknown")} failed: ${serializeError(error)}`);
-    return { ok: false, error: browserIPCError(error) };
-  }
-});
 ipcMain.handle("lazymind:agentIntegrationStatuses", () => runAgentConnector("all", "status"));
 ipcMain.handle("lazymind:agentIntegrationAction", (_event, agent, action) => runAgentConnector(agent, action));
 ipcMain.handle("lazymind:executorIntegrationPolicies", () => runExecutorConnector("all", "status"));

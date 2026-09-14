@@ -77,6 +77,41 @@ func TestEdgePairingPreservesBrowserAndExtensionVersions(t *testing.T) {
 	}
 }
 
+func TestRevokeAllDevicesIsUserScopedAndClosesConnections(t *testing.T) {
+	hub, err := NewHub()
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstPairing, _ := hub.CreatePairing("user-1")
+	first, _ := hub.PairExtension(PairExtensionInput{Code: firstPairing.Code})
+	secondPairing, _ := hub.CreatePairing("user-1")
+	second, _ := hub.PairExtension(PairExtensionInput{Code: secondPairing.Code})
+	otherPairing, _ := hub.CreatePairing("user-2")
+	_, _ = hub.PairExtension(PairExtensionInput{Code: otherPairing.Code})
+	connection := &deviceConnection{done: make(chan struct{}), pending: make(map[string]chan commandResponse)}
+	if err := hub.Attach(first.DeviceID, connection); err != nil {
+		t.Fatal(err)
+	}
+
+	if revoked := hub.RevokeAllDevices("user-1"); revoked != 2 {
+		t.Fatalf("revoked = %d, want 2", revoked)
+	}
+	select {
+	case <-connection.done:
+	default:
+		t.Fatal("online device connection was not closed")
+	}
+	if len(hub.ListDevices("user-1")) != 0 {
+		t.Fatal("revoked user still has devices")
+	}
+	if len(hub.ListDevices("user-2")) != 1 {
+		t.Fatal("another user's device was revoked")
+	}
+	if _, err := hub.AuthenticateDevice(second.DeviceID, second.DeviceToken); err == nil {
+		t.Fatal("revoked device credentials still authenticate")
+	}
+}
+
 func TestExpiredPairingIsRejected(t *testing.T) {
 	hub, err := NewHub()
 	if err != nil {
@@ -163,30 +198,30 @@ func TestSummarizeBrowserCommandResultFallsBackToElements(t *testing.T) {
 	}
 }
 
-func TestOnlineDevicePrefersConfiguredDesktopBrowser(t *testing.T) {
-	t.Setenv("LAZYMIND_BROWSER_PREFERRED_DEVICE_BROWSER", "Electron WebContentsView")
+func TestOnlineDevicePrefersConfiguredBrowser(t *testing.T) {
+	t.Setenv("LAZYMIND_BROWSER_PREFERRED_DEVICE_BROWSER", "Edge")
 	hub, err := NewHub()
 	if err != nil {
 		t.Fatal(err)
 	}
 	chromeConnection := &deviceConnection{done: make(chan struct{})}
-	desktopConnection := &deviceConnection{done: make(chan struct{})}
+	edgeConnection := &deviceConnection{done: make(chan struct{})}
 	now := time.Now().UTC()
 	hub.devices["chrome"] = &deviceRecord{
 		ID: "chrome", UserID: "user-1", Browser: "Chrome",
 		LastSeenAt: now, Connection: chromeConnection,
 	}
-	hub.devices["desktop"] = &deviceRecord{
-		ID: "desktop", UserID: "user-1", Browser: "Electron WebContentsView",
-		LastSeenAt: now.Add(-time.Hour), Connection: desktopConnection,
+	hub.devices["edge"] = &deviceRecord{
+		ID: "edge", UserID: "user-1", Browser: "Edge",
+		LastSeenAt: now.Add(-time.Hour), Connection: edgeConnection,
 	}
 
 	selected, err := hub.onlineDevice("user-1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if selected != desktopConnection {
-		t.Fatalf("selected %#v, want Desktop embedded browser", selected)
+	if selected != edgeConnection {
+		t.Fatalf("selected %#v, want configured Edge browser", selected)
 	}
 }
 
@@ -199,6 +234,14 @@ func TestAllowedActionIncludesEveryPublishedBrowserAction(t *testing.T) {
 	}
 	if allowedAction("raw_cdp") {
 		t.Fatal("raw CDP action must remain blocked")
+	}
+	if allowedAction("click_at") {
+		t.Fatal("coordinate click must not be exposed")
+	}
+	for _, name := range ToolNames {
+		if name == "browser.click_at" {
+			t.Fatal("coordinate click must not be published")
+		}
 	}
 }
 

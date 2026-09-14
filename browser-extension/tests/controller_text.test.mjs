@@ -18,14 +18,14 @@ test('keeps meaningful text while removing safe invisible separators', () => {
   assert.equal(normalizeText('中文\u200d内容'), '中文\u200d内容');
 });
 
-test('accepts visual coordinates inside the CSS viewport', () => {
+test('accepts an intersection point inside the CSS viewport', () => {
   assert.deepEqual(normalizeViewportPoint(120.5, 240, {width: 800, height: 600}), {
     x: 120.5,
     y: 240,
   });
 });
 
-test('rejects visual coordinates outside the CSS viewport', () => {
+test('rejects an intersection point outside the CSS viewport', () => {
   assert.throws(
     () => normalizeViewportPoint(800, 100, {width: 800, height: 600}),
     (error) => error.code === 'COORDINATE_OUT_OF_BOUNDS',
