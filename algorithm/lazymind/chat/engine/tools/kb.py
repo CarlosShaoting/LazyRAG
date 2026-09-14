@@ -301,7 +301,6 @@ class KBToolkit:
     __tool_auto_activate__ = [
         r'知识库|资料库|(?<!\w)knowledge[\s_-]+bases?(?!\w)',
     ]
-
     def __init__(self, kb_scope: Optional[List[str]] = None):
         self._kb_scope = tuple(_string_list(kb_scope)) if kb_scope is not None else None
 
@@ -488,8 +487,9 @@ class KBToolkit:
             image_topk: Top-k for the image retrieval branch. Defaults to 3.
             filters: Metadata filters for retrieval, e.g.
                 {'file_name': 'report.pdf'}.
-            kb_ids: Knowledge-base IDs. Overrides the knowledge bases selected
-                in the current request.
+            kb_ids: Knowledge-base IDs as a JSON array, for example
+                ``["ds_example"]``. Do not pass a string containing the array.
+                Overrides the knowledge bases selected in the current request.
         """
         agentic_config = lazyllm.globals['agentic_config']
         selected_ids = self._kb_ids(kb_ids)
