@@ -112,7 +112,7 @@ type DeviceInput struct {
 
 type OpenInput struct {
 	DeviceID            string `json:"device_id,omitempty" jsonschema:"optional device ID"`
-	URL                 string `json:"url" jsonschema:"http or https URL to open in a visible LazyMind-managed Chrome or Edge window"`
+	URL                 string `json:"url" jsonschema:"http or https URL to open in a visible LazyMind-managed browser window"`
 	AllowPrivateNetwork bool   `json:"allow_private_network,omitempty" jsonschema:"allow an explicitly requested localhost or private-network URL"`
 }
 

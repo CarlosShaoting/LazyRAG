@@ -1,5 +1,15 @@
 # LazyMind Browser Extension
 
+## Desktop 默认浏览器（无需配置 Chrome）
+
+Desktop 现在自带 LazyMind 专用浏览器。登录 LazyMind 后，桌面主进程自动通过现有认证接口配对 Browser Gateway；无需加载扩展、填写地址或复制配对码。直接在对话中提供网址，或到“设置 → 系统工具 → 依赖安装 → LazyMind 专用浏览器”打开网站。
+
+专用窗口使用 Electron 的 Chromium 内核，首次需要登录网站。网站 Cookie 和本地存储保存在独立的持久化 profile 中，并按 LazyMind 服务地址和用户 ID 隔离。退出 LazyMind 会断开控制并关闭专用窗口，保留该用户的网站登录数据供下次使用；网站登录仍可能过期。不会继承日常 Chrome 的登录状态或读取其标签页。
+
+Desktop 复用本目录 `controller.js` 的 CDP 动作和 `capture.js` 的正文提取，通过 `desktop/electron/src/managed-browser.js` 适配 `webContents.debugger`。外部网页没有 Node.js 权限或 LazyMind preload。Core 重启造成设备凭证失效时，Desktop 会自动重新配对。
+
+下面的 Chrome/Edge 扩展安装流程用于非 Desktop 部署，以及需要读取日常浏览器页面的场景。Electron 的网站兼容性与 Chrome 不完全相同，部分身份提供商可能限制嵌入式浏览器登录。
+
 当前目录是无需构建即可加载的 Chrome/Edge Manifest V3 开发版扩展。Chrome 与 Edge 共用同一个 Manifest、Gateway 协议和控制器；扩展会在配对时自动识别当前浏览器，并把 `Google Chrome` 或 `Microsoft Edge` 及浏览器版本上报给 LazyMind。
 
 ## 本地加载
@@ -11,9 +21,9 @@
 5. 打开扩展，填写 LazyMind 地址与配对码。
 6. 如需抓取当前页，点击“授权当前站点”。如需控制页面，直接在 LazyMind 对话中要求打开 URL；扩展只控制它为任务创建的窗口。
 
-## Desktop 依赖安装
+## 旧版 Desktop / 外部浏览器扩展安装
 
-Desktop 用户可以在“设置 → 系统工具 → 依赖安装 → 浏览器控制扩展”中安装扩展包。安装目录为 Desktop Runtime 下的 `deps/browser-extension`，安装完成后可点击“打开安装位置”。
+旧版 Desktop 用户可以在“设置 → 系统工具 → 依赖安装 → 浏览器控制扩展”中安装扩展包。安装目录为 Desktop Runtime 下的 `deps/browser-extension`，安装完成后可点击“打开安装位置”。新版 Desktop 默认显示专用浏览器入口；如仍需外部扩展，可按上面的“本地加载”流程安装。
 
 Chrome/Edge 安全策略不允许 Desktop 在普通个人浏览器中静默启用扩展；仍需打开对应浏览器的扩展管理页、启用开发者模式并选择“加载解压缩的扩展”。正式商店版本发布后可分别改为 Chrome Web Store 或 Microsoft Edge Add-ons 安装；企业受管 Edge 可再使用 `ExtensionInstallForcelist` 部署。
 

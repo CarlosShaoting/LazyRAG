@@ -42,6 +42,10 @@ const {
   saveAccessState,
 } = require("./local-folder-access");
 
+const { BrowserConnection } = require("./browser-connection");
+const { createBrowserAdapter, loadBrowserController, profilePartition } = require("./managed-browser");
+const WebSocket = require("ws");
+
 const isWindows = process.platform === "win32";
 const isMac = process.platform === "darwin";
 const isInstallerWarmup = isWindows && process.argv.includes("--installer-warmup");
@@ -2134,6 +2138,49 @@ ipcMain.handle("lazymind:openAnki", async () => {
 ipcMain.handle("lazymind:agentExecutableBindings", () => readAgentBindings());
 ipcMain.handle("lazymind:agentExecutableBind", (_event, target, executablePath) => runAgentBinding(target, "set", executablePath));
 ipcMain.handle("lazymind:agentExecutableClear", (_event, target) => runAgentBinding(target, "clear"));
+const managedBrowser = new BrowserConnection({
+  WebSocket,
+  fetch: (...args) => net.fetch(...args),
+  version: app.getVersion(),
+  browserVersion: process.versions.chrome,
+  onError: (error) => appendStartupLog("browser", error.message),
+  createController: async (serverURL, userID) => {
+    const root = isPackaged
+      ? path.join(process.resourcesPath, "browser-controller")
+      : path.join(repoRoot, "browser-extension");
+    const { BrowserController, captureCurrentPage } = await loadBrowserController(root);
+    const adapter = createBrowserAdapter({ BrowserWindow, session, partition: profilePartition(serverURL, userID) });
+    const controller = new BrowserController(adapter);
+    return {
+      dispatch: (action, payload) => action === "capture_current_page"
+        ? captureCurrentPage(payload, adapter)
+        : controller.dispatch(action, payload),
+      dispose: () => adapter.dispose(),
+    };
+  },
+});
+function assertBrowserIPC(event) {
+  if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame) {
+    throw new Error("Browser control is only available from the LazyMind main window");
+  }
+}
+let browserSessionUpdate = Promise.resolve();
+ipcMain.handle("lazymind:browserSessionSet", (event, value) => {
+  assertBrowserIPC(event);
+  browserSessionUpdate = browserSessionUpdate.catch(() => {}).then(() => managedBrowser.setSession(value));
+  return browserSessionUpdate;
+});
+ipcMain.handle("lazymind:browserStatus", (event) => {
+  assertBrowserIPC(event);
+  return managedBrowser.status();
+});
+ipcMain.handle("lazymind:browserOpen", async (event, url) => {
+  assertBrowserIPC(event);
+  await browserSessionUpdate;
+  return managedBrowser.open(url);
+});
+app.on("will-quit", () => { void managedBrowser.clear(); });
+
 ipcMain.handle("lazymind:assistantSessionSet", (_event, value) =>
   runConnectorJSON(["internal", "session", "set"], agentConnectorActionTimeoutMs, value));
 ipcMain.handle("lazymind:assistantSessionClear", () =>

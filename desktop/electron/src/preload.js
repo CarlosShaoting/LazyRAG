@@ -1,6 +1,9 @@
 function createDesktopBridge(ipcRenderer) {
   return {
     platform: process.platform,
+    browserSessionSet: (value) => ipcRenderer.invoke("lazymind:browserSessionSet", value),
+    browserStatus: () => ipcRenderer.invoke("lazymind:browserStatus"),
+    browserOpen: (url) => ipcRenderer.invoke("lazymind:browserOpen", url),
     openLogsDir: () => ipcRenderer.invoke("lazymind:openLogsDir"),
     openDataDir: () => ipcRenderer.invoke("lazymind:openDataDir"),
     openBrowserExtensionDir: () => ipcRenderer.invoke("lazymind:openBrowserExtensionDir"),

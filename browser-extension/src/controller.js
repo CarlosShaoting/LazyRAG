@@ -15,9 +15,10 @@ const INTERACTIVE_ROLES = new Set([
 // ]);
 
 export class BrowserController {
-  constructor() {
+  constructor(browserAPI = globalThis.chrome) {
+    this.browser = browserAPI;
     this.sessions = new Map();
-    chrome.debugger.onDetach.addListener((source) => this.handleDetach(source));
+    this.browser.debugger.onDetach.addListener((source) => this.handleDetach(source));
   }
 
   async dispatch(action, payload = {}) {
@@ -26,7 +27,6 @@ export class BrowserController {
       case 'navigate': return this.navigate(payload);
       case 'snapshot': return this.snapshot(this.requireSession(payload.session_id));
       case 'click': return this.click(payload);
-      case 'click_at': return this.clickAt(payload);
       case 'click_intersection': return this.clickIntersection(payload);
       case 'type': return this.type(payload);
       case 'type_focused': return this.typeFocused(payload);
@@ -43,7 +43,7 @@ export class BrowserController {
 
   async open(payload) {
     const url = validateTargetURL(payload.url, payload.allow_private_network);
-    const created = await chrome.windows.create({
+    const created = await this.browser.windows.create({
       url,
       focused: true,
       type: 'normal',
@@ -51,18 +51,18 @@ export class BrowserController {
     });
     const tab = created.tabs?.[0];
     if (!tab?.id) {
-      if (created.id) await chrome.windows.remove(created.id);
+      if (created.id) await this.browser.windows.remove(created.id);
       throw browserError('OPEN_FAILED', '浏览器没有创建受控标签页');
     }
     try {
-      await chrome.debugger.attach({tabId: tab.id}, CDP_VERSION);
+      await this.browser.debugger.attach({tabId: tab.id}, CDP_VERSION);
       await Promise.all([
         this.send(tab.id, 'Page.enable'),
         this.send(tab.id, 'DOM.enable'),
         this.send(tab.id, 'Runtime.enable'),
         this.send(tab.id, 'Accessibility.enable'),
       ]);
-      await waitForTabComplete(tab.id, 15000);
+      await waitForTabComplete(this.browser, tab.id, 15000);
       const session = {
         id: `bs_${crypto.randomUUID().replaceAll('-', '')}`,
         windowId: created.id,
@@ -75,7 +75,7 @@ export class BrowserController {
       const snapshot = await this.snapshot(session);
       return {session_id: session.id, ...snapshot};
     } catch (error) {
-      try { await chrome.windows.remove(created.id); } catch {}
+      try { await this.browser.windows.remove(created.id); } catch {}
       throw normalizeError(error, 'OPEN_FAILED');
     }
   }
@@ -84,16 +84,37 @@ export class BrowserController {
     const session = this.requireSession(payload.session_id);
     const url = validateTargetURL(payload.url, payload.allow_private_network);
     await this.send(session.tabId, 'Page.navigate', {url});
-    await waitForTabComplete(session.tabId, 15000);
+    await waitForTabComplete(this.browser, session.tabId, 15000);
     return this.snapshot(session);
+  }
+
+  async prepareVisiblePage(session) {
+    // Virtualized editors may defer their DOM/AX updates while their window is
+    // covered or inactive. CDP scroll offsets alone do not prove a new frame
+    // has rendered. Activate only the session's managed tab before observing.
+    const tab = await this.browser.tabs.get(session.tabId);
+    await this.browser.windows.update(tab.windowId, {focused: true});
+    await this.browser.tabs.update(session.tabId, {active: true});
+    await this.send(session.tabId, 'Page.bringToFront');
+    await this.send(session.tabId, 'Runtime.evaluate', {
+      expression: `new Promise(resolve => {
+        const timer = setTimeout(() => resolve('timeout'), 500);
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          clearTimeout(timer); resolve('rendered');
+        }));
+      })`,
+      awaitPromise: true,
+      returnByValue: true,
+    });
   }
 
   async snapshot(session) {
     this.ensureAttached(session);
+    await this.prepareVisiblePage(session);
     const startedAt = Date.now();
     const [tree, tab, pageMetadata] = await Promise.all([
       this.send(session.tabId, 'Accessibility.getFullAXTree'),
-      chrome.tabs.get(session.tabId),
+      this.browser.tabs.get(session.tabId),
       this.send(session.tabId, 'Runtime.evaluate', {
         expression: '({url: location.href, title: document.title})',
         returnByValue: true,
@@ -200,15 +221,6 @@ export class BrowserController {
     await this.send(session.tabId, 'Input.dispatchMouseEvent', {type: 'mouseMoved', x, y});
     await this.send(session.tabId, 'Input.dispatchMouseEvent', {type: 'mousePressed', x, y, button: 'left', clickCount: 1});
     await this.send(session.tabId, 'Input.dispatchMouseEvent', {type: 'mouseReleased', x, y, button: 'left', clickCount: 1});
-    await delay(300);
-    return this.snapshot(session);
-  }
-
-  async clickAt(payload) {
-    const session = this.requireSession(payload.session_id);
-    const viewport = await this.viewportSize(session);
-    const point = normalizeViewportPoint(payload.x, payload.y, viewport);
-    await this.dispatchClick(session.tabId, point.x, point.y);
     await delay(300);
     return this.snapshot(session);
   }
@@ -326,14 +338,17 @@ export class BrowserController {
   async scroll(payload) {
     const session = this.requireSession(payload.session_id);
     const objectId = await this.documentObject(session.tabId);
-    await this.send(session.tabId, 'Runtime.callFunctionOn', {
+    const scrolled = await this.send(session.tabId, 'Runtime.callFunctionOn', {
       objectId,
-      functionDeclaration: 'function (x, y) { window.scrollBy({left: x, top: y, behavior: "instant"}); }',
+      functionDeclaration: scrollPageContainer.toString(),
       arguments: [{value: finiteNumber(payload.x)}, {value: finiteNumber(payload.y)}],
       returnByValue: true,
     });
+    if (scrolled.exceptionDetails) {
+      throw browserError('SCROLL_FAILED', '无法滚动页面内容，请获取最新快照后重试');
+    }
     await delay(150);
-    return this.snapshot(session);
+    return {...await this.snapshot(session), scroll: scrolled.result?.value};
   }
 
   async wait(payload) {
@@ -362,13 +377,14 @@ export class BrowserController {
 
   async screenshot(payload) {
     const session = this.requireSession(payload.session_id);
+    await this.prepareVisiblePage(session);
     const [shot, viewport] = await Promise.all([
       this.send(session.tabId, 'Page.captureScreenshot', {
         format: 'jpeg', quality: 75, fromSurface: true, captureBeyondViewport: false,
       }),
       this.viewportSize(session),
     ]);
-    const tab = await chrome.tabs.get(session.tabId);
+    const tab = await this.browser.tabs.get(session.tabId);
     return {
       session_id: session.id,
       url: tab.url || '',
@@ -381,7 +397,7 @@ export class BrowserController {
 
   async tabs(payload) {
     const session = this.requireSession(payload.session_id);
-    const tab = await chrome.tabs.get(session.tabId);
+    const tab = await this.browser.tabs.get(session.tabId);
     return {
       session_id: session.id,
       tabs: [{tab_id: tab.id, url: tab.url || '', title: tab.title || '', active: tab.active}],
@@ -391,10 +407,10 @@ export class BrowserController {
   async close(payload) {
     const session = this.requireSession(payload.session_id);
     this.sessions.delete(session.id);
-    try { await chrome.debugger.detach({tabId: session.tabId}); } catch {}
+    try { await this.browser.debugger.detach({tabId: session.tabId}); } catch {}
     try {
-      if (session.windowId) await chrome.windows.remove(session.windowId);
-      else await chrome.tabs.remove(session.tabId);
+      if (session.windowId) await this.browser.windows.remove(session.windowId);
+      else await this.browser.tabs.remove(session.tabId);
     } catch {}
     return {session_id: session.id, closed: true};
   }
@@ -574,7 +590,7 @@ export class BrowserController {
   }
 
   send(tabId, method, params = {}) {
-    return chrome.debugger.sendCommand({tabId}, method, params);
+    return this.browser.debugger.sendCommand({tabId}, method, params);
   }
 
   handleDetach(source) {
@@ -582,6 +598,41 @@ export class BrowserController {
       if (session.tabId === source.tabId) session.detached = true;
     }
   }
+}
+
+// Runs inside the page through CDP; keep this function self-contained.
+export function scrollPageContainer(x, y) {
+  const root = document.scrollingElement || document.documentElement;
+  const horizontal = Math.abs(x) > Math.abs(y);
+  const candidates = [root, ...document.querySelectorAll('*')].filter((el, index, all) => {
+    if (!el || all.indexOf(el) !== index) return false;
+    const rect = el.getBoundingClientRect();
+    const style = getComputedStyle(el);
+    const overflow = horizontal ? style.overflowX : style.overflowY;
+    const range = horizontal ? el.scrollWidth - el.clientWidth : el.scrollHeight - el.clientHeight;
+    return range > 1 && (el === root || /auto|scroll|overlay/.test(overflow))
+      && style.visibility !== 'hidden' && style.display !== 'none'
+      && rect.bottom > 0 && rect.right > 0 && rect.top < innerHeight && rect.left < innerWidth;
+  });
+  const area = (el) => {
+    const r = el.getBoundingClientRect();
+    return Math.max(0, Math.min(r.right, innerWidth) - Math.max(r.left, 0))
+      * Math.max(0, Math.min(r.bottom, innerHeight) - Math.max(r.top, 0));
+  };
+  // Prefer the main visible document pane over narrow sidebars. Keep the same
+  // pane at its boundary, so reaching the end does not scroll an unrelated UI.
+  candidates.sort((a, b) => area(b) - area(a));
+  const target = candidates[0] || root;
+  const before = {x: target.scrollLeft, y: target.scrollTop};
+  target.scrollBy({left: x, top: y, behavior: 'instant'});
+  const after = {x: target.scrollLeft, y: target.scrollTop};
+  return {
+    target: target === root ? 'document' : 'container',
+    before, after, moved: before.x !== after.x || before.y !== after.y,
+    at_boundary: horizontal
+      ? (x >= 0 ? target.scrollLeft + target.clientWidth >= target.scrollWidth - 1 : target.scrollLeft <= 0)
+      : (y >= 0 ? target.scrollTop + target.clientHeight >= target.scrollHeight - 1 : target.scrollTop <= 0),
+  };
 }
 
 function validateTargetURL(raw, allowPrivateNetwork) {
@@ -687,10 +738,10 @@ function isInvisibleOnlyText(value) {
   return Boolean(text) && text.replace(INVISIBLE_ONLY_TEXT_PATTERN, '') === '';
 }
 
-function waitForTabComplete(tabId, timeout) {
+function waitForTabComplete(browser, tabId, timeout) {
   return new Promise(async (resolve) => {
     try {
-      const current = await chrome.tabs.get(tabId);
+      const current = await browser.tabs.get(tabId);
       if (current.status === 'complete') {
         resolve();
         return;
@@ -700,16 +751,16 @@ function waitForTabComplete(tabId, timeout) {
       return;
     }
     const timer = setTimeout(() => {
-      chrome.tabs.onUpdated.removeListener(listener);
+      browser.tabs.onUpdated.removeListener(listener);
       resolve();
     }, timeout);
     const listener = (updatedTabId, changeInfo) => {
       if (updatedTabId !== tabId || changeInfo.status !== 'complete') return;
       clearTimeout(timer);
-      chrome.tabs.onUpdated.removeListener(listener);
+      browser.tabs.onUpdated.removeListener(listener);
       resolve();
     };
-    chrome.tabs.onUpdated.addListener(listener);
+    browser.tabs.onUpdated.addListener(listener);
   });
 }
 
