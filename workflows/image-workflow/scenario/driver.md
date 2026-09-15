@@ -27,6 +27,9 @@ describing what was produced and whether it meets the criteria below.
   once as a deterministic post-step check before accepting this Attempt. It must not start a
   second SubAgent. MEDIA_CAPABILITY_DEPENDENCY_MISSING is terminal: do not generate media, retain
   every Chinese reason/settings_url for the Chat jump card, and do not retry automatically.
+  Preserve the completed analysis artifacts and selected next_step. After the user finishes
+  configuration and continues, retry only the deterministic check from that checkpoint; do not
+  rerun analysis or select a new path. Once ready, continue to the saved next_step.
 
 ### collect_materials
 - This remains the only external material collection step and runs only when routing selected it.
