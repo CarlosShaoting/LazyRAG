@@ -5,6 +5,9 @@ describing what was produced and whether it meets the criteria below.
 ## Step evaluation rules
 
 ### analyze_subject
+- Current image uploads always require collect_materials to resolve and save them, even if
+  older artifacts exist. Finish analysis with select_image_material_route; its result owns
+  the next branch and enforces upload collection from the actual attachment context.
 - `subject_analysis` must be user-facing natural language (50+ words) and must not contain
   WORKFLOW/REQUIRES/NEXT_STEPS/SKIP_STEPS lines or step-id lists.
 - `workflow_routing` must contain exactly one WORKFLOW, REQUIRES, NEXT_STEPS, and SKIP_STEPS line.
@@ -27,6 +30,8 @@ describing what was produced and whether it meets the criteria below.
 
 ### collect_materials
 - This remains the only external material collection step and runs only when routing selected it.
+- When image uploads exist, at least one resolved upload must be saved as material_images;
+  a summary alone cannot satisfy collection.
 - Uploaded files are resolved with find_user_attachment; web images come verbatim from
   image_search_and_validate.selected and no more than three material_images are saved.
 - REFERENCE_GENERATE needs 1-3 validated references. FIND_AND_EDIT/EDIT_UPLOAD need a validated

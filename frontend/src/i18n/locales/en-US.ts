@@ -2515,6 +2515,8 @@ const enUS = {
     mediaCapabilitiesRequiredDesc: "A model or system dependency required by this task is not ready.",
     configureThisCapability: "Open settings",
     configureRequiredCapability: "Open settings",
+    mediaCapabilitiesConfigured: "Required capabilities are configured",
+    mediaCapabilitiesConfiguredDesc: "You can continue the workflow.",
     continueAfterConfiguration: "Continue",
     mediaCapabilityStillMissing: "The setup is not active yet. Complete the required model setup before continuing.",
     mediaCapabilityCheckFailed: "Unable to verify the model setup right now. Try again shortly.",

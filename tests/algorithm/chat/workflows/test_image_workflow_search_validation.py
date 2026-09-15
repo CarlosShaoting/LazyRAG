@@ -182,6 +182,24 @@ class ImageWorkflowSearchValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'exactly one WORKFLOW'):
             self.tools.select_image_route('NEXT_STEPS: enhance_image')
 
+    def test_uploaded_image_forces_material_collection(self):
+        import lazyllm
+
+        routing = 'WORKFLOW: EDIT_UPLOAD\nNEXT_STEPS: optimize_prompt,enhance_image'
+        for files, expected in [
+            (['/uploads/dog.jpeg'], 'collect_materials'),
+            (['https://example.com/dog.png?signature=abc'], 'collect_materials'),
+            ([], 'optimize_prompt'),
+            (['/uploads/notes.txt'], 'optimize_prompt'),
+        ]:
+            with self.subTest(files=files), mock.patch.object(
+                lazyllm.globals, 'get', return_value={'files': files},
+            ):
+                result = self.tools.select_image_material_route(routing)
+                self.assertEqual(result['control']['next_step'], expected)
+        state = yaml.safe_load((_repo_root() / 'workflows/image-workflow/scenario/state.yml').read_text())
+        self.assertEqual(state['steps']['analyze_subject']['terminal_tools'], ['select_image_material_route'])
+
     def test_direct_edit_routes_and_static_meme_sources(self):
         cases = [
             ('EDIT_UPLOAD', 'image_editor', 'enhance_image'),

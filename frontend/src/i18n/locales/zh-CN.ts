@@ -2452,6 +2452,8 @@ const zhCN = {
     mediaCapabilitiesRequiredDesc: "当前任务所需的模型或系统依赖尚未就绪。",
     configureThisCapability: "前往配置",
     configureRequiredCapability: "前往配置",
+    mediaCapabilitiesConfigured: "所需能力已配置",
+    mediaCapabilitiesConfiguredDesc: "可以继续执行工作流。",
     continueAfterConfiguration: "继续",
     mediaCapabilityStillMissing: "配置尚未生效，请完成当前模型配置后再继续。",
     mediaCapabilityCheckFailed: "暂时无法确认模型配置状态，请稍后重试。",

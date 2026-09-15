@@ -119,7 +119,10 @@ steps:
       6. If the runtime instruction mentions a selected knowledge base, filters.kb_id is set,
          or the user explicitly references 知识库 / knowledge base style, prefer WORKFLOW: KB_STYLE
          (unless the final deliverable is a meme or animation; those routes win).
-      7. Decide whether material collection is actually needed. Make this decision from the
+      7. CURRENT IMAGE UPLOADS MUST ALWAYS COLLECT, even if a prior workflow artifact exists.
+         Only collect_materials resolves and saves uploaded images; never skip it when the
+         current request includes an image attachment.
+         Decide whether material collection is otherwise needed. Make this decision from the
          request's semantic dependencies, not from a fixed subject/category keyword list.
          - An explicit request to find/search an image is always COLLECT. Do not replace it
            with the model's memorized knowledge or reinterpret it as direct generation.
@@ -190,7 +193,7 @@ steps:
            - SKIP + other animation/meme/caption:
              NEXT_STEPS: optimize_prompt,generate_image,enhance_image
              SKIP_STEPS: collect_materials
-         A source-dependent route may skip collection only when the source is already available
+         Without current image uploads, a source-dependent route may skip collection only when the source is already available
          as a workflow artifact; otherwise choose COLLECT.
          Do NOT save raw_source_image, image_output, prompt_used, material_images, or material_summary in this step.
       11. For FIND_AND_EDIT / EDIT_UPLOAD, save the material route token:
@@ -199,7 +202,13 @@ steps:
            ])
          For generation / animated workflows, do not save edit_route; generation is the default branch.
 
-      Stop after saving required artifacts only.
+      After saving required artifacts, call select_image_material_route exactly once with
+      the exact workflow_routing text. This terminal tool forces collect_materials for current
+      image uploads, even if NEXT_STEPS mistakenly omitted it. Follow its returned target.
+    tools:
+      - select_image_material_route
+    terminal_tools:
+      - select_image_material_route
     outputs:
       - material: subject_analysis
         required: true
@@ -397,7 +406,9 @@ steps:
       The step must never use find_artifact/get_artifact/list_artifacts to locate user uploads.
       Uploaded files must be resolved through find_user_attachment only.
       If the current request has uploaded images, only those uploads may be saved as
-      material_images; no knowledge-base or web image search may be performed or appended.
+      material_images; saving at least one resolved upload is mandatory, even on routes where
+      this slot is normally optional. A summary without the uploaded image is not success.
+      No knowledge-base or web image search may be performed or appended.
       For uploaded edit workflows, the first upload must also be raw_source_image.
       For uploaded animated workflows, the first upload must also be image_output.
       For CREATE_NEW: material_images are optional (0–3) when the text request is sufficient.

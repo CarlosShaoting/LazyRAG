@@ -66,6 +66,7 @@ tool_scripts:
       - image_search_tool
       - validate_image_ref
       - meme_add_caption
+      - select_image_material_route
       - select_image_route
       - select_image_postprocess_route
       - check_image_workflow_capabilities
