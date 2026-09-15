@@ -235,10 +235,11 @@ def check_image_workflow_capabilities(workflow_routing: str) -> dict[str, Any]:
 def select_image_route(workflow_routing: str) -> dict[str, Any]:
     """Return the only valid post-optimization branch from the routing artifact."""
     route = _workflow_route(workflow_routing)
-    # Every mode first produces or stages a concrete base image. Editing,
-    # animation, GIF conversion and deterministic captions happen afterward in
-    # enhance_image when that post-processing step applies.
-    next_step = 'generate_image'
+    next_step = _IMAGE_ROUTE_TARGETS[route]
+    if route == 'CREATE_STATIC_MEME':
+        required = _required_media_capabilities(workflow_routing, route)
+        if 'image_generator' not in required:
+            next_step = 'enhance_image'
     return {
         'status': 'ok',
         'workflow': route,

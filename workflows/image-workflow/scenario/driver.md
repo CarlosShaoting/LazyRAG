@@ -9,8 +9,9 @@ describing what was produced and whether it meets the criteria below.
   WORKFLOW/REQUIRES/NEXT_STEPS/SKIP_STEPS lines or step-id lists.
 - `workflow_routing` must contain exactly one WORKFLOW, REQUIRES, NEXT_STEPS, and SKIP_STEPS line.
   REQUIRES may contain only image_generator, image_editor, video_generator, ffmpeg, or none.
-- Every route must list `generate_image`. Edit, animation,
-  meme, and caption routes must place `enhance_image` after `generate_image`; ordinary still
+- Direct-source routes (FIND_AND_EDIT, EDIT_UPLOAD, CREATE_STATIC_MEME without image_generator)
+  skip `generate_image` and advance from optimize to enhance. Other animation, meme, and
+  caption routes place `enhance_image` after `generate_image`; ordinary still
   routes must skip enhancement.
 - REQUIRES must match the exact behavior: fresh base=image_generator; source visual
   edit=image_editor; source caption-only=none; video/GIF=video_generator+ffmpeg plus
@@ -34,8 +35,8 @@ describing what was produced and whether it meets the criteria below.
   required source into a successful summary.
 
 ### optimize_prompt
-- `prompt_used` must be English and complete for the selected route. Every route advances to
-  `generate_image`; none may jump directly to `enhance_image`.
+- `prompt_used` must be English and complete. Follow select_image_route: direct-source routes
+  advance directly to `enhance_image`; other routes advance to `generate_image`.
 - Edit prompts contain Requested edit, Edit scope, Preserve, and Do not clauses.
 - Generic animation prompts contain COUNT (1–10), FIRST_FRAME_PROMPT, LAST_FRAME_PROMPT, and
   MOTION_PROMPT so multi-GIF requests keep stable page indexes.
@@ -66,7 +67,10 @@ describing what was produced and whether it meets the criteria below.
   animation, GIF, meme, or caption route to enhance_image.
 
 ### enhance_image
-- Every result must derive from generated_base_image and a real route-appropriate output must be
+- Direct-source edits require raw_source_image; single source-backed static memes use
+  raw_source_image or the first material_images entry. Use that source directly
+  inside enhance, never in a separate generation step. Fail before paid calls if it is absent.
+- Other routes require the base produced by generate_image. A real route-appropriate output must be
   saved before `enhancement_status` may say completed.
 - Edit routes save enhanced_image_output using the narrow four-clause preservation contract.
 - Meme routes that require a visual edit run image_editor here before the final postprocessor.
