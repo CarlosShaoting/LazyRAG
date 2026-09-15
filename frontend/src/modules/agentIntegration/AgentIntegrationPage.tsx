@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import { Alert, Button, Card, Input, Modal, Popover, Space, Spin, Switch, Tag, Tooltip, Typography, message } from "antd";
 import {
   CheckCircleOutlined,
@@ -37,6 +37,7 @@ import {
   type ChatExecutorDescriptor,
 } from "@/modules/chat/utils/request";
 import "./index.scss";
+import ExternalCapabilityAccess from "./ExternalCapabilityAccess";
 
 interface AgentDefinition {
   id: DesktopAgent;
@@ -376,6 +377,8 @@ export default function AgentIntegrationPage() {
         />
       )}
 
+      <ExternalCapabilityAccess />
+
       <Spin spinning={loading}>
         <section className="agent-integration-section">
           <div className="agent-integration-grid">
@@ -438,7 +441,7 @@ export default function AgentIntegrationPage() {
           autoFocus
           value={manualBindingPath}
           placeholder={t(executablePathPlaceholderKey(manualBindingTarget))}
-          onChange={(event) => setManualBindingPath(event.target.value)}
+          onChange={(event: ChangeEvent<HTMLInputElement>) => setManualBindingPath(event.target.value)}
         />
       </Modal>
     </div>
