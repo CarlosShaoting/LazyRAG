@@ -118,3 +118,14 @@ pnpm exec vitest run \
 步骤、全局 cursor 跳跃、版本 0 旧事件、无内存通知的持久完成事件，以及旧配置卡清理。
 排查时先对照同一 session/task 的数据库状态、projection 版本、事件 cursor，再看页面；
 不要把另一轮 attempt 或历史工具文本当成当前执行状态。
+
+CI 另有独立的前端契约测试目录，修改同步机制时也必须运行：
+
+```sh
+cd tests/frontend
+npm test
+```
+
+其中 `workflowProjection.test.js` 检查事件版本与重放规则，
+`workflowEventStreamSurface.test.js` 检查订阅、引用清理与会话刷新入口。
+它们与 `frontend/src` 下的测试共同维护同一份状态契约。

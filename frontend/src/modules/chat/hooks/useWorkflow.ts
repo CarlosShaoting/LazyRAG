@@ -3,7 +3,8 @@ import { useWorkflowStore, type SlotRevision } from '@/modules/chat/store/workfl
 
 /**
  * useWorkflowSession returns the active workflow session and helpers for the given conversationId.
- * ChatLayout owns initial loading and live refresh for the active conversation.
+ * ChatLayout owns initial loading and conversation invalidations; this hook
+ * attaches the shared session stream and releases its reference on cleanup.
  */
 export function useWorkflowSession(conversationId: string) {
   const session = useWorkflowStore((s) => s.sessionByConversation[conversationId] ?? null);
