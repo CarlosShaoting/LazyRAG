@@ -171,10 +171,14 @@ func (s *Service) Inventory(ctx context.Context, userID, agent string) (Inventor
 	}
 	for _, row := range tools {
 		available, reason := toolAvailability(row)
+		authorized, explicit := grants[grantKey(CapabilityTool, row.ID)]
+		if !explicit {
+			authorized = available
+		}
 		items = append(items, CapabilityItem{
 			ID: row.ID, Type: CapabilityTool, Name: row.Name, Source: row.ServerName,
 			Description: row.Description, InputSchema: row.InputSchema,
-			Available: available, Reason: reason, Authorized: grants[grantKey(CapabilityTool, row.ID)],
+			Available: available, Reason: reason, Authorized: authorized,
 		})
 	}
 	sort.Slice(items, func(i, j int) bool {
@@ -326,7 +330,7 @@ func (s *Service) ListExternalTools(ctx context.Context, call capability.Invocat
 	items := []capability.ExternalToolSummary{}
 	for _, row := range rows {
 		available, _ := toolAvailability(row)
-		if !available || !grants[grantKey(CapabilityTool, row.ID)] {
+		if !available || !capabilityGranted(grants, CapabilityTool, row.ID) {
 			continue
 		}
 		schema := map[string]any{}
@@ -693,22 +697,29 @@ func (s *Service) isAvailable(ctx context.Context, userID, kind, id string) (boo
 
 func (s *Service) grants(ctx context.Context, userID, agent string) (map[string]bool, error) {
 	var rows []orm.ExternalCapabilityGrant
-	err := s.db.WithContext(ctx).Where("owner_user_id = ? AND agent = ? AND enabled = ?", strings.TrimSpace(userID), agent, true).Find(&rows).Error
+	err := s.db.WithContext(ctx).Where("owner_user_id = ? AND agent = ?", strings.TrimSpace(userID), agent).Find(&rows).Error
 	out := make(map[string]bool, len(rows))
 	for _, row := range rows {
-		out[grantKey(row.CapabilityType, row.CapabilityID)] = true
+		out[grantKey(row.CapabilityType, row.CapabilityID)] = row.Enabled
 	}
 	return out, err
 }
 
 func (s *Service) hasGrant(ctx context.Context, userID, agent, kind, id string) bool {
-	var count int64
-	if agent == "" || s.db.WithContext(ctx).Model(&orm.ExternalCapabilityGrant{}).
-		Where("owner_user_id = ? AND agent = ? AND capability_type = ? AND capability_id = ? AND enabled = ?", userID, agent, kind, id, true).
-		Count(&count).Error != nil {
+	if agent == "" || strings.TrimSpace(userID) == "" {
 		return false
 	}
-	return count == 1
+	grants, err := s.grants(ctx, userID, agent)
+	return err == nil && capabilityGranted(grants, kind, id)
+}
+
+// Tools default to allowed; explicit opt-outs always win. Models remain opt-in.
+// Availability and ownership are checked separately on every actual call.
+func capabilityGranted(grants map[string]bool, kind, id string) bool {
+	if enabled, exists := grants[grantKey(kind, id)]; exists {
+		return enabled
+	}
+	return kind == CapabilityTool
 }
 
 func grantKey(kind, id string) string { return kind + ":" + id }

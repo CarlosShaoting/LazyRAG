@@ -1028,7 +1028,7 @@ const enUS = {
     title: "External Agent integrations",
     mergedDescription: "Manage both directions per Agent. Finish the matching setup before enabling it.",
     capabilityAccessTitle: "External capability access",
-    capabilityAccessDescription: "LazyMind registry tools and connected MCP tools appear automatically. Grant selected capabilities to an Agent without adding them again. Unconfigured, disabled, or context-dependent tools cannot be enabled. Nothing is shared by default.",
+    capabilityAccessDescription: "Connected external Agents can use all eligible built-in and MCP tools by default, including newly available tools. Individual opt-outs are preserved. Models still require explicit authorization. Unconfigured, disabled, or context-dependent tools cannot be called.",
     capabilityFilter: "Search names or descriptions",
     capabilityAgentLabel: "Select external Agent",
     capabilitySecurityNotice: "Agents can invoke capabilities but cannot view or copy API keys, tokens, or original connection settings. LazyMind proxies every request server-side and records an audit event.",

@@ -17,6 +17,25 @@ import (
 	"lazymind/core/common/orm"
 )
 
+func TestDefaultToolGrantFailsClosedOnReadError(t *testing.T) {
+	s := New(testDB(t), nil)
+	ctx := context.Background()
+	if !s.hasGrant(ctx, "user-1", "codex", CapabilityTool, "builtin:calculator") {
+		t.Fatal("tools should default to allowed")
+	}
+	if s.hasGrant(ctx, "user-1", "codex", CapabilityModel, "model-1") {
+		t.Fatal("models must remain opt-in")
+	}
+	if s.hasGrant(ctx, "", "codex", CapabilityTool, "builtin:calculator") {
+		t.Fatal("missing user must be denied")
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if s.hasGrant(canceled, "user-1", "codex", CapabilityTool, "builtin:calculator") {
+		t.Fatal("failed authorization read must deny default access")
+	}
+}
+
 func TestExplicitModelGrantProxiesWithoutExposingCredentialAndAudits(t *testing.T) {
 	const secret = "server-only-secret"
 	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -225,7 +244,7 @@ func TestBuiltinImageToolUsesSelectedVerifiedModelThroughLazyMind(t *testing.T) 
 			break
 		}
 	}
-	if imageTool == nil || !imageTool.Available || imageTool.Authorized {
+	if imageTool == nil || !imageTool.Available || !imageTool.Authorized {
 		t.Fatalf("unexpected image tool inventory: %#v", imageTool)
 	}
 	if err := service.SetGrant(context.Background(), "user-1", GrantUpdate{

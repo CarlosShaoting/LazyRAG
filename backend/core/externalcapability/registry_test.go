@@ -55,8 +55,12 @@ func TestRegistrySearchUsesVerifiedOwnConfigAndFreshGrant(t *testing.T) {
 	ctx := context.Background()
 	call := capability.InvocationContext{Principal: capability.Principal{UserID: "user-1"}, ExternalAgent: "codex"}
 	input := capability.InvokeExternalToolInput{ToolID: "builtin:web_search", Arguments: map[string]any{"query": "test"}}
-	if _, err := s.InvokeExternalTool(ctx, call, input); err == nil {
-		t.Fatal("default authorization must be closed")
+	listed, err := s.ListExternalTools(ctx, call)
+	if err != nil || len(listed.Items) != 1 {
+		t.Fatalf("default tools listing=%#v err=%v", listed, err)
+	}
+	if _, err := s.InvokeExternalTool(ctx, call, input); err != nil {
+		t.Fatalf("available tools must be open by default: %v", err)
 	}
 	grant := GrantUpdate{Agent: "codex", CapabilityType: CapabilityTool, CapabilityID: input.ToolID, Enabled: true}
 	if err := s.SetGrant(ctx, "user-1", grant); err != nil {
@@ -66,10 +70,27 @@ func TestRegistrySearchUsesVerifiedOwnConfigAndFreshGrant(t *testing.T) {
 		t.Fatal(err)
 	}
 	call.ExternalAgent = "cursor"
+	if err := s.SetGrant(ctx, "user-1", GrantUpdate{Agent: "cursor", CapabilityType: CapabilityTool, CapabilityID: input.ToolID, Enabled: false}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.InvokeExternalTool(ctx, call, input); err == nil {
-		t.Fatal("another Agent must be denied")
+		t.Fatal("explicitly disabled Agent must be denied")
+	}
+	// A fresh service must retain the opt-out, including in discovery and settings.
+	fresh := New(db, server.Client())
+	listed, err = fresh.ListExternalTools(ctx, call)
+	if err != nil || len(listed.Items) != 0 {
+		t.Fatalf("disabled tools listing=%#v err=%v", listed, err)
+	}
+	inventory, err := fresh.Inventory(ctx, "user-1", "cursor")
+	if err != nil || len(inventory.Capabilities) != 1 || inventory.Capabilities[0].Authorized {
+		t.Fatalf("disabled tool inventory=%#v err=%v", inventory, err)
 	}
 	call.ExternalAgent = "codex"
+	listed, err = fresh.ListExternalTools(ctx, call)
+	if err != nil || len(listed.Items) != 1 {
+		t.Fatalf("another Agent's opt-out affected Codex: %#v err=%v", listed, err)
+	}
 	if err := db.Model(&orm.UserModelProviderGroup{}).Where("id = ?", "search-group").Update("is_verified", false).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +104,7 @@ func TestRegistrySearchUsesVerifiedOwnConfigAndFreshGrant(t *testing.T) {
 	if _, err := s.InvokeExternalTool(ctx, call, input); err == nil {
 		t.Fatal("revoked grant must be denied")
 	}
-	if calls != 1 {
+	if calls != 2 {
 		t.Fatalf("unexpected executions: %d", calls)
 	}
 }

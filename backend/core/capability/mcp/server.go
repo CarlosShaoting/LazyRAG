@@ -155,14 +155,14 @@ func newServer(service *capability.Service) *mcp.Server {
 		})
 		mcp.AddTool(server, &mcp.Tool{
 			Name: "tool.list", Title: "List authorized LazyMind tools",
-			Description: "List only verified, enabled MCP tools explicitly authorized for this external Agent. Stored service credentials are never returned.", Annotations: annotations,
+			Description: "List available tools for this Agent. Tools are allowed by default unless the user explicitly disables access. Stored service credentials are never returned.", Annotations: annotations,
 		}, func(ctx context.Context, request *mcp.CallToolRequest, input capability.ListExternalToolsInput) (*mcp.CallToolResult, capability.ListExternalToolsResult, error) {
 			result, err := service.ListExternalTools(ctx, invocation(ctx, request), input)
 			return nil, result, err
 		})
 		mcp.AddTool(server, &mcp.Tool{
 			Name: "tool.call", Title: "Call an authorized LazyMind tool",
-			Description: "Execute one explicitly authorized MCP tool through LazyMind after a fresh availability and permission check.", Annotations: executionAnnotations(true),
+			Description: "Execute an available tool through LazyMind after checking ownership, current availability, and the Agent's explicit opt-outs.", Annotations: executionAnnotations(true),
 		}, func(ctx context.Context, request *mcp.CallToolRequest, input capability.InvokeExternalToolInput) (*mcp.CallToolResult, capability.InvokeExternalToolResult, error) {
 			result, err := service.InvokeExternalTool(ctx, invocation(ctx, request), input)
 			return nil, result, err
