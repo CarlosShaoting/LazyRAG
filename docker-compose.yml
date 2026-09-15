@@ -1015,9 +1015,6 @@ services:
   opensearch:
     profiles:
       - opensearch
-    # OpenSearch's ARM64 Java 21 image can SIGILL on Apple M4; use the
-    # amd64 image through Colima/Rosetta on Apple Silicon.
-    platform: linux/amd64
     image: ${OPENSEARCH_IMAGE:-opensearchproject/opensearch:2.18.0}
     environment:
       - cluster.name=opensearch-cluster
