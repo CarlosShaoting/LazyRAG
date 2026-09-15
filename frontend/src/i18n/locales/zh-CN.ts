@@ -2508,6 +2508,8 @@ const zhCN = {
     workflowStatusRunning: "执行中",
     workflowStatusDone: "已完成",
     workflowStatusReady: "待执行",
+    workflowStatusPaused: "待继续",
+    workflowStatusBlocked: "等待输入",
     workflowStatusWaiting: "等待审批",
     workflowStatusFailed: "失败",
     workflowStatusStopped: "已停止",

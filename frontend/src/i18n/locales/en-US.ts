@@ -2708,6 +2708,8 @@ const enUS = {
     workflowStatusRunning: "Running",
     workflowStatusDone: "Done",
     workflowStatusReady: "Ready to run",
+    workflowStatusPaused: "Ready to continue",
+    workflowStatusBlocked: "Waiting for inputs",
     workflowStatusWaiting: "Waiting for approval",
     workflowStatusFailed: "Failed",
     workflowStatusStopped: "Stopped",

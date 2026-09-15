@@ -1605,7 +1605,7 @@ function TabSlotGrid({
 const STATUS_KEY: Record<string, string> = {
   active: 'chat.workflowStatusRunning',
   completed: 'chat.workflowStatusDone',
-  waiting: 'chat.workflowStatusWaiting',
+  waiting: 'chat.workflowStatusPaused',
   failed: 'chat.workflowStatusFailed',
   stopped: 'chat.workflowStatusStopped',
 };
@@ -1884,7 +1884,10 @@ export function WorkflowPanel({
     [footerActions],
   );
   const displayStatus = autoRunning ? 'active' : session.status;
-  const displayStatusKey = isWorkflowReadyToStart(
+  const approvalStepId = resolvePendingApprovalStep(session, displayStatus);
+  const displayStatusKey = approvalStepId ? 'chat.workflowStatusWaiting'
+    : displayStatus === 'waiting' && (session.projection?.blocked?.length ?? 0) > 0 ? 'chat.workflowStatusBlocked'
+    : isWorkflowReadyToStart(
     displayStatus,
     session.projection,
     session.steps?.length ?? 0,
@@ -1923,7 +1926,6 @@ export function WorkflowPanel({
       : undefined);
   const effectivePast = new Set(session.projection?.past ?? []);
   const continueDisabled = buttonsDisabled || currentStepStatus === 'failed';
-  const approvalStepId = resolvePendingApprovalStep(session, displayStatus);
 
   async function runFooterAction(action: () => void | Promise<void>, flushKey?: string) {
     if (sessionBusy || actionPending) return;
