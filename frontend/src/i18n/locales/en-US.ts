@@ -2206,6 +2206,7 @@ const enUS = {
     send: "Send",
     workflowContinue: "Continue",
     workflowContinueExecution: "Continue execution",
+    workflowResumeExecution: "Resume execution",
     workflowApprovalActions: "Workflow approval actions",
     workflowApprovalRequired: "Current step is awaiting approval",
     workflowSkipThisApproval: "No approval for this step",

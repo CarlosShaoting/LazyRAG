@@ -2144,6 +2144,7 @@ const zhCN = {
     send: "发送",
     workflowContinue: "继续",
     workflowContinueExecution: "继续执行",
+    workflowResumeExecution: "恢复执行",
     workflowApprovalActions: "工作流审批操作",
     workflowApprovalRequired: "当前步骤等待审批",
     workflowSkipThisApproval: "此步骤不需审批",
