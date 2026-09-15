@@ -162,6 +162,13 @@ func newServer(service *capability.Service) *mcp.Server {
 		})
 		mcp.AddTool(server, &mcp.Tool{
 			Name: "tool.call", Title: "Call an authorized LazyMind tool",
+			// Some MCP clients (including DSH) reject boolean property schemas.
+			// An empty object accepts the same arbitrary JSON values as true.
+			OutputSchema: map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{"result": map[string]any{}},
+				"required":   []string{"result"},
+			},
 			Description: "Execute an available tool through LazyMind after checking ownership, current availability, and the Agent's explicit opt-outs.", Annotations: executionAnnotations(true),
 		}, func(ctx context.Context, request *mcp.CallToolRequest, input capability.InvokeExternalToolInput) (*mcp.CallToolResult, capability.InvokeExternalToolResult, error) {
 			result, err := service.InvokeExternalTool(ctx, invocation(ctx, request), input)
