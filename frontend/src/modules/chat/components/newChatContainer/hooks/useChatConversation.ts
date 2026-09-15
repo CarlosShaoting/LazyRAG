@@ -1989,7 +1989,11 @@ export function useChatConversation({
       }
 
       const signature = mediaCapabilityDependencySignature(dependency);
-      const started = await regenerate();
+      const started = await sendMessage({
+        text: "已完成配置，继续工作流",
+        clearInput: false,
+        fileList: [],
+      });
       if (!started) return false;
 
       if (dependency.failure_id) {
