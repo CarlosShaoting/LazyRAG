@@ -1001,7 +1001,7 @@ const zhCN = {
     title: "外部 Agent 集成",
     mergedDescription: "按 Agent 管理双向集成。完成对应配置后再启用。",
     capabilityAccessTitle: "外部能力授权",
-    capabilityAccessDescription: "已接入的外部 Agent 默认可用全部符合条件的内置及 MCP 工具，新增可用工具也默认开放。可逐项关闭，关闭后保持关闭；模型仍需手动授权。未配置、已禁用或缺少执行上下文的工具不可调用。",
+    capabilityAccessDescription: "已接入的外部 Agent 默认可用全部已配置、验证通过的兼容模型及符合条件的内置和 MCP 工具，新增可用能力也默认开放，无需逐项开启。未配置、未验证、已禁用或缺少执行上下文的能力不可调用。下方可查看调用记录及结果。",
     capabilityFilter: "搜索名称或说明",
     capabilityAgentLabel: "选择外部 Agent",
     capabilitySecurityNotice: "Agent 只能发起调用，无法查看或复制 API Key、Token 和原始连接配置；所有请求均由 LazyMind 服务端代理并记录审计。",

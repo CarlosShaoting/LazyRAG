@@ -1,12 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, Button, Card, Empty, Input, Modal, Select, Spin, Switch, Tag, Typography, message } from "antd";
+import { useCallback, useEffect, useState } from "react";
+import { Alert, Button, Card, Empty, Modal, Select, Spin, Tag, Typography } from "antd";
 import { HistoryOutlined, ReloadOutlined, SafetyCertificateOutlined } from "@ant-design/icons";
 import { useTranslation } from "react-i18next";
 import {
-  loadExternalCapabilities,
   loadExternalCapabilityInvocations,
-  setExternalCapabilityGrant,
-  type ExternalCapabilityItem,
   type ExternalCapabilityInvocation,
   type ExternalCapabilityInvocationPage,
 } from "./externalCapabilitiesApi";
@@ -23,26 +20,9 @@ const AGENT_OPTIONS = [
 export default function ExternalCapabilityAccess() {
   const { t } = useTranslation();
   const [agent, setAgent] = useState("codex");
-  const [items, setItems] = useState<ExternalCapabilityItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState("");
-  const [failed, setFailed] = useState(false);
   const [history, setHistory] = useState<ExternalCapabilityInvocationPage | null>(null);
   const [historyLoading, setHistoryLoading] = useState(true);
   const [historyFailed, setHistoryFailed] = useState(false);
-
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setFailed(false);
-    try {
-      const inventory = await loadExternalCapabilities(agent);
-      setItems(inventory.capabilities || []);
-    } catch {
-      setFailed(true);
-    } finally {
-      setLoading(false);
-    }
-  }, [agent]);
 
   const refreshHistory = useCallback(async () => {
     setHistoryLoading(true);
@@ -56,32 +36,7 @@ export default function ExternalCapabilityAccess() {
     }
   }, [agent]);
 
-  useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => { void refreshHistory(); }, [refreshHistory]);
-
-  const groups = useMemo(() => ({
-    model: items.filter((item) => item.type === "model"),
-    tool: items.filter((item) => item.type === "tool"),
-  }), [items]);
-
-  const toggle = async (item: ExternalCapabilityItem, enabled: boolean) => {
-    const key = `${item.type}:${item.id}`;
-    setBusy(key);
-    try {
-      await setExternalCapabilityGrant(agent, item, enabled);
-      setItems((current) => current.map((value) => value.id === item.id && value.type === item.type
-        ? { ...value, authorized: enabled }
-        : value));
-      message.success(t(enabled
-        ? "agentIntegration.capabilityGrantEnabled"
-        : "agentIntegration.capabilityGrantDisabled", { name: item.name }));
-    } catch {
-      message.error(t("agentIntegration.capabilityGrantFailed"));
-      await refresh();
-    } finally {
-      setBusy("");
-    }
-  };
 
   return (
     <Card className="external-capability-access-card">
@@ -106,28 +61,6 @@ export default function ExternalCapabilityAccess() {
         showIcon
         message={t("agentIntegration.capabilitySecurityNotice")}
       />
-      <Spin spinning={loading}>
-        {failed ? (
-          <Alert type="error" showIcon message={t("agentIntegration.capabilityLoadFailed")} />
-        ) : (
-          <div className="external-capability-access-groups">
-            <CapabilityGroup
-              title={t("agentIntegration.capabilityModels")}
-              empty={t("agentIntegration.capabilityModelsEmpty")}
-              items={groups.model}
-              busy={busy}
-              onToggle={toggle}
-            />
-            <CapabilityGroup
-              title={t("agentIntegration.capabilityTools")}
-              empty={t("agentIntegration.capabilityToolsEmpty")}
-              items={groups.tool}
-              busy={busy}
-              onToggle={toggle}
-            />
-          </div>
-        )}
-      </Spin>
       <InvocationHistoryPanel
         history={history}
         loading={historyLoading}
@@ -135,58 +68,6 @@ export default function ExternalCapabilityAccess() {
         onRefresh={refreshHistory}
       />
     </Card>
-  );
-}
-
-function CapabilityGroup({
-  title, empty, items, busy, onToggle,
-}: {
-  title: string;
-  empty: string;
-  items: ExternalCapabilityItem[];
-  busy: string;
-  onToggle: (item: ExternalCapabilityItem, enabled: boolean) => Promise<void>;
-}) {
-  const { t } = useTranslation();
-  const [query, setQuery] = useState("");
-  const visibleItems = items.filter((item) =>
-    `${item.name} ${item.description || ""} ${item.source}`.toLowerCase().includes(query.trim().toLowerCase()),
-  );
-  return (
-    <section className="external-capability-group">
-      <div className="external-capability-group-title">
-        <strong>{title}</strong><Tag>{items.filter((item) => item.authorized).length}/{items.length}</Tag>
-      </div>
-      <Input.Search
-        allowClear value={query} onChange={(event) => setQuery(event.target.value)}
-        placeholder={t("agentIntegration.capabilityFilter")}
-        aria-label={`${title}: ${t("agentIntegration.capabilityFilter")}`}
-      />
-      {!items.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={empty} /> : (
-        <div className="external-capability-list">
-          {visibleItems.map((item) => (
-            <div className={`external-capability-row${item.available ? "" : " is-unavailable"}`} key={`${item.type}:${item.id}`}>
-              <div>
-                <div className="external-capability-name">
-                  <span>{item.name}</span>
-                  {!item.available && <Tag color="default">{t("agentIntegration.capabilityUnavailable")}</Tag>}
-                </div>
-                <span className="external-capability-source">{item.source}</span>
-                {item.description && <Typography.Paragraph type="secondary">{item.description}</Typography.Paragraph>}
-                {!item.available && item.reason && <span className="external-capability-reason">{item.reason}</span>}
-              </div>
-              <Switch
-                checked={item.authorized}
-                disabled={!item.available && !item.authorized}
-                loading={busy === `${item.type}:${item.id}`}
-                onChange={(enabled: boolean) => void onToggle(item, enabled)}
-                aria-label={`${title}: ${item.name}`}
-              />
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
   );
 }
 

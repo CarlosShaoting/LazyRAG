@@ -163,10 +163,14 @@ func (s *Service) Inventory(ctx context.Context, userID, agent string) (Inventor
 	items := make([]CapabilityItem, 0, len(models)+len(tools))
 	for _, row := range models {
 		available, reason := modelAvailability(row)
+		authorized, explicit := grants[grantKey(CapabilityModel, row.ID)]
+		if !explicit {
+			authorized = available
+		}
 		items = append(items, CapabilityItem{
 			ID: row.ID, Type: CapabilityModel, Name: row.Name,
 			Source:    strings.Trim(strings.Join([]string{row.ProviderName, row.GroupName}, " · "), " ·"),
-			Available: available, Reason: reason, Authorized: grants[grantKey(CapabilityModel, row.ID)],
+			Available: available, Reason: reason, Authorized: authorized,
 		})
 	}
 	for _, row := range tools {
@@ -309,7 +313,7 @@ func (s *Service) ListExternalModels(ctx context.Context, call capability.Invoca
 	items := []capability.ExternalModelSummary{}
 	for _, row := range rows {
 		available, _ := modelAvailability(row)
-		if !available || !grants[grantKey(CapabilityModel, row.ID)] {
+		if !available || !capabilityGranted(grants, CapabilityModel, row.ID) {
 			continue
 		}
 		items = append(items, capability.ExternalModelSummary{
@@ -432,11 +436,12 @@ func (s *Service) InvokeExternalTool(ctx context.Context, call capability.Invoca
 	const op = "tool.call"
 	audit := s.startAudit(ctx, call, CapabilityTool, input.ToolID)
 	toolName := ""
+	var auditResult any
 	defer func() {
 		encoded, _ := json.Marshal(result.Result)
 		preview := any(nil)
 		if finalErr == nil {
-			preview = result.Result
+			preview = auditResult
 		}
 		s.finishAudit(call, audit, toolName, map[string]any{"result_bytes": len(encoded)}, preview, finalErr)
 	}()
@@ -466,6 +471,14 @@ func (s *Service) InvokeExternalTool(ctx context.Context, call capability.Invoca
 	}
 	if err := json.Unmarshal(raw, &result.Result); err != nil {
 		return result, capability.NewError(capability.Unavailable, op, "tool returned an invalid JSON result; check the tool connection in Settings", false, err)
+	}
+	// Audit the original local references, not the external presentation URLs.
+	auditResult = result.Result
+	if row.Builtin && row.Name == "image_generator" {
+		var external any
+		if err := json.Unmarshal(externalImageResult(raw), &external); err == nil {
+			result.Result = external
+		}
 	}
 	return result, nil
 }
@@ -718,13 +731,13 @@ func (s *Service) hasGrant(ctx context.Context, userID, agent, kind, id string) 
 	return err == nil && capabilityGranted(grants, kind, id)
 }
 
-// Tools default to allowed; explicit opt-outs always win. Models remain opt-in.
+// Models and tools default to allowed; explicit opt-outs always win.
 // Availability and ownership are checked separately on every actual call.
 func capabilityGranted(grants map[string]bool, kind, id string) bool {
 	if enabled, exists := grants[grantKey(kind, id)]; exists {
 		return enabled
 	}
-	return kind == CapabilityTool
+	return kind == CapabilityTool || kind == CapabilityModel
 }
 
 func grantKey(kind, id string) string { return kind + ":" + id }

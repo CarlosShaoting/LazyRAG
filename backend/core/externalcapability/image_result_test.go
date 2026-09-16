@@ -62,3 +62,22 @@ func TestImageRefreshRejectsRemoteAndUnsafePaths(t *testing.T) {
 		}
 	}
 }
+
+func TestExternalImageURLs(t *testing.T) {
+	t.Setenv("LAZYMIND_PUBLIC_BASE_URL", "https://lazy.example/prefix/api/core/")
+	for _, prefix := range []string{"", "/api/core"} {
+		original := prefix + "/static-files/ai_generated/cat.png?expires=123&sig=abc"
+		raw, _ := json.Marshal(map[string]any{"image_url": original, "image_markdown": "![cat](" + original + ")",
+			"images": []any{map[string]any{"image_url": original}}})
+		got := string(externalImageResult(raw))
+		if strings.Count(got, "https://lazy.example/prefix/api/core/static-files/ai_generated/cat.png?expires=123") != 3 || strings.Count(got, "sig=abc") != 3 {
+			t.Fatalf("unexpected external URLs: %s", got)
+		}
+	}
+	for _, path := range []string{"https://remote.example/cat.png", "//remote.example/cat.png", "/static-files/ai_generated/../private.png", "/static-files/ai_generated/%2e%2e/private.png"} {
+		raw, _ := json.Marshal(map[string]any{"image_url": path})
+		if got := string(externalImageResult(raw)); got != string(raw) {
+			t.Fatalf("untrusted URL changed: %s", got)
+		}
+	}
+}

@@ -17,14 +17,14 @@ import (
 	"lazymind/core/common/orm"
 )
 
-func TestDefaultToolGrantFailsClosedOnReadError(t *testing.T) {
+func TestDefaultCapabilityGrantFailsClosedOnReadError(t *testing.T) {
 	s := New(testDB(t), nil)
 	ctx := context.Background()
 	if !s.hasGrant(ctx, "user-1", "codex", CapabilityTool, "builtin:calculator") {
 		t.Fatal("tools should default to allowed")
 	}
-	if s.hasGrant(ctx, "user-1", "codex", CapabilityModel, "model-1") {
-		t.Fatal("models must remain opt-in")
+	if !s.hasGrant(ctx, "user-1", "codex", CapabilityModel, "model-1") {
+		t.Fatal("models should default to allowed")
 	}
 	if s.hasGrant(ctx, "", "codex", CapabilityTool, "builtin:calculator") {
 		t.Fatal("missing user must be denied")
@@ -34,9 +34,12 @@ func TestDefaultToolGrantFailsClosedOnReadError(t *testing.T) {
 	if s.hasGrant(canceled, "user-1", "codex", CapabilityTool, "builtin:calculator") {
 		t.Fatal("failed authorization read must deny default access")
 	}
+	if s.hasGrant(canceled, "user-1", "codex", CapabilityModel, "model-1") {
+		t.Fatal("failed authorization read must deny model access")
+	}
 }
 
-func TestExplicitModelGrantProxiesWithoutExposingCredentialAndAudits(t *testing.T) {
+func TestDefaultModelGrantProxiesWithoutExposingCredentialAndAudits(t *testing.T) {
 	const secret = "server-only-secret"
 	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/chat/completions" || r.Header.Get("Authorization") != "Bearer "+secret {
@@ -51,13 +54,8 @@ func TestExplicitModelGrantProxiesWithoutExposingCredentialAndAudits(t *testing.
 	seedModel(t, db, modelServer.URL+"/v1", secret)
 	service := New(db, modelServer.Client())
 	inventory, err := service.Inventory(context.Background(), "user-1", "codex")
-	if err != nil || len(inventory.Capabilities) != 1 || inventory.Capabilities[0].Authorized {
+	if err != nil || len(inventory.Capabilities) != 1 || !inventory.Capabilities[0].Authorized {
 		t.Fatalf("default inventory=%#v err=%v", inventory, err)
-	}
-	if err := service.SetGrant(context.Background(), "user-1", GrantUpdate{
-		Agent: "codex", CapabilityType: CapabilityModel, CapabilityID: "model-1", Enabled: true,
-	}); err != nil {
-		t.Fatal(err)
 	}
 	call := capability.InvocationContext{
 		Principal:     capability.Principal{UserID: "user-1", Permissions: capability.NewPermissionSet(capability.RequiredPermission)},
@@ -92,6 +90,21 @@ func TestExplicitModelGrantProxiesWithoutExposingCredentialAndAudits(t *testing.
 	})
 	if code, ok := capability.CodeOf(err); !ok || code != capability.PermissionDenied {
 		t.Fatalf("revoked model call error=%v code=%q", err, code)
+	}
+	listed, err = service.ListExternalModels(context.Background(), call)
+	if err != nil || len(listed.Items) != 0 {
+		t.Fatalf("explicitly disabled model remained listed: %#v %v", listed, err)
+	}
+	otherAgent := call
+	otherAgent.ExternalAgent = "cursor"
+	listed, err = service.ListExternalModels(context.Background(), otherAgent)
+	if err != nil || len(listed.Items) != 1 {
+		t.Fatalf("opt-out affected another agent: %#v %v", listed, err)
+	}
+	otherAgent.Principal.UserID = "user-2"
+	listed, err = service.ListExternalModels(context.Background(), otherAgent)
+	if err != nil || len(listed.Items) != 0 {
+		t.Fatalf("default grant exposed another user's model: %#v %v", listed, err)
 	}
 	history, err := service.InvocationHistory(context.Background(), "user-1", "codex", 50)
 	if err != nil || history.Total != 2 || history.Summary.Succeeded != 1 || history.Summary.Failed != 1 ||
@@ -186,6 +199,7 @@ func TestExplicitToolGrantChecksServerStateAndProxiesStoredHeaders(t *testing.T)
 }
 
 func TestBuiltinImageToolUsesSelectedVerifiedModelThroughLazyMind(t *testing.T) {
+	t.Setenv("LAZYMIND_PUBLIC_BASE_URL", "https://lazy.example/api/core")
 	const secret = "image-provider-secret"
 	chatServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/chat/tools/external-catalog" {
@@ -211,7 +225,7 @@ func TestBuiltinImageToolUsesSelectedVerifiedModelThroughLazyMind(t *testing.T) 
 			t.Fatalf("selected image model was not injected: %#v", imageConfig)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"tool_name":"image_generator","result":{"image_url":"/static-files/generated.png?sig=test","image_markdown":"![generated](/static-files/generated.png?sig=test)"}}`))
+		_, _ = w.Write([]byte(`{"tool_name":"image_generator","result":{"image_url":"/static-files/ai_generated/generated.png?sig=test","image_markdown":"![generated](/static-files/ai_generated/generated.png?sig=test)"}}`))
 	}))
 	defer chatServer.Close()
 	db := testDB(t)
@@ -261,6 +275,16 @@ func TestBuiltinImageToolUsesSelectedVerifiedModelThroughLazyMind(t *testing.T) 
 	encodedResult, _ := json.Marshal(result.Result)
 	if err != nil || !strings.Contains(string(encodedResult), "generated.png") || strings.Contains(string(encodedResult), secret) {
 		t.Fatalf("result=%s err=%v", encodedResult, err)
+	}
+	if strings.Count(string(encodedResult), "https://lazy.example/api/core/static-files/ai_generated/generated.png?sig=test") != 2 {
+		t.Fatalf("external image links must be absolute: %s", encodedResult)
+	}
+	var audit orm.ExternalCapabilityInvocation
+	if err := db.Where("capability_id = ?", imageTool.ID).First(&audit).Error; err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(audit.ResultJSON), "sig=") || strings.Contains(string(audit.ResultJSON), "https://lazy.example") {
+		t.Fatalf("audit should retain stable local references: %s", audit.ResultJSON)
 	}
 }
 

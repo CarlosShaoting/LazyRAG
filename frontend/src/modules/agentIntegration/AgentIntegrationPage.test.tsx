@@ -222,6 +222,16 @@ describe("AgentIntegrationPage", () => {
     mocks.setCapability.mockResolvedValue(undefined);
   });
 
+  it("hides per-capability configuration while retaining invocation history", async () => {
+    render(<AgentIntegrationPage />);
+    await waitFor(() => expect(mocks.invocations).toHaveBeenCalledWith("codex"));
+    expect(screen.getByText("外部调用记录")).toBeInTheDocument();
+    expect(document.querySelector(".external-capability-access-groups")).toBeNull();
+    expect(document.querySelector(".external-capability-list")).toBeNull();
+    expect(mocks.capabilities).not.toHaveBeenCalled();
+    expect(mocks.setCapability).not.toHaveBeenCalled();
+  });
+
   it("shows who called each external capability and the aggregate call count", async () => {
     mocks.invocations.mockResolvedValue({
       invocations: [{
