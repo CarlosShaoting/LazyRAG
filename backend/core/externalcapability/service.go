@@ -285,6 +285,11 @@ func (s *Service) InvocationHistory(ctx context.Context, userID, agent string, l
 	if err := filtered().Order("started_at DESC").Limit(limit).Find(&rows).Error; err != nil {
 		return InvocationPage{}, err
 	}
+	for i := range rows {
+		if rows[i].CapabilityType == CapabilityTool && rows[i].CapabilityID == "builtin:image_generator" {
+			rows[i].ResultJSON = orm.InvocationResultJSON(rewriteImageResult(rows[i].ResultJSON, true))
+		}
+	}
 	return InvocationPage{Invocations: rows, Total: total, Summary: summary}, nil
 }
 
@@ -753,8 +758,15 @@ func (s *Service) finishAudit(call capability.InvocationContext, row *orm.Extern
 	}
 	now := time.Now().UTC()
 	usageJSON, _ := json.Marshal(usage)
+	if row.CapabilityType == CapabilityTool && row.CapabilityID == "builtin:image_generator" {
+		// Strip temporary signatures before bounding/truncating the audit preview.
+		if encoded, err := json.Marshal(result); err == nil {
+			_ = json.Unmarshal(rewriteImageResult(encoded, false), &result)
+		}
+	}
+	preview := auditResultPreview(result)
 	updates := map[string]any{
-		"status": "succeeded", "usage_json": usageJSON, "result_json": auditResultPreview(result),
+		"status": "succeeded", "usage_json": usageJSON, "result_json": preview,
 		"finished_at": &now, "updated_at": now,
 	}
 	if strings.TrimSpace(name) != "" {
