@@ -224,8 +224,15 @@ describe("AgentIntegrationPage", () => {
 
   it("hides per-capability configuration while retaining invocation history", async () => {
     render(<AgentIntegrationPage />);
-    await waitFor(() => expect(mocks.invocations).toHaveBeenCalledWith("codex"));
     expect(screen.getByText("外部调用记录")).toBeInTheDocument();
+    const historyToggle = screen.getByRole("button", { name: /外部调用记录/ });
+    expect(historyToggle).toHaveAttribute("aria-expanded", "false");
+    expect(mocks.invocations).not.toHaveBeenCalled();
+    const historyCard = document.querySelector(".external-capability-access-card")!;
+    const agents = document.querySelector(".agent-integration-section")!;
+    expect(agents.compareDocumentPosition(historyCard) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(historyToggle);
+    await waitFor(() => expect(mocks.invocations).toHaveBeenCalledWith("codex"));
     expect(document.querySelector(".external-capability-access-groups")).toBeNull();
     expect(document.querySelector(".external-capability-list")).toBeNull();
     expect(mocks.capabilities).not.toHaveBeenCalled();
@@ -267,7 +274,7 @@ describe("AgentIntegrationPage", () => {
 
     render(<AgentIntegrationPage />);
 
-    expect(await screen.findByText("外部调用记录")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /外部调用记录/ }));
     expect(await screen.findByText("2 次")).toBeInTheDocument();
     expect(screen.getAllByText("Qwen/Qwen3.8-Flash-Next")).toHaveLength(2);
     expect(screen.getByText("110 tokens")).toBeInTheDocument();
@@ -287,6 +294,7 @@ describe("AgentIntegrationPage", () => {
       }],
     });
     render(<AgentIntegrationPage />);
+    fireEvent.click(screen.getByRole("button", { name: /外部调用记录/ }));
     fireEvent.click(await screen.findByRole("button", { name: "查看结果" }));
     expect(document.querySelector(".external-capability-result-image")).toHaveAttribute(
       "src", "/api/core/static-files/ai_generated/test.png?sig=test",

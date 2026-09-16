@@ -377,8 +377,6 @@ export default function AgentIntegrationPage() {
         />
       )}
 
-      <ExternalCapabilityAccess />
-
       <Spin spinning={loading}>
         <section className="agent-integration-section">
           <div className="agent-integration-grid">
@@ -417,6 +415,7 @@ export default function AgentIntegrationPage() {
           </div>
         </section>
       </Spin>
+      <ExternalCapabilityAccess />
       <Modal
         open={manualBindingTarget !== null}
         title={t("agentIntegration.executablePathTitle")}

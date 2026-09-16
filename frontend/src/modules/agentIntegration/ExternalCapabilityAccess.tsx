@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Button, Card, Empty, Modal, Select, Spin, Tag, Typography } from "antd";
+import { Alert, Button, Card, Collapse, Empty, Modal, Select, Spin, Tag, Typography } from "antd";
 import { HistoryOutlined, ReloadOutlined, SafetyCertificateOutlined } from "@ant-design/icons";
 import { useTranslation } from "react-i18next";
 import {
@@ -20,6 +20,7 @@ const AGENT_OPTIONS = [
 export default function ExternalCapabilityAccess() {
   const { t } = useTranslation();
   const [agent, setAgent] = useState("codex");
+  const [expanded, setExpanded] = useState(false);
   const [history, setHistory] = useState<ExternalCapabilityInvocationPage | null>(null);
   const [historyLoading, setHistoryLoading] = useState(true);
   const [historyFailed, setHistoryFailed] = useState(false);
@@ -36,10 +37,17 @@ export default function ExternalCapabilityAccess() {
     }
   }, [agent]);
 
-  useEffect(() => { void refreshHistory(); }, [refreshHistory]);
+  useEffect(() => { if (expanded) void refreshHistory(); }, [expanded, refreshHistory]);
 
   return (
-    <Card className="external-capability-access-card">
+    <Collapse
+      className="external-capability-access-card"
+      activeKey={expanded ? ["history"] : []}
+      onChange={(keys) => setExpanded(keys.includes("history"))}
+      items={[{
+        key: "history",
+        label: t("agentIntegration.capabilityHistoryTitle"),
+        children: <Card bordered={false}>
       <div className="external-capability-access-header">
         <div>
           <Typography.Title level={4}>
@@ -67,7 +75,9 @@ export default function ExternalCapabilityAccess() {
         failed={historyFailed}
         onRefresh={refreshHistory}
       />
-    </Card>
+        </Card>,
+      }]}
+    />
   );
 }
 
