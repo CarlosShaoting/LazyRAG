@@ -7265,6 +7265,11 @@ components:
         SearchWordGroupsRequest:
             properties:
                 keyword:
+                vision:
+                    description: Whether this LLM accepts image input
+                    type: boolean
+                max_input_tokens:
+                    description: Optional override. When omitted, LLM/VLM windows are resolved from config/model_context_windows.yaml by model name and unknown names fall back to 128K.
                     type: string
                 page_size:
                     type: integer
@@ -7285,6 +7290,10 @@ components:
                         type: string
                     type: array
                 api_key_preview:
+                vision:
+                    description: Whether this LLM accepts image input
+                    type: boolean
+                base_url:
                     type: string
                 create_time:
                     format: date-time
@@ -8860,6 +8869,14 @@ components:
         agentRouterAlgorithm:
             properties:
                 algorithm_id:
+                vision:
+                    description: Whether this LLM accepts image input
+                    type: boolean
+                base_url:
+                    type: string
+                group_name:
+                    type: string
+                id:
                     type: string
                 created_at:
                     nullable: true
