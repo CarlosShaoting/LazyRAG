@@ -5652,11 +5652,6 @@ components:
         SearchWordGroupsRequest:
             properties:
                 keyword:
-                vision:
-                    description: Whether this LLM accepts image input
-                    type: boolean
-                max_input_tokens:
-                    description: Optional override. When omitted, LLM/VLM windows are resolved from config/model_context_windows.yaml by model name and unknown names fall back to 128K.
                     type: string
                 page_size:
                     type: integer
@@ -5677,10 +5672,6 @@ components:
                         type: string
                     type: array
                 api_key_preview:
-                vision:
-                    description: Whether this LLM accepts image input
-                    type: boolean
-                base_url:
                     type: string
                 create_time:
                     format: date-time
@@ -6841,6 +6832,9 @@ components:
                     type: string
                 name:
                     type: string
+                vision:
+                    description: Whether this LLM accepts image input
+                    type: boolean
             required:
                 - model_type
                 - name
@@ -6869,6 +6863,9 @@ components:
                     type: string
                 user_model_provider_id:
                     type: string
+                vision:
+                    description: Whether this LLM accepts image input
+                    type: boolean
             required:
                 - base_url
                 - group_name
@@ -6879,6 +6876,7 @@ components:
                 - provider_name
                 - user_model_provider_group_id
                 - user_model_provider_id
+                - vision
             type: object
         agentRouterABAudit:
             properties:
@@ -6978,14 +6976,6 @@ components:
         agentRouterAlgorithm:
             properties:
                 algorithm_id:
-                vision:
-                    description: Whether this LLM accepts image input
-                    type: boolean
-                base_url:
-                    type: string
-                group_name:
-                    type: string
-                id:
                     type: string
                 created_at:
                     nullable: true
@@ -8189,6 +8179,9 @@ components:
                     type: string
                 user_model_provider_id:
                     type: string
+                vision:
+                    description: Whether this LLM accepts image input
+                    type: boolean
             required:
                 - availability
                 - id
@@ -8201,6 +8194,7 @@ components:
                 - provider_name
                 - read_only
                 - source
+                - vision
             type: object
         listModelProviderGroupModelsOpenAPIResponse:
             properties:
