@@ -148,13 +148,6 @@ assert_no_absolute_symlinks() {
 }
 
 
-prune_python_runtime() {
-  local root="$1"
-  find "${root}" -type d -name "__pycache__" -prune -exec rm -rf {} +
-  find "${root}" -type f \( -name "*.pyc" -o -name "*.pyo" \) -delete
-  find "${root}" -type d \( -name "test" -o -name "tests" \) -prune -exec rm -rf {} +
-}
-
 assert_desktop_runtime_app() {
   local app_root="$1"
   local frontend_dist="${app_root}/frontend/dist/index.html"
@@ -279,9 +272,12 @@ make_python_venv_relocatable "${RUNTIME_ROOT}/deps/python/auth-service" "${PYTHO
 make_python_venv_relocatable "${RUNTIME_ROOT}/deps/python/channel-gateway" "${PYTHON}"
 make_python_venv_relocatable "${RUNTIME_ROOT}/deps/python/algorithm" "${PYTHON}"
 make_internal_symlinks_relative "${RUNTIME_ROOT}"
-echo "==> Pruning Python runtime bytecode and test packages"
-prune_python_runtime "${RUNTIME_ROOT}/runtimes/python"
-prune_python_runtime "${RUNTIME_ROOT}/deps/python"
+echo "==> Auditing and pruning bundled Python runtime"
+python_prune_args=("${RUNTIME_ROOT}" --report "${BUILD_ROOT}/python-size-report.json" --verify-ark)
+if [[ "${LAZYMIND_DESKTOP_PRUNE_PYTHON:-true}" == "true" ]]; then
+  python_prune_args+=(--apply)
+fi
+"${RUNTIME_ROOT}/deps/python/algorithm/bin/python" "${ROOT}/desktop/scripts/prune-python-runtime.py" "${python_prune_args[@]}"
 
 echo "==> Staging runtime app files"
 rsync -a --delete \
@@ -359,7 +355,7 @@ if [[ "${RELEASE_BUILD}" == "true" ]]; then
 fi
 (cd "${ROOT}/backend/core" && "${GO_BIN}" "${BUILTIN_SKILL_BUNDLE_ARGS[@]}")
 
-echo "==> Downloading verified history injection package"
+echo "==> Preparing workflow example metadata (download during warmup by default)"
 node "${ROOT}/desktop/scripts/stage-history-injection-package.mjs" "${RUNTIME_ROOT}"
 
 echo "==> Downloading and staging verified Pandoc runtime"

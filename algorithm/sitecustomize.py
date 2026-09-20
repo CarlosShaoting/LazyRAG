@@ -22,6 +22,13 @@ def _is_resource_tracker() -> bool:
         return False
     return command.startswith('from multiprocessing.resource_tracker import main;main(')
 
+import site
+
+
+for _component_path in os.environ.get('LAZYMIND_PYTHON_COMPONENT_PATHS', '').split(os.pathsep):
+    if _component_path:
+        site.addsitedir(_component_path)
+
 
 def _uses_sqlite_proxy() -> bool:
     database_values = (
