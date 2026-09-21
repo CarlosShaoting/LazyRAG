@@ -230,8 +230,13 @@ def _coerce_message_content(msg: Any) -> str:
 
 def llm(system_prompt: str, user_prompt: str, *, model: str | None = None,
         timeout: float | None = None, retries: int = 0,
-        request_name: str = "llm") -> str:
-    """Call the LLM chat endpoint. Returns the assistant message text."""
+        request_name: str = "llm",
+        output_tool: dict[str, Any] | None = None) -> str:
+    """Call the LLM endpoint and return text or one forced tool's arguments.
+
+    ``output_tool`` is intentionally opt-in so ordinary chat and every other
+    PPT stage retain their existing text-response behavior.
+    """
     if _LLM_IMPL is not None:
         return _LLM_IMPL(
             system_prompt,
@@ -240,6 +245,7 @@ def llm(system_prompt: str, user_prompt: str, *, model: str | None = None,
             timeout=timeout,
             retries=retries,
             request_name=request_name,
+            output_tool=output_tool,
         )
 
     cfg = LLMConfig.from_env()
@@ -257,6 +263,19 @@ def llm(system_prompt: str, user_prompt: str, *, model: str | None = None,
             {"role": "user", "content": user_prompt},
         ],
     }
+    expected_tool_name = ""
+    if output_tool is not None:
+        function = output_tool.get("function") if isinstance(output_tool, dict) else None
+        expected_tool_name = str((function or {}).get("name") or "").strip()
+        if not expected_tool_name:
+            raise ModelClientError(
+                f"Structured output tool has no function name [{request_name}]"
+            )
+        payload["tools"] = [output_tool]
+        payload["tool_choice"] = {
+            "type": "function",
+            "function": {"name": expected_tool_name},
+        }
     headers = {
         "Authorization": f"Bearer {cfg.api_key}",
         "Content-Type": "application/json",
@@ -287,6 +306,30 @@ def llm(system_prompt: str, user_prompt: str, *, model: str | None = None,
             raise ModelClientError(
                 f"LLM response shape unexpected [{request_name}]: {json.dumps(data)[:500]}"
             ) from e
+        if output_tool is not None:
+            tool_calls = message.get("tool_calls") if isinstance(message, dict) else None
+            if not tool_calls and isinstance(message, dict) and message.get("function_call"):
+                tool_calls = [{"function": message["function_call"]}]
+            if not isinstance(tool_calls, list) or len(tool_calls) != 1:
+                raise ModelClientError(
+                    f"Model did not call {expected_tool_name} exactly once "
+                    f"[{request_name}]"
+                )
+            function_call = tool_calls[0].get("function") or {}
+            actual_name = str(function_call.get("name") or "").strip()
+            if actual_name != expected_tool_name:
+                raise ModelClientError(
+                    f"Model called {actual_name or 'an unnamed tool'} instead of "
+                    f"{expected_tool_name} [{request_name}]"
+                )
+            arguments = function_call.get("arguments")
+            if isinstance(arguments, dict):
+                return json.dumps(arguments, ensure_ascii=False)
+            if isinstance(arguments, str) and arguments.strip():
+                return arguments.strip()
+            raise ModelClientError(
+                f"Tool {expected_tool_name} returned no arguments [{request_name}]"
+            )
         text = _coerce_message_content(message)
         if text:
             return text

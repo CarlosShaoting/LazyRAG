@@ -50,8 +50,23 @@ Without these tags the converter's gate may reject the HTML.
 
 Every reader-facing element carries `data-el` on its outermost container:
 `title`, `subtitle`, `eyebrow`/`eyebrow-i`, `narrative`, `bullet-i`, `kpi-i`, `table`, `image-i`,
-`footer` (i is 1-based, in document order, no gaps). A small heading and its
+`chart-i`, `diagram-i`, `footer` (i is 1-based, in document order, no gaps). A small heading and its
 body share one `data-group`.
+
+Charts, coordinate plots, relationship diagrams, and flow diagrams carry their
+`data-el="chart-i"` or `data-el="diagram-i"` on the outermost semantic container
+that encloses all visible marks and labels. Decorative curves, grid lines, axes,
+and data points are selected through that parent instead of receiving their own
+anchors. A title or annotation gets a child `data-el` only when users need to
+edit its wording independently.
+
+When one horizontal or vertical set must support both item-level and whole-set
+editing (for example step cards, KPI cards, or bullet lists), its smallest common
+layout container carries `data-selection-scope="group"`. Each member keeps its
+own `data-el`; the group container itself does not receive `data-el` and must not
+include unrelated titles, footers, or neighboring sections. The preview uses
+pointer position to float between the member and group scopes, and commits only
+the scope that the user clicks.
 
 Every `data-el` value MUST be unique within one page. `title` is reserved for
 the one main page title; labels or kickers above it use `eyebrow` instead.

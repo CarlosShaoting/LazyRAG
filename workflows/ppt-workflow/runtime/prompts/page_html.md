@@ -107,6 +107,7 @@ Use ECharts only when no such diagram image is available for the data on this pa
 | 第 i 个要点卡片 / 列表项 | `bullet-i` |
 | 第 i 个指标 / KPI 卡片 | `kpi-i` |
 | 表格 | `table` |
+| 第 i 个图表 / 关系图 / 流程图复合对象 | `chart-i` / `diagram-i` |
 | 第 i 张配图（含 caption 容器） | `image-i` |
 | 第 i 个分栏 / 小节标签（例如"核心创新""性能数据"这类栏目名） | `section-i` |
 | 页脚 / 收束语 | `footer` |
@@ -117,6 +118,8 @@ Use ECharts only when no such diagram image is available for the data on this pa
   必须用 `eyebrow` / `eyebrow-i`，即使它看起来也像标题，也绝不能再次使用 `title`。
 - 表里没有对应类型时，另起一个语义清楚的新名字（如 `quote`、`timeline-2`），**不要复用别的类型的 id**。
 - `data-el` 放在**这一项的最外层容器**上（例如整张 `.stat-card`，不是里面的数字 `<div>`），这样删除该元素就等于删掉这一项。
+- 图表、坐标图、关系图和流程图必须把 `data-el="chart-i"` / `data-el="diagram-i"` 放在包住全部可见图形与标签的最外层语义容器上。曲线、网格、坐标轴、数据点等装饰子节点不要单独加 `data-el`；确实需要独立改文案的标题或注释可以使用唯一的子级 `data-el`。
+- 可以整体修改、也可以逐项修改的横向或纵向并列内容（例如步骤卡片、KPI 卡片或要点列表），必须在它们最小的共同布局容器上增加 `data-selection-scope="group"`，各成员继续保留各自的 `data-el`。该容器本身不要再加 `data-el`，也不要把页面标题、页脚或其他区域包进来。预览器会在鼠标掠过成员时浮动显示单项范围，在掠过容器留白或边缘时浮动显示整组范围，只有点击才确认选择。
 - 若一个语义块由标题 + 内容两部分组成（例如"美食"小标题 + 对应正文），两者都再加同一个 `data-group`（例如 `data-group="kpi-3"`），使它们能作为一组被整体删除。
 - 序号按 user message 里条目出现的顺序，**不要跳号**；条目是 3 条就只有 `kpi-1`..`kpi-3`。
 - 这些属性是下游做"只删这一项 / 只改这一处"的确定性编辑用的锚点，不影响视觉，**不得省略、不得改名、不得只加在部分元素上**。装饰性元素（纯背景、分隔线、图标底纹）不要加。

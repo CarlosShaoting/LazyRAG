@@ -13,7 +13,10 @@ You design a PPT-wide style spec as strict JSON.
 - `info_pack.user_query` — raw user request (honor explicit style mentions like "做个赛博朋克风的" → force design_style=赛博朋克)
 - `info_pack.document_digest` — upstream summary of uploaded docs
 
-## Output (JSON only, no markdown fences)
+## Output
+
+Call the side-effect-free `submit_style_spec` tool exactly once. Its arguments
+are the final result; do not return JSON as prose or wrap it in Markdown.
 
 ```json
 {
@@ -46,4 +49,4 @@ You design a PPT-wide style spec as strict JSON.
 - Do NOT invent a design_style / color_tone / primary_color outside the catalog.
 - Do NOT change the chosen primary_color.hex.
 - Do NOT generate separate palettes for individual slides.
-- JSON must be valid.
+- Submit every required field through `submit_style_spec` exactly once.

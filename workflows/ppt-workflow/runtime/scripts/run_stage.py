@@ -928,6 +928,135 @@ def cmd_preflight(deck: Path) -> int:
     )
 
 
+_STYLE_MAX_ATTEMPTS = 3
+
+
+def _style_spec_schema() -> dict:
+    named_dimension = {
+        "type": "object",
+        "properties": {
+            "id": {"type": "integer", "minimum": 1},
+            "name_zh": {"type": "string", "minLength": 1},
+            "name_en": {"type": "string", "minLength": 1},
+        },
+        "required": ["id", "name_zh", "name_en"],
+        "additionalProperties": False,
+    }
+    return {
+        "type": "object",
+        "properties": {
+            "design_style": named_dimension,
+            "color_tone": named_dimension,
+            "primary_color": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "integer", "minimum": 1},
+                    "name_zh": {"type": "string", "minLength": 1},
+                    "name_en": {"type": "string", "minLength": 1},
+                    "hex": {"type": "string", "pattern": "^#[0-9A-Fa-f]{6}$"},
+                },
+                "required": ["id", "name_zh", "name_en", "hex"],
+                "additionalProperties": False,
+            },
+            "palette": {
+                "type": "object",
+                "properties": {
+                    "primary": {"type": "string", "pattern": "^#[0-9A-Fa-f]{6}$"},
+                    "accent": {"type": "string", "pattern": "^#[0-9A-Fa-f]{6}$"},
+                    "neutral": {"type": "string", "pattern": "^#[0-9A-Fa-f]{6}$"},
+                },
+                "required": ["primary", "accent", "neutral"],
+                "additionalProperties": False,
+            },
+            "typography": {
+                "type": "object",
+                "properties": {
+                    "heading_font": {"type": "string", "minLength": 1},
+                    "body_font": {"type": "string", "minLength": 1},
+                    "base_size_px": {"type": "integer", "minimum": 10, "maximum": 32},
+                },
+                "required": ["heading_font", "body_font", "base_size_px"],
+                "additionalProperties": False,
+            },
+        },
+        "required": [
+            "design_style", "color_tone", "primary_color", "palette", "typography",
+        ],
+        "additionalProperties": False,
+    }
+
+
+def _style_output_tool() -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": "submit_style_spec",
+            "description": "Submit the one authoritative deck-wide style.",
+            "parameters": _style_spec_schema(),
+        },
+    }
+
+
+def _style_samples_output_tool() -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": "submit_style_samples",
+            "description": "Submit exactly three deck-wide style candidates.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "samples": {
+                        "type": "array", "minItems": 3, "maxItems": 3,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "label": {"type": "string", "minLength": 1},
+                                "rationale": {"type": "string", "minLength": 1},
+                                "style_spec": _style_spec_schema(),
+                            },
+                            "required": ["label", "rationale", "style_spec"],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                "required": ["samples"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+def _style_spec_validation_errors(value: object) -> list[str]:
+    if not isinstance(value, dict):
+        return ["the submitted style must be one object"]
+    errors: list[str] = []
+    for key in ("design_style", "color_tone", "primary_color", "palette", "typography"):
+        if not isinstance(value.get(key), dict):
+            errors.append(f"{key} must be an object")
+    for key in ("design_style", "color_tone", "primary_color"):
+        dimension = value.get(key)
+        if isinstance(dimension, dict) and (
+            not isinstance(dimension.get("id"), int) or isinstance(dimension.get("id"), bool)
+        ):
+            errors.append(f"{key}.id must be an integer")
+    palette = value.get("palette")
+    if isinstance(palette, dict):
+        for key in ("primary", "accent", "neutral"):
+            color = palette.get(key)
+            if not isinstance(color, str) or not re.fullmatch(r"#[0-9A-Fa-f]{6}", color):
+                errors.append(f"palette.{key} must be a six-digit hex color")
+    return errors
+
+
+def _style_retry_prompt(base_prompt: str, tool_name: str, errors: list[str]) -> str:
+    details = "\n".join(f"- {error}" for error in errors[:20])
+    return (
+        f"{base_prompt}\n\nYour previous {tool_name} call was rejected:\n{details}\n"
+        f"Correct only these issues and call {tool_name} exactly once. Do not return prose."
+    )
+
+
 def cmd_style(deck: Path, sample_id: str | None = None) -> int:
     tp = _load_json(deck / "task_pack.json")
     if tp.get("ppt_mode") == "standard":
@@ -945,11 +1074,34 @@ def cmd_style(deck: Path, sample_id: str | None = None) -> int:
         "info_pack_user_query": ip.get("user_query"),
         "info_pack_document_digest": ip.get("document_digest"),
     }, ensure_ascii=False, indent=2)
-    try:
-        raw = llm(system_prompt, user_prompt, request_name='style')
-        data = _parse_json_loose(raw)
-    except (ModelClientError, json.JSONDecodeError) as e:
-        return _fail(f"style: {e}")
+    output_tool = _style_output_tool()
+    attempt_prompt = user_prompt
+    data: dict | None = None
+    last_errors: list[str] = []
+    for attempt in range(1, _STYLE_MAX_ATTEMPTS + 1):
+        try:
+            raw = llm(
+                system_prompt, attempt_prompt, request_name=f'style-{attempt}',
+                retries=0, output_tool=output_tool,
+            )
+            candidate = _parse_json_loose(raw)
+            last_errors = _style_spec_validation_errors(candidate)
+            if not last_errors:
+                data = candidate
+                break
+        except Exception as exc:
+            last_errors = [str(exc)]
+        if attempt < _STYLE_MAX_ATTEMPTS:
+            attempt_prompt = _style_retry_prompt(
+                user_prompt, 'submit_style_spec', last_errors,
+            )
+    if data is None:
+        return _fail(
+            "当前模型连续 3 次未能提交有效的 PPT 风格，请切换支持工具调用的模型后重试当前步骤。",
+            code="MODEL_STRUCTURED_OUTPUT_UNSUPPORTED",
+            detail="; ".join(last_errors[:20]),
+            attempts=_STYLE_MAX_ATTEMPTS,
+        )
 
     repair_notes: list[str] = []
     dims = _load_style_dimensions()
@@ -967,6 +1119,7 @@ def cmd_style(deck: Path, sample_id: str | None = None) -> int:
         primary_color=data.get("primary_color"),
         palette=data.get("palette"),
         repairs=repair_notes or None,
+        attempts=attempt,
     )
 
 
@@ -982,15 +1135,51 @@ def cmd_style_samples(deck: Path) -> int:
         "info_pack_user_query": ip.get("user_query"),
         "info_pack_document_digest": ip.get("document_digest"),
     }, ensure_ascii=False, indent=2)
-    try:
-        raw = llm(system_prompt, user_prompt, request_name='style-samples')
-        data = _parse_json_loose(raw)
-    except (ModelClientError, json.JSONDecodeError) as e:
-        return _fail(f"style-samples: {e}")
-
-    raw_samples = data.get("samples")
-    if not isinstance(raw_samples, list) or len(raw_samples) < 3:
-        return _fail("style-samples: expected at least three samples")
+    output_tool = _style_samples_output_tool()
+    attempt_prompt = user_prompt
+    data: dict | None = None
+    raw_samples: list = []
+    last_errors: list[str] = []
+    for attempt in range(1, _STYLE_MAX_ATTEMPTS + 1):
+        try:
+            raw = llm(
+                system_prompt, attempt_prompt,
+                request_name=f'style-samples-{attempt}', retries=0,
+                output_tool=output_tool,
+            )
+            candidate = _parse_json_loose(raw)
+            candidate_samples = candidate.get("samples") if isinstance(candidate, dict) else None
+            last_errors = []
+            if not isinstance(candidate_samples, list) or len(candidate_samples) != 3:
+                last_errors.append("samples must contain exactly three candidates")
+            else:
+                for index, sample in enumerate(candidate_samples):
+                    if not isinstance(sample, dict):
+                        last_errors.append(f"samples[{index}] must be an object")
+                        continue
+                    if not str(sample.get("label") or "").strip():
+                        last_errors.append(f"samples[{index}].label must be non-empty")
+                    last_errors.extend(
+                        f"samples[{index}].{error}"
+                        for error in _style_spec_validation_errors(sample.get("style_spec"))
+                    )
+            if not last_errors:
+                data = candidate
+                raw_samples = candidate_samples
+                break
+        except Exception as exc:
+            last_errors = [str(exc)]
+        if attempt < _STYLE_MAX_ATTEMPTS:
+            attempt_prompt = _style_retry_prompt(
+                user_prompt, 'submit_style_samples', last_errors,
+            )
+    if data is None:
+        return _fail(
+            "当前模型连续 3 次未能提交三套有效的 PPT 风格方案，请切换支持工具调用的模型后重试当前步骤。",
+            code="MODEL_STRUCTURED_OUTPUT_UNSUPPORTED",
+            detail="; ".join(last_errors[:20]),
+            attempts=_STYLE_MAX_ATTEMPTS,
+        )
 
     dims = _load_style_dimensions()
     samples: list[dict] = []
@@ -1044,6 +1233,7 @@ def cmd_style_samples(deck: Path) -> int:
             for s in samples
         ],
         repairs=all_repairs or None,
+        attempts=attempt,
     )
 
 
@@ -1145,6 +1335,190 @@ def _ensure_outline_reference_images(
     return repaired
 
 
+_OUTLINE_MAX_ATTEMPTS = 3
+_OUTLINE_PAGE_KINDS = frozenset({
+    "cover", "section_header", "content", "data", "closing",
+})
+
+
+def _outline_output_tool(expected_page_count: int) -> dict:
+    """Return the side-effect-free tool contract for one deck outline."""
+    page_items: dict[str, int] = {"minItems": 1}
+    if expected_page_count > 0:
+        page_items = {
+            "minItems": expected_page_count,
+            "maxItems": expected_page_count,
+        }
+    nullable_table = {
+        "anyOf": [
+            {
+                "type": "object",
+                "properties": {
+                    "doc_index": {"type": "integer", "minimum": 0},
+                    "table_index": {"type": "integer", "minimum": 0},
+                },
+                "required": ["doc_index", "table_index"],
+                "additionalProperties": False,
+            },
+            {"type": "null"},
+        ],
+    }
+    nullable_image = {
+        "anyOf": [
+            {
+                "type": "object",
+                "properties": {
+                    "doc_index": {"type": "integer", "minimum": 0},
+                    "image_index": {"type": "integer", "minimum": 0},
+                },
+                "required": ["doc_index", "image_index"],
+                "additionalProperties": False,
+            },
+            {
+                "type": "object",
+                "properties": {
+                    "reference_image_index": {"type": "integer", "minimum": 0},
+                },
+                "required": ["reference_image_index"],
+                "additionalProperties": False,
+            },
+            {"type": "null"},
+        ],
+    }
+    return {
+        "type": "function",
+        "function": {
+            "name": "submit_deck_outline",
+            "description": (
+                "Submit the complete PPT deck outline. This virtual tool has "
+                "no external side effects; its arguments are the final result."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pages": {
+                        "type": "array",
+                        **page_items,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "page_no": {"type": "integer", "minimum": 1},
+                                "page_kind": {
+                                    "type": "string",
+                                    "enum": sorted(_OUTLINE_PAGE_KINDS),
+                                },
+                                "title": {"type": "string", "minLength": 1},
+                                "subtitle": {"type": "string"},
+                                "bullets": {
+                                    "type": "array",
+                                    "minItems": 1,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "head": {"type": "string", "minLength": 1},
+                                            "detail": {"type": "string", "minLength": 1},
+                                        },
+                                        "required": ["head", "detail"],
+                                        "additionalProperties": False,
+                                    },
+                                },
+                                "narrative": {"type": "string", "minLength": 1},
+                                "data_points": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "label": {"type": "string", "minLength": 1},
+                                            "value": {"type": "string", "minLength": 1},
+                                            "context": {"type": "string"},
+                                        },
+                                        "required": ["label", "value"],
+                                        "additionalProperties": False,
+                                    },
+                                },
+                                "visual_hints": {"type": "string", "minLength": 1},
+                                "use_table": nullable_table,
+                                "use_image": nullable_image,
+                            },
+                            "required": [
+                                "page_no", "page_kind", "title", "bullets",
+                                "narrative", "data_points", "visual_hints",
+                                "use_table", "use_image",
+                            ],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                "required": ["pages"],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+def _outline_validation_errors(data: object, expected_page_count: int) -> list[str]:
+    """Validate only the fields that make the downstream outline usable."""
+    if not isinstance(data, dict):
+        return ["the submitted result must be one object"]
+    pages = data.get("pages")
+    if not isinstance(pages, list) or not pages:
+        return ["pages must be a non-empty array"]
+
+    errors: list[str] = []
+    if expected_page_count > 0 and len(pages) != expected_page_count:
+        errors.append(
+            f"pages has {len(pages)} items; exactly {expected_page_count} are required"
+        )
+    page_numbers: list[int] = []
+    required_text = ("title", "narrative", "visual_hints")
+    for index, page in enumerate(pages, start=1):
+        location = f"pages[{index - 1}]"
+        if not isinstance(page, dict):
+            errors.append(f"{location} must be an object")
+            continue
+        page_no = page.get("page_no")
+        if not isinstance(page_no, int) or isinstance(page_no, bool) or page_no < 1:
+            errors.append(f"{location}.page_no must be a positive integer")
+        else:
+            page_numbers.append(page_no)
+        if page.get("page_kind") not in _OUTLINE_PAGE_KINDS:
+            errors.append(f"{location}.page_kind is invalid")
+        for field in required_text:
+            if not isinstance(page.get(field), str) or not page[field].strip():
+                errors.append(f"{location}.{field} must be non-empty text")
+        bullets = page.get("bullets")
+        if not isinstance(bullets, list) or not bullets:
+            errors.append(f"{location}.bullets must be a non-empty array")
+        else:
+            for bullet_index, bullet in enumerate(bullets):
+                if not isinstance(bullet, dict) or any(
+                    not isinstance(bullet.get(field), str) or not bullet[field].strip()
+                    for field in ("head", "detail")
+                ):
+                    errors.append(
+                        f"{location}.bullets[{bullet_index}] needs non-empty head and detail"
+                    )
+        if not isinstance(page.get("data_points"), list):
+            errors.append(f"{location}.data_points must be an array")
+
+    if len(page_numbers) != len(set(page_numbers)):
+        errors.append("page_no values must be unique")
+    if expected_page_count > 0 and set(page_numbers) != set(range(1, expected_page_count + 1)):
+        errors.append(f"page_no values must be exactly 1 through {expected_page_count}")
+    return errors
+
+
+def _outline_retry_prompt(base_prompt: str, errors: list[str]) -> str:
+    details = "\n".join(f"- {error}" for error in errors[:20])
+    return (
+        f"{base_prompt}\n\n"
+        "Your previous submit_deck_outline call was rejected by local validation:\n"
+        f"{details}\n"
+        "Correct these issues and call submit_deck_outline exactly once with the "
+        "complete outline. Do not return prose."
+    )
+
+
 def cmd_outline(deck: Path) -> int:
     tp = _load_json(deck / "task_pack.json")
     ip = _load_json(deck / "info_pack.json")
@@ -1192,19 +1566,44 @@ def cmd_outline(deck: Path) -> int:
         "OUTLINE_SN_TEXT_TIMEOUT",
         _env_float("SN_TEXT_TIMEOUT", _env_float("SN_CHAT_TIMEOUT", 300.0)),
     )
-    outline_retries = _env_int("OUTLINE_SN_TEXT_RETRIES", 1)
-    try:
-        raw = llm(
-            system_prompt, user_prompt,
-            timeout=outline_timeout, retries=outline_retries, request_name="outline",
-        )
-        data = _parse_json_loose(raw)
-    except (ModelClientError, json.JSONDecodeError) as e:
-        return _fail(f"outline: {e}")
-    pages = data.get("pages", [])
     expected = int(tp.get("params", {}).get("page_count", 0))
-    if expected and len(pages) != expected:
-        return _fail(f"outline page_count mismatch: got {len(pages)}, expected {expected}")
+    output_tool = _outline_output_tool(expected)
+    attempt_prompt = user_prompt
+    data: dict | None = None
+    last_errors: list[str] = []
+    for attempt in range(1, _OUTLINE_MAX_ATTEMPTS + 1):
+        try:
+            raw = llm(
+                system_prompt,
+                attempt_prompt,
+                timeout=outline_timeout,
+                retries=0,
+                request_name=f"outline-{attempt}",
+                output_tool=output_tool,
+            )
+            candidate = _parse_json_loose(raw)
+            last_errors = _outline_validation_errors(candidate, expected)
+            if not last_errors:
+                data = candidate
+                break
+        # Provider SDKs do not share one exception hierarchy. Keep retries
+        # bounded here so a rejected/malformed tool call from any supplier gets
+        # the same three-attempt contract without changing other PPT stages.
+        except Exception as exc:
+            last_errors = [str(exc)]
+        if attempt < _OUTLINE_MAX_ATTEMPTS:
+            attempt_prompt = _outline_retry_prompt(user_prompt, last_errors)
+
+    if data is None:
+        detail = "; ".join(last_errors[:20]) or "unknown validation failure"
+        return _fail(
+            "当前模型连续 3 次未能提交有效的 PPT 大纲，请切换支持工具调用的模型后重试当前步骤。",
+            code="MODEL_STRUCTURED_OUTPUT_UNSUPPORTED",
+            detail=detail,
+            attempts=_OUTLINE_MAX_ATTEMPTS,
+        )
+
+    pages = data["pages"]
     image_bindings_repaired = _ensure_outline_reference_images(
         pages,
         available_reference_images,
@@ -1214,6 +1613,7 @@ def cmd_outline(deck: Path) -> int:
         path="outline.json",
         pages=len(pages),
         image_bindings_repaired=image_bindings_repaired,
+        attempts=attempt,
     )
 
 

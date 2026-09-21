@@ -75,14 +75,14 @@ _RUNTIME = _PLUGIN_ROOT / 'runtime'
 _RUN_STAGE = _RUNTIME / 'scripts' / 'run_stage.py'
 
 _VALID_STAGES = frozenset({
-    'preflight', 'style', 'outline', 'asset-plan',
+    'preflight', 'style-samples', 'style', 'outline', 'asset-plan',
     'page-html', 'batch-page-html',
     'refine-page', 'batch-refine-page',
 })
 
 # LLM/VLM stages: in-process + AutoModel. preflight also in-process (no LLM).
 _INPROCESS_STAGES = frozenset({
-    'preflight', 'style', 'outline', 'asset-plan',
+    'preflight', 'style-samples', 'style', 'outline', 'asset-plan',
     'page-html', 'batch-page-html', 'refine-page', 'batch-refine-page',
 })
 
@@ -103,7 +103,25 @@ _PPT_BACKGROUND_CAPABILITY_RE = re.compile(
 )
 
 
-def check_ppt_workflow_capabilities(capability_requirements: str) -> dict[str, Any]:
+def _normalize_style_flow(value: Any) -> str:
+    """Normalize the user-owned style decision, never a model-owned mode."""
+    text = _coerce_str(value).strip().lower()
+    if text in {'preview_choice', 'preview', 'choices', 'standard'} or text.startswith(
+        ('先看三套', '三套', '多套')
+    ):
+        return 'preview_choice'
+    return 'auto'
+
+
+def _ppt_mode_from_style_flow(style_flow: Any) -> str:
+    return 'standard' if _normalize_style_flow(style_flow) == 'preview_choice' else 'fast'
+
+
+def check_ppt_workflow_capabilities(
+    capability_requirements: str,
+    style_flow: str = 'auto',
+    generate_background_images: Optional[str] = None,
+) -> dict[str, Any]:
     """Check the image model only when startup Ask enabled AI backgrounds."""
     marker = str(capability_requirements or '').strip()
     matched = _PPT_BACKGROUND_CAPABILITY_RE.fullmatch(marker)
@@ -112,7 +130,17 @@ def check_ppt_workflow_capabilities(capability_requirements: str) -> dict[str, A
             'ppt_capability_requirements must be exactly '
             'AI_BACKGROUND_IMAGES: enabled or AI_BACKGROUND_IMAGES: disabled'
         )
+    normalized_style_flow = _normalize_style_flow(style_flow)
+    background_value = _coerce_str(generate_background_images).strip().lower()
+    if not background_value:
+        background_value = matched.group(1)
+    if background_value not in {'enabled', 'disabled'}:
+        raise ValueError('generate_background_images must be exactly enabled or disabled')
     enabled = matched.group(1) == 'enabled'
+    if enabled != (background_value == 'enabled'):
+        raise ValueError(
+            'generate_background_images conflicts with ppt_capability_requirements'
+        )
     if not enabled:
         return {
             'status': 'ready',
@@ -120,6 +148,7 @@ def check_ppt_workflow_capabilities(capability_requirements: str) -> dict[str, A
             'required': [],
             'checks': [],
             'missing': [],
+            'style_flow': normalized_style_flow,
             'message': '未启用 AI 底图，无需检查文生图模型。',
         }
 
@@ -141,6 +170,7 @@ def check_ppt_workflow_capabilities(capability_requirements: str) -> dict[str, A
         'required': ['image_generator'],
         'checks': [check],
         'missing': missing,
+        'style_flow': normalized_style_flow,
         'message': (
             'PPT AI 底图所需的文生图模型已配置，可以继续执行。'
             if available else
@@ -2739,6 +2769,83 @@ def _resolve_el(tree: _HtmlTree, el: str, op: dict) -> list[int]:
     )
 
 
+_LEGACY_VISUAL_EL_RE = re.compile(r'^__lazymind_auto_[a-z0-9_-]+$')
+_VISUAL_TAGS = frozenset({'svg', 'canvas', 'img', 'picture'})
+
+
+def _resolve_legacy_visual_path(tree: _HtmlTree, target: dict[str, Any]) -> int:
+    path = target.get('dom_path')
+    if (
+        not isinstance(path, list)
+        or not path
+        or len(path) > 32
+        or any(not isinstance(part, int) or isinstance(part, bool) or part < 0 for part in path)
+    ):
+        raise ValueError('legacy visual selection requires a valid dom_path')
+    bodies = [i for i, node in enumerate(tree.nodes) if node['tag'] == 'body']
+    if len(bodies) != 1:
+        raise ValueError('legacy visual selection requires one body element')
+    current = bodies[0]
+    for part in path:
+        children = tree.nodes[current]['children']
+        if part >= len(children):
+            raise ValueError('legacy visual selection path is stale')
+        current = children[part]
+    expected_tag = _coerce_str(target.get('tag')).lower()
+    node = tree.nodes[current]
+    if not expected_tag or node['tag'] != expected_tag:
+        raise ValueError('legacy visual selection tag does not match the current page')
+    if tree.is_protected(current):
+        raise ValueError('legacy visual selection cannot target the protected page shell')
+    descendants = [
+        index for index in range(len(tree.nodes))
+        if current in tree.ancestors(index)
+    ]
+    if node['tag'] not in _VISUAL_TAGS and not any(
+        tree.nodes[index]['tag'] in _VISUAL_TAGS for index in descendants
+    ):
+        raise ValueError('legacy structural selection is limited to visual content')
+    if node['el']:
+        raise ValueError('legacy visual selection must not replace an existing data-el')
+    if any(tree.nodes[index]['el'] for index in descendants):
+        raise ValueError('legacy visual selection cannot swallow addressable content')
+    return current
+
+
+def _materialize_legacy_visual_anchors(
+    html: str,
+    selection: dict[str, Any],
+) -> str:
+    raw_targets = selection.get('targets')
+    targets = raw_targets if isinstance(raw_targets, list) else [selection]
+    structural = [target for target in targets if isinstance(target, dict) and target.get('dom_path')]
+    if not structural:
+        return html
+
+    tree = _HtmlTree(html)
+    insertions: list[tuple[int, str]] = []
+    resolved: set[int] = set()
+    for target in structural:
+        el = _coerce_str(target.get('el'))
+        if not _LEGACY_VISUAL_EL_RE.fullmatch(el):
+            raise ValueError('legacy visual selection requires a synthetic data-el')
+        node_index = _resolve_legacy_visual_path(tree, target)
+        if node_index in resolved:
+            raise ValueError('legacy visual selection contains a duplicate target')
+        resolved.add(node_index)
+        node = tree.nodes[node_index]
+        start_tag = html[node['start']:node['open_end']]
+        closing = '/>' if start_tag.rstrip().endswith('/>') else '>'
+        at = start_tag.rfind(closing)
+        if at < 0:
+            raise ValueError('legacy visual target has an invalid start tag')
+        insertions.append((node['start'] + at, f' data-el="{el}"'))
+
+    for offset, attribute in sorted(insertions, reverse=True):
+        html = html[:offset] + attribute + html[offset:]
+    return html
+
+
 def _select_delete_targets(tree: _HtmlTree, op: dict) -> list[int]:
     """Resolve one delete_node op to the element(s) it removes.
 
@@ -3498,24 +3605,47 @@ def _agent_llm_call(
     timeout: float | None = None,
     retries: int = 0,
     request_name: str = 'llm',
+    output_tool: dict[str, Any] | None = None,
 ) -> str:
     from lazyllm import AutoModel
     from lazyllm.components import ChatPrompter
 
     instruction = _sanitize_prompt(system_prompt or '')
+    if output_tool is not None:
+        expected_tool_name = _coerce_str(
+            (output_tool.get('function') or {}).get('name')
+            if isinstance(output_tool, dict) else '',
+        )
+        if not expected_tool_name:
+            raise RuntimeError(
+                f'Structured output tool has no function name [{request_name}]'
+            )
+        instruction = (
+            f'{instruction}\n\n'
+            f'You must call {expected_tool_name} exactly once. '
+            'Do not answer with prose or a JSON code block. The tool has no '
+            'external side effects; its arguments are the requested result.'
+        ).strip()
     prompt_input = user_prompt or ''
     effective_timeout = float(
         timeout
         if timeout is not None
         else os.environ.get('LAZYMIND_PPT_LLM_TIMEOUT', '90')
     )
-    llm = AutoModel(model='llm').share(
-        prompt=ChatPrompter(instruction=instruction),
+    share_options: dict[str, Any] = {
+        'prompt': ChatPrompter(
+            instruction=instruction,
+            tools=[output_tool] if output_tool is not None else None,
+        ),
         # Keep consuming provider chunks so timeout measures inactivity rather
         # than the total time needed to generate a complete HTML document.
         # AutoModel still merges the chunks and returns one final string here.
-        stream=True,
-    )
+        'stream': True,
+    }
+    if output_tool is not None:
+        from lazyllm.components.formatter import FunctionCallFormatter
+        share_options['format'] = FunctionCallFormatter()
+    llm = AutoModel(model='llm').share(**share_options)
     # model_client deliberately forwards its per-request timeout to this
     # adapter. The adapter previously discarded it, so AutoModel fell back to
     # the provider configuration's 120-second timeout. Page HTML commonly
@@ -3533,6 +3663,28 @@ def _agent_llm_call(
                 f'[{request_name}]'
             ) from exc
         raise
+    if output_tool is not None:
+        tool_calls = out.get('tool_calls') if isinstance(out, dict) else None
+        if not isinstance(tool_calls, list) or len(tool_calls) != 1:
+            raise RuntimeError(
+                f'Model did not call {expected_tool_name} exactly once '
+                f'[{request_name}]'
+            )
+        function_call = tool_calls[0].get('function') or {}
+        actual_name = _coerce_str(function_call.get('name'))
+        if actual_name != expected_tool_name:
+            raise RuntimeError(
+                f'Model called {actual_name or "an unnamed tool"} instead of '
+                f'{expected_tool_name} [{request_name}]'
+            )
+        arguments = function_call.get('arguments')
+        if isinstance(arguments, dict):
+            return json.dumps(arguments, ensure_ascii=False)
+        if isinstance(arguments, str) and arguments.strip():
+            return arguments.strip()
+        raise RuntimeError(
+            f'Tool {expected_tool_name} returned no arguments [{request_name}]'
+        )
     text = str(out).strip() if out is not None else ''
     if not text:
         raise RuntimeError(f'AutoModel llm returned empty text [{request_name}]')
@@ -3591,6 +3743,7 @@ def _run_stage_inprocess(
     start_page: int = 0,
     end_page: int = 0,
     insert_before: int = 0,
+    sample: str = '',
 ) -> dict:
     mc, rs = _load_sn_ppt_modules()
     needs_llm = stage_name != 'preflight'
@@ -3601,8 +3754,10 @@ def _run_stage_inprocess(
     try:
         if stage_name == 'preflight':
             code, payload = rs._capture_cmd(rs.cmd_preflight, deck)
+        elif stage_name == 'style-samples':
+            code, payload = rs._capture_cmd(rs.cmd_style_samples, deck)
         elif stage_name == 'style':
-            code, payload = rs._capture_cmd(rs.cmd_style, deck)
+            code, payload = rs._capture_cmd(rs.cmd_style, deck, sample or None)
         elif stage_name == 'outline':
             code, payload = rs._capture_cmd(rs.cmd_outline, deck)
         elif stage_name == 'asset-plan':
@@ -5192,6 +5347,7 @@ def ppt_init_deck(
     scene: Optional[str] = None,
     style_hint: Optional[str] = None,
     ppt_mode: Optional[str] = None,
+    style_flow: Optional[str] = None,
     key_points_json: Union[str, list, None] = None,
     generate_background_images: Union[bool, str, None] = False,
 ) -> dict:
@@ -5219,7 +5375,9 @@ def ppt_init_deck(
         audience (str): Target audience.
         scene (str): Presentation scene.
         style_hint (str): Optional visual style guidance.
-        ppt_mode (str): 'fast' or 'standard'. Default 'fast'.
+        ppt_mode (str): Deprecated compatibility input. New decks derive it
+            from style_flow and never trust a model-supplied mode.
+        style_flow (str): User-owned style decision: auto or preview_choice.
         key_points_json (str): JSON array string like '["a","b"]', or omit.
         generate_background_images (bool): Persist the user's explicit opt-in
             for one AI-generated background per slide. Default false.
@@ -5239,9 +5397,8 @@ def ppt_init_deck(
         return _tool_error('ppt_init_deck', 'user_query is required')
 
     pages = _coerce_int(page_count, 4, lo=1)
-    mode = _coerce_str(ppt_mode, 'fast').lower()
-    if mode not in ('fast', 'standard'):
-        mode = 'fast'
+    flow = _normalize_style_flow(style_flow)
+    mode = _ppt_mode_from_style_flow(flow)
     if isinstance(key_points_json, list):
         key_points = [str(x) for x in key_points_json][:12]
     else:
@@ -5272,6 +5429,7 @@ def ppt_init_deck(
             'scene': _coerce_str(scene, '主题分享'),
             'page_count': pages,
             'language': _infer_language(query),
+            'style_flow': flow,
             'generate_background_images': _coerce_bool(generate_background_images),
         },
         'created_at': now,
@@ -5296,6 +5454,7 @@ def ppt_init_deck(
         'deck_id': deck_id,
         'page_count': pages,
         'ppt_mode': mode,
+        'style_flow': flow,
         'material_images_attached': attached['attached'],
         'next_stage': 'preflight',
         'stage_order': _STAGE_ORDER_HINT,
@@ -5487,6 +5646,265 @@ def ppt_publish_deck_outline(deck_dir: str) -> dict:
     })
 
 
+def _style_selection_id(value: Any) -> str:
+    """Accept one unambiguous editable A/B/C style choice."""
+    text = _coerce_str(value).strip().upper()
+    if text in {'A', 'B', 'C'}:
+        return text
+    choices = set(re.findall(r'(?<![A-Z])([ABC])(?![A-Z])', text))
+    return next(iter(choices)) if len(choices) == 1 else ''
+
+
+def _read_style_spec(deck: Path) -> dict[str, Any]:
+    try:
+        value = json.loads((deck / 'style_spec.json').read_text(encoding='utf-8'))
+    except (FileNotFoundError, json.JSONDecodeError, TypeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _style_spec_is_ready(deck: Path, selection: str = '') -> bool:
+    style = _read_style_spec(deck)
+    if not style or not all(
+        isinstance(style.get(key), dict)
+        for key in ('design_style', 'color_tone', 'primary_color', 'palette')
+    ):
+        return False
+    if selection:
+        selected = style.get('_selected_sample') or {}
+        return _coerce_str(selected.get('sample_id')).upper() == selection
+    return True
+
+
+def _style_samples_are_ready(deck: Path) -> bool:
+    try:
+        data = json.loads((deck / 'style_samples.json').read_text(encoding='utf-8'))
+    except (FileNotFoundError, json.JSONDecodeError, TypeError):
+        return False
+    samples = data.get('samples') if isinstance(data, dict) else None
+    return isinstance(samples, list) and len(samples) == 3 and {
+        _coerce_str(sample.get('sample_id')).upper()
+        for sample in samples if isinstance(sample, dict)
+    } == {'A', 'B', 'C'}
+
+
+def _persist_deck_style_flow(deck: Path, requested: Any = None) -> tuple[dict, str]:
+    """Migrate legacy decks and keep ppt_mode as a derived compatibility field."""
+    pack_path = deck / 'task_pack.json'
+    pack = json.loads(pack_path.read_text(encoding='utf-8'))
+    params = pack.setdefault('params', {})
+    requested_text = _coerce_str(requested).strip()
+    stored_text = _coerce_str(params.get('style_flow')).strip()
+    selected_style = _read_style_spec(deck).get('_selected_sample')
+    if requested_text:
+        flow = _normalize_style_flow(requested_text)
+    elif stored_text:
+        flow = _normalize_style_flow(stored_text)
+    elif _style_samples_are_ready(deck) or isinstance(selected_style, dict):
+        flow = 'preview_choice'
+    else:
+        # Historical decks could persist standard without ever producing
+        # style-samples. Recover those as the safe one-style path.
+        flow = 'auto'
+    mode = _ppt_mode_from_style_flow(flow)
+    if params.get('style_flow') != flow or pack.get('ppt_mode') != mode:
+        params['style_flow'] = flow
+        pack['ppt_mode'] = mode
+        temporary = pack_path.with_name(pack_path.name + '.tmp')
+        temporary.write_text(json.dumps(pack, ensure_ascii=False, indent=2), encoding='utf-8')
+        os.replace(temporary, pack_path)
+    return pack, flow
+
+
+def _publish_style_choices(deck: Path) -> dict[str, Any]:
+    preview_path = deck / 'style_samples' / 'style_samples.html'
+    samples_path = deck / 'style_samples.json'
+    if not preview_path.is_file() or not _style_samples_are_ready(deck):
+        return {'ok': False, 'error': 'three style previews are not ready'}
+    samples = json.loads(samples_path.read_text(encoding='utf-8'))['samples']
+    default = _coerce_str(samples[0].get('sample_id'), 'A').upper()
+    saves = {
+        'style_previews': _save_artifact(
+            key='style_previews', content_type='text',
+            value=preview_path.read_text(encoding='utf-8'),
+            source_tool='ppt_prepare_style_choices', internal_publish=True,
+        ),
+        'style_selection': _save_artifact(
+            key='style_selection', content_type='text', value=default,
+            caption=f"{default} · {samples[0].get('label') or '推荐方案'}",
+            source_tool='ppt_prepare_style_choices', internal_publish=True,
+        ),
+    }
+    failed = [key for key, response in saves.items() if _tool_failed(response)]
+    if failed:
+        return {'ok': False, 'error': f"failed to publish: {', '.join(failed)}"}
+    return {
+        'ok': True,
+        'default_selection': default,
+        'choices': [
+            {
+                'sample_id': sample.get('sample_id'),
+                'label': sample.get('label'),
+                'rationale': sample.get('rationale'),
+            }
+            for sample in samples
+        ],
+    }
+
+
+def ppt_prepare_style_choices(
+    user_query: str,
+    page_count: Union[int, str, None] = 4,
+    topic: Optional[str] = None,
+    role: Optional[str] = None,
+    audience: Optional[str] = None,
+    scene: Optional[str] = None,
+    style_hint: Optional[str] = None,
+    key_points_json: Union[str, list, None] = None,
+    generate_background_images: Union[bool, str, None] = False,
+    deck_dir: Optional[str] = None,
+) -> dict:
+    """Create and publish exactly three style previews for human A/B/C choice."""
+    resolved = _coerce_str(deck_dir)
+    if resolved:
+        try:
+            deck = _resolve_deck_dir(resolved)
+            pack, flow = _persist_deck_style_flow(deck, 'preview_choice')
+        except (FileNotFoundError, json.JSONDecodeError, OSError) as exc:
+            return _tool_error('ppt_prepare_style_choices', str(exc))
+        init_payload = {
+            'deck_dir': str(deck.resolve()),
+            'deck_id': pack.get('deck_id') or deck.name,
+            'page_count': (pack.get('params') or {}).get('page_count'),
+            'ppt_mode': pack.get('ppt_mode'),
+            'style_flow': flow,
+        }
+        resolved = str(deck.resolve())
+    else:
+        init = ppt_init_deck(
+            user_query=user_query, page_count=page_count, topic=topic, role=role,
+            audience=audience, scene=scene, style_hint=style_hint,
+            style_flow='preview_choice', key_points_json=key_points_json,
+            generate_background_images=generate_background_images,
+        )
+        if _tool_failed(init):
+            return _tool_error(
+                'ppt_prepare_style_choices', f'init failed: {_tool_fail_reason(init)}',
+            )
+        init_payload = _tool_payload(init)
+        resolved = _coerce_str(init_payload.get('deck_dir'))
+        deck = _resolve_deck_dir(resolved)
+
+    stages: list[dict[str, Any]] = []
+    for stage_name in ('preflight', 'style-samples'):
+        if stage_name == 'style-samples' and _style_samples_are_ready(deck):
+            stages.append({'step': stage_name, 'status': 'reused'})
+            continue
+        result = ppt_run_stage(resolved, stage=stage_name)
+        if _tool_failed(result):
+            return _tool_error(
+                'ppt_prepare_style_choices',
+                f'{stage_name} failed: {_tool_fail_reason(result)}',
+                meta={'deck_dir': resolved, 'failed_stage': stage_name},
+            )
+        stages.append({'step': stage_name, 'status': 'ok'})
+    published = _publish_style_choices(deck)
+    if not published.get('ok'):
+        return _tool_error(
+            'ppt_prepare_style_choices', _coerce_str(published.get('error')),
+        )
+    return _tool_success('ppt_prepare_style_choices', {
+        **init_payload,
+        'style_flow': 'preview_choice',
+        'default_selection': published.get('default_selection'),
+        'choices': published.get('choices'),
+        'stages': stages,
+        'next_step': 'plan_background_prompts',
+    })
+
+
+def ppt_prepare_style(
+    user_query: str,
+    page_count: Union[int, str, None] = 4,
+    topic: Optional[str] = None,
+    role: Optional[str] = None,
+    audience: Optional[str] = None,
+    scene: Optional[str] = None,
+    style_hint: Optional[str] = None,
+    style_flow: Optional[str] = None,
+    style_selection: Optional[str] = None,
+    key_points_json: Union[str, list, None] = None,
+    generate_background_images: Union[bool, str, None] = None,
+    deck_dir: Optional[str] = None,
+) -> dict:
+    """Ensure one authoritative style_spec exists before visual generation."""
+    resolved = _coerce_str(deck_dir)
+    if resolved:
+        try:
+            deck = _resolve_deck_dir(resolved)
+            pack, flow = _persist_deck_style_flow(deck, style_flow)
+        except (FileNotFoundError, json.JSONDecodeError, OSError) as exc:
+            return _tool_error('ppt_prepare_style', str(exc))
+        params = pack.setdefault('params', {})
+        if generate_background_images is not None and _coerce_bool(
+            params.get('generate_background_images')
+        ) != _coerce_bool(generate_background_images):
+            params['generate_background_images'] = _coerce_bool(
+                generate_background_images
+            )
+            (deck / 'task_pack.json').write_text(
+                json.dumps(pack, ensure_ascii=False, indent=2), encoding='utf-8',
+            )
+        init_payload = {
+            'deck_dir': str(deck.resolve()),
+            'deck_id': pack.get('deck_id') or deck.name,
+            'page_count': params.get('page_count'),
+            'ppt_mode': pack.get('ppt_mode'),
+            'style_flow': flow,
+        }
+        resolved = str(deck.resolve())
+    else:
+        flow = _normalize_style_flow(style_flow)
+        init = ppt_init_deck(
+            user_query=user_query, page_count=page_count, topic=topic, role=role,
+            audience=audience, scene=scene, style_hint=style_hint,
+            style_flow=flow, key_points_json=key_points_json,
+            generate_background_images=generate_background_images,
+        )
+        if _tool_failed(init):
+            return _tool_error('ppt_prepare_style', f'init failed: {_tool_fail_reason(init)}')
+        init_payload = _tool_payload(init)
+        resolved = _coerce_str(init_payload.get('deck_dir'))
+        deck = _resolve_deck_dir(resolved)
+
+    selection = _style_selection_id(style_selection)
+    if flow == 'preview_choice' and not selection:
+        return _tool_error(
+            'ppt_prepare_style', '请在三套风格预览中选择 A、B 或 C 后再继续。',
+        )
+    stages: list[dict[str, Any]] = []
+    preflight = ppt_run_stage(resolved, stage='preflight')
+    if _tool_failed(preflight):
+        return _tool_error('ppt_prepare_style', f'preflight failed: {_tool_fail_reason(preflight)}')
+    stages.append({'step': 'preflight', 'status': 'ok'})
+    expected_selection = selection if flow == 'preview_choice' else ''
+    if _style_spec_is_ready(deck, expected_selection):
+        stages.append({'step': 'style', 'status': 'reused'})
+    else:
+        styled = ppt_run_stage(resolved, stage='style', sample=expected_selection or None)
+        if _tool_failed(styled):
+            return _tool_error('ppt_prepare_style', f'style failed: {_tool_fail_reason(styled)}')
+        stages.append({'step': 'style', 'status': 'ok'})
+    return _tool_success('ppt_prepare_style', {
+        **init_payload,
+        'style_flow': flow,
+        'style_selection': selection or None,
+        'style_spec': _read_style_spec(deck),
+        'stages': stages,
+        'next_step': 'plan_background_prompts',
+    })
+
+
 def ppt_build_outline(
     user_query: str,
     page_count: Union[int, str, None] = 4,
@@ -5496,8 +5914,10 @@ def ppt_build_outline(
     scene: Optional[str] = None,
     style_hint: Optional[str] = None,
     ppt_mode: Optional[str] = None,
+    style_flow: Optional[str] = None,
+    style_selection: Optional[str] = None,
     key_points_json: Union[str, list, None] = None,
-    generate_background_images: Union[bool, str, None] = False,
+    generate_background_images: Union[bool, str, None] = None,
     deck_dir: Optional[str] = None,
 ) -> dict:
     """Build a full deck outline in one call (preferred for build_outline step).
@@ -5519,10 +5939,12 @@ def ppt_build_outline(
         audience (str): Target audience.
         scene (str): Presentation scene.
         style_hint (str): Optional visual style guidance.
-        ppt_mode (str): 'fast' or 'standard'. Default 'fast'.
+        ppt_mode (str): Deprecated; derived from style_flow.
+        style_flow (str): User-owned choice: auto or preview_choice.
+        style_selection (str): A, B, or C for preview_choice.
         key_points_json (str): JSON array string like '["a","b"]', or omit.
-        generate_background_images (bool): True only when the startup AI
-            background question was explicitly enabled. Default false.
+        generate_background_images (bool): The startup AI-background choice.
+            When omitted for a prepared deck, keep its stored choice.
 
     Returns:
         deck_dir, stages summary, and the deck_outline publication result.
@@ -5533,7 +5955,7 @@ def ppt_build_outline(
     if resolved_deck:
         try:
             deck = _resolve_deck_dir(resolved_deck)
-            pack = json.loads((deck / 'task_pack.json').read_text(encoding='utf-8'))
+            pack, flow = _persist_deck_style_flow(deck, style_flow)
         except (FileNotFoundError, json.JSONDecodeError) as exc:
             return _tool_error('ppt_build_outline', f'prepared deck is invalid: {exc}')
         attached = _attach_material_images_to_deck(deck)
@@ -5541,12 +5963,26 @@ def ppt_build_outline(
         prepared_backgrounds_enabled = _coerce_bool(
             params.get('generate_background_images'),
         )
+        if generate_background_images is not None:
+            requested_backgrounds_enabled = _coerce_bool(
+                generate_background_images
+            )
+            if prepared_backgrounds_enabled != requested_backgrounds_enabled:
+                params['generate_background_images'] = requested_backgrounds_enabled
+                pack_path = deck / 'task_pack.json'
+                temporary = pack_path.with_name(pack_path.name + '.tmp')
+                temporary.write_text(
+                    json.dumps(pack, ensure_ascii=False, indent=2), encoding='utf-8',
+                )
+                os.replace(temporary, pack_path)
+            prepared_backgrounds_enabled = requested_backgrounds_enabled
         resolved_deck = str(deck.resolve())
         init_payload = {
             'deck_dir': resolved_deck,
             'deck_id': pack.get('deck_id') or deck.name,
             'page_count': params.get('page_count'),
             'ppt_mode': pack.get('ppt_mode') or 'fast',
+            'style_flow': flow,
             'material_images_attached': attached['attached'],
         }
     else:
@@ -5559,6 +5995,7 @@ def ppt_build_outline(
             scene=scene,
             style_hint=style_hint,
             ppt_mode=ppt_mode,
+            style_flow=style_flow,
             key_points_json=key_points_json,
             generate_background_images=generate_background_images,
         )
@@ -5572,6 +6009,7 @@ def ppt_build_outline(
         resolved_deck = str(init_payload.get('deck_dir') or '')
         if not resolved_deck:
             return _tool_error('ppt_build_outline', 'ppt_init_deck returned no deck_dir')
+        prepared_backgrounds_enabled = _coerce_bool(generate_background_images)
 
     stages: list[dict[str, Any]] = [
         {
@@ -5581,8 +6019,23 @@ def ppt_build_outline(
         },
     ]
 
-    for stage_name in ('preflight', 'style', 'outline'):
-        stage_res = ppt_run_stage(resolved_deck, stage=stage_name)
+    deck = _resolve_deck_dir(resolved_deck)
+    flow = _normalize_style_flow(init_payload.get('style_flow') or style_flow)
+    selection = _style_selection_id(style_selection)
+    if flow == 'preview_choice' and not selection and not _style_spec_is_ready(deck):
+        return _tool_error(
+            'ppt_build_outline', '请先在风格预览中选择 A、B 或 C。',
+            meta={'deck_dir': resolved_deck, 'failed_stage': 'style'},
+        )
+    expected_selection = selection if flow == 'preview_choice' else ''
+    stage_plan: list[tuple[str, Optional[str]]] = [('preflight', None)]
+    if not _style_spec_is_ready(deck, expected_selection):
+        stage_plan.append(('style', expected_selection or None))
+    stage_plan.append(('outline', None))
+    for stage_name, stage_sample in stage_plan:
+        stage_res = ppt_run_stage(
+            resolved_deck, stage=stage_name, sample=stage_sample,
+        )
         if _tool_failed(stage_res):
             return _tool_error(
                 'ppt_build_outline',
@@ -5635,10 +6088,10 @@ def ppt_build_outline(
         'deck_id': init_payload.get('deck_id'),
         'page_count': init_payload.get('page_count'),
         'ppt_mode': init_payload.get('ppt_mode'),
+        'style_flow': flow,
+        'style_selection': selection or None,
         'material_images_attached': init_payload.get('material_images_attached'),
-        'background_images_enabled': (
-            _coerce_bool(generate_background_images) or prepared_backgrounds_enabled
-        ),
+        'background_images_enabled': prepared_backgrounds_enabled,
         'background_images_count': background_count,
         'next_step': 'plan_page_prompts',
         'deck_outline_published': True,
@@ -5854,6 +6307,7 @@ def ppt_run_stage(
     start_page: int = 0,
     end_page: int = 0,
     insert_before: int = 0,
+    sample: Optional[str] = None,
 ) -> dict:
     """Run one PPT HTML-pipeline stage (workflows/ppt-workflow/runtime).
 
@@ -5866,7 +6320,7 @@ def ppt_run_stage(
 
     Args:
         deck_dir (str): Absolute deck directory from ppt_init_deck.
-        stage (str): preflight|style|outline|asset-plan|page-html|
+        stage (str): preflight|style-samples|style|outline|asset-plan|page-html|
             batch-page-html|refine-page|batch-refine-page.
             Export is UI-only — do not pass stage=export.
         page (int): Required for page-html / refine-page (1-based).
@@ -5877,6 +6331,7 @@ def ppt_run_stage(
         insert_before (int): For one incremental page-html insertion, the same
             1-based value as page. This inserts new preview/notes cards while
             leaving all later card revisions untouched.
+        sample (str): A, B, or C when applying a preview_choice style.
 
     Returns:
         Stage status fields from run_stage.
@@ -5907,6 +6362,14 @@ def ppt_run_stage(
     sp = _coerce_int(start_page, 0, lo=0)
     ep = _coerce_int(end_page, 0, lo=0)
     insertion = _coerce_int(insert_before, 0, lo=0)
+    selected_sample = _coerce_str(sample).upper()
+    if selected_sample and (
+        stage_name != 'style' or selected_sample not in {'A', 'B', 'C'}
+    ):
+        return _tool_error(
+            'ppt_run_stage',
+            'sample is supported only for style and must be A, B, or C',
+        )
     if insertion and (stage_name != 'page-html' or page_no != insertion):
         return _tool_error(
             'ppt_run_stage',
@@ -5917,7 +6380,7 @@ def ppt_run_stage(
             return _tool_error('ppt_run_stage', f'{stage_name} requires page>=1')
         payload = _run_stage_inprocess(
             stage_name, deck, page=page_no, concurrency=conc, start_page=sp,
-            end_page=ep, insert_before=insertion,
+            end_page=ep, insert_before=insertion, sample=selected_sample,
         )
         if stage_name == 'page-html' and insertion and payload.get('status') == 'ok':
             published = payload.get('published') if isinstance(payload, dict) else None
@@ -6882,7 +7345,50 @@ def _plan_compound_text_replacement(
     return clean_values
 
 
-def _selection_edit_ops(
+def _normalized_multi_selection_targets(
+    selection: dict[str, Any],
+    tree: _HtmlTree,
+) -> list[dict[str, Any]]:
+    raw_targets = selection.get('targets')
+    if raw_targets is None:
+        return []
+    if not isinstance(raw_targets, list) or len(raw_targets) < 2:
+        raise ValueError('PPT HTML multi-selection requires at least two targets')
+
+    targets: list[dict[str, Any]] = []
+    resolved: list[int] = []
+    for raw_target in raw_targets:
+        if not isinstance(raw_target, dict):
+            raise ValueError('PPT HTML multi-selection targets must be objects')
+        el = _coerce_str(raw_target.get('el'))
+        if not el:
+            raise ValueError('PPT HTML multi-selection target requires data-el')
+        target: dict[str, Any] = {'el': el}
+        if _coerce_str(raw_target.get('index')):
+            target['index'] = _coerce_int(raw_target.get('index'), 0, lo=1)
+        group = _coerce_str(raw_target.get('group'))
+        selected_text = _coerce_str(raw_target.get('selected_text'))
+        computed_style = raw_target.get('computed_style')
+        if computed_style is not None and not isinstance(computed_style, dict):
+            raise ValueError('PPT HTML multi-selection computed_style must be an object')
+        if group:
+            target['group'] = group
+        if selected_text:
+            target['selected_text'] = selected_text
+        if computed_style:
+            target['computed_style'] = computed_style
+        node_index = _resolve_el(tree, el, target)[0]
+        if node_index in resolved:
+            raise ValueError('PPT HTML multi-selection contains a duplicate target')
+        for other in resolved:
+            if node_index in tree.ancestors(other) or other in tree.ancestors(node_index):
+                raise ValueError('PPT HTML multi-selection cannot contain both a parent and its child')
+        resolved.append(node_index)
+        targets.append(target)
+    return targets
+
+
+def _single_selection_edit_ops(
     instruction: str,
     selection: dict[str, Any],
     tree: _HtmlTree,
@@ -7145,6 +7651,61 @@ def _selection_edit_ops(
     raise ValueError('AI edit planner returned an unsupported operation')
 
 
+def _selection_edit_ops(
+    instruction: str,
+    selection: dict[str, Any],
+    tree: _HtmlTree,
+) -> tuple[list[dict[str, Any]], str, str]:
+    targets = _normalized_multi_selection_targets(selection, tree)
+    if not targets:
+        return _single_selection_edit_ops(instruction, selection, tree)
+
+    combined_ops: list[dict[str, Any]] = []
+    old_texts: list[str] = []
+    new_texts: list[str] = []
+    operation_families: set[str] = set()
+    for target in targets:
+        scoped_selection = {
+            key: value for key, value in selection.items()
+            if key not in {'targets', 'scope', 'el', 'index', 'group', 'selected_text', 'computed_style'}
+        }
+        scoped_selection.update(target)
+        ops, old_text, new_text = _single_selection_edit_ops(
+            instruction, scoped_selection, tree,
+        )
+        names = {_coerce_str(op.get('op')).lower().replace('-', '_') for op in ops}
+        if 'insert_sibling' in names:
+            raise ValueError('adding repeated items is not supported for a multi-selection')
+        for name in names:
+            if name in {'replace_text', 'replace_text_segments'}:
+                operation_families.add('text')
+            elif name == 'set_style':
+                operation_families.add('style')
+            elif name == 'delete_node':
+                operation_families.add('delete')
+            else:
+                operation_families.add(name)
+        combined_ops.extend(ops)
+        old_texts.append(old_text)
+        new_texts.append(new_text)
+
+    if len(operation_families) != 1:
+        raise ValueError('one multi-selection instruction must resolve to one operation type')
+
+    if operation_families == {'delete'}:
+        resolved_deletes: list[int] = []
+        for op in combined_ops:
+            for node_index in _select_delete_targets(tree, op):
+                if node_index in resolved_deletes:
+                    raise ValueError('multi-selection resolves to the same deletable item more than once')
+                for other in resolved_deletes:
+                    if node_index in tree.ancestors(other) or other in tree.ancestors(node_index):
+                        raise ValueError('multi-selection delete targets overlap after item resolution')
+                resolved_deletes.append(node_index)
+
+    return combined_ops, '\n'.join(old_texts), '\n'.join(new_texts)
+
+
 def ppt_preview_selection_edit(
     artifact: Any,
     instruction: str,
@@ -7152,7 +7713,7 @@ def ppt_preview_selection_edit(
     artifact_store: str = '',
     slot: str = '',
 ) -> dict[str, Any]:
-    """Preview one bounded edit against a selected data-el in a PPT HTML page."""
+    """Preview one atomic edit against one or more selected PPT HTML elements."""
     if slot != 'preview_html' or _coerce_str(selection.get('type')) != 'ppt_html':
         raise ValueError('selection edit requires a preview_html PPT element')
     artifact_html = _artifact_html_text(artifact, artifact_store)
@@ -7174,10 +7735,12 @@ def ppt_preview_selection_edit(
     source_page = int(source.stem.rsplit('_', 1)[-1]) if source is not None else (selected_page or 1)
     if source is not None and selected_page and selected_page != source_page:
         raise ValueError('selected page does not match the artifact source')
+    base_original = original
+    original = _materialize_legacy_visual_anchors(original, selection)
     tree = _HtmlTree(original)
     ops, old_text, new_text = _selection_edit_ops(instruction, selection, tree)
     edited, applied, notes, removed = _apply_html_ops(original, ops)
-    _validate_local_html_edit(original, edited)
+    _validate_local_html_edit(base_original, edited)
 
     if source is not None and deck is not None:
         public_html, _ = _inline_preview_images(_sanitize_page_html(edited), deck, source)
@@ -7193,7 +7756,7 @@ def ppt_preview_selection_edit(
     manifest.write_text(json.dumps({
         'mode': 'source_page' if source is not None else 'artifact_only',
         'source_path': str(source) if source is not None else None,
-        'expected_sha256': _html_sha256(original),
+        'expected_sha256': _html_sha256(base_original),
         'artifact_sha256': _html_sha256(artifact_html),
         'candidate_path': str(raw_candidate),
         'candidate_sha256': _html_sha256(edited),
@@ -7203,21 +7766,26 @@ def ppt_preview_selection_edit(
         'layout_notes': notes,
         'removed_texts': removed,
     }, ensure_ascii=False), encoding='utf-8')
+    multi_targets = _normalized_multi_selection_targets(selection, tree)
+    primary_selection = multi_targets[0] if multi_targets else selection
+    primary_el = _coerce_str(primary_selection.get('el'))
+    primary_ref = (
+        {'index': primary_selection.get('index')}
+        if _coerce_str(primary_selection.get('index')) else {}
+    )
     return {
         'representation': 'ppt_html',
         'target': {
             'type': 'block',
-            'block_type': tree.nodes[_resolve_el(
-                tree,
-                _coerce_str(selection.get('el')),
-                {'index': selection.get('index')}
-                if _coerce_str(selection.get('index')) else {},
-            )[0]]['tag'],
-            'el': _coerce_str(selection.get('el')),
-            'index': _coerce_int(selection.get('index'), 0, lo=1)
-            if _coerce_str(selection.get('index')) else None,
-            'group': _coerce_str(selection.get('group')) or None,
+            'block_type': 'multi' if multi_targets else tree.nodes[
+                _resolve_el(tree, primary_el, primary_ref)[0]
+            ]['tag'],
+            'el': primary_el,
+            'index': _coerce_int(primary_selection.get('index'), 0, lo=1)
+            if _coerce_str(primary_selection.get('index')) else None,
+            'group': _coerce_str(primary_selection.get('group')) or None,
             'page': source_page,
+            'count': len(multi_targets) if multi_targets else 1,
         },
         'preview': {'old_text': old_text, 'new_text': new_text},
         'patch': {'type': 'ppt_html_ops', 'payload': {'ops': ops}},

@@ -16,7 +16,8 @@ The catalog's IDs are pre-validated for compatibility.
 
 ## Output
 
-Return JSON only, no markdown fences:
+Call the side-effect-free `submit_style_samples` tool exactly once. Its arguments
+are the final result; do not return JSON as prose or wrap it in Markdown.
 
 ```json
 {
@@ -46,4 +47,4 @@ Return JSON only, no markdown fences:
 6. If the user explicitly requested a style, keep all three samples within that intent while varying tone, color, or layout personality.
 7. Treat the topic as context, not as a literal color command. When the user did not name colors, use topic-specific imagery, materials, atmosphere, audience, and purpose; do not fall back to broad stereotypes such as "festival / celebration = red and gold" or "traditional Chinese = red".
 8. Every sample is a complete deck-wide contract: after one is selected, every slide must reuse it and must not select a separate page palette.
-9. JSON must be valid.
+9. Submit exactly three complete candidates through `submit_style_samples` once.

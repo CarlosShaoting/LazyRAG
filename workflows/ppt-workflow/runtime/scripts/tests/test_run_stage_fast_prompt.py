@@ -94,12 +94,54 @@ class StyleRenderingRecipeTest(unittest.TestCase):
         self.assertTrue(field['choices'][1].startswith('不启用'))
         self.assertIn('background_images', workflow['runtime']['publisher_owned_slots'])
 
+    def test_workflow_asks_how_to_resolve_the_deck_style(self) -> None:
+        workflow_path = Path(__file__).resolve().parents[3] / 'workflow.yaml'
+        workflow = yaml.safe_load(workflow_path.read_text(encoding='utf-8'))
+        field = next(
+            item for item in workflow['runtime']['clarification_fields']
+            if item['id'] == 'style_flow'
+        )
+
+        self.assertEqual(field['type'], 'single')
+        self.assertEqual(field['choice_policy'], 'fixed')
+        self.assertFalse(field['allow_other'])
+        self.assertEqual(len(field['choices']), 2)
+        self.assertTrue(field['choices'][0].startswith('直接生成一套'))
+        self.assertTrue(field['choices'][1].startswith('先看三套方案'))
+        self.assertIn(
+            'call trigger_ppt_workflow as the first action',
+            workflow['when_to_use'],
+        )
+        self.assertIn(
+            'Do not merely announce',
+            workflow['when_to_use'],
+        )
+
+    def test_style_prompts_keep_choice_and_background_decisions_independent(self) -> None:
+        workflow_path = Path(__file__).resolve().parents[3] / 'workflow.yaml'
+        state_path = workflow_path.parent / 'scenario' / 'state.yml'
+        state = yaml.safe_load(state_path.read_text(encoding='utf-8'))
+
+        analyze = state['steps']['analyze_requirements']['prompt']
+        choose = state['steps']['choose_style']['prompt']
+        backgrounds = state['steps']['plan_background_prompts']['prompt']
+        outline = state['steps']['build_outline']['prompt']
+
+        self.assertIn('independent from AI background generation', analyze)
+        self.assertIn('exactly three', choose)
+        self.assertIn('leaving A unchanged or editing style_selection to B', choose)
+        self.assertIn('ppt_prepare_style', backgrounds)
+        self.assertIn('Use the returned style_spec', backgrounds)
+        self.assertIn('style_flow=<exact hidden auto or preview_choice value>', outline)
+        self.assertIn('Never pass ppt_mode', outline)
+
     def test_only_page_prompts_and_generation_checkpoints_require_approval(self) -> None:
         state_path = Path(__file__).resolve().parents[3] / 'scenario' / 'state.yml'
         state = yaml.safe_load(state_path.read_text(encoding='utf-8'))
 
         self.assertEqual(state['steps']['plan_background_prompts']['mode'], 'auto')
         self.assertEqual(state['steps']['build_outline']['mode'], 'auto')
+        self.assertEqual(state['steps']['choose_style']['mode'], 'human')
         self.assertEqual(state['steps']['plan_page_prompts']['mode'], 'human')
         self.assertEqual(state['steps']['generate_backgrounds']['mode'], 'human')
         self.assertEqual(state['steps']['generate_ppt']['mode'], 'human')
@@ -124,31 +166,24 @@ class StyleRenderingRecipeTest(unittest.TestCase):
         self.assertEqual(slots['background_prompts']['cardinality'], 'list')
         self.assertIn('background_prompts', workflow['runtime']['publisher_owned_slots'])
         self.assertEqual(
-            state['transitions']['collect_materials'],
-            [
-                {
-                    'to': 'plan_background_prompts',
-                    'when': (
-                        'ppt_capability_requirements is exactly '
-                        'AI_BACKGROUND_IMAGES: enabled.\n'
-                    ),
-                },
-                {
-                    'to': 'build_outline',
-                    'when': (
-                        'ppt_capability_requirements is exactly '
-                        'AI_BACKGROUND_IMAGES: disabled.\n'
-                    ),
-                },
-            ],
+            state['steps']['collect_materials']['skip_if'],
+            {'material': 'skip_material_collection'},
         )
-        self.assertEqual(state['steps']['analyze_requirements']['route'], 'choice')
-        self.assertEqual(state['steps']['collect_materials']['route'], 'choice')
-        self.assertNotIn('skip_if', state['steps']['collect_materials'])
         self.assertEqual(
-            [edge['to'] for edge in state['transitions']['analyze_requirements']],
-            ['collect_materials', 'plan_background_prompts', 'build_outline'],
+            state['transitions']['analyze_requirements'],
+            [{'to': 'collect_materials'}],
         )
+        self.assertEqual(
+            state['transitions']['collect_materials'],
+            [{'to': 'choose_style'}],
+        )
+        self.assertEqual(state['transitions']['choose_style'], [{'to': 'plan_background_prompts'}])
+        self.assertEqual(
+            state['transitions']['plan_background_prompts'],
+            [{'to': 'generate_backgrounds'}],
+        )
+        self.assertNotIn('route', state['steps']['analyze_requirements'])
+        self.assertNotIn('route', state['steps']['collect_materials'])
         self.assertEqual(
             state['transitions']['generate_backgrounds'],
             [{'to': 'build_outline'}],
@@ -170,9 +205,43 @@ class StyleRenderingRecipeTest(unittest.TestCase):
             page_prompts['composite_layout']['children'],
             [{'slot': 'slide_outline'}],
         )
+        self.assertEqual(
+            workflow['ui']['tab_visibility_ready_material'],
+            'ppt_capability_requirements',
+        )
+        tabs = {tab['id']: tab for tab in workflow['ui']['tabs']}
+        self.assertEqual(
+            tabs['materials']['hide_when_material'],
+            'skip_material_collection',
+        )
+        for tab_id in ('background_prompts', 'background_images'):
+            self.assertEqual(
+                tabs[tab_id]['hide_when_material'],
+                'skip_background_images',
+            )
+        self.assertEqual(tabs['style']['hide_when_material'], 'skip_style_choices')
+        completed_edit_routing = workflow['runtime']['completed_edit_routing']
+        for routing_stage in (
+            'analyze_requirements',
+            'collect_materials',
+            'plan_background_prompts',
+            'generate_backgrounds',
+            'build_outline',
+            'plan_page_prompts',
+            'generate_ppt',
+        ):
+            self.assertRegex(completed_edit_routing, rf'to\s+{routing_stage}')
+        self.assertIn(
+            'conditional stage\nwas skipped on the first run',
+            completed_edit_routing,
+        )
+        self.assertIn(
+            'rewind to analyze_requirements',
+            completed_edit_routing,
+        )
         self.assertIn(
             'rewind to plan_background_prompts',
-            workflow['runtime']['completed_edit_routing'],
+            completed_edit_routing,
         )
         self.assertIn(
             "ppt_publish_outline(deck_dir, pages=[N], insert_before=N)",
@@ -209,9 +278,13 @@ class StyleRenderingRecipeTest(unittest.TestCase):
             'tool': 'check_ppt_workflow_capabilities',
             'arguments': {
                 'capability_requirements': 'ppt_capability_requirements',
+                'style_flow': 'style_flow',
+                'generate_background_images': 'generate_background_images',
             },
         }])
         self.assertFalse(slots['ppt_capability_requirements']['exposed'])
+        self.assertFalse(slots['style_flow']['exposed'])
+        self.assertFalse(slots['generate_background_images']['exposed'])
 
 
 class OutlineReferenceImageRepairTest(unittest.TestCase):
@@ -309,6 +382,218 @@ class OutlineReferenceImageRepairTest(unittest.TestCase):
         self.assertEqual(pages[1]["use_image"], {"reference_image_index": 4})
         self.assertEqual(pages[2]["use_image"], {"reference_image_index": 7})
         self.assertIsNone(pages[3]["use_image"])
+
+
+class StyleStructuredSubmissionTest(unittest.TestCase):
+    @staticmethod
+    def _valid_style(style_id: int = 1) -> dict:
+        return {
+            "design_style": {"id": style_id, "name_zh": "科技感", "name_en": "Tech"},
+            "color_tone": {"id": 1, "name_zh": "深色", "name_en": "Dark"},
+            "primary_color": {
+                "id": 3, "name_zh": "宝石蓝", "name_en": "Blue", "hex": "#1976D2",
+            },
+            "palette": {
+                "primary": "#1976D2", "accent": "#00AEEF", "neutral": "#111827",
+            },
+            "typography": {
+                "heading_font": "Inter, Arial", "body_font": "Inter, Arial",
+                "base_size_px": 16,
+            },
+        }
+
+    @classmethod
+    def _samples(cls) -> dict:
+        return {
+            "samples": [
+                {
+                    "label": f"Style {index}",
+                    "rationale": "Distinct visual direction",
+                    "style_spec": cls._valid_style(index),
+                }
+                for index in (1, 2, 3)
+            ],
+        }
+
+    @staticmethod
+    def _deck(root: Path, index: int, mode: str) -> Path:
+        deck = root / f"{mode}-{index}"
+        deck.mkdir(parents=True)
+        (deck / "task_pack.json").write_text(json.dumps({
+            "deck_id": deck.name,
+            "ppt_mode": mode,
+            "params": {"page_count": 1, "style_flow": (
+                "preview_choice" if mode == "standard" else "auto"
+            )},
+        }), encoding="utf-8")
+        (deck / "info_pack.json").write_text(json.dumps({
+            "user_query": "一页科技汇报", "query_normalized": {"topic": "AI"},
+        }), encoding="utf-8")
+        return deck
+
+    def test_ten_auto_style_runs_recover_on_third_structured_attempt(self) -> None:
+        calls: list[dict] = []
+
+        def fake_llm(_system: str, user: str, **kwargs) -> str:
+            calls.append({"user": user, **kwargs})
+            attempt = ((len(calls) - 1) % 3) + 1
+            if attempt == 1:
+                return json.dumps({})
+            if attempt == 2:
+                return json.dumps({**self._valid_style(), "palette": {"primary": "blue"}})
+            return json.dumps(self._valid_style())
+
+        with tempfile.TemporaryDirectory() as temp, patch.object(
+            run_stage, "llm", side_effect=fake_llm,
+        ), patch.object(run_stage, "_load_style_dimensions", return_value=None), patch.object(
+            run_stage, "_ok", return_value=0,
+        ):
+            root = Path(temp)
+            results = [
+                run_stage.cmd_style(self._deck(root, index, "fast"))
+                for index in range(10)
+            ]
+
+        self.assertEqual(results, [0] * 10)
+        self.assertEqual(len(calls), 30)
+        self.assertTrue(all(
+            call["output_tool"]["function"]["name"] == "submit_style_spec"
+            for call in calls
+        ))
+
+    def test_ten_preview_runs_recover_on_third_structured_attempt(self) -> None:
+        calls: list[dict] = []
+
+        def fake_llm(_system: str, user: str, **kwargs) -> str:
+            calls.append({"user": user, **kwargs})
+            attempt = ((len(calls) - 1) % 3) + 1
+            if attempt == 1:
+                return json.dumps({"samples": []})
+            if attempt == 2:
+                return json.dumps({"samples": self._samples()["samples"][:2]})
+            return json.dumps(self._samples())
+
+        def fake_preview(deck: Path, *_args) -> dict:
+            out = deck / "style_samples"
+            out.mkdir(exist_ok=True)
+            html = out / "style_samples.html"
+            index = out / "index.html"
+            html.write_text("<html></html>", encoding="utf-8")
+            index.write_text("<html></html>", encoding="utf-8")
+            return {"url": html.as_uri(), "html": html, "index": index, "artifacts": []}
+
+        with tempfile.TemporaryDirectory() as temp, patch.object(
+            run_stage, "llm", side_effect=fake_llm,
+        ), patch.object(run_stage, "_load_style_dimensions", return_value=None), patch.object(
+            run_stage, "_render_style_samples_html", side_effect=fake_preview,
+        ), patch.object(run_stage, "_ok", return_value=0):
+            root = Path(temp)
+            results = [
+                run_stage.cmd_style_samples(self._deck(root, index, "standard"))
+                for index in range(10)
+            ]
+
+        self.assertEqual(results, [0] * 10)
+        self.assertEqual(len(calls), 30)
+        self.assertTrue(all(
+            call["output_tool"]["function"]["name"] == "submit_style_samples"
+            for call in calls
+        ))
+
+
+class OutlineStructuredSubmissionTest(unittest.TestCase):
+    @staticmethod
+    def _valid_outline(page_no: int = 1) -> dict:
+        return {
+            "pages": [{
+                "page_no": page_no,
+                "page_kind": "cover",
+                "title": "结构化大纲",
+                "subtitle": "可靠提交",
+                "bullets": [{"head": "目标", "detail": "验证大纲提交协议"}],
+                "narrative": "模型通过虚拟工具提交完整的大纲数据。",
+                "data_points": [],
+                "visual_hints": "居中标题配合简洁的信息卡片",
+                "use_table": None,
+                "use_image": None,
+            }],
+        }
+
+    @staticmethod
+    def _deck(root: Path, index: int) -> Path:
+        deck = root / f"deck-{index}"
+        deck.mkdir(parents=True)
+        fixtures = {
+            "task_pack.json": {
+                "params": {"language": "zh-Hans", "page_count": 1},
+            },
+            "info_pack.json": {
+                "user_query": "生成一页结构化输出测试幻灯片",
+                "user_assets": {},
+            },
+            "style_spec.json": {
+                "palette": {"primary": "#2563EB"},
+                "typography": {"font_family": "Noto Sans SC"},
+            },
+        }
+        for name, value in fixtures.items():
+            (deck / name).write_text(
+                json.dumps(value, ensure_ascii=False), encoding="utf-8",
+            )
+        return deck
+
+    def test_ten_runs_all_succeed_with_at_most_three_attempts(self) -> None:
+        calls: list[dict] = []
+
+        def fake_llm(_system: str, user: str, **kwargs) -> str:
+            calls.append({"user": user, **kwargs})
+            attempt = ((len(calls) - 1) % 3) + 1
+            if attempt == 1:
+                return json.dumps({"pages": []})
+            if attempt == 2:
+                return json.dumps(self._valid_outline(page_no=2), ensure_ascii=False)
+            return json.dumps(self._valid_outline(), ensure_ascii=False)
+
+        with tempfile.TemporaryDirectory() as temp, patch.object(
+            run_stage, "llm", side_effect=fake_llm,
+        ), patch.object(run_stage, "_ok", return_value=0):
+            root = Path(temp)
+            results = [
+                run_stage.cmd_outline(self._deck(root, index))
+                for index in range(10)
+            ]
+
+            self.assertEqual(results, [0] * 10)
+            self.assertEqual(len(calls), 30)
+            for index, call in enumerate(calls):
+                self.assertEqual(call["retries"], 0)
+                self.assertEqual(
+                    call["output_tool"]["function"]["name"],
+                    "submit_deck_outline",
+                )
+                if index % 3:
+                    self.assertIn("rejected by local validation", call["user"])
+            for index in range(10):
+                outline = json.loads(
+                    (root / f"deck-{index}" / "outline.json").read_text(encoding="utf-8")
+                )
+                self.assertEqual(outline["pages"][0]["page_no"], 1)
+
+    def test_three_invalid_submissions_fail_without_writing_outline(self) -> None:
+        with tempfile.TemporaryDirectory() as temp, patch.object(
+            run_stage, "llm", return_value=json.dumps({"pages": []}),
+        ), patch.object(run_stage, "_fail", return_value=1) as fail:
+            deck = self._deck(Path(temp), 0)
+
+            self.assertEqual(run_stage.cmd_outline(deck), 1)
+
+            self.assertFalse((deck / "outline.json").exists())
+            self.assertEqual(fail.call_args.kwargs["attempts"], 3)
+            self.assertEqual(
+                fail.call_args.kwargs["code"],
+                "MODEL_STRUCTURED_OUTPUT_UNSUPPORTED",
+            )
+            self.assertIn("当前模型连续 3 次", fail.call_args.args[0])
 
 
 class PagePromptModeTest(unittest.TestCase):
