@@ -89,6 +89,19 @@ def make_deck(root: Path) -> tuple[Path, Path]:
 
 
 class DeckInitializationTests(unittest.TestCase):
+    def setUp(self):
+        workspace = tempfile.TemporaryDirectory()
+        self.addCleanup(workspace.cleanup)
+        self.root = Path(workspace.name)
+        root_patch = mock.patch.object(TOOLS, '_conversation_root', return_value=self.root)
+        root_patch.start()
+        self.addCleanup(root_patch.stop)
+        for name in ('deck-without-images', 'deck-with-backgrounds'):
+            deck = self.root / name
+            deck.mkdir()
+            for filename in ('task_pack.json', 'info_pack.json', 'style_spec.json', 'outline.json'):
+                (deck / filename).write_text('{}', encoding='utf-8')
+
     def test_deck_outline_markdown_has_one_description_per_page(self):
         markdown = TOOLS._format_deck_outline_markdown({
             'title': '季度经营复盘',
@@ -182,13 +195,13 @@ class DeckInitializationTests(unittest.TestCase):
             return {'status': 'ok', 'pages': 4}
 
         with mock.patch.object(TOOLS, 'ppt_init_deck', return_value={
-            'deck_dir': '/tmp/deck-without-images',
+            'deck_dir': str(self.root / 'deck-without-images'),
             'deck_id': 'deck-without-images',
             'page_count': 4,
             'ppt_mode': 'fast',
             'material_images_attached': 0,
         }), mock.patch.object(TOOLS, 'ppt_attach_material_images', return_value={
-            'deck_dir': '/tmp/deck-without-images',
+            'deck_dir': str(self.root / 'deck-without-images'),
             'attached': 0,
             'reference_image_count': 0,
             'reference_images': [],
@@ -205,7 +218,7 @@ class DeckInitializationTests(unittest.TestCase):
             )
 
         attach.assert_not_called()
-        self.assertEqual(stages, ['preflight', 'style', 'outline'])
+        self.assertEqual(stages, ['preflight', 'style-outline'])
         self.assertEqual(result['material_images_attached'], 0)
         self.assertTrue(result['deck_outline_published'])
         self.assertEqual(result['background_images_count'], 0)
@@ -213,7 +226,7 @@ class DeckInitializationTests(unittest.TestCase):
 
     def test_build_outline_defers_enabled_background_generation_to_human_steps(self):
         with mock.patch.object(TOOLS, 'ppt_init_deck', return_value={
-            'deck_dir': '/tmp/deck-with-backgrounds',
+            'deck_dir': str(self.root / 'deck-with-backgrounds'),
             'deck_id': 'deck-with-backgrounds',
             'page_count': 3,
             'ppt_mode': 'fast',
@@ -249,6 +262,8 @@ class DeckInitializationTests(unittest.TestCase):
                 'ppt_mode': 'fast',
                 'params': {'page_count': 3},
             }), encoding='utf-8')
+            for filename in ('info_pack.json', 'style_spec.json', 'outline.json'):
+                (deck / filename).write_text('{}', encoding='utf-8')
             (deck / 'background_prompts.json').write_text('{}', encoding='utf-8')
             (deck / 'background_images.json').write_text('{}', encoding='utf-8')
 
@@ -1198,6 +1213,68 @@ class PartialEditTests(unittest.TestCase):
             self.assertEqual(result['retry_count'], 1)
             self.assertEqual(result['retries'][0]['page'], 1)
             self.assertTrue(result['retries'][0]['ok'])
+
+    def test_batch_retry_across_tool_calls_reuses_successful_pages(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            deck, _page = make_deck(Path(tmp))
+            (deck / 'outline.json').write_text(json.dumps({
+                'pages': [
+                    {'page_no': 1, 'title': 'Page one'},
+                    {'page_no': 2, 'title': 'Page two'},
+                ],
+            }), encoding='utf-8')
+
+            attempts = {1: 0, 2: 0}
+
+            def capture(_command, current_deck, page_no):
+                attempts[page_no] += 1
+                if page_no == 1 and attempts[page_no] == 1:
+                    return 1, {'status': 'failed', 'error': 'HTTP 504'}
+                (current_deck / 'pages' / f'page_{page_no:03d}.html').write_text(
+                    PAGE_HTML.replace('Old title', f'Page {page_no}'),
+                    encoding='utf-8',
+                )
+                return 0, {'status': 'ok', 'page_no': page_no}
+
+            published = []
+
+            def publish(_deck, page_no, **_kwargs):
+                published.append(page_no)
+                return {
+                    'page': page_no,
+                    'ok': True,
+                    'title_hint': f'Page {page_no}',
+                    'bytes': 100,
+                }
+
+            fake_model_client = mock.Mock()
+            fake_runtime = mock.Mock()
+            fake_runtime._capture_cmd.side_effect = capture
+            fake_runtime.cmd_page_html = mock.Mock()
+            with mock.patch.object(
+                TOOLS, '_load_sn_ppt_modules',
+                return_value=(fake_model_client, fake_runtime),
+            ), mock.patch.object(
+                TOOLS, '_load_slide_outline_briefs', return_value={},
+            ), mock.patch.object(
+                TOOLS, '_ui_slot_order_list', return_value=[],
+            ), mock.patch.object(
+                TOOLS, '_publish_one_page', side_effect=publish,
+            ), mock.patch.object(
+                TOOLS.time, 'sleep', return_value=None,
+            ), mock.patch.dict(
+                TOOLS.os.environ, {'LAZYMIND_PPT_PAGE_RETRIES': '0'}, clear=False,
+            ):
+                first = TOOLS._batch_page_html_publish_progressive(deck, concurrency=1)
+                self.assertEqual(first['failed'], 1)
+                result = TOOLS._batch_page_html_publish_progressive(deck, concurrency=1)
+
+            self.assertEqual(result['status'], 'ok')
+            self.assertEqual(result['published_count'], 2)
+            self.assertEqual(published, [1, 2])
+            self.assertEqual(attempts, {1: 2, 2: 1})
+            self.assertEqual(result['retry_count'], 0)
+            self.assertFalse(list(deck.glob('.page_retry_*.json')))
 
     def test_batch_page_html_does_not_retry_timed_out_page(self):
         with tempfile.TemporaryDirectory() as tmp:

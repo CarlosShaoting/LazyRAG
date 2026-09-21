@@ -917,6 +917,10 @@ def _registration_key_source(tool: Any) -> Callable[[], Any] | None:
 
 
 def tool_is_active(cfg: ToolConfig) -> bool:
+    if cfg.name == 'kb':
+        context = lazyllm.globals.get('agentic_config') or {}
+        if not (context.get('filters') or {}).get('kb_id'):
+            return False
     if cfg.model_role and not is_model_role_available(cfg.model_role):
         return False
     key_source = _registration_key_source(cfg.tool)

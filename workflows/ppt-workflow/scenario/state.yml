@@ -394,7 +394,7 @@ steps:
       from requirement_analysis into style_hint. The PPT runtime selects one
       deck-wide style and applies that same contract to every page.
 
-      This call reuses the prepared deck and runs preflight → style → outline,
+      This call reuses the prepared deck and its valid style, then runs preflight → outline,
       then writes one deck_outline Markdown artifact for the Outline tab.
       This step never generates AI backgrounds; the dedicated stages before it
       already published prompts and images. When AI backgrounds were
@@ -402,7 +402,12 @@ steps:
       ppt_build_outline without deck_dir so it initializes the deck itself.
 
       This is an atomic step. If ppt_build_outline fails, report that exact tool
-      error and stop so the Workflow step fails and can be retried. Do NOT recover
+      error and stop so only this Workflow step fails and can be retried.
+      On retry call ppt_build_outline with the same arguments and the returned
+      deck_dir when available. It resumes the failed stage, preserving completed
+      style/outline work and all existing materials/backgrounds. Never restart
+      analyze_requirements, collect_materials, or background generation for an
+      outline failure; never call ppt_init_deck to recover. Do NOT recover
       by calling save_artifacts.
       Do NOT call batch-page-html or export here — HTML is generate_ppt.
       After success, stop.
@@ -511,7 +516,8 @@ steps:
 
       On the first full run, call ppt_init_deck once using the analyzed request,
       exact positive page_count N, audience/scene/style, and
-      generate_background_images=true. Then call
+      generate_background_images=true and ppt_mode=fast. Editable PPT export
+      does not require standard mode; do not select standard. Then call
       ppt_publish_background_prompts with that deck_dir and exactly N objects:
         [{"page_no":1,"prompt":"..."}, ..., {"page_no":N,"prompt":"..."}]
 
@@ -784,7 +790,7 @@ steps:
       Call ONE tool:
         ppt_generate_pages()
           — omit deck_dir to auto-find; or pass deck_dir from earlier results.
-          — concurrency=2 by default.
+          — omit concurrency to use the default 3 parallel page workers; do not force 2.
           — Internally: asset-plan → batch-page-html
             (uses each slide_outline brief, including Outline-tab edits;
              auto-publishes preview_html + notes).

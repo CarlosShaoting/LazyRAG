@@ -1,3 +1,4 @@
+import { resolveSlideAssets } from './slideAssets';
 import { ArtifactSourceButton } from '../ArtifactSourceButton';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -189,9 +190,18 @@ export function SlotHtmlSlide({
   const actionSlotId = slotId || slot.slot_id || slot.slot;
   const editable = Boolean(sessionId && actionSlotId && !readOnly && !compact && page > 0);
   const displayHtml = editPreview?.candidate_html || html;
+  const [resolvedDisplayHtml, setResolvedDisplayHtml] = useState('');
+  useEffect(() => {
+    let cancelled = false;
+    setResolvedDisplayHtml('');
+    resolveSlideAssets(displayHtml || '').then(value => {
+      if (!cancelled) setResolvedDisplayHtml(value);
+    }).catch(() => { if (!cancelled) setError('Failed to load slide images'); });
+    return () => { cancelled = true; };
+  }, [displayHtml]);
   const srcDoc = useMemo(
-    () => (displayHtml ? htmlForStaticPreview(displayHtml) : ''),
-    [displayHtml],
+    () => (resolvedDisplayHtml ? htmlForStaticPreview(resolvedDisplayHtml) : ''),
+    [resolvedDisplayHtml],
   );
 
   const clearSelectedNode = useCallback(() => {
