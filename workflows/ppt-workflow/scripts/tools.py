@@ -101,6 +101,7 @@ _LOG = logging.getLogger(__name__)
 _PPT_BACKGROUND_CAPABILITY_RE = re.compile(
     r'^AI_BACKGROUND_IMAGES:\s*(enabled|disabled)$',
 )
+_PPT_EXECUTION_STATE_SCHEMA = 1
 
 
 def _normalize_style_flow(value: Any) -> str:
@@ -1724,12 +1725,27 @@ def _publish_pages_from_disk(
         except Exception as exc:
             item = {'page': page_no, 'ok': False, 'error': str(exc)}
         if item.get('ok'):
+            _record_page_execution(
+                deck,
+                page_no,
+                generation_status='succeeded',
+                publication_status='succeeded',
+            )
             published.append({
                 'page': item['page'],
                 'title_hint': item.get('title_hint'),
                 'bytes': item.get('bytes'),
             })
         else:
+            _record_page_execution(
+                deck,
+                page_no,
+                generation_status=(
+                    'succeeded' if _page_html_path(deck, page_no).is_file() else 'failed'
+                ),
+                publication_status='failed',
+                error=item.get('error') or 'publish failed',
+            )
             failed.append({'page': page_no, 'error': item.get('error') or 'publish failed'})
     return {
         'deck_dir': str(deck.resolve()),
@@ -3407,6 +3423,92 @@ def _outline_page_numbers(
     return out
 
 
+def _execution_state_path(deck: Path) -> Path:
+    return deck / 'execution_state.json'
+
+
+def _load_execution_state(deck: Path) -> dict[str, Any]:
+    try:
+        state = json.loads(_execution_state_path(deck).read_text(encoding='utf-8'))
+    except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError):
+        state = {}
+    if not isinstance(state, dict) or state.get('schema_version') != _PPT_EXECUTION_STATE_SCHEMA:
+        state = {}
+    pages = state.get('pages')
+    if not isinstance(pages, dict):
+        pages = {}
+    return {'schema_version': _PPT_EXECUTION_STATE_SCHEMA, 'pages': pages}
+
+
+def _save_execution_state(deck: Path, state: dict[str, Any]) -> None:
+    state['schema_version'] = _PPT_EXECUTION_STATE_SCHEMA
+    _write_json_atomic(_execution_state_path(deck), state)
+
+
+def _record_page_execution(
+    deck: Path,
+    page_no: int,
+    *,
+    generation_status: str,
+    publication_status: str,
+    error: str | None = None,
+) -> None:
+    """Persist generation and publication as two separate per-page receipts."""
+    state = _load_execution_state(deck)
+    entry = {
+        **(state['pages'].get(str(page_no), {}) or {}),
+        'generation_status': generation_status,
+        'publication_status': publication_status,
+        'updated_at': datetime.now(timezone.utc).isoformat(),
+    }
+    page_path = _page_html_path(deck, page_no)
+    if page_path.is_file():
+        entry['html_sha256'] = _html_sha256(page_path.read_text(encoding='utf-8'))
+    else:
+        entry.pop('html_sha256', None)
+    if error:
+        entry['error'] = error
+    else:
+        entry.pop('error', None)
+    state['pages'][str(page_no)] = entry
+    _save_execution_state(deck, state)
+
+
+def _ppt_completion_receipt_issues(
+    deck: Path,
+    expected_pages: list[int],
+) -> tuple[list[str], dict[str, Any]]:
+    """Confirm only planned pages using durable receipts, not file/UI counts."""
+    issues: list[str] = []
+    confirmed_pages: list[int] = []
+    state = _load_execution_state(deck)
+    if not expected_pages:
+        issues.append('outline has no pages')
+    for page_no in expected_pages:
+        page_path = _page_html_path(deck, page_no)
+        entry = state['pages'].get(str(page_no), {}) or {}
+        before = len(issues)
+        if not page_path.is_file():
+            issues.append(f'page {page_no} generated HTML is missing')
+        if entry.get('generation_status') != 'succeeded':
+            issues.append(f'page {page_no} generation checkpoint is not succeeded')
+        if entry.get('publication_status') != 'succeeded':
+            issues.append(f'page {page_no} publication checkpoint is not succeeded')
+        if page_path.is_file():
+            current_sha = _html_sha256(page_path.read_text(encoding='utf-8'))
+            if entry.get('html_sha256') != current_sha:
+                issues.append(f'page {page_no} checkpoint does not match current HTML')
+        if len(issues) == before:
+            confirmed_pages.append(page_no)
+    return issues, {
+        'planned_pages': expected_pages,
+        'confirmed_pages': confirmed_pages,
+        'unrelated_disk_pages': [
+            page for page in _iter_page_numbers(deck) if page not in expected_pages
+        ],
+    }
+
+
 def _batch_page_html_publish_progressive(
     deck: Path,
     *,
@@ -3464,6 +3566,12 @@ def _batch_page_html_publish_progressive(
                 )
                 if pub.get('ok'):
                     results[pno].pop('publish_error', None)
+                    _record_page_execution(
+                        deck,
+                        pno,
+                        generation_status='succeeded',
+                        publication_status='succeeded',
+                    )
                     published.append({
                         'page': pno,
                         'title_hint': pub.get('title_hint'),
@@ -3472,9 +3580,23 @@ def _batch_page_html_publish_progressive(
                     next_publish_i += 1
                 else:
                     results[pno]['publish_error'] = pub.get('error') or 'publish failed'
+                    _record_page_execution(
+                        deck,
+                        pno,
+                        generation_status='succeeded',
+                        publication_status='failed',
+                        error=results[pno]['publish_error'],
+                    )
                     return
             except Exception as exc:
                 results[pno]['publish_error'] = str(exc)
+                _record_page_execution(
+                    deck,
+                    pno,
+                    generation_status='succeeded',
+                    publication_status='failed',
+                    error=str(exc),
+                )
                 return
 
     try:
@@ -3502,6 +3624,13 @@ def _batch_page_html_publish_progressive(
                     'brief_source': 'slide_outline' if pno in briefs else 'outline.json',
                 }
                 ready_ok[pno] = ok
+                _record_page_execution(
+                    deck,
+                    pno,
+                    generation_status='succeeded' if ok else 'failed',
+                    publication_status='pending',
+                    error=None if ok else payload.get('error') or 'generation failed',
+                )
                 _flush_ready()
 
         # A page generation request can fail transiently (most commonly an
@@ -3559,6 +3688,13 @@ def _batch_page_html_publish_progressive(
                     'retry': retry_no,
                 }
                 ready_ok[pno] = ok
+                _record_page_execution(
+                    deck,
+                    pno,
+                    generation_status='succeeded' if ok else 'failed',
+                    publication_status='pending',
+                    error=None if ok else payload.get('error') or 'generation failed',
+                )
                 _flush_ready()
 
         # Retry a transient artifact-save failure once more without another LLM
@@ -3782,6 +3918,13 @@ def _run_stage_inprocess(
                         slot_orders=slot_orders,
                         insert_before=insert_before or None,
                     )
+                    _record_page_execution(
+                        deck,
+                        page,
+                        generation_status='succeeded',
+                        publication_status='succeeded' if pub.get('ok') else 'failed',
+                        error=None if pub.get('ok') else pub.get('error') or 'publish failed',
+                    )
                     payload['published'] = {
                         'page': page,
                         'ok': bool(pub.get('ok')),
@@ -3800,6 +3943,13 @@ def _run_stage_inprocess(
                             payload['recovered_published'] = recovered
                 except Exception as exc:
                     payload['publish_error'] = str(exc)
+                    _record_page_execution(
+                        deck,
+                        page,
+                        generation_status='succeeded',
+                        publication_status='failed',
+                        error=str(exc),
+                    )
                 if isinstance(payload, dict):
                     payload['brief_source'] = 'slide_outline' if brief else 'outline.json'
         elif stage_name == 'batch-page-html':
@@ -6370,6 +6520,26 @@ def ppt_generate_pages(
                 'ok': True,
                 'published_count': published_count,
             })
+
+    completion_issues, completion = _ppt_completion_receipt_issues(
+        deck,
+        _outline_page_numbers(deck),
+    )
+    stages.append({
+        'step': 'completion-receipt',
+        'ok': not completion_issues,
+        **completion,
+    })
+    if completion_issues:
+        return _tool_error(
+            'ppt_generate_pages',
+            'generation incomplete',
+            detail=json.dumps({
+                'issues': completion_issues,
+                **completion,
+            }, ensure_ascii=False),
+            meta={'deck_dir': deck_dir_s},
+        )
 
     status = html_payload.get('status', 'ok')
     return _tool_success('ppt_generate_pages', {

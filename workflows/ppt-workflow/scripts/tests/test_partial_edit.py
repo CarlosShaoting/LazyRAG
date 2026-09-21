@@ -1107,6 +1107,46 @@ class PartialEditTests(unittest.TestCase):
                 [0, 0, 1, 1],
             )
 
+    def test_completion_receipt_ignores_unrelated_disk_pages(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            deck, page = make_deck(Path(tmp))
+            extra = deck / 'pages' / 'page_002.html'
+            extra.write_text(PAGE_HTML.replace('Old title', 'Extra'), encoding='utf-8')
+            TOOLS._record_page_execution(
+                deck,
+                1,
+                generation_status='succeeded',
+                publication_status='succeeded',
+            )
+
+            issues, detail = TOOLS._ppt_completion_receipt_issues(deck, [1])
+
+            self.assertEqual(issues, [])
+            self.assertEqual(detail['confirmed_pages'], [1])
+            self.assertEqual(detail['unrelated_disk_pages'], [2])
+            self.assertEqual(
+                json.loads((deck / 'execution_state.json').read_text())['pages']['1'][
+                    'html_sha256'
+                ],
+                TOOLS._html_sha256(page.read_text()),
+            )
+
+    def test_completion_receipt_rejects_generation_without_publication(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            deck, _page = make_deck(Path(tmp))
+            TOOLS._record_page_execution(
+                deck,
+                1,
+                generation_status='succeeded',
+                publication_status='failed',
+                error='preview_notes publish failed',
+            )
+
+            issues, detail = TOOLS._ppt_completion_receipt_issues(deck, [1])
+
+            self.assertIn('page 1 publication checkpoint is not succeeded', issues)
+            self.assertEqual(detail['confirmed_pages'], [])
+
     def test_page_html_retry_recovers_deferred_trailing_pages(self):
         with tempfile.TemporaryDirectory() as tmp:
             deck, _page = make_deck(Path(tmp))
@@ -1198,6 +1238,13 @@ class PartialEditTests(unittest.TestCase):
             self.assertEqual(result['retry_count'], 1)
             self.assertEqual(result['retries'][0]['page'], 1)
             self.assertTrue(result['retries'][0]['ok'])
+            receipts = json.loads(
+                (deck / 'execution_state.json').read_text(encoding='utf-8'),
+            )['pages']
+            self.assertEqual(receipts['1']['generation_status'], 'succeeded')
+            self.assertEqual(receipts['1']['publication_status'], 'succeeded')
+            self.assertEqual(receipts['2']['generation_status'], 'succeeded')
+            self.assertEqual(receipts['2']['publication_status'], 'succeeded')
 
     def test_batch_page_html_does_not_retry_timed_out_page(self):
         with tempfile.TemporaryDirectory() as tmp:
