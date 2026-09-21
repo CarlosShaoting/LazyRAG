@@ -1,6 +1,6 @@
 You plan a PPT outline for the standard (HTML) mode.
 
-Input: style_spec.json, info_pack.query_normalized, info_pack.document_digest (may be null), info_pack.user_assets.reference_images (list of standalone user-uploaded / collect_materials figure paths; may be empty), task_pack.params (incl. page_count).
+Input: optional style_spec.json (may be empty; global visual design is deferred to HTML generation), info_pack.query_normalized, info_pack.document_digest (may be null), info_pack.user_assets.reference_images (list of standalone user-uploaded / collect_materials figure paths; may be empty), task_pack.params (incl. page_count).
 
 **Goal**: produce a concise, complete outline that follows the user's requested content density and page-by-page structure. Every field becomes visible downstream; do not repeat the same message as bullets, narrative, and data points. Whitespace and large imagery are intentional design choices, not missing content. Explicit requests such as "少字", "大图", "留白", "minimal", or "magazine style" take priority over default detail guidance.
 
@@ -39,13 +39,12 @@ All reader-visible text fields (`title`, `subtitle`, every `bullets[].head`/`det
 
 ## Rules
 
-- `style_spec.json` is the single authoritative visual contract for the entire
-  deck. Every page must use the same design style, color tone, primary color,
-  palette, and typography.
-- `visual_hints` describes page composition, hierarchy, imagery, and mood only.
-  Do not introduce a new page-specific palette, named visual theme, or primary
-  color, and do not override / reinterpret `style_spec.json` based on the page
-  topic. The page HTML stage receives `style_spec.json` separately.
+- Plan content, page roles, and source-image bindings only. Global font, palette,
+  layout implementation, masks, HTML, and export rules are resolved during HTML
+  generation. Do not generate a style specification or rendering recipe here.
+- `visual_hints` is one short composition/imagery sentence. Preserve explicit user
+  requests (e.g. large images, whitespace, magazine feel); do not invent a per-page
+  palette or theme. If an existing style_spec is supplied, respect it.
 - `pages` length MUST equal `page_count` exactly.
 - **Page structure**: follow any explicit per-page roles from the user. By default use a cover first, content/data pages in the middle, and a closing only when it fits the requested content. A final action checklist is a content page, not a mandatory thank-you slide. Do not spend a short deck on section dividers. For decks with at least 5 pages, add section headers only where useful; they still count toward page_count.
 - `title` <= 24 chars. Always required.

@@ -167,12 +167,12 @@ def test_outline_retry_reuses_deck_style_and_completed_outline(monkeypatch, tmp_
         calls.append(stage)
         deck = Path(deck_dir)
         deck_paths.append(deck)
-        if stage in ('style', 'style-outline'):
+        if stage == 'style':
             (deck / 'style_spec.json').write_text(json.dumps({
                 'design_style': {'id': 1}, 'palette': {'primary': '#fff'},
                 'typography': {'heading_font': 'Arial'},
             }))
-        if stage in ('outline', 'style-outline'):
+        if stage in ('outline', 'content-outline'):
             if fail_outline:
                 fail_outline = False
                 return {'ok': False, 'value': 'upstream timeout'}
@@ -194,9 +194,11 @@ def test_outline_retry_reuses_deck_style_and_completed_outline(monkeypatch, tmp_
     (deck / 'images' / 'preserved.png').write_bytes(b'original image')
     with pytest.raises(Exception, match='publish deck outline failed'):
         tools.ppt_build_outline('Retry this presentation', page_count=1)
+    # Creating the visual contract later must not invalidate the content checkpoint.
+    (deck / 'style_spec.json').write_text('{"palette": {"primary": "#fff"}}')
     result = tools.ppt_build_outline('Retry this presentation', page_count=1)
     assert result['deck_dir'] == str(deck)
-    assert calls == ['preflight', 'style-outline', 'preflight', 'outline', 'preflight']
+    assert calls == ['preflight', 'content-outline', 'preflight', 'content-outline', 'preflight']
     assert len(set(deck_paths)) == 1
     assert (deck / 'images' / 'preserved.png').read_bytes() == b'original image'
     assert not list((tmp_path / '.outline_builds').glob('*.json'))
@@ -220,8 +222,7 @@ def test_legacy_standard_deck_recovers_without_recreating_assets(monkeypatch, tm
     def stage(deck_dir, stage):
         calls.append(stage)
         assert Path(deck_dir) == deck
-        if stage == 'style-outline':
-            (deck / 'style_spec.json').write_text('{"design_style":{"id":3},"palette":{"primary":"#fff"},"typography":{"heading_font":"Arial"}}')
+        if stage == 'content-outline':
             (deck / 'outline.json').write_text('{"pages":[{"page_no":1}]}')
         return {'status': 'ok'}
 
@@ -230,7 +231,7 @@ def test_legacy_standard_deck_recovers_without_recreating_assets(monkeypatch, tm
     result = tools.ppt_build_outline('A short presentation', page_count=1, deck_dir=str(deck))
     assert result['ppt_mode'] == 'fast'
     assert result['deck_dir'] == str(deck)
-    assert calls == ['preflight', 'style-outline']
+    assert calls == ['preflight', 'content-outline']
     assert image.read_bytes() == b'preserved background'
 
 
@@ -259,12 +260,11 @@ def test_workflow_deck_binding_survives_reworded_retry_and_other_workflows(monke
         nonlocal failed
         assert Path(deck_dir) == deck
         calls.append(stage)
-        if stage == 'style-outline':
-            (deck / 'style_spec.json').write_text('{"design_style":{"id":3},"palette":{"primary":"#fff"},"typography":{"heading_font":"Arial"}}')
+        if stage == 'content-outline':
             if not failed:
                 failed = True
                 return {'ok': False, 'value': 'temporary timeout'}
-        if stage == 'outline':
+        if stage == 'content-outline':
             (deck / 'outline.json').write_text('{"pages":[{"page_no":1}]}')
         return {'status': 'ok'}
 
@@ -274,6 +274,6 @@ def test_workflow_deck_binding_survives_reworded_retry_and_other_workflows(monke
         tools.ppt_build_outline('First wording', page_count=1)
     result = tools.ppt_build_outline('Completely different recovery wording', page_count=1, style_hint='green')
     assert Path(result['deck_dir']) == deck
-    assert calls == ['preflight', 'style-outline', 'preflight', 'outline']
+    assert calls == ['preflight', 'content-outline', 'preflight', 'content-outline']
     assert (deck / 'images' / 'background.png').read_bytes() == b'keep'
     assert len(list((tmp_path / 'ppt_decks').iterdir())) == 2

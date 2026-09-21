@@ -604,3 +604,58 @@ class OutputNormalizationTest(unittest.TestCase):
                 self.assertEqual(code, expected)
                 self.assertEqual(model.call_count, 2)
                 self.assertEqual((deck / 'pages/page_001.html').exists(), expected == 0)
+
+
+class DeferredStyleTest(unittest.TestCase):
+    def test_content_outline_needs_no_style_and_preserves_image_binding(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            deck = Path(tmp)
+            image = deck / 'photo.png'
+            image.write_bytes(b'image')
+            (deck / 'task_pack.json').write_text('{"params":{"page_count":1}}')
+            (deck / 'info_pack.json').write_text(json.dumps({
+                'user_query': '米白绿色，大图少字',
+                'user_assets': {'reference_images': [str(image)]},
+            }))
+            with patch.object(run_stage, 'llm', return_value='{"pages":[{"title":"周末"}]}') as model:
+                code, _ = run_stage._capture_cmd(run_stage.cmd_outline, deck, content_only=True)
+            self.assertEqual(code, 0)
+            self.assertFalse((deck / 'style_spec.json').exists())
+            system, query = model.call_args.args
+            self.assertNotIn('=== style_spec requirements ===', system)
+            self.assertEqual(json.loads(query)['style_spec'], {})
+            self.assertIn('米白绿色', query)
+            self.assertEqual(json.loads((deck / 'outline.json').read_text())['pages'][0]['use_image'],
+                             {'reference_image_index': 0})
+
+    def test_style_failure_preserves_outline_then_retry_reuses_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            deck = Path(tmp)
+            (deck / 'task_pack.json').write_text('{"ppt_mode":"fast"}')
+            (deck / 'info_pack.json').write_text('{}')
+            outline = b'{"pages":[{"title":"Keep me"}]}'
+            (deck / 'outline.json').write_bytes(outline)
+            style = {'design_style': {'id': 3}, 'palette': {'primary': '#fff'},
+                     'typography': {'heading_font': 'Arial'}}
+            with patch.object(run_stage, 'llm', side_effect=['{}', json.dumps(style)]) as model:
+                code, _ = run_stage._capture_cmd(run_stage.cmd_ensure_style, deck)
+                self.assertNotEqual(code, 0)
+                self.assertFalse((deck / 'style_spec.json').exists())
+                code, _ = run_stage._capture_cmd(run_stage.cmd_ensure_style, deck)
+                self.assertEqual(code, 0)
+                saved = (deck / 'style_spec.json').read_bytes()
+                code, payload = run_stage._capture_cmd(run_stage.cmd_ensure_style, deck)
+                self.assertEqual(code, 0)
+                self.assertTrue(payload['reused'])
+                self.assertEqual(model.call_count, 2)
+            self.assertEqual((deck / 'style_spec.json').read_bytes(), saved)
+            self.assertEqual((deck / 'outline.json').read_bytes(), outline)
+
+    def test_standard_deck_still_requires_manual_style_selection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            deck = Path(tmp)
+            (deck / 'task_pack.json').write_text('{"ppt_mode":"standard"}')
+            with patch.object(run_stage, 'llm') as model:
+                code, _ = run_stage._capture_cmd(run_stage.cmd_ensure_style, deck)
+            self.assertNotEqual(code, 0)
+            model.assert_not_called()

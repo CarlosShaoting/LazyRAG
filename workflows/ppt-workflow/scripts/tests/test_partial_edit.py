@@ -218,7 +218,7 @@ class DeckInitializationTests(unittest.TestCase):
             )
 
         attach.assert_not_called()
-        self.assertEqual(stages, ['preflight', 'style-outline'])
+        self.assertEqual(stages, ['preflight', 'content-outline'])
         self.assertEqual(result['material_images_attached'], 0)
         self.assertTrue(result['deck_outline_published'])
         self.assertEqual(result['background_images_count'], 0)
@@ -546,7 +546,7 @@ class PartialEditTests(unittest.TestCase):
         }, ensure_ascii=False)
         with mock.patch.object(TOOLS, '_agent_llm_call', return_value=model_output) as llm:
             ops, old_text, new_text = TOOLS._selection_edit_ops(
-                '下面增加第四条', selection, TOOLS._HtmlTree(MISSION_LIST_HTML),
+                '后面加一条', selection, TOOLS._HtmlTree(MISSION_LIST_HTML),
             )
 
         self.assertEqual(ops, [{
@@ -576,6 +576,58 @@ class PartialEditTests(unittest.TestCase):
         self.assertEqual(len(applied), 1)
         self.assertTrue(notes)
         self.assertEqual(removed, [])
+
+    def test_unmatched_instruction_can_insert_before_or_after_selected_item(self):
+        for instruction, position in [('跟在它后头再来一个讲早睡的', 'after'),
+                                      ('在它前头摆一个关于休息的', 'before')]:
+            with self.subTest(instruction=instruction), mock.patch.object(
+                TOOLS, '_agent_llm_call', return_value=json.dumps({
+                    'op': 'insert_sibling', 'position': position,
+                    'el': 'mission-1',  # Model cannot redirect the selected target.
+                    'values': ['04', '早点休息', '十一点前入睡'],
+                }, ensure_ascii=False),
+            ) as llm:
+                ops, _, _ = TOOLS._selection_edit_ops(
+                    instruction, {'el': 'mission-3-title', 'selected_text': '开放世界'},
+                    TOOLS._HtmlTree(MISSION_LIST_HTML),
+                )
+                self.assertEqual(llm.call_args.kwargs['request_name'], 'ppt-selection-edit')
+                prompt = json.loads(llm.call_args.args[1])
+                self.assertIn('insert_sibling', [op['op'] for op in prompt['allowed_operations']])
+                self.assertEqual(len(prompt['selected_item']['text_segments_in_order']), 3)
+                self.assertNotIn('ignoreMe()', prompt['current_page_html'])
+                self.assertEqual(ops[0]['el'], 'mission-3-title')
+                self.assertEqual(ops[0]['position'], position)
+                edited, applied, _, _ = TOOLS._apply_html_ops(MISSION_LIST_HTML, ops)
+                TOOLS._validate_local_html_edit(MISSION_LIST_HTML, edited)
+                self.assertIn('早点休息', edited)
+                self.assertIn('开放世界', edited)
+                self.assertEqual(len(applied), 1)
+
+    def test_unmatched_instruction_can_delete_without_rewriting(self):
+        with mock.patch.object(TOOLS, '_agent_llm_call', return_value='{"op":"delete_node"}') as llm:
+            ops, _, new_text = TOOLS._selection_edit_ops(
+                '这一项不要了', {'el': 'mission-3-title'}, TOOLS._HtmlTree(MISSION_LIST_HTML),
+            )
+        llm.assert_called_once()
+        edited, _, _, _ = TOOLS._apply_html_ops(MISSION_LIST_HTML, ops)
+        self.assertNotIn('开放世界', edited)
+        self.assertIn('夜之城', edited)
+        self.assertEqual(new_text, '')
+
+    def test_model_insertion_rejects_invalid_shape_or_position(self):
+        for plan in [
+            {'op': 'insert_sibling', 'position': 'after', 'values': ['one']},
+            {'op': 'insert_sibling', 'position': 'elsewhere', 'values': ['a', 'b', 'c']},
+            {'op': 'insert_sibling', 'position': 'after', 'values': ['a', {}, 'c']},
+        ]:
+            with self.subTest(plan=plan), mock.patch.object(
+                TOOLS, '_agent_llm_call', return_value=json.dumps(plan),
+            ), self.assertRaises(ValueError):
+                TOOLS._selection_edit_ops(
+                    '跟在它后头再来一个', {'el': 'mission-3-title'},
+                    TOOLS._HtmlTree(MISSION_LIST_HTML),
+                )
 
     def test_insert_rejects_wrong_text_segment_count(self):
         with self.assertRaisesRegex(ValueError, 'expected 3, got 1'):
@@ -990,6 +1042,32 @@ class PartialEditTests(unittest.TestCase):
             )
             self.assertEqual(applied['representation'], 'ppt_html')
             self.assertIn('New title', page.read_text(encoding='utf-8'))
+
+    def test_reordered_page_can_insert_without_editing_the_page_at_visual_position(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            deck, page = make_deck(root)
+            page.write_text(MISSION_LIST_HTML, encoding='utf-8')
+            other = deck / 'pages' / 'page_002.html'
+            other.write_text(PAGE_HTML, encoding='utf-8')
+            public, _ = TOOLS._inline_preview_images(MISSION_LIST_HTML, deck, page)
+            artifact = TOOLS._with_ppt_source_meta(public, page, TOOLS._html_sha256(MISSION_LIST_HTML))
+            with mock.patch.object(TOOLS, '_agent_llm_call', return_value=json.dumps({
+                'op': 'insert_sibling', 'values': ['04', '早睡', '早点放下手机'],
+            }, ensure_ascii=False)):
+                preview = TOOLS.ppt_preview_selection_edit(
+                    artifact, '再加入一条',
+                    {'type': 'ppt_html', 'page': 2, 'el': 'mission-3-title'},
+                    artifact_store=str(root / 'artifacts'), slot='preview_html',
+                )
+            self.assertIn('早睡', preview['candidate_html'])
+            self.assertEqual(page.read_text(encoding='utf-8'), MISSION_LIST_HTML)
+            TOOLS.ppt_apply_selection_edit(
+                commit_token=preview['commit']['token'],
+                artifact_store=str(root / 'artifacts'), slot='preview_html',
+            )
+            self.assertIn('早睡', page.read_text(encoding='utf-8'))
+            self.assertEqual(other.read_text(encoding='utf-8'), PAGE_HTML)
 
     def test_injected_portable_source_accepts_matching_content_with_stale_hash(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1454,3 +1532,45 @@ class SinglePageMediaEditTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class DeferredStyleDispatchTests(unittest.TestCase):
+    def test_batch_waits_for_shared_style_and_stops_on_style_failure(self):
+        mc = mock.Mock()
+        rs = mock.Mock()
+        events = []
+
+        def prepare(*args, **kwargs):
+            events.append('style')
+            return 0, {'status': 'ok'}
+
+        def pages(*args, **kwargs):
+            events.append('pages')
+            return {'status': 'ok'}
+
+        rs._capture_cmd.side_effect = prepare
+        with mock.patch.object(TOOLS, '_load_sn_ppt_modules', return_value=(mc, rs)), \
+                mock.patch.object(TOOLS, '_batch_page_html_publish_progressive', side_effect=pages) as batch:
+            result = TOOLS._run_stage_inprocess('batch-page-html', Path('/unused'))
+            self.assertEqual(result['status'], 'ok')
+            self.assertEqual(events, ['style', 'pages'])
+            rs._capture_cmd.assert_called_once_with(rs.cmd_ensure_style, Path('/unused'))
+            rs._capture_cmd.side_effect = None
+            rs._capture_cmd.return_value = (1, {'status': 'failed', 'error': 'style timeout'})
+            result = TOOLS._run_stage_inprocess('batch-page-html', Path('/unused'))
+            self.assertEqual(result['failed_stage'], 'style')
+            self.assertEqual(batch.call_count, 1)
+        mc.set_llm_impl.assert_called_with(None)
+
+    def test_single_page_retry_also_prepares_style_before_loading_brief(self):
+        mc, rs = mock.Mock(), mock.Mock()
+        events = []
+        def capture(fn, *args, **kwargs):
+            events.append('style' if fn is rs.cmd_ensure_style else 'page')
+            return (0, {'status': 'ok'}) if fn is rs.cmd_ensure_style else (1, {'status': 'failed'})
+        rs._capture_cmd.side_effect = capture
+        with mock.patch.object(TOOLS, '_load_sn_ppt_modules', return_value=(mc, rs)), \
+                mock.patch.object(TOOLS, '_load_slide_outline_briefs', return_value={1: 'Edited content'}):
+            TOOLS._run_stage_inprocess('page-html', Path('/unused'), page=1)
+        self.assertEqual(events, ['style', 'page'])
+        rs._capture_cmd.assert_called_with(rs.cmd_page_html_from_brief, Path('/unused'), 1, 'Edited content')

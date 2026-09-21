@@ -394,8 +394,10 @@ steps:
       from requirement_analysis into style_hint. The PPT runtime selects one
       deck-wide style and applies that same contract to every page.
 
-      This call reuses the prepared deck and its valid style, then runs preflight → outline,
+      This call reuses the prepared deck, then runs preflight → content-outline,
       then writes one deck_outline Markdown artifact for the Outline tab.
+      Global style and rendering rules are deferred to generate_ppt; this stage
+      only plans content, page roles, and image bindings.
       This step never generates AI backgrounds; the dedicated stages before it
       already published prompts and images. When AI backgrounds were
       disabled and those steps were skipped, do not call ppt_find_deck: call
@@ -791,7 +793,8 @@ steps:
         ppt_generate_pages()
           — omit deck_dir to auto-find; or pass deck_dir from earlier results.
           — omit concurrency to use the default 3 parallel page workers; do not force 2.
-          — Internally: asset-plan → batch-page-html
+          — Internally: asset-plan → ensure shared style → batch-page-html
+            (generates the deck-wide style once if absent; reuses it on retries)
             (uses each slide_outline brief, including Outline-tab edits;
              auto-publishes preview_html + notes).
 

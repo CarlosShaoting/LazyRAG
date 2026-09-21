@@ -985,6 +985,23 @@ def cmd_preflight(deck: Path) -> int:
     )
 
 
+def _valid_deck_style(style: object) -> bool:
+    return isinstance(style, dict) and all(
+        isinstance(style.get(key), dict) and bool(style[key])
+        for key in ("design_style", "palette", "typography")
+    )
+
+
+def cmd_ensure_style(deck: Path) -> int:
+    """Reuse the deck-wide style; generate only when it is absent or invalid."""
+    try:
+        if _valid_deck_style(_load_json(deck / "style_spec.json")):
+            return _ok(path="style_spec.json", reused=True)
+    except (OSError, ValueError):
+        pass
+    return cmd_style(deck)
+
+
 def cmd_style(deck: Path, sample_id: str | None = None) -> int:
     tp = _load_json(deck / "task_pack.json")
     if tp.get("ppt_mode") == "standard":
@@ -1008,6 +1025,8 @@ def cmd_style(deck: Path, sample_id: str | None = None) -> int:
     except (ModelClientError, json.JSONDecodeError) as e:
         return _fail(f"style: {e}")
 
+    if not _valid_deck_style(data):
+        return _fail("style: expected non-empty design_style, palette, and typography objects")
     repair_notes: list[str] = []
     dims = _load_style_dimensions()
     if dims is not None:
@@ -1202,12 +1221,12 @@ def _ensure_outline_reference_images(
     return repaired
 
 
-def cmd_outline(deck: Path, *, generate_style: bool = False) -> int:
+def cmd_outline(deck: Path, *, generate_style: bool = False, content_only: bool = False) -> int:
     tp = _load_json(deck / "task_pack.json")
     if generate_style and tp.get("ppt_mode") == "standard":
         return _fail("standard mode requires an explicitly selected style sample")
     ip = _load_json(deck / "info_pack.json")
-    style = {} if generate_style else _load_deck_style(deck)
+    style = {} if generate_style or content_only else _load_deck_style(deck)
     system_prompt = _load_prompt("outline.md")
     if generate_style:
         system_prompt = (

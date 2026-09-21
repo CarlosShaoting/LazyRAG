@@ -1053,11 +1053,6 @@ function OrdinaryTaskCard({
                 count: item.task?.artifacts.length ?? 0,
               })}
             </span>
-            {item.retryCount > 0 && (
-              <span>
-                {t("taskCenter.ordinaryRetryCount", { count: item.retryCount })}
-              </span>
-            )}
             {(item.task?.input_slots?.length ?? 0) > 0 && (
               <span>
                 {t("taskCenter.ordinaryDependencyCount", {
