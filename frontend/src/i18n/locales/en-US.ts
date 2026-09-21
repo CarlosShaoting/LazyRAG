@@ -2252,7 +2252,6 @@ const enUS = {
       subject: "Subject",
       body: "Body",
       attachments: "Attachments",
-      recipientRequired: "Add at least one recipient before sending.",
       removeAttachment: "Remove",
       uploadAttachment: "Upload mail attachment",
       addFromConversation: "Add from this chat",
