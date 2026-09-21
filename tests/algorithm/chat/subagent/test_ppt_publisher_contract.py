@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from lazymind.chat.engine.subagent.context import SubAgentContext
-from lazymind.chat.engine.subagent.runner import _build_subagent_tools, _publisher_owns_outputs
+from lazymind.chat.engine.subagent.runner import (
+    _build_subagent_plan,
+    _build_subagent_tools,
+    _publisher_owns_outputs,
+)
 
 
 def _ctx(*, workflow_id: str, output_slots: list[str]) -> SubAgentContext:
@@ -38,6 +42,54 @@ def test_ppt_publisher_outputs_disable_generic_artifact_writes() -> None:
     assert 'patch_artifact' not in names
     assert 'discard_draft' not in names
     assert 'get_artifact' in names
+
+
+def test_ppt_publisher_plan_stops_only_at_declared_terminal_tools() -> None:
+    def ppt_find_deck() -> None:
+        pass
+
+    def ppt_read_page_outline() -> None:
+        pass
+
+    def ppt_insert_outline_page() -> None:
+        pass
+
+    def ppt_publish_deck_outline() -> None:
+        pass
+
+    def ppt_build_outline() -> None:
+        pass
+
+    ctx = _ctx(
+        workflow_id='builtin:ppt-workflow',
+        output_slots=['preview_html', 'preview_notes'],
+    )
+    ctx.params['terminal_tools'] = [
+        'ppt_build_outline',
+        'ppt_insert_outline_page',
+        'ppt_publish_deck_outline',
+    ]
+    tools = [
+        ppt_find_deck,
+        ppt_read_page_outline,
+        ppt_insert_outline_page,
+        ppt_publish_deck_outline,
+        ppt_build_outline,
+    ]
+
+    plan = _build_subagent_plan(
+        ctx,
+        None,
+        tools=tools,
+        tool_prompt_appendices={},
+    )
+
+    assert plan.tools == tools
+    assert plan.stop_tools == [
+        'ppt_build_outline',
+        'ppt_insert_outline_page',
+        'ppt_publish_deck_outline',
+    ]
 
 
 def test_non_ppt_step_keeps_generic_artifact_write_contract() -> None:

@@ -104,6 +104,20 @@ class StyleRenderingRecipeTest(unittest.TestCase):
         self.assertEqual(state['steps']['generate_backgrounds']['mode'], 'human')
         self.assertEqual(state['steps']['generate_ppt']['mode'], 'human')
 
+    def test_build_outline_stops_after_its_publisher_tool_succeeds(self) -> None:
+        state_path = Path(__file__).resolve().parents[3] / 'scenario' / 'state.yml'
+        state = yaml.safe_load(state_path.read_text(encoding='utf-8'))
+        outline = state['steps']['build_outline']
+
+        self.assertEqual(outline['terminal_tools'], [
+            'ppt_build_outline',
+            'ppt_insert_outline_page',
+            'ppt_publish_deck_outline',
+        ])
+        self.assertNotIn('ppt_find_deck', outline['terminal_tools'])
+        self.assertNotIn('ppt_read_page_outline', outline['terminal_tools'])
+        self.assertNotIn('terminal_tools_only', outline)
+
     def test_background_prompt_and_generation_steps_support_skip_and_targeted_rerun(self) -> None:
         workflow_path = Path(__file__).resolve().parents[3] / 'workflow.yaml'
         state_path = workflow_path.parent / 'scenario' / 'state.yml'
