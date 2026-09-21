@@ -233,6 +233,64 @@ class StyleFlowCombinationTest(unittest.TestCase):
             self.assertEqual(result['status'], 'ready')
             self.assertEqual(result['style_flow'], flow)
 
+    def test_style_choice_retry_reuses_checkpointed_deck_and_previews(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            deck = root / 'ppt_decks' / 'deck-1'
+            deck.mkdir(parents=True)
+            (deck / 'task_pack.json').write_text(json.dumps({
+                'deck_id': 'deck-1',
+                'ppt_mode': 'standard',
+                'params': {'page_count': 2, 'style_flow': 'preview_choice'},
+            }), encoding='utf-8')
+
+            def run_stage(_deck_dir: str, *, stage: str, **_kwargs):
+                if stage == 'style-samples':
+                    (deck / 'style_samples.json').write_text(json.dumps({
+                        'samples': [
+                            {'sample_id': sample, 'label': f'Style {sample}'}
+                            for sample in ('A', 'B', 'C')
+                        ],
+                    }), encoding='utf-8')
+                return {'status': 'ok'}
+
+            init = mock.Mock(return_value={
+                'deck_dir': str(deck),
+                'deck_id': 'deck-1',
+                'page_count': 2,
+                'ppt_mode': 'standard',
+                'style_flow': 'preview_choice',
+            })
+            stage = mock.Mock(side_effect=run_stage)
+            published = {
+                'ok': True,
+                'default_selection': 'A',
+                'choices': [{'sample_id': sample} for sample in ('A', 'B', 'C')],
+            }
+            with mock.patch.object(
+                TOOLS, '_conversation_root', return_value=root,
+            ), mock.patch.object(
+                TOOLS, '_resolve_deck_dir', return_value=deck,
+            ), mock.patch.object(
+                TOOLS, 'ppt_init_deck', init,
+            ), mock.patch.object(
+                TOOLS, 'ppt_run_stage', stage,
+            ), mock.patch.object(
+                TOOLS, '_publish_style_choices', return_value=published,
+            ):
+                first = TOOLS.ppt_prepare_style_choices('两页产品汇报', page_count=2)
+                second = TOOLS.ppt_prepare_style_choices('两页产品汇报', page_count=2)
+
+            self.assertEqual(first['deck_id'], 'deck-1')
+            self.assertEqual(second['deck_id'], 'deck-1')
+            self.assertEqual(second['stages'], [
+                {'step': 'preflight', 'status': 'reused'},
+                {'step': 'style-samples', 'status': 'reused'},
+            ])
+            init.assert_called_once()
+            self.assertEqual(stage.call_count, 2)
+            self.assertEqual(len(list(root.glob('.style-plan-*.json'))), 1)
+
 
 if __name__ == '__main__':
     unittest.main()

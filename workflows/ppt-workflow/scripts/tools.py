@@ -5688,6 +5688,52 @@ def _style_samples_are_ready(deck: Path) -> bool:
     } == {'A', 'B', 'C'}
 
 
+def _load_style_checkpoint(path: Path) -> dict[str, Any]:
+    """Read a best-effort style checkpoint without turning corruption into a retry loop."""
+    try:
+        value = json.loads(path.read_text(encoding='utf-8'))
+    except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _save_style_checkpoint(path: Path, data: dict[str, Any]) -> None:
+    """Atomically persist cross-task style progress for Continue/retry recovery."""
+    temporary = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
+    temporary.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
+    os.replace(temporary, path)
+
+
+def _style_choice_checkpoint(
+    *,
+    user_query: str,
+    page_count: Union[int, str, None],
+    topic: Optional[str],
+    role: Optional[str],
+    audience: Optional[str],
+    scene: Optional[str],
+    style_hint: Optional[str],
+    key_points_json: Union[str, list, None],
+    generate_background_images: Union[bool, str, None],
+) -> Path:
+    """Key recovery by the approved request, never by a disposable workflow task id."""
+    request = {
+        'user_query': _coerce_str(user_query),
+        'page_count': _coerce_int(page_count, 4, lo=1),
+        'topic': _coerce_str(topic),
+        'role': _coerce_str(role),
+        'audience': _coerce_str(audience),
+        'scene': _coerce_str(scene),
+        'style_hint': _coerce_str(style_hint),
+        'key_points': key_points_json,
+        'generate_background_images': _coerce_bool(generate_background_images),
+    }
+    fingerprint = hashlib.sha256(json.dumps(
+        request, ensure_ascii=False, sort_keys=True, separators=(',', ':'),
+    ).encode('utf-8')).hexdigest()
+    return _conversation_root() / f'.style-plan-{fingerprint[:24]}.json'
+
+
 def _persist_deck_style_flow(deck: Path, requested: Any = None) -> tuple[dict, str]:
     """Migrate legacy decks and keep ppt_mode as a derived compatibility field."""
     pack_path = deck / 'task_pack.json'
@@ -5766,6 +5812,47 @@ def ppt_prepare_style_choices(
 ) -> dict:
     """Create and publish exactly three style previews for human A/B/C choice."""
     resolved = _coerce_str(deck_dir)
+    checkpoint: Path | None = None
+    saved: dict[str, Any] = {}
+    if not resolved:
+        checkpoint = _style_choice_checkpoint(
+            user_query=user_query,
+            page_count=page_count,
+            topic=topic,
+            role=role,
+            audience=audience,
+            scene=scene,
+            style_hint=style_hint,
+            key_points_json=key_points_json,
+            generate_background_images=generate_background_images,
+        )
+        saved = _load_style_checkpoint(checkpoint)
+        saved_result = saved.get('result')
+        if isinstance(saved_result, dict):
+            saved_deck_dir = _coerce_str(saved_result.get('deck_dir'))
+            try:
+                saved_deck = _resolve_deck_dir(saved_deck_dir)
+            except (FileNotFoundError, OSError, ValueError):
+                saved_deck = None
+            if saved_deck is not None and _style_samples_are_ready(saved_deck):
+                return _tool_success('ppt_prepare_style_choices', {
+                    **saved_result,
+                    'stages': [
+                        {'step': 'preflight', 'status': 'reused'},
+                        {'step': 'style-samples', 'status': 'reused'},
+                    ],
+                })
+        saved_init = saved.get('init')
+        if isinstance(saved_init, dict):
+            saved_deck_dir = _coerce_str(saved_init.get('deck_dir'))
+            try:
+                deck = _resolve_deck_dir(saved_deck_dir)
+            except (FileNotFoundError, OSError, ValueError):
+                deck = None
+            if deck is not None:
+                init_payload = saved_init
+                resolved = str(deck.resolve())
+
     if resolved:
         try:
             deck = _resolve_deck_dir(resolved)
@@ -5794,6 +5881,9 @@ def ppt_prepare_style_choices(
         init_payload = _tool_payload(init)
         resolved = _coerce_str(init_payload.get('deck_dir'))
         deck = _resolve_deck_dir(resolved)
+        if checkpoint is not None:
+            saved['init'] = init_payload
+            _save_style_checkpoint(checkpoint, saved)
 
     stages: list[dict[str, Any]] = []
     for stage_name in ('preflight', 'style-samples'):
@@ -5813,14 +5903,18 @@ def ppt_prepare_style_choices(
         return _tool_error(
             'ppt_prepare_style_choices', _coerce_str(published.get('error')),
         )
-    return _tool_success('ppt_prepare_style_choices', {
+    result_payload = {
         **init_payload,
         'style_flow': 'preview_choice',
         'default_selection': published.get('default_selection'),
         'choices': published.get('choices'),
         'stages': stages,
         'next_step': 'plan_background_prompts',
-    })
+    }
+    if checkpoint is not None:
+        saved['result'] = result_payload
+        _save_style_checkpoint(checkpoint, saved)
+    return _tool_success('ppt_prepare_style_choices', result_payload)
 
 
 def ppt_prepare_style(
