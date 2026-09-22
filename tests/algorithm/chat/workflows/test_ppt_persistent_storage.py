@@ -115,10 +115,10 @@ def test_init_deck_accepts_model_key_points_alias(monkeypatch, tmp_path):
     monkeypatch.setattr(tools, '_conversation_root', lambda: tmp_path)
     monkeypatch.setattr(tools, '_attach_material_images_to_deck', lambda _: {'attached': 0})
     result = tools.ppt_init_deck(user_query='Test deck', key_points='["Keep this point"]')
-    info = json.loads((Path(result['deck_dir']) / 'info_pack.json').read_text())
+    info = json.loads((Path(result['deck_dir']) / 'info_pack.json').read_text(encoding='utf-8'))
     assert info['query_normalized']['key_points'] == ['Keep this point']
     result = tools.ppt_init_deck(user_query='Canonical deck', key_points=['alias'], key_points_json=['canonical'])
-    info = json.loads((Path(result['deck_dir']) / 'info_pack.json').read_text())
+    info = json.loads((Path(result['deck_dir']) / 'info_pack.json').read_text(encoding='utf-8'))
     assert info['query_normalized']['key_points'] == ['canonical']
 
 
@@ -132,13 +132,13 @@ def test_preview_images_use_small_durable_urls_but_disk_stays_relative(monkeypat
     image.write_bytes(b'x' * 2_000_000)
     original = '<html><style>#bg{background:url("../images/big image.png")}</style><img src="../images/big image.png"></html>'
     page = deck / 'pages' / 'page_001.html'
-    page.write_text(original)
+    page.write_text(original, encoding='utf-8')
     preview, count = tools._inline_preview_images(original, deck, page)
     assert count == 2
     assert preview.count('/static-files/deck/images/big%20image.png') == 2
     assert len(preview) < 300
     assert 'base64' not in preview
-    assert page.read_text() == original
+    assert page.read_text(encoding='utf-8') == original
 
 
 def test_preview_never_links_files_outside_the_deck(monkeypatch, tmp_path):
@@ -171,12 +171,12 @@ def test_outline_retry_reuses_deck_style_and_completed_outline(monkeypatch, tmp_
             (deck / 'style_spec.json').write_text(json.dumps({
                 'design_style': {'id': 1}, 'palette': {'primary': '#fff'},
                 'typography': {'heading_font': 'Arial'},
-            }))
+            }), encoding='utf-8')
         if stage in ('outline', 'content-outline'):
             if fail_outline:
                 fail_outline = False
                 return {'ok': False, 'value': 'upstream timeout'}
-            (deck / 'outline.json').write_text('{"pages":[{"page_no":1}]}')
+            (deck / 'outline.json').write_text('{"pages":[{"page_no":1}]}', encoding='utf-8')
         return {'status': 'ok'}
 
     def publish(deck):
@@ -195,7 +195,7 @@ def test_outline_retry_reuses_deck_style_and_completed_outline(monkeypatch, tmp_
     with pytest.raises(Exception, match='publish deck outline failed'):
         tools.ppt_build_outline('Retry this presentation', page_count=1)
     # Creating the visual contract later must not invalidate the content checkpoint.
-    (deck / 'style_spec.json').write_text('{"palette": {"primary": "#fff"}}')
+    (deck / 'style_spec.json').write_text('{"palette": {"primary": "#fff"}}', encoding='utf-8')
     result = tools.ppt_build_outline('Retry this presentation', page_count=1)
     assert result['deck_dir'] == str(deck)
     assert calls == ['preflight', 'content-outline', 'preflight', 'content-outline', 'preflight']
@@ -211,10 +211,10 @@ def test_legacy_standard_deck_recovers_without_recreating_assets(monkeypatch, tm
     monkeypatch.setattr(tools, '_attach_material_images_to_deck', lambda _: {'attached': 0})
     initial = tools.ppt_init_deck('A short presentation', page_count=1, ppt_mode='standard')
     deck = Path(initial['deck_dir'])
-    assert json.loads((deck / 'task_pack.json').read_text())['ppt_mode'] == 'fast'
-    pack = json.loads((deck / 'task_pack.json').read_text())
+    assert json.loads((deck / 'task_pack.json').read_text(encoding='utf-8'))['ppt_mode'] == 'fast'
+    pack = json.loads((deck / 'task_pack.json').read_text(encoding='utf-8'))
     pack['ppt_mode'] = 'standard'  # A deck created by an older workflow revision.
-    (deck / 'task_pack.json').write_text(json.dumps(pack))
+    (deck / 'task_pack.json').write_text(json.dumps(pack), encoding='utf-8')
     image = deck / 'images' / 'background.png'
     image.write_bytes(b'preserved background')
     calls = []
@@ -223,7 +223,7 @@ def test_legacy_standard_deck_recovers_without_recreating_assets(monkeypatch, tm
         calls.append(stage)
         assert Path(deck_dir) == deck
         if stage == 'content-outline':
-            (deck / 'outline.json').write_text('{"pages":[{"page_no":1}]}')
+            (deck / 'outline.json').write_text('{"pages":[{"page_no":1}]}', encoding='utf-8')
         return {'status': 'ok'}
 
     monkeypatch.setattr(tools, 'ppt_run_stage', stage)
@@ -265,7 +265,7 @@ def test_workflow_deck_binding_survives_reworded_retry_and_other_workflows(monke
                 failed = True
                 return {'ok': False, 'value': 'temporary timeout'}
         if stage == 'content-outline':
-            (deck / 'outline.json').write_text('{"pages":[{"page_no":1}]}')
+            (deck / 'outline.json').write_text('{"pages":[{"page_no":1}]}', encoding='utf-8')
         return {'status': 'ok'}
 
     monkeypatch.setattr(tools, 'ppt_run_stage', stage)
