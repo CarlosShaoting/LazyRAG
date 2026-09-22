@@ -1266,7 +1266,16 @@ def cmd_outline(deck: Path, *, generate_style: bool = False, content_only: bool 
             "caption": caption or None,
         })
 
+    approved_path = deck / "approved_outline.md"
+    approved = approved_path.read_text(encoding="utf-8") if approved_path.exists() else None
+    if approved:
+        system_prompt += (
+            "\nThe approved page briefs are authoritative. Convert them to the internal "
+            "schema without rewriting, dropping or adding facts, titles, list items or pages. "
+            "Respect their current order and user edits over the original request."
+        )
     user_prompt = json.dumps({
+        "approved_page_briefs": approved,
         "style_spec": style,
         "task_pack_params": tp.get("params", {}),
         "info_pack_query_normalized": ip.get("query_normalized"),
@@ -1279,44 +1288,73 @@ def cmd_outline(deck: Path, *, generate_style: bool = False, content_only: bool 
         "OUTLINE_SN_TEXT_TIMEOUT",
         _env_float("SN_TEXT_TIMEOUT", _env_float("SN_CHAT_TIMEOUT", 300.0)),
     )
-    outline_retries = _env_int("OUTLINE_SN_TEXT_RETRIES", 1)
-    try:
-        raw = llm(
-            system_prompt, user_prompt,
-            timeout=outline_timeout, retries=outline_retries, request_name="outline",
-        )
-        data = _parse_json_loose(raw)
-    except (ModelClientError, json.JSONDecodeError) as e:
-        return _fail(f"outline: {e}")
-    if generate_style:
-        if not isinstance(data, dict):
-            return _fail("outline: expected style_spec and outline objects")
-        style = data.get("style_spec")
-        if not isinstance(style, dict) or not all(
-            isinstance(style.get(key), dict) and style[key]
-            for key in ("design_style", "palette", "typography")
-        ):
-            return _fail("outline: invalid generated style_spec")
-        dims = _load_style_dimensions()
-        if dims is not None:
-            style, notes = _repair_style_triple(style, dims)
-            if notes:
-                style["_repairs"] = notes
-        style = _attach_style_rendering_recipe(style)
-        # Preserve a valid style even if the outline needs a retry.
-        _write_text(deck / "style_spec.json", json.dumps(style, ensure_ascii=False, indent=2))
-        data = data.get("outline")
-    if not isinstance(data, dict) or not isinstance(data.get("pages"), list):
-        return _fail("outline: expected a pages array")
-    pages = data.get("pages", [])
+    # Three attempts TOTAL, including the initial generation. Only malformed
+    # output is corrected here; provider failures/timeouts are not retried as
+    # if they were content errors. Share one wall-clock budget across attempts.
+    deadline = time.monotonic() + outline_timeout
     expected = int(tp.get("params", {}).get("page_count", 0))
-    if expected and len(pages) != expected:
-        return _fail(f"outline page_count mismatch: got {len(pages)}, expected {expected}")
-    try:
-        pages = _normalize_outline_pages(pages)
-    except ValueError as exc:
-        return _fail(f"outline: {exc}")
-    data['pages'] = pages
+    attempt_prompt = user_prompt
+    combined = generate_style
+    for attempt in range(1, 4):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return _fail("outline: correction time budget exhausted", attempts=attempt - 1)
+        try:
+            raw = llm(
+                system_prompt, attempt_prompt,
+                timeout=remaining, retries=0, request_name="outline",
+            )
+        except ModelClientError as exc:
+            return _fail(f"outline: {exc}", attempts=attempt)
+        try:
+            data = _parse_json_loose(raw)
+            if combined:
+                if not isinstance(data, dict):
+                    raise ValueError("expected style_spec and outline objects")
+                candidate_style = data.get("style_spec")
+                if not isinstance(candidate_style, dict) or not all(
+                    isinstance(candidate_style.get(key), dict) and candidate_style[key]
+                    for key in ("design_style", "palette", "typography")
+                ):
+                    raise ValueError("invalid generated style_spec")
+                style = candidate_style
+                dims = _load_style_dimensions()
+                if dims is not None:
+                    style, notes = _repair_style_triple(style, dims)
+                    if notes:
+                        style["_repairs"] = notes
+                style = _attach_style_rendering_recipe(style)
+                _write_text(deck / "style_spec.json", json.dumps(style, ensure_ascii=False, indent=2))
+                data = data.get("outline")
+                # Once style is valid, corrections only address the outline.
+                combined = False
+                system_prompt = _load_prompt("outline.md")
+                context = json.loads(user_prompt)
+                context['style_spec'] = style
+                user_prompt = json.dumps(context, ensure_ascii=False)
+            if not isinstance(data, dict) or not isinstance(data.get("pages"), list):
+                raise ValueError("expected a pages array")
+            pages = data['pages']
+            if not pages:
+                raise ValueError("pages must not be empty")
+            if expected and len(pages) != expected:
+                raise ValueError(f"page_count mismatch: got {len(pages)}, expected {expected}")
+            pages = _normalize_outline_pages(pages)
+            data['pages'] = pages
+            break
+        except (json.JSONDecodeError, ValueError) as exc:
+            if attempt == 3:
+                return _fail(f"outline: {exc}", attempts=attempt)
+            attempt_prompt = json.dumps({
+                'original_request': json.loads(user_prompt),
+                'previous_output': raw,
+                'validation_error': str(exc),
+                'instruction': (
+                    'Correct only the reported errors. Preserve valid content and the existing style. '
+                    'Return the complete corrected JSON object, without commentary. '
+                    'Do not restart the workflow or generate a new deck.'
+                ),
+            }, ensure_ascii=False)
     image_bindings_repaired = _ensure_outline_reference_images(
         pages,
         available_reference_images,
@@ -1326,6 +1364,7 @@ def cmd_outline(deck: Path, *, generate_style: bool = False, content_only: bool 
         path="outline.json",
         pages=len(pages),
         image_bindings_repaired=image_bindings_repaired,
+        attempts=attempt,
     )
 
 

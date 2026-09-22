@@ -4,9 +4,9 @@ Preferred high-level pipeline (one tool call each):
   collect: KB-first retrieval; web_search / ppt_search_web_images only for gaps
     → ppt_register_material_images  (workspace Pool-B images)
     → ppt_generate_material_images  (ONLY when user explicitly asks for AI material images)
-  ppt_build_outline(...)   # init → preflight → content-outline → publish deck_outline Markdown
+  ppt_build_outline(..., outline_markdown=...) # publish readable content only
   ppt_publish_outline(...) # publish editable per-page generation prompts
-  ppt_generate_pages(...)  # asset-plan → batch-page-html
+  ppt_generate_pages(...)  # internal outline → asset-plan → style → batch-page-html
 
 Low-level stages (ppt_init_deck / ppt_run_stage / ppt_publish_*) remain for
 debug and recovery; prefer the wrappers above for full runs.
@@ -2088,6 +2088,95 @@ def _format_deck_outline_markdown(outline: dict) -> str:
     return '\n'.join(lines).strip()
 
 
+def _split_text_outline(markdown: str) -> list[str]:
+    """Split user-facing Markdown without imposing the internal page schema."""
+    sections = re.split(r'(?m)(?=^##\s+)', markdown.strip())
+    pages = [section.strip() for section in sections if section.startswith('## ')]
+    if not pages or any(not page.split('\n', 1)[0][3:].strip() for page in pages):
+        raise ValueError('Use one non-empty ## heading per slide in outline_markdown')
+    return pages
+
+
+def _publish_text_outline(deck: Path, markdown: str) -> dict[str, Any]:
+    pages = _split_text_outline(markdown)
+    # Durable source only: internal outline.json is built by generate_ppt.
+    (deck / 'outline_draft.md').write_text(markdown, encoding='utf-8')
+    saved = _save_artifact(
+        key='deck_outline', value=markdown, content_type='text',
+        source_tool='ppt_build_outline', internal_publish=True,
+    )
+    return {'ok': not _tool_failed(saved), 'page_count': len(pages),
+            'chars': len(markdown), 'error': _tool_fail_reason(saved) if _tool_failed(saved) else None}
+
+
+def _publish_text_page_briefs(deck: Path, pages: Optional[list[int]]) -> dict[str, Any]:
+    ctx = require_context()
+    text, _ = _resolve_artifact_text(ctx, 'deck_outline')
+    # Fail explicitly on an unreadable approved artifact rather than silently
+    # replacing the user's edits with the original draft.
+    if not text or not str(text).strip():
+        raise ValueError('No approved deck_outline text available')
+    briefs = _split_text_outline(str(text))
+    order = _ui_slot_order_list('slide_outline')
+    targets = pages if pages is not None else list(range(1, len(briefs) + 1))
+    published = []
+    for number in targets:
+        if number < 1 or number > len(briefs):
+            raise ValueError(f'Page {number} outside approved outline')
+        brief = briefs[number - 1]
+        saved = _publish_ordered_ppt_artifact(
+            slot='slide_outline', page_no=number, value=brief,
+            content_type='text', source_tool='ppt_publish_outline',
+            caption=brief.splitlines()[0].lstrip('# ').strip(),
+            order_list=order, expected_total=len(briefs),
+        )
+        if _tool_failed(saved):
+            raise ValueError(_tool_fail_reason(saved) or 'Page brief publication failed')
+        published.append({'page': number})
+    if pages is None:
+        for position in range(len(order), len(briefs), -1):
+            deleted = _delete_ui_slot_item('slide_outline', position)
+            if _tool_failed(deleted):
+                raise ValueError('Cannot remove stale page brief')
+    return {'published_count': len(published), 'published': published, 'failed_count': 0}
+
+
+def _prepare_deferred_outline(deck: Path) -> dict[str, Any]:
+    """Build internal structure only in generate, from current edited cards."""
+    try:
+        items = _selected_slide_outline_items()
+    except Exception as exc:
+        return {'status': 'failed', 'reason': f'Cannot read approved page briefs: {exc}'}
+    if not items or any(not brief.strip() for _, brief in items):
+        return {'status': 'failed', 'reason': 'No approved slide_outline pages available'}
+    approved = '\n\n'.join(f'Page {n}:\n{brief}' for n, (_, brief) in enumerate(items, 1))
+    (deck / 'approved_outline.md').write_text(approved, encoding='utf-8')
+    _sync_task_pack_page_count(deck, len(items))
+    digest = hashlib.sha256()
+    for name in ('approved_outline.md', 'task_pack.json', 'info_pack.json'):
+        digest.update((deck / name).read_bytes())
+    key = digest.hexdigest()
+    checkpoint = deck / '.deferred_outline_checkpoint.json'
+    output = deck / 'outline.json'
+    try:
+        saved = json.loads(checkpoint.read_text(encoding='utf-8'))
+        if (saved.get('input_hash') == key and
+                saved.get('output_hash') == hashlib.sha256(output.read_bytes()).hexdigest()):
+            return {'status': 'reused', 'page_count': len(items)}
+    except (OSError, ValueError, AttributeError):
+        pass
+    for stage in ('preflight', 'content-outline'):
+        result = ppt_run_stage(str(deck), stage=stage)
+        if _tool_failed(result) or _tool_payload(result).get('status') == 'failed':
+            return {'status': 'failed', 'reason': _tool_fail_reason(result), 'stage': stage}
+    if not output.is_file():
+        return {'status': 'failed', 'reason': 'Internal outline was not created'}
+    checkpoint.write_text(json.dumps({
+        'input_hash': key, 'output_hash': hashlib.sha256(output.read_bytes()).hexdigest(),
+    }), encoding='utf-8')
+    return {'status': 'ok', 'page_count': len(items)}
+
+
 def _publish_deck_outline(deck: Path) -> dict[str, Any]:
     outline = _load_outline(deck)
     markdown = _format_deck_outline_markdown(outline)
@@ -3531,11 +3620,13 @@ def _batch_page_html_publish_progressive(
             })
         elif result.get('publish_error'):
             failed.append({'page': pno, 'error': result['publish_error']})
-    if not failed:
+    published_pages = {item['page'] for item in published}
+    unpublished_pages = [pno for pno in page_nos if pno not in published_pages]
+    if not failed and not unpublished_pages:
         for pno in page_nos:
             (deck / f'.page_retry_{pno:03d}.json').unlink(missing_ok=True)
     return {
-        'status': 'ok' if len(failed) == 0 else ('partial' if published else 'failed'),
+        'status': 'ok' if not failed and not unpublished_pages else ('partial' if published else 'failed'),
         'stage': 'page-html',
         'concurrency': workers,
         'submitted': len(page_nos),
@@ -3544,6 +3635,7 @@ def _batch_page_html_publish_progressive(
         'failed_detail': failed or None,
         'published_count': len(published),
         'published': published,
+        'unpublished_pages': unpublished_pages,
         'auto_published': True,
         'retry_count': len(retry_history),
         'retries': retry_history or None,
@@ -3746,6 +3838,16 @@ def _run_stage_inprocess(
 
 def _stage_tool_result(stage_name: str, payload: dict) -> dict:
     status = payload.get('status')
+    if stage_name == 'page-html' and status == 'ok':
+        published = payload.get('published')
+        if payload.get('publish_error') or (
+            isinstance(published, dict) and not published.get('ok')
+        ):
+            return _tool_error(
+                'ppt_run_stage', 'page HTML generated but publication failed',
+                detail=json.dumps(payload, ensure_ascii=False)[:2000],
+                meta={'stage': stage_name},
+            )
     clean = {k: v for k, v in payload.items() if not str(k).startswith('_')}
     if status == 'ok':
         return _tool_success('ppt_run_stage', {'stage': stage_name, **clean})
@@ -5594,10 +5696,15 @@ def ppt_build_outline(
     key_points_json: Union[str, list, None] = None,
     generate_background_images: Union[bool, str, None] = False,
     deck_dir: Optional[str] = None,
+    outline_markdown: Optional[str] = None,
 ) -> dict:
     """Build a full deck outline in one call (preferred for build_outline step).
 
-    Runs the fixed serial pipeline internally. It initializes a deck when
+    Pass outline_markdown (one ## heading per page) to publish text only.
+    Internal structure, image bindings and validation then run in generate_ppt.
+    Omitting it preserves the legacy API for existing callers.
+
+    Runs the legacy fixed serial pipeline internally. It initializes a deck when
     ``deck_dir`` is omitted, otherwise it reuses the prepared deck, then runs:
       preflight → content-outline → publish deck_outline Markdown
 
@@ -5605,6 +5712,8 @@ def ppt_build_outline(
     that is ppt_generate_pages / generate_ppt.
 
     Args:
+        outline_markdown (str): User-facing content outline, one ## heading per page.
+            Required for new workflow runs; no internal JSON or visual schema.
         deck_dir (str): Optional prepared deck from ppt_init_deck. When supplied,
             reuse it so approved background prompts/images remain attached.
         user_query (str): Full presentation request (required).
@@ -5702,6 +5811,20 @@ def ppt_build_outline(
     resume_path.write_text(json.dumps({'deck_dir': resolved_deck}), encoding='utf-8')
     build_deck = Path(resolved_deck)
     _bind_workflow_deck(build_deck)
+    if outline_markdown is not None:
+        try:
+            published = _publish_text_outline(build_deck, str(outline_markdown).strip())
+        except ValueError as exc:
+            return _tool_error('ppt_build_outline', str(exc))
+        if not published['ok']:
+            return _tool_error('ppt_build_outline', published.get('error') or 'Publish failed')
+        resume_path.unlink(missing_ok=True)
+        return _tool_success('ppt_build_outline', {
+            **init_payload, 'deck_outline_published': True,
+            'page_count': published['page_count'], 'structure_deferred': True,
+            'next_step': 'plan_page_prompts',
+            'note': 'Text outline published. Internal page structure is deferred to generate_ppt.',
+        })
     checkpoint_path = build_deck / '.outline_checkpoint.json'
 
     def outline_input_hash() -> str:
@@ -5819,7 +5942,7 @@ def ppt_generate_pages(
     """Generate all slide HTML pages from published slide_outline in one call.
 
     Preferred for the full-deck generate_ppt path. Runs:
-      sync-edited-outline → asset-plan → batch-page-html
+      approved text → internal outline (or legacy sync) → asset-plan → batch-page-html
     batch-page-html auto-publishes preview_html (+ notes) page-by-page.
 
     If a durable whole-page insertion is pending, this entry point safely
@@ -5915,7 +6038,8 @@ def ppt_generate_pages(
             ),
         })
 
-    sync_result = _sync_outline_from_selected_artifacts(deck)
+    sync_result = (_prepare_deferred_outline(deck) if (deck / 'outline_draft.md').exists()
+                   else _sync_outline_from_selected_artifacts(deck))
     if sync_result.get('status') == 'failed':
         return _tool_error(
             'ppt_generate_pages',
@@ -5972,19 +6096,28 @@ def ppt_generate_pages(
         'published_count': html_payload.get('published_count'),
     })
 
-    published_count = int(html_payload.get('published_count') or 0)
-    if published_count <= 0 and int(html_payload.get('ok') or 0) > 0:
-        pub_res = ppt_publish_pages(deck_dir_s)
-        if not _tool_failed(pub_res):
-            pub_payload = _tool_payload(pub_res)
-            published_count = int(pub_payload.get('published_count') or 0)
-            stages.append({
-                'step': 'publish_pages',
-                'ok': True,
-                'published_count': published_count,
-            })
-
-    status = html_payload.get('status', 'ok')
+    # Trust acknowledgements for this batch's planned pages, not directory or
+    # UI counts. _publish_one_page acknowledges HTML AND notes together.
+    expected_pages = set(_outline_page_numbers(deck))
+    published_pages = {
+        item.get('page') for item in (html_payload.get('published') or [])
+        if isinstance(item, dict)
+    }
+    missing_pages = sorted(expected_pages - published_pages)
+    status = html_payload.get('status', 'failed')
+    if status != 'ok' or html_payload.get('failed') or missing_pages or not expected_pages:
+        return _tool_error(
+            'ppt_generate_pages',
+            'generation incomplete; retry the current deck to resume failed pages or publication',
+            detail=json.dumps({
+                'status': status,
+                'failed_detail': html_payload.get('failed_detail'),
+                'unpublished_pages': missing_pages,
+                'published_pages': sorted(published_pages),
+            }, ensure_ascii=False),
+            meta={'deck_dir': deck_dir_s},
+        )
+    published_count = len(published_pages)
     return _tool_success('ppt_generate_pages', {
         'deck_dir': deck_dir_s,
         'status': status,
@@ -6292,11 +6425,12 @@ def ppt_publish_outline(
                 'ppt_publish_outline',
                 'insert_before requires pages to contain exactly the same one position',
             )
-        result = _publish_slide_outlines_from_disk(
-            deck,
-            page_list,
-            insert_before=insertion or None,
-        )
+        if (deck / 'outline_draft.md').exists() and not insertion:
+            result = _publish_text_page_briefs(deck, page_list)
+        else:
+            result = _publish_slide_outlines_from_disk(
+                deck, page_list, insert_before=insertion or None,
+            )
     except (FileNotFoundError, ValueError, KeyError, json.JSONDecodeError) as exc:
         return _tool_error('ppt_publish_outline', str(exc))
 

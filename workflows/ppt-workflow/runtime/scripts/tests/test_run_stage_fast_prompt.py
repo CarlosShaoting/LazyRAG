@@ -512,7 +512,8 @@ class CombinedStyleOutlineTest(unittest.TestCase):
             })) as model:
                 code, result = run_stage._capture_cmd(run_stage.cmd_outline, deck, generate_style=True)
             self.assertNotEqual(code, 0)
-            model.assert_called_once()
+            self.assertEqual(model.call_count, 3)
+            self.assertNotIn('=== style_spec requirements ===', model.call_args.args[0])
             self.assertTrue((deck / 'style_spec.json').exists())
             self.assertFalse((deck / 'outline.json').exists())
             saved_style = (deck / 'style_spec.json').read_bytes()
@@ -659,3 +660,68 @@ class DeferredStyleTest(unittest.TestCase):
                 code, _ = run_stage._capture_cmd(run_stage.cmd_ensure_style, deck)
             self.assertNotEqual(code, 0)
             model.assert_not_called()
+
+
+class OutlineLocalCorrectionTest(unittest.TestCase):
+    def test_count_then_field_error_corrected_in_one_call(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            deck = Path(tmp)
+            (deck / 'task_pack.json').write_text('{"params":{"page_count":2}}')
+            (deck / 'info_pack.json').write_text('{}')
+            style = b'{"existing":"unchanged"}'
+            (deck / 'style_spec.json').write_bytes(style)
+            replies = [
+                '{"pages":[{"title":"Keep"}]}',
+                '{"pages":[{"title":"Keep"},{"bullets":[]}]}',
+                '{"pages":[{"title":"Keep","page_no":9},{"title":"Added","page_no":9}]}',
+            ]
+            with patch.object(run_stage, 'llm', side_effect=replies) as model:
+                code, result = run_stage._capture_cmd(run_stage.cmd_outline, deck, content_only=True)
+            self.assertEqual(code, 0)
+            self.assertEqual(result['attempts'], 3)
+            calls = model.call_args_list
+            self.assertIn('page_count mismatch', calls[1].args[1])
+            self.assertIn('non-empty title', calls[2].args[1])
+            self.assertTrue(all(c.kwargs['retries'] == 0 for c in calls))
+            self.assertLessEqual(calls[2].kwargs['timeout'], calls[0].kwargs['timeout'])
+            self.assertEqual((deck / 'style_spec.json').read_bytes(), style)
+            self.assertEqual([p['page_no'] for p in json.loads((deck / 'outline.json').read_text())['pages']], [1, 2])
+
+    def test_invalid_outputs_stop_at_three_without_overwriting_previous_outline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            deck = Path(tmp)
+            (deck / 'task_pack.json').write_text('{}')
+            (deck / 'info_pack.json').write_text('{}')
+            (deck / 'outline.json').write_text('previous version')
+            with patch.object(run_stage, 'llm', return_value='not JSON') as model:
+                code, result = run_stage._capture_cmd(run_stage.cmd_outline, deck, content_only=True)
+            self.assertNotEqual(code, 0)
+            self.assertEqual(model.call_count, 3)
+            self.assertEqual(result['attempts'], 3)
+            self.assertEqual((deck / 'outline.json').read_text(), 'previous version')
+
+    def test_provider_rejection_is_not_retried_as_content_correction(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            deck = Path(tmp)
+            (deck / 'task_pack.json').write_text('{}')
+            (deck / 'info_pack.json').write_text('{}')
+            with patch.object(run_stage, 'llm', side_effect=run_stage.ModelClientError('provider error')) as model:
+                code, _ = run_stage._capture_cmd(run_stage.cmd_outline, deck, content_only=True)
+            self.assertNotEqual(code, 0)
+            model.assert_called_once()
+
+
+class ApprovedOutlineInputTest(unittest.TestCase):
+    def test_generate_uses_approved_content_as_authoritative_input(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            deck = Path(tmp)
+            (deck / 'task_pack.json').write_text(json.dumps({'params': {'page_count': 1}}))
+            (deck / 'info_pack.json').write_text('{}')
+            (deck / 'approved_outline.md').write_text('## 修改后的标题\n保留用户新增条目')
+            with patch.object(run_stage, 'llm', return_value=json.dumps({
+                'pages': [{'page_no': 1, 'title': '修改后的标题'}],
+            })) as model:
+                code, _ = run_stage._capture_cmd(run_stage.cmd_outline, deck, content_only=True)
+            self.assertEqual(code, 0)
+            self.assertIn('authoritative', model.call_args.args[0])
+            self.assertIn('保留用户新增条目', json.loads(model.call_args.args[1])['approved_page_briefs'])

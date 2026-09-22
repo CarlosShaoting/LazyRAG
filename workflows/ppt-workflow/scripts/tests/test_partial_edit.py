@@ -1574,3 +1574,194 @@ class DeferredStyleDispatchTests(unittest.TestCase):
             TOOLS._run_stage_inprocess('page-html', Path('/unused'), page=1)
         self.assertEqual(events, ['style', 'page'])
         rs._capture_cmd.assert_called_with(rs.cmd_page_html_from_brief, Path('/unused'), 1, 'Edited content')
+
+
+class CompletionGateTests(unittest.TestCase):
+    def test_partial_or_missing_acknowledgement_cannot_complete_deck(self):
+        for payload in [
+            {'status': 'partial', 'ok': 1, 'failed': 1, 'published': [{'page': 1}]},
+            {'status': 'ok', 'ok': 1, 'failed': 0, 'published_count': 1, 'published': [{'page': 99}]},
+            {'status': 'ok', 'ok': 1, 'failed': 0, 'published_count': 1},
+        ]:
+            with self.subTest(payload=payload), tempfile.TemporaryDirectory() as tmp:
+                deck, _ = make_deck(Path(tmp))
+                with mock.patch.object(TOOLS, '_resolve_deck_dir', return_value=deck), \
+                     mock.patch.object(TOOLS, '_sync_outline_from_selected_artifacts', return_value={'status': 'ok'}), \
+                     mock.patch.object(TOOLS, 'ppt_run_stage', side_effect=[{'status': 'ok'}, payload]), \
+                     mock.patch.object(TOOLS, 'ppt_publish_pages') as fallback:
+                    with self.assertRaises(ToolExecutionError) as error:
+                        TOOLS.ppt_generate_pages(str(deck))
+                self.assertIn('generation incomplete', str(error.exception))
+                fallback.assert_not_called()
+
+    def test_complete_acknowledgements_ignore_unrelated_disk_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            deck, _ = make_deck(Path(tmp))
+            (deck / 'pages/page_099.html').write_text(PAGE_HTML)
+            payload = {'status': 'ok', 'ok': 1, 'failed': 0, 'published': [{'page': 1}]}
+            with mock.patch.object(TOOLS, '_resolve_deck_dir', return_value=deck), \
+                 mock.patch.object(TOOLS, '_sync_outline_from_selected_artifacts', return_value={'status': 'ok'}), \
+                 mock.patch.object(TOOLS, 'ppt_run_stage', side_effect=[{'status': 'ok'}, payload]):
+                result = TOOLS.ppt_generate_pages(str(deck))
+            self.assertEqual(result['published_count'], 1)
+
+    def test_notes_failure_is_not_a_successful_page_publication(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            deck, _ = make_deck(Path(tmp))
+            with mock.patch.object(TOOLS, '_publish_ordered_ppt_artifact', side_effect=[{'ok': True}, {'ok': False}]), \
+                 mock.patch.object(TOOLS, '_inline_preview_images', side_effect=lambda html, *_: (html, 0)):
+                result = TOOLS._publish_one_page(deck, 1, slot_orders={'preview_html': [], 'preview_notes': []})
+            self.assertFalse(result['ok'])
+            self.assertIn('preview_notes', result['error'])
+
+    def test_single_page_publication_failure_reaches_tool_boundary(self):
+        for extra in [{'published': {'page': 1, 'ok': False}}, {'publish_error': 'save failed'}]:
+            with self.subTest(extra=extra), self.assertRaises(ToolExecutionError):
+                TOOLS._stage_tool_result('page-html', {'status': 'ok', **extra})
+
+    def test_five_pages_resume_failed_second_page_and_publish_suffix(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            deck, _ = make_deck(Path(tmp))
+            (deck / 'outline.json').write_text(json.dumps({'pages': [
+                {'page_no': n, 'title': str(n)} for n in range(1, 6)
+            ]}))
+            calls = {n: 0 for n in range(1, 6)}
+            def capture(_fn, current_deck, number):
+                calls[number] += 1
+                if number == 2 and calls[number] == 1:
+                    return 1, {'status': 'failed', 'error': 'provider data_inspection_failed'}
+                (current_deck / 'pages' / f'page_{number:03d}.html').write_text(PAGE_HTML)
+                return 0, {'status': 'ok'}
+            runtime = mock.Mock()
+            runtime._capture_cmd.side_effect = capture
+            def publish(_deck, number, **kwargs):
+                return {'page': number, 'ok': True}
+            with mock.patch.object(TOOLS, '_load_sn_ppt_modules', return_value=(mock.Mock(), runtime)), \
+                 mock.patch.object(TOOLS, '_load_slide_outline_briefs', return_value={}), \
+                 mock.patch.object(TOOLS, '_ui_slot_order_list', return_value=[]), \
+                 mock.patch.object(TOOLS, '_publish_one_page', side_effect=publish), \
+                 mock.patch.dict(TOOLS.os.environ, {'LAZYMIND_PPT_PAGE_RETRIES': '0'}):
+                first = TOOLS._batch_page_html_publish_progressive(deck, concurrency=1)
+                self.assertEqual(first['status'], 'partial')
+                self.assertEqual(first['ok'], 4)
+                self.assertEqual(first['published_count'], 1)
+                self.assertEqual(first['unpublished_pages'], [2, 3, 4, 5])
+                second = TOOLS._batch_page_html_publish_progressive(deck, concurrency=1)
+            self.assertEqual(second['status'], 'ok')
+            self.assertEqual([item['page'] for item in second['published']], [1, 2, 3, 4, 5])
+            self.assertEqual(calls, {1: 1, 2: 2, 3: 1, 4: 1, 5: 1})
+
+    def test_publish_only_retry_reuses_generated_html(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            deck, _ = make_deck(Path(tmp))
+            runtime = mock.Mock()
+            runtime._capture_cmd.return_value = (0, {'status': 'ok'})
+            with mock.patch.object(TOOLS, '_load_sn_ppt_modules', return_value=(mock.Mock(), runtime)), \
+                 mock.patch.object(TOOLS, '_load_slide_outline_briefs', return_value={}), \
+                 mock.patch.object(TOOLS, '_ui_slot_order_list', return_value=[]), \
+                 mock.patch.object(TOOLS, '_publish_one_page', return_value={'ok': False, 'error': 'notes failed'}) as pub:
+                first = TOOLS._batch_page_html_publish_progressive(deck, concurrency=1)
+                self.assertNotEqual(first['status'], 'ok')
+                pub.return_value = {'ok': True, 'page': 1}
+                second = TOOLS._batch_page_html_publish_progressive(deck, concurrency=1)
+            runtime._capture_cmd.assert_called_once()
+            self.assertEqual(second['status'], 'ok')
+
+
+class DeferredTextOutlineTest(unittest.TestCase):
+    def test_text_outline_build_does_not_run_internal_stages(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            deck = Path(tmp)
+            (deck / 'task_pack.json').write_text(json.dumps({'params': {'page_count': 1}}))
+            with (
+                mock.patch.object(TOOLS, '_resolve_deck_dir', return_value=deck),
+                mock.patch.object(TOOLS, '_conversation_root', return_value=deck),
+                mock.patch.object(TOOLS, '_bind_workflow_deck'),
+                mock.patch.object(TOOLS, '_attach_material_images_to_deck', return_value={'attached': 0}),
+                mock.patch.object(TOOLS, '_save_artifact', return_value={'ok': True}),
+                mock.patch.object(TOOLS, 'ppt_run_stage') as stages,
+                mock.patch.object(TOOLS, '_agent_llm_call') as model,
+            ):
+                result = TOOLS.ppt_build_outline(
+                    '一页总结', page_count=1, deck_dir=str(deck),
+                    outline_markdown='## 总结\n用户确认的三个结论。',
+                )
+            self.assertTrue(result['structure_deferred'])
+            stages.assert_not_called()
+            model.assert_not_called()
+            self.assertFalse((deck / 'outline.json').exists())
+
+    def test_text_cards_use_edited_artifact_not_original_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            deck = Path(tmp)
+            (deck / 'outline_draft.md').write_text('## 原始标题\n原始内容')
+            with (
+                mock.patch.object(TOOLS, 'require_context', return_value=object()),
+                mock.patch.object(TOOLS, '_resolve_artifact_text', return_value=(
+                    '## 用户新标题\n用户删改后内容', 'text')),
+                mock.patch.object(TOOLS, '_ui_slot_order_list', return_value=[]),
+                mock.patch.object(TOOLS, '_publish_ordered_ppt_artifact', return_value={'ok': True}) as publish,
+            ):
+                result = TOOLS._publish_text_page_briefs(deck, None)
+            self.assertEqual(result['published_count'], 1)
+            self.assertIn('用户删改后内容', publish.call_args.kwargs['value'])
+            self.assertNotIn('原始内容', publish.call_args.kwargs['value'])
+
+    def test_generate_structure_reuses_checkpoint_and_invalidates_on_user_edit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            deck = Path(tmp)
+            (deck / 'task_pack.json').write_text(json.dumps({'params': {'page_count': 1}}))
+            (deck / 'info_pack.json').write_text('{}')
+            stages = []
+
+            def run(_deck, *, stage):
+                stages.append(stage)
+                if stage == 'content-outline':
+                    (deck / 'outline.json').write_text(json.dumps({'pages': [{'page_no': 1, 'title': '结果'}]}))
+                return {'status': 'ok'}
+
+            with (
+                mock.patch.object(TOOLS, '_selected_slide_outline_items', return_value=[(0, '用户编辑后的内容')]) as selected,
+                mock.patch.object(TOOLS, 'ppt_run_stage', side_effect=run),
+            ):
+                self.assertEqual(TOOLS._prepare_deferred_outline(deck)['status'], 'ok')
+                self.assertIn('用户编辑后的内容', (deck / 'approved_outline.md').read_text())
+                self.assertEqual(TOOLS._prepare_deferred_outline(deck)['status'], 'reused')
+                self.assertEqual(stages, ['preflight', 'content-outline'])
+                selected.return_value = [(0, '再次修改')]
+                self.assertEqual(TOOLS._prepare_deferred_outline(deck)['status'], 'ok')
+                self.assertEqual(len(stages), 4)
+
+    def test_structure_failure_does_not_checkpoint_or_start_rendering(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            deck = Path(tmp)
+            (deck / 'task_pack.json').write_text(json.dumps({'params': {'page_count': 1}}))
+            (deck / 'info_pack.json').write_text('{}')
+            with (
+                mock.patch.object(TOOLS, '_selected_slide_outline_items', return_value=[(0, '内容')]),
+                mock.patch.object(TOOLS, 'ppt_run_stage', side_effect=[
+                    {'status': 'ok'}, {'status': 'failed', 'error': 'invalid outline'},
+                ]) as run,
+            ):
+                result = TOOLS._prepare_deferred_outline(deck)
+            self.assertEqual(result['status'], 'failed')
+            self.assertEqual(run.call_count, 2)
+            self.assertFalse((deck / '.deferred_outline_checkpoint.json').exists())
+
+    def test_public_generate_defers_structure_failure_without_starting_html(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            deck = Path(tmp)
+            (deck / 'outline_draft.md').write_text('## 内容\n已确认')
+            with (
+                mock.patch.object(TOOLS, '_resolve_deck_dir', return_value=deck),
+                mock.patch.object(TOOLS, '_prepare_deferred_outline', return_value={
+                    'status': 'failed', 'reason': 'structure correction exhausted',
+                }) as prepare,
+                mock.patch.object(TOOLS, '_sync_outline_from_selected_artifacts') as legacy,
+                mock.patch.object(TOOLS, 'ppt_run_stage') as render,
+            ):
+                with self.assertRaises(ToolExecutionError):
+                    TOOLS.ppt_generate_pages(str(deck))
+            prepare.assert_called_once_with(deck)
+            legacy.assert_not_called()
+            render.assert_not_called()
