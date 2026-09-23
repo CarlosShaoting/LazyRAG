@@ -69,11 +69,19 @@ export function serializeModel(model: GraphModel, includeLayout = false): string
       mode: node.mode,
     };
     if (node.route && node.route !== 'all') step.route = node.route;
+    if (node.routeSelector !== undefined) step.route_selector = node.routeSelector;
     if (node.skipIf) step.skip_if = node.skipIf;
     else if (node.legacySkipIf?.trim()) step.skip_if = node.legacySkipIf;
     if (node.prompt?.trim()) step.prompt = node.prompt;
     if (node.tools && node.tools.length > 0) step.tools = node.tools;
     if (node.capabilities && node.capabilities.length > 0) step.capabilities = node.capabilities;
+    if (node.terminalTools && node.terminalTools.length > 0) {
+      step.terminal_tools = node.terminalTools;
+    }
+    if (node.failFastTools && node.failFastTools.length > 0) {
+      step.fail_fast_tools = node.failFastTools;
+    }
+    if (node.executionPolicy !== undefined) step.execution = node.executionPolicy;
     if (node.acceptanceCriteria?.trim()) step.acceptance_criteria = node.acceptanceCriteria;
     if (node.inputs.length > 0) {
       step.inputs = node.inputs.map((input) => ({

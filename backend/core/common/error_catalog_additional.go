@@ -901,6 +901,23 @@ func init() {
 	registerAdditionalError("multiple or invalid JSON values", http.StatusBadRequest, 2003097)
 	registerAdditionalError("snapshot must be a string or IR object", http.StatusBadRequest, 2003098)
 	registerAdditionalError("mixed rewrite input", http.StatusBadRequest, 2003099)
+	for _, template := range []string{
+		"router %s has multiple selected decision revisions",
+		"router %s has no effective %s decision",
+		"router %s decision is not valid json",
+		"router %s selected an unsupported %s",
+		"router %s decision field %s is missing",
+		"router %s decision nesting is invalid",
+	} {
+		registerAdditionalErrorPattern(template, "Workflow Router decision is invalid", http.StatusConflict, 2003100)
+	}
+	registerAdditionalErrorPattern("load router decision %s", "Failed to load Workflow Router decision", http.StatusInternalServerError, 2003101)
+	registerAdditionalError("execution policy must be a mapping", http.StatusUnprocessableEntity, 2003102)
+	registerAdditionalError("execution policy is invalid", http.StatusUnprocessableEntity, 2003103)
+	registerAdditionalError("max_rounds must be at least 2", http.StatusUnprocessableEntity, 2003104)
+	registerAdditionalError("timeout_seconds must be positive", http.StatusUnprocessableEntity, 2003105)
+	registerAdditionalError("hard_repeat_limit must be at least 2", http.StatusUnprocessableEntity, 2003106)
+	registerAdditionalError("tool_call_limits must use non-empty names and positive limits", http.StatusUnprocessableEntity, 2003107)
 	registerAdditionalErrorAlias("revision required", "base_revision required", http.StatusBadRequest, 2003086)
 	registerAdditionalErrorAlias("draft version required", "base_draft_version required", http.StatusBadRequest, 2003084)
 	registerAdditionalErrorAlias("draft version conflict", "draft version conflict; refresh and retry", http.StatusConflict, 2003085)

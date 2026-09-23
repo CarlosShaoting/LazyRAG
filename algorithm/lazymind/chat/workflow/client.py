@@ -112,13 +112,18 @@ class RemoteExecutorClient:
         return str(value.get('path') or '')
 
     async def fail(self, client: httpx.AsyncClient, attempt: str, lease: str,
-                   message: str, *, post_step_checkpoint: Dict[str, Any] | None = None) -> httpx.Response:
+                   message: str, *, post_step_checkpoint: Dict[str, Any] | None = None,
+                   error_code: str = 'LAZYMIND_EXECUTION_FAILED',
+                   diagnostic_id: str = '') -> httpx.Response:
+        result = {'error': message}
+        if post_step_checkpoint:
+            result['post_step_checkpoint'] = post_step_checkpoint
+        if diagnostic_id:
+            result['diagnostic_id'] = diagnostic_id
         payload = {
             'lease_token': lease,
-            'error_code': 'LAZYMIND_EXECUTION_FAILED',
-            'result': {'error': message, **(
-                {'post_step_checkpoint': post_step_checkpoint} if post_step_checkpoint else {}
-            )},
+            'error_code': error_code or 'LAZYMIND_EXECUTION_FAILED',
+            'result': result,
         }
         response = await client.post(f'{self.base_url}/internal/workflow-attempts/{attempt}:fail',
                                      headers=self.headers(lease), json=payload)

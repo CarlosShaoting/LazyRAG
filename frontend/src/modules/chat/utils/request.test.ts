@@ -8,9 +8,10 @@ import {
   WorkflowSessionApi,
 } from './request';
 
-const { patchMock, postMock } = vi.hoisted(() => ({
+const { patchMock, postMock, getMock } = vi.hoisted(() => ({
   patchMock: vi.fn(),
   postMock: vi.fn(),
+  getMock: vi.fn(),
 }));
 
 vi.mock('@/components/request', () => ({
@@ -18,6 +19,7 @@ vi.mock('@/components/request', () => ({
     defaults: {},
     patch: patchMock,
     post: postMock,
+    get: getMock,
   },
   BASE_URL: '',
 }));
@@ -31,6 +33,111 @@ describe('WorkflowSessionApi.convertDocument', () => {
         ...(draftVersion !== undefined ? { base_draft_version: draftVersion } : {}),
         input: { output_format: 'latex', document: '# Draft' } },
       { silentError: true },
+    );
+  });
+});
+
+describe('WorkflowSessionApi.getProductProjectArtifact', () => {
+  it('reads the project-bound view through the current session without navigation', () => {
+    WorkflowSessionApi().getProductProjectArtifact('session/with spaces', 'prototype');
+    expect(getMock).toHaveBeenCalledWith(
+      '/api/core/workflow-sessions/session%2Fwith%20spaces/product-artifacts/prototype',
+      { params: { format: 'html' } },
+    );
+  });
+
+  it('patches the editable Markdown representation without creating another project', () => {
+    const payload = { base_revision_id: 'revision/2', base_revision: 2, markdown: '# Updated', idempotency_key: 'edit-1' };
+    WorkflowSessionApi().updateProductProjectMarkdown('session/1', 'design', payload);
+    expect(patchMock).toHaveBeenCalledWith(
+      '/api/core/workflow-sessions/session%2F1/product-artifacts/design/markdown', payload, undefined,
+    );
+  });
+
+  it('posts an explicit decision confirmation with encoded identifiers', () => {
+    const payload = { action: 'accept' as const, expected_state_version: 4, expected_decision_hash: 'hash', idempotency_key: 'command-1' };
+    WorkflowSessionApi().updateProductDecision('session/1', 'decision/1', payload);
+    expect(postMock).toHaveBeenCalledWith('/api/core/workflow-sessions/session%2F1/product-decisions/decision%2F1', payload, undefined);
+  });
+});
+
+describe('WorkflowSessionApi.advanceStepAndHandOff', () => {
+  beforeEach(() => {
+    postMock.mockReset();
+  });
+
+  it('posts a versioned, idempotent command while preserving caller options and headers', () => {
+    const payload = {
+      contract_version: 'workflow.v1' as const,
+      command_id: 'workflow-ui-command-1',
+      tool: 'advance_step_and_hand_off' as const,
+      session_id: 'session/with spaces',
+      expected_state_version: 25,
+      retry_origin: 'user' as const,
+      steps: [{ step_id: 'build_design_outline', runtime_instruction: '继续生成设计大纲' }],
+    };
+
+    WorkflowSessionApi().advanceStepAndHandOff(
+      'session/with spaces',
+      payload,
+      {
+        timeout: 12_345,
+        headers: {
+          Authorization: 'Bearer local-token',
+          'Idempotency-Key': 'must-be-replaced',
+          'Workflow-Contract-Version': 'workflow.v999',
+        },
+      },
+    );
+
+    expect(postMock).toHaveBeenCalledWith(
+      '/api/core/workflow-sessions/session%2Fwith%20spaces:advance-step-and-hand-off',
+      payload,
+      {
+        timeout: 12_345,
+        headers: {
+          Authorization: 'Bearer local-token',
+          'Workflow-Contract-Version': 'workflow.v1',
+          'Idempotency-Key': payload.command_id,
+        },
+      },
+    );
+  });
+});
+
+describe('WorkflowSessionApi.restartOnLatest', () => {
+  beforeEach(() => {
+    postMock.mockReset();
+  });
+
+  it('posts the workspace-preserving restart with its idempotency key', () => {
+    const payload = {
+      idempotency_key: 'restart-on-latest-1',
+      expected_state_version: 17,
+    };
+
+    WorkflowSessionApi().restartOnLatest(
+      'session/with spaces',
+      payload,
+      {
+        timeout: 12_345,
+        headers: {
+          Authorization: 'Bearer local-token',
+          'Idempotency-Key': 'must-be-replaced',
+        },
+      },
+    );
+
+    expect(postMock).toHaveBeenCalledWith(
+      '/api/core/workflow-sessions/session%2Fwith%20spaces:restart-on-latest',
+      payload,
+      {
+        timeout: 12_345,
+        headers: {
+          Authorization: 'Bearer local-token',
+          'Idempotency-Key': payload.idempotency_key,
+        },
+      },
     );
   });
 });

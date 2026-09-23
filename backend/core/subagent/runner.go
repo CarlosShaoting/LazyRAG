@@ -72,6 +72,8 @@ type TaskEvent struct {
 	Status       string          `json:"status,omitempty"`
 	Summary      string          `json:"summary,omitempty"`
 	Message      string          `json:"message,omitempty"`
+	ErrorCode    string          `json:"error_code,omitempty"`
+	DiagnosticID string          `json:"diagnostic_id,omitempty"`
 	// Tool step events forwarded from SubAgent runner for frontend display.
 	ToolCalls   json.RawMessage `json:"tool_calls,omitempty"`
 	ToolResults json.RawMessage `json:"tool_results,omitempty"`
@@ -362,7 +364,7 @@ func publishTaskEvent(ctx context.Context, db *gorm.DB, stateStore state.Store, 
 	case "task_start":
 		_ = WriteStatus(ctx, stateStore, ev.TaskID, map[string]any{"status": StatusRunning, "progress": 0})
 		if terminalHook {
-			routeWorkflowStepStatus(ctx, db, stateStore, ev.TaskID, StatusRunning, "")
+			routeWorkflowStepStatus(ctx, db, stateStore, ev.TaskID, StatusRunning, "", "", "")
 		}
 	case "progress":
 		_ = WriteStatus(ctx, stateStore, ev.TaskID, map[string]any{"status": StatusRunning, "progress": ev.Progress, "current_phase": ev.CurrentPhase})
@@ -386,7 +388,7 @@ func publishTaskEvent(ctx context.Context, db *gorm.DB, stateStore state.Store, 
 		}
 		_ = WriteStatus(ctx, stateStore, ev.TaskID, fields)
 		if terminalHook {
-			routeWorkflowStepStatus(ctx, db, stateStore, ev.TaskID, status, summary)
+			routeWorkflowStepStatus(ctx, db, stateStore, ev.TaskID, status, summary, ev.ErrorCode, ev.DiagnosticID)
 		}
 	}
 	if isArtifactStreamEvent(ev.Type) || ev.Type == "progress" || ev.Type == "done" || ev.Type == "error" {
@@ -407,7 +409,7 @@ func routeError(ctx context.Context, db *gorm.DB, stateStore state.Store, taskID
 	_ = WriteStatus(ctx, stateStore, taskID, map[string]any{"status": StatusFailed, "summary": message})
 	_ = AppendStreamEvent(ctx, stateStore, taskID, ev)
 	PublishConversationTaskEvent(ctx, db, stateStore, ev)
-	routeWorkflowStepStatus(ctx, db, stateStore, taskID, StatusFailed, message)
+	routeWorkflowStepStatus(ctx, db, stateStore, taskID, StatusFailed, message, "", "")
 }
 
 // PublishConversationTaskEvent keeps the conversation stream limited to bounded
@@ -457,7 +459,8 @@ var EventHooks = &eventHooks{}
 
 type eventHooks struct {
 	onArtifact       func(ctx context.Context, db *gorm.DB, stateStore state.Store, taskID, artifactKey string)
-	onTerminalStatus func(ctx context.Context, db *gorm.DB, stateStore state.Store, taskID, status, message string)
+	onTerminalStatus func(ctx context.Context, db *gorm.DB, stateStore state.Store,
+		taskID, status, message, errorCode, diagnosticID string)
 	// onConversationEvent is called when a plugin lifecycle event should be pushed to the
 	// main conversation SSE stream. convID and historyID identify the target stream;
 	// eventType is a bounded workflow lifecycle notification such as
@@ -471,7 +474,8 @@ func (h *eventHooks) RegisterArtifactHook(fn func(ctx context.Context, db *gorm.
 }
 
 // RegisterTerminalStatusHook registers a hook called when a task reaches terminal status.
-func (h *eventHooks) RegisterTerminalStatusHook(fn func(ctx context.Context, db *gorm.DB, stateStore state.Store, taskID, status, message string)) {
+func (h *eventHooks) RegisterTerminalStatusHook(fn func(ctx context.Context, db *gorm.DB, stateStore state.Store,
+	taskID, status, message, errorCode, diagnosticID string)) {
 	h.onTerminalStatus = fn
 }
 
@@ -498,9 +502,10 @@ func (h *eventHooks) CallConversationEventChecked(ctx context.Context, stateStor
 	return h.onConversationEvent(ctx, stateStore, convID, historyID, eventType, payload)
 }
 
-func routeWorkflowStepStatus(ctx context.Context, db *gorm.DB, stateStore state.Store, taskID, status, message string) {
+func routeWorkflowStepStatus(ctx context.Context, db *gorm.DB, stateStore state.Store,
+	taskID, status, message, errorCode, diagnosticID string) {
 	if EventHooks.onTerminalStatus != nil {
-		EventHooks.onTerminalStatus(ctx, db, stateStore, taskID, status, message)
+		EventHooks.onTerminalStatus(ctx, db, stateStore, taskID, status, message, errorCode, diagnosticID)
 	}
 }
 

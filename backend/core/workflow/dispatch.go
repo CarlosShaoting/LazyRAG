@@ -10,6 +10,7 @@ import (
 	"lazymind/core/subagent"
 	"lazymind/core/workflow/attempt"
 	"lazymind/core/workflow/executor"
+	"lazymind/core/workflow/graphengine"
 	workflowstore "lazymind/core/workflow/store"
 
 	"github.com/google/uuid"
@@ -61,10 +62,17 @@ func enqueueCanonicalAttempt(ctx context.Context, db *gorm.DB, request subagent.
 		AttemptID: step.ID, StepID: step.StepID, AttemptNo: step.Attempt, Operation: operation, Objective: task.Objective}
 	_ = json.Unmarshal(task.OutputSlots, &value.DeclaredOutputs)
 	var taskParams struct {
-		OutputTypes map[string]string `json:"output_slot_types"`
+		OutputTypes     map[string]string               `json:"output_slot_types"`
+		FailFastTools   []string                        `json:"fail_fast_tools"`
+		ExecutionPolicy graphengine.StepExecutionPolicy `json:"execution_policy"`
 	}
 	_ = json.Unmarshal(task.Params, &taskParams)
 	value.DeclaredOutputTypes = taskParams.OutputTypes
+	value.FailFastTools = taskParams.FailFastTools
+	value.ExecutionPolicy = taskParams.ExecutionPolicy
+	if failFastTools, ok := request.Params["fail_fast_tools"].([]string); ok {
+		value.FailFastTools = failFastTools
+	}
 	if required, ok := request.Params["required_output_artifact_keys"].([]string); ok {
 		value.RequiredOutputs = required
 	}

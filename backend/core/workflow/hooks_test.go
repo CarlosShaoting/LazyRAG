@@ -23,8 +23,9 @@ func TestLoadWorkflowChatContextFromDB_MissingTask(t *testing.T) {
 func TestWorkflowStepParamsExposePinnedScriptTools(t *testing.T) {
 	params := WorkflowStepParams{
 		WorkflowID: "test-workflow", RevisionID: "revision-1", TreeHash: "tree-1",
-		LegacyTools: []string{"create_list_fixtures"},
-		Runtime:     graphengine.RuntimePolicy{PublisherOwnedSlots: []string{"report"}},
+		LegacyTools:   []string{"create_list_fixtures"},
+		FailFastTools: []string{"validate_product_assessment"},
+		Runtime:       graphengine.RuntimePolicy{PublisherOwnedSlots: []string{"report"}},
 	}
 	got := params.asMap()
 	if got["revision_id"] != "revision-1" || got["tree_hash"] != "tree-1" {
@@ -33,6 +34,10 @@ func TestWorkflowStepParamsExposePinnedScriptTools(t *testing.T) {
 	tools, ok := got["legacy_tools"].([]string)
 	if !ok || len(tools) != 1 || tools[0] != "create_list_fixtures" {
 		t.Fatalf("compiled script tools missing: %#v", got)
+	}
+	failFastTools, ok := got["fail_fast_tools"].([]string)
+	if !ok || len(failFastTools) != 1 || failFastTools[0] != "validate_product_assessment" {
+		t.Fatalf("compiled fail-fast tools missing: %#v", got)
 	}
 	runtime, ok := got["workflow_runtime"].(graphengine.RuntimePolicy)
 	if !ok || len(runtime.PublisherOwnedSlots) != 1 || runtime.PublisherOwnedSlots[0] != "report" {

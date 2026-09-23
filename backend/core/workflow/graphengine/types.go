@@ -46,24 +46,52 @@ type ProducerRef struct {
 }
 
 type CompiledNode struct {
-	ID                string            `json:"id"`
-	Label             string            `json:"label,omitempty"`
-	Route             string            `json:"route"`
-	Input             *Expression       `json:"input_expression,omitempty"`
-	OptionalInputs    []MaterialRef     `json:"optional_inputs,omitempty"`
-	InputTransports   map[string]string `json:"input_transports,omitempty"`
-	Outputs           []string          `json:"outputs,omitempty"`
-	RequiredOutputs   []string          `json:"required_outputs,omitempty"`
-	SkipIf            *Expression       `json:"skip_if,omitempty"`
-	Prompt            string            `json:"prompt,omitempty"`
-	Acceptance        []string          `json:"acceptance_criteria,omitempty"`
-	Capabilities      []string          `json:"capabilities,omitempty"`
-	LegacyTools       []string          `json:"legacy_tools,omitempty"`
-	TerminalTools     []string          `json:"terminal_tools,omitempty"`
-	ToolsOnly         bool              `json:"tools_only,omitempty"`
-	TerminalToolsOnly bool              `json:"terminal_tools_only,omitempty"`
-	StreamHeartbeat   bool              `json:"stream_heartbeat,omitempty"`
-	Mode              string            `json:"mode,omitempty"`
+	ID                string              `json:"id"`
+	Label             string              `json:"label,omitempty"`
+	Route             string              `json:"route"`
+	RouteSelector     *RouteSelector      `json:"route_selector,omitempty"`
+	Input             *Expression         `json:"input_expression,omitempty"`
+	OptionalInputs    []MaterialRef       `json:"optional_inputs,omitempty"`
+	InputTransports   map[string]string   `json:"input_transports,omitempty"`
+	Outputs           []string            `json:"outputs,omitempty"`
+	RequiredOutputs   []string            `json:"required_outputs,omitempty"`
+	SkipIf            *Expression         `json:"skip_if,omitempty"`
+	Prompt            string              `json:"prompt,omitempty"`
+	Acceptance        []string            `json:"acceptance_criteria,omitempty"`
+	Capabilities      []string            `json:"capabilities,omitempty"`
+	LegacyTools       []string            `json:"legacy_tools,omitempty"`
+	TerminalTools     []string            `json:"terminal_tools,omitempty"`
+	FailFastTools     []string            `json:"fail_fast_tools,omitempty"`
+	ToolsOnly         bool                `json:"tools_only,omitempty"`
+	TerminalToolsOnly bool                `json:"terminal_tools_only,omitempty"`
+	ExecutionPolicy   StepExecutionPolicy `json:"execution_policy,omitempty"`
+	StreamHeartbeat   bool                `json:"stream_heartbeat,omitempty"`
+	Mode              string              `json:"mode,omitempty"`
+}
+
+// StepExecutionPolicy bounds one model-driven step independently of prompt compliance.
+type StepExecutionPolicy struct {
+	MaxRounds             int            `json:"max_rounds,omitempty" yaml:"max_rounds,omitempty"`
+	TimeoutSeconds        int            `json:"timeout_seconds,omitempty" yaml:"timeout_seconds,omitempty"`
+	HardRepeatLimit       int            `json:"hard_repeat_limit,omitempty" yaml:"hard_repeat_limit,omitempty"`
+	ToolCallLimits        map[string]int `json:"tool_call_limits,omitempty" yaml:"tool_call_limits,omitempty"`
+	PublisherFallbackTool string         `json:"publisher_fallback_tool,omitempty" yaml:"publisher_fallback_tool,omitempty"`
+	DisableArtifactReads  bool           `json:"disable_artifact_reads,omitempty" yaml:"disable_artifact_reads,omitempty"`
+	CompactSummary        bool           `json:"compact_summary,omitempty" yaml:"compact_summary,omitempty"`
+}
+
+func (p StepExecutionPolicy) IsZero() bool {
+	return p.MaxRounds == 0 && p.TimeoutSeconds == 0 && p.HardRepeatLimit == 0 &&
+		len(p.ToolCallLimits) == 0 && p.PublisherFallbackTool == "" &&
+		!p.DisableArtifactReads && !p.CompactSummary
+}
+
+// RouteSelector binds a choice to a required JSON output of its Router. The
+// model supplies the decision, while the host owns the exact outgoing edge.
+type RouteSelector struct {
+	Material string            `json:"material" yaml:"material"`
+	Field    string            `json:"field" yaml:"field"`
+	Targets  map[string]string `json:"targets" yaml:"targets"`
 }
 
 type CompiledEdge struct {
@@ -92,6 +120,7 @@ type ClarificationField struct {
 	Type         string   `json:"type,omitempty" yaml:"type,omitempty"`
 	Choices      []string `json:"choices,omitempty" yaml:"choices,omitempty"`
 	ChoicePolicy string   `json:"choice_policy,omitempty" yaml:"choice_policy,omitempty"`
+	Binding      string   `json:"binding,omitempty" yaml:"binding,omitempty"`
 }
 
 // PostStepCheck is a deterministic package-owned function that a Host must run
@@ -154,6 +183,9 @@ type MaterialValue struct {
 	MaterialID string `json:"material_id"`
 	RevisionID string `json:"revision_id"`
 	Valid      bool   `json:"valid"`
+	// Value is loaded only for declared route selectors and never exposed by the
+	// projection API. Ordinary material readiness needs revision metadata only.
+	Value json.RawMessage `json:"-"`
 }
 
 type Witness struct {

@@ -386,14 +386,40 @@ func LoadSteps(ctx context.Context, db *gorm.DB, taskID string) ([]orm.SubAgentS
 
 // AppendRemoteStep persists streamed Host events so reconnects and lease
 // reclaims have the same durable execution history as an in-process SubAgent.
+// Every accepted event remains append-only. The DB-backed SSE fallback advances
+// by sequence number, so updating an already observed row would hide later text
+// from a live client when the faster state-store stream is unavailable.
 func AppendRemoteStep(ctx context.Context, db *gorm.DB, taskID, role string, content json.RawMessage) error {
 	return common.ImmediateTransactionWithSQLiteBusyRetry(ctx, db, func(tx *gorm.DB) error {
-		var maxSeq int
-		if err := tx.Model(&orm.SubAgentStep{}).Where("task_id = ?", taskID).
-			Select("COALESCE(MAX(seq), -1)").Scan(&maxSeq).Error; err != nil {
+		if err := lockRemoteStepSeq(tx, taskID); err != nil {
 			return err
 		}
+
+		var last orm.SubAgentStep
+		result := tx.Model(&orm.SubAgentStep{}).
+			Where("task_id = ?", taskID).
+			Order("seq DESC").
+			Limit(1).
+			Find(&last)
+		if result.Error != nil {
+			return result.Error
+		}
+		nextSeq := 0
+		if result.RowsAffected > 0 {
+			nextSeq = last.Seq + 1
+		}
 		return tx.Create(&orm.SubAgentStep{ID: "sas_" + common.GenerateID(), TaskID: taskID,
-			Seq: maxSeq + 1, Role: role, Content: normalizeJSON(content, "{}"), CreatedAt: time.Now().UTC()}).Error
+			Seq: nextSeq, Role: role, Content: normalizeJSON(content, "{}"), CreatedAt: time.Now().UTC()}).Error
 	})
+}
+
+// PostgreSQL can execute remote event requests concurrently, so sequence
+// allocation is serialized per task before reading the indexed last row.
+// SQLite writer transactions are serialized by the database and retried by
+// TransactionWithSQLiteBusyRetry.
+func lockRemoteStepSeq(tx *gorm.DB, taskID string) error {
+	if tx.Dialector.Name() == "postgres" {
+		return tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", "sub_agent_steps:"+taskID).Error
+	}
+	return nil
 }

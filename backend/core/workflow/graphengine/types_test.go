@@ -3,6 +3,8 @@ package graphengine
 import (
 	"encoding/json"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // TestCompiledStateGraph_JSON marshals to valid JSON.
@@ -83,5 +85,39 @@ func TestMaterialValue_JSON(t *testing.T) {
 	json.Unmarshal(b, &restored)
 	if restored.MaterialID != "m1" || !restored.Valid {
 		t.Fatalf("roundtrip: %+v", restored)
+	}
+}
+
+func TestStepExecutionPolicyPublisherFallbackRoundTripsJSONAndYAML(t *testing.T) {
+	policy := StepExecutionPolicy{
+		PublisherFallbackTool: "publish_unavailable",
+		ToolCallLimits:        map[string]int{"publish_unavailable": 1},
+	}
+	if policy.IsZero() {
+		t.Fatal("publisher fallback tool must make the execution policy non-zero")
+	}
+
+	jsonBytes, err := json.Marshal(policy)
+	if err != nil {
+		t.Fatalf("marshal JSON: %v", err)
+	}
+	var fromJSON StepExecutionPolicy
+	if err := json.Unmarshal(jsonBytes, &fromJSON); err != nil {
+		t.Fatalf("unmarshal JSON: %v", err)
+	}
+	if fromJSON.PublisherFallbackTool != policy.PublisherFallbackTool {
+		t.Fatalf("JSON roundtrip lost publisher fallback tool: %#v", fromJSON)
+	}
+
+	yamlBytes, err := yaml.Marshal(policy)
+	if err != nil {
+		t.Fatalf("marshal YAML: %v", err)
+	}
+	var fromYAML StepExecutionPolicy
+	if err := yaml.Unmarshal(yamlBytes, &fromYAML); err != nil {
+		t.Fatalf("unmarshal YAML: %v", err)
+	}
+	if fromYAML.PublisherFallbackTool != policy.PublisherFallbackTool {
+		t.Fatalf("YAML roundtrip lost publisher fallback tool: %#v", fromYAML)
 	}
 }

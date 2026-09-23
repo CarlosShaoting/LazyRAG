@@ -112,12 +112,16 @@ export function extractErrorCode(error: any): string | undefined {
     responseData?.err_code,
     responseData?.err_msg,
     responseData?.error?.code,
+    // Workflow transition admission errors are delegated through the public
+    // facade and currently arrive inside the facade result envelope.
+    responseData?.result?.error?.code,
     responseData?.data?.code,
     responseData?.data?.error_code,
     responseData?.data?.errorCode,
     responseData?.data?.err_code,
     responseData?.data?.err_msg,
     responseData?.data?.error?.code,
+    responseData?.data?.result?.error?.code,
   ];
 
   for (const candidate of candidates) {
@@ -168,6 +172,20 @@ function extractRawErrorMessage(error: any): string | undefined {
     responseData.error.message.trim()
   ) {
     return responseData.error.message;
+  }
+
+  if (
+    typeof responseData?.result?.error?.message === "string" &&
+    responseData.result.error.message.trim()
+  ) {
+    return responseData.result.error.message;
+  }
+
+  if (
+    typeof responseData?.data?.result?.error?.message === "string" &&
+    responseData.data.result.error.message.trim()
+  ) {
+    return responseData.data.result.error.message;
   }
 
   if (

@@ -577,6 +577,151 @@ func TestOnSubAgentDone_Failed_SetsSessionFailed(t *testing.T) {
 	}
 }
 
+func TestWorkflowFailFastErrorCodes(t *testing.T) {
+	for _, code := range []string{
+		"authentication_failed", "permission_denied", "not_found", "usage_limit_exceeded",
+		"quota_exhausted", "balance_exhausted", "organization_spend_limit_exceeded",
+		"project_spend_limit_exceeded", "input_filtered", "output_filtered",
+		"workflow_tool_failed", "workflow_step_deadline_exceeded",
+		"workflow_execution_limit_exceeded",
+	} {
+		t.Run(code, func(t *testing.T) {
+			if !isWorkflowFailFastErrorCode("  " + strings.ToUpper(code) + "  ") {
+				t.Fatalf("%q must fail fast", code)
+			}
+		})
+	}
+	for _, code := range []string{
+		"", "invalid_request", "rate_limited", "concurrency_limited", "request_timeout",
+		"provider_overloaded", "service_unavailable", "provider_internal_error", "transport_error",
+	} {
+		t.Run("retryable_"+code, func(t *testing.T) {
+			if isWorkflowFailFastErrorCode(code) {
+				t.Fatalf("%q must remain eligible for recovery", code)
+			}
+		})
+	}
+}
+
+func TestOnSubAgentDone_FailFastFailureSkipsAutoDriver(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	if _, err := CreateSession(ctx, db.DB, CreateSessionInput{
+		SessionID: "ps-fail-fast", ConversationID: "conv-fail-fast", WorkflowID: "product-workflow",
+	}); err != nil {
+		t.Fatalf("session: %v", err)
+	}
+	if _, err := CreateSessionStep(ctx, db.DB, "ps-fail-fast", "write_prd", "task-fail-fast", 1); err != nil {
+		t.Fatalf("step: %v", err)
+	}
+
+	driverRequest := make(chan struct{}, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		select {
+		case driverRequest <- struct{}{}:
+		default:
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprint(w, `{"next_step":null}`)
+	}))
+	defer srv.Close()
+	t.Setenv("LAZYMIND_CHAT_SERVICE_URL", srv.URL)
+
+	var gotEvents []string
+	var errorPayload map[string]any
+	onSubAgentDone(ctx, db.DB, nil, "task-fail-fast", subagent.StatusFailed,
+		"model balance exhausted", "balance_exhausted", "diag-402",
+		func(eventType string, payload map[string]any) {
+			gotEvents = append(gotEvents, eventType)
+			if eventType == "workflow_error" {
+				errorPayload = payload
+			}
+		}, &WorkflowChatContext{
+			SessionID: "ps-fail-fast", WorkflowID: "product-workflow", StepID: "write_prd",
+			ConvID: "conv-fail-fast", UserID: "user-1", WorkflowMode: "auto",
+		})
+
+	if strings.Join(gotEvents, ",") != "workflow_step_feedback,workflow_error" {
+		t.Fatalf("events=%v", gotEvents)
+	}
+	if errorPayload["error_code"] != "balance_exhausted" || errorPayload["diagnostic_id"] != "diag-402" {
+		t.Fatalf("workflow_error=%#v", errorPayload)
+	}
+	step, err := GetStepByTaskID(ctx, db.DB, "task-fail-fast")
+	if err != nil || step.Status != StepStatusFailed || step.TerminalCode != "balance_exhausted" {
+		t.Fatalf("step=%#v err=%v", step, err)
+	}
+	session, err := GetSession(ctx, db.DB, "ps-fail-fast")
+	if err != nil || session.Status != SessionStatusFailed {
+		t.Fatalf("session=%#v err=%v", session, err)
+	}
+	select {
+	case <-driverRequest:
+		t.Fatal("deterministic provider failure called DriverAgent")
+	case <-time.After(150 * time.Millisecond):
+	}
+}
+
+func TestOnSubAgentDone_ParallelSiblingCannotAdvanceAfterFailFastFailure(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	if _, err := CreateSession(ctx, db.DB, CreateSessionInput{
+		SessionID: "ps-fail-fast-parallel", ConversationID: "conv-fail-fast-parallel", WorkflowID: "product-workflow",
+	}); err != nil {
+		t.Fatalf("session: %v", err)
+	}
+	for _, item := range []struct{ stepID, taskID string }{
+		{"analyze", "task-fail-fast-a"},
+		{"research", "task-fail-fast-b"},
+	} {
+		if _, err := CreateSessionStep(ctx, db.DB, "ps-fail-fast-parallel", item.stepID, item.taskID, 1); err != nil {
+			t.Fatalf("step %s: %v", item.stepID, err)
+		}
+		if err := UpdateStepStatus(ctx, db.DB, item.taskID, StepStatusRunning); err != nil {
+			t.Fatalf("run %s: %v", item.stepID, err)
+		}
+	}
+
+	driverRequest := make(chan struct{}, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		select {
+		case driverRequest <- struct{}{}:
+		default:
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	t.Setenv("LAZYMIND_CHAT_SERVICE_URL", srv.URL)
+
+	var events []string
+	onSSE := func(eventType string, _ map[string]any) { events = append(events, eventType) }
+	base := WorkflowChatContext{
+		SessionID: "ps-fail-fast-parallel", WorkflowID: "product-workflow",
+		ConvID: "conv-fail-fast-parallel", UserID: "user-1", WorkflowMode: "auto",
+	}
+	failed := base
+	failed.StepID = "analyze"
+	onSubAgentDone(ctx, db.DB, nil, "task-fail-fast-a", subagent.StatusFailed,
+		"validation failed", "workflow_tool_failed", "diag-tool", onSSE, &failed)
+	succeeded := base
+	succeeded.StepID = "research"
+	onSubAgentDone(ctx, db.DB, nil, "task-fail-fast-b", subagent.StatusSucceeded,
+		"research complete", "", "", onSSE, &succeeded)
+
+	if strings.Join(events, ",") != "workflow_step_feedback,workflow_error,step_partial_done,workflow_step_feedback" {
+		t.Fatalf("a later successful sibling advanced a failed workflow: %v", events)
+	}
+	session, err := GetSession(ctx, db.DB, "ps-fail-fast-parallel")
+	if err != nil || session.Status != SessionStatusFailed {
+		t.Fatalf("session=%#v err=%v", session, err)
+	}
+	select {
+	case <-driverRequest:
+		t.Fatal("parallel fail-fast workflow called DriverAgent")
+	case <-time.After(150 * time.Millisecond):
+	}
+}
+
 func TestCheckAndFallbackIfStuck_SkipsWhenSubAgentRunning(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()

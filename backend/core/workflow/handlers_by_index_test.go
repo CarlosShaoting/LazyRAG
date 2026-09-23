@@ -802,4 +802,23 @@ func TestPatchSlotItemByIndexHonorsBaseRevision(t *testing.T) {
 	if len(artifacts) != 1 || artifacts[0].ContentType != "file" {
 		t.Fatalf("unexpected human artifacts: %#v", artifacts)
 	}
+	var session orm.WorkflowSession
+	if err := db.First(&session, "id = 'session-1'").Error; err != nil {
+		t.Fatalf("load session: %v", err)
+	}
+	if session.StateVersion != 1 {
+		t.Fatalf("human save did not advance state version: %d", session.StateVersion)
+	}
+	if err := db.Model(&session).Update("dismissed", true).Error; err != nil {
+		t.Fatalf("dismiss session: %v", err)
+	}
+	currentDraftVersion := int64(0)
+	if rec := request("checkpoint", 4, &currentDraftVersion); rec.Code != http.StatusConflict {
+		t.Fatalf("dismissed source remained editable: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var afterDismiss int64
+	db.Model(&orm.WorkflowSlotRevision{}).Where("session_id = ? AND slot_id = ?", "session-1", "draft_document").Count(&afterDismiss)
+	if afterDismiss != 2 {
+		t.Fatalf("dismissed edit created a revision: %d", afterDismiss)
+	}
 }

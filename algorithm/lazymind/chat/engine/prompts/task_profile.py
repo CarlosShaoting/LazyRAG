@@ -442,10 +442,20 @@ def _assess_request(
                 'conflicting_requirements', description,
                 f'{left_match.group(0)} / {right_match.group(0)}', 'high',
             ))
+    # Negated upload statements are constraints, not references. Without this
+    # normalization, requests such as "没有附件，按默认结构执行" are classified
+    # as blocked on a missing attachment before a text-only Workflow can apply
+    # its own input contract.
+    attachment_evidence_text = re.sub(
+        r'(?:当前)?(?:没有|无|无需|不需要|不要求).{0,12}'
+        r'(?:任何)?(?:附件|上传(?:文件|材料)?|参考(?:文件|样例|模板)?)|'
+        r'\b(?:no|without)\s+(?:attachments?|attached\s+(?:files?|documents?|images?))\b',
+        ' ', text, flags=re.I,
+    )
     attachment_reference = re.search(
         r'这个文件|上面(?:的)?文件|这份(?:文档|财报|论文|报告|合同|文件)|'
         r'这篇(?:文章|论文|报告)|附件|这张图|'
-        r'attached\s+(?:file|document|image)', text, re.I,
+        r'attached\s+(?:file|document|image)', attachment_evidence_text, re.I,
     )
     if attachment_reference and not has_attachments:
         issues.append(RequestIssue(

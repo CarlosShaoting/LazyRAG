@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import inspect
 import json
 import os
 import re
@@ -9,6 +10,7 @@ import time
 import base64
 import types
 import tempfile
+import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -36,6 +38,7 @@ from lazymind.chat.engine.agent_runtime import (
     render_attachment_content,
     make_cancel_stop_condition,
 )
+from lazymind.chat.engine.agent_runtime.tool_call_guard import AgentExecutionLimitError
 from lazymind.chat.engine.prompts import add_standard_system_sections
 from lazymind.chat.engine.tools.file_resources.tools import (
     search_file_resource as grep, read_file_resource as read_file,
@@ -84,6 +87,17 @@ DRAFT_STREAM_EVENT_TYPES = frozenset({
 SUBAGENT_TEXT_STREAM_CHUNK_CHARS = 256
 SUBAGENT_TEXT_STREAM_MAX_LATENCY_SECONDS = 0.25
 
+_HOST_REQUIRED_OUTPUT_FALLBACK_ORIGIN = 'host_required_output_fallback'
+_HOST_EXACT_ARTIFACT_ENVELOPE_ORIGIN = 'host_exact_artifact_envelope_recovery'
+
+
+class _WorkflowToolResultError(RuntimeError):
+    """Structured failure returned by a terminal/fail-fast Workflow tool."""
+
+    def __init__(self, tool_name: str, message: str) -> None:
+        super().__init__(message)
+        self.tool_name = tool_name
+
 
 def _publisher_owns_outputs(ctx: 'SubAgentContext') -> bool:
     """Return whether this step's outputs are written by package publisher tools."""
@@ -100,6 +114,27 @@ def _publisher_owns_outputs(ctx: 'SubAgentContext') -> bool:
         and bool(slots)
         and slots.issubset(owned)
     )
+
+
+def _publisher_fallback_tool_name(
+    ctx: 'SubAgentContext', effective_agent_type: str,
+) -> str:
+    """Resolve an explicitly configured fallback for a publisher-owned Workflow step."""
+    if effective_agent_type != 'workflow_step' or not _publisher_owns_outputs(ctx):
+        return ''
+    policy = _coerce_dict((ctx.params or {}).get('execution_policy'))
+    raw_name = policy.get('publisher_fallback_tool')
+    if not isinstance(raw_name, str) or not raw_name.strip():
+        return ''
+    name = raw_name.strip()
+    declared = set(_coerce_str_list((ctx.params or {}).get('legacy_tools')))
+    if name not in declared:
+        LOG.warning(
+            '[SubAgent] publisher fallback %r is not a declared tool for task=%s',
+            name, ctx.task_id,
+        )
+        return ''
+    return name
 
 
 async def merge_agent_and_stream_events(
@@ -295,6 +330,9 @@ def _resolve_runtime_tools(
     """
     if explicit:
         core_tool_names = set(SUBAGENT_CORE_TOOL_NAMES)
+        # A step may disable broad Artifact browsing but explicitly need the
+        # file reader for offloaded Skill contracts.
+        core_tool_names.discard('read_file')
         name_list = [
             name for item in explicit
             if (name := str(item).strip()) and name not in core_tool_names
@@ -310,7 +348,9 @@ def _resolve_runtime_tools(
         file_tools = FileSystemToolkit().get_flat_tools() if host_filesystem_enabled else {}
         result = []
         for name in name_list:
-            if name in package_by_name:
+            if name == 'read_file':
+                result.append(read_file)
+            elif name in package_by_name:
                 result.append(package_by_name[name])
             elif name in file_tools:
                 result.append(file_tools[name])
@@ -327,6 +367,7 @@ def _build_subagent_tools(
     attachment_configs: Optional[List[Any]] = None,
     *,
     tools_only: bool = False,
+    include_artifact_reads: bool = True,
     include_artifact_writes: bool = True,
 ) -> List[Any]:
     """Combine mandatory SubAgent infra tools with optional domain tools.
@@ -340,14 +381,16 @@ def _build_subagent_tools(
     if tools_only:
         return list(extra_tools or [])
 
-    base = [
-        subagent_tools.get_artifact,
-        subagent_tools.list_artifacts,
-        subagent_tools.list_knowledge_bases,
-        grep,
-        read_file,
-        subagent_tools.find_artifact,
-    ]
+    base = []
+    if include_artifact_reads:
+        base.extend([
+            subagent_tools.get_artifact,
+            subagent_tools.list_artifacts,
+            subagent_tools.list_knowledge_bases,
+            grep,
+            read_file,
+            subagent_tools.find_artifact,
+        ])
     if include_artifact_writes:
         base.extend([
             subagent_tools.save_artifacts,
@@ -437,7 +480,7 @@ _STRUCTURED_PARAM_KEYS = {
     'workflow_id', 'workflow_ref', 'revision_id', 'revision_no', 'tree_hash',
     'remote_root', 'step_id', 'session_id', 'user_input', 'hand_off',
     'chat_session_id', 'workflow_mode', 'user_id', 'preflight_id',
-    'legacy_tools', 'terminal_tools_only', 'parent_agentic_config', 'filters', '_enable_tool_retrieval',
+    'legacy_tools', 'terminal_tools_only', 'terminal_tools', 'fail_fast_tools', 'execution_policy', 'parent_agentic_config', 'filters', '_enable_tool_retrieval',
     '_workspace_execution', '_core_workspace_context', '_core_local_runtime', 'workspace_context',
     SUBAGENT_SKILLS_CONTEXT_KEY,
     SUBAGENT_ENVIRONMENT_CONTEXT_KEY,
@@ -724,7 +767,8 @@ def _build_subagent_plan(
     if not publisher_owned_outputs:
         output_lines.append(
             '## Exact save_artifacts call shape\n'
-            'Use this exact JSON structure:\n'
+            'Call the save_artifacts tool with this exact JSON structure; never print the JSON '
+            'as your final reply:\n'
             '{"artifacts":[{"key":"<declared output key>","value":"<actual content>",'
             '"content_type":"text","caption":"<optional label>"}]}\n'
             'The payload field MUST be named value. Never use content, data, body, or text '
@@ -743,15 +787,24 @@ def _build_subagent_plan(
             '(e.g. "重新收集第二张图", "replace item 3", "redo position N"), '
             'you MUST pass sort_order=N. Omitting it will append a new item instead of replacing.'
         )
-    output_lines.append(
-        ('After the publisher tool succeeds, ' if publisher_owned_outputs
-         else 'After all required artifacts are saved, ')
-        + 'write a final summary that contains the actual results and key findings — not only '
-        'a reference to the artifacts. '
-        'For example, if you searched for information, include the information itself. '
-        'The summary must be self-contained and directly usable by the caller without '
-        'opening any artifact.'
-    )
+    execution_policy = _coerce_dict(ctx.params.get('execution_policy'))
+    if bool(execution_policy.get('compact_summary')):
+        output_lines.append(
+            ('After the publisher tool succeeds, ' if publisher_owned_outputs
+             else 'After all required artifacts are saved, ')
+            + 'return only the short status or delivery sentence required by the task. '
+            'Do not recap artifact contents, tool calls, paths, or internal records.'
+        )
+    else:
+        output_lines.append(
+            ('After the publisher tool succeeds, ' if publisher_owned_outputs
+             else 'After all required artifacts are saved, ')
+            + 'write a final summary that contains the actual results and key findings — not only '
+            'a reference to the artifacts. '
+            'For example, if you searched for information, include the information itself. '
+            'The summary must be self-contained and directly usable by the caller without '
+            'opening any artifact.'
+        )
     builder.runtime(
         'subagent_output_contract', 'Output Contract', '\n'.join(output_lines), 'task.slots',
         priority=60,
@@ -768,6 +821,7 @@ def _build_subagent_plan(
     )
     history = []
     terminal_tool_names = set(_coerce_str_list(ctx.params.get('terminal_tools')))
+    fail_fast_tool_names = set(_coerce_str_list(ctx.params.get('fail_fast_tools')))
     available_tool_names = {
         str(getattr(tool, '__name__', '') or '') for tool in tools
     }
@@ -783,12 +837,19 @@ def _build_subagent_plan(
             str(_cfg['skill_fs_url'] or '').strip(),
             workflow_skills_dir(),
         ]))
+    max_rounds = _positive_int(
+        execution_policy.get('max_rounds'), int(_cfg['agentic_expanded_max_rounds']), minimum=2,
+    )
+    hard_repeat_limit = _positive_int(
+        execution_policy.get('hard_repeat_limit'), 0, minimum=2,
+    ) or None
     return AgentRunPlan(
         role=AgentRole.SUBAGENT,
         prompt=builder.build(),
         history=history,
         tools=tools,
         stop_tools=sorted(terminal_tool_names & available_tool_names),
+        fail_fast_tools=sorted(fail_fast_tool_names & available_tool_names),
         force_summarize_context=ctx.objective,
         execution_options=AgentExecutionOptions(
             tool_state_scope=f'subagent:{ctx.task_id}',
@@ -804,7 +865,9 @@ def _build_subagent_plan(
             fs=FS if inherited_skills else None,
             skills_dir=skills_dir,
             extra_stop_condition=make_cancel_stop_condition(),
-            max_retries=max(1, int(_cfg['agentic_expanded_max_rounds']) - 1),
+            max_retries=max(1, max_rounds - 1),
+            tool_call_limits=_positive_int_map(execution_policy.get('tool_call_limits')),
+            hard_repeat_limit=hard_repeat_limit,
             llm_config=llm_config or {},
         ),
     )
@@ -876,22 +939,208 @@ def _commit_prompt_only_text_output(
     return True
 
 
+def _parse_exact_artifact_envelope(
+    ctx: SubAgentContext,
+    required_output_keys: List[str],
+    saved_keys: set[str],
+    final_text: Any,
+) -> Optional[List[Dict[str, Any]]]:
+    """Return a strict ``save_artifacts`` payload emitted as final model text.
+
+    Small local models occasionally print the exact structured-tool arguments as
+    their final response instead of emitting a tool-call frame.  Recover only the
+    unambiguous case: a Workflow step with every required output still missing and
+    a whole-response JSON object whose sole field is ``artifacts``.  All artifact
+    keys and item fields must satisfy the same public tool boundary; prose-wrapped,
+    partial, publisher-owned, or out-of-contract payloads remain hard failures.
+    """
+    if str(ctx.agent_type or '') != 'workflow_step' or _publisher_owns_outputs(ctx):
+        return None
+    required = [str(key).strip() for key in required_output_keys if str(key).strip()]
+    if not required or any(key in saved_keys for key in required):
+        return None
+    text = str(final_text or '').strip()
+    if not text:
+        return None
+    try:
+        payload = json.loads(text)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict) or set(payload) != {'artifacts'}:
+        return None
+    artifacts = payload.get('artifacts')
+    if not isinstance(artifacts, list) or not artifacts or len(artifacts) > 50:
+        return None
+    allowed_fields = {
+        'key', 'value', 'content_type', 'source_tool', 'sort_order', 'caption',
+    }
+    declared = {str(key).strip() for key in ctx.output_slots if str(key).strip()}
+    recovered_keys: set[str] = set()
+    normalized: List[Dict[str, Any]] = []
+    for item in artifacts:
+        if (
+            not isinstance(item, dict)
+            or 'key' not in item
+            or 'value' not in item
+            or not set(item).issubset(allowed_fields)
+        ):
+            return None
+        key = str(item.get('key') or '').strip()
+        if not key or key in recovered_keys or (declared and key not in declared):
+            return None
+        content_type = str(item.get('content_type') or 'text').strip().lower()
+        if content_type not in subagent_tools._CONTENT_TYPES:
+            return None
+        if subagent_tools._validate_declared_artifact_type(ctx, key, content_type):
+            return None
+        if not _preflight_exact_artifact_value(ctx, item.get('value'), content_type):
+            return None
+        recovered_keys.add(key)
+        normalized.append(dict(item))
+    if not set(required).issubset(recovered_keys):
+        return None
+    return normalized
+
+
+def _preflight_exact_artifact_value(
+    ctx: SubAgentContext,
+    value: Any,
+    content_type: str,
+) -> bool:
+    """Validate side-effectful artifact kinds before executing a recovered batch."""
+    if content_type in {'text', 'json'}:
+        return True
+    if content_type == 'image':
+        if isinstance(value, dict):
+            source = str(
+                value.get('path') or value.get('image_url') or value.get('url') or ''
+            ).strip()
+        else:
+            source = str(value or '').strip()
+        if not source:
+            return False
+        if not source.lower().startswith(('http://', 'https://')):
+            source = subagent_tools._materialize_local_path(source)
+        return subagent_tools._is_valid_image_ref(source)
+
+    raw_paths: List[Any]
+    if content_type == 'file':
+        source = str(
+            (value.get('path') if isinstance(value, dict) else value) or ''
+        ).strip()
+        raw_paths = [source]
+    else:
+        raw_paths = value if isinstance(value, list) else [value]
+    if not raw_paths:
+        return False
+    workspace = os.path.realpath(ctx.workspace_path)
+    for raw_path in raw_paths:
+        source = str(raw_path or '').strip()
+        if not source:
+            return False
+        if os.path.isabs(source):
+            resolved = os.path.realpath(source)
+        else:
+            resolved = os.path.realpath(os.path.join(workspace, source))
+            try:
+                if os.path.commonpath([workspace, resolved]) != workspace:
+                    return False
+            except ValueError:
+                return False
+        if not os.path.isfile(resolved):
+            return False
+    return True
+
+
+def _recover_exact_artifact_envelope(
+    ctx: SubAgentContext,
+    artifacts: List[Dict[str, Any]],
+    step_seq: int,
+) -> tuple[int, List[Dict[str, Any]], Any, Optional[BaseException]]:
+    """Persist and execute one auditable host recovery of an exact tool envelope."""
+    call_id = f'host-exact-artifact-envelope-{uuid.uuid4().hex}'
+    origin = _HOST_EXACT_ARTIFACT_ENVELOPE_ORIGIN
+    call_event: Dict[str, Any] = {
+        'tag': 'tool_calls',
+        'origin': origin,
+        'tool_calls': [{
+            'id': call_id,
+            'name': 'save_artifacts',
+            'args': {'artifacts': artifacts},
+            'origin': origin,
+        }],
+    }
+    _persist_step(ctx, step_seq, call_event)
+    step_seq += 1
+
+    raw_result: Any = None
+    recovery_error: Optional[BaseException] = None
+    try:
+        raw_result = subagent_tools.save_artifacts(artifacts)
+        envelope: Dict[str, Any] = {'ok': True, 'value': raw_result}
+    except Exception as exc:  # noqa: BLE001 - identical boundary to the public tool.
+        recovery_error = exc
+        envelope = {'ok': False, 'value': f'save_artifacts failed: {exc}'}
+
+    result_event: Dict[str, Any] = {
+        'tag': 'tool_results',
+        'origin': origin,
+        'tool_results': [{
+            'id': call_id,
+            'name': 'save_artifacts',
+            'result': envelope,
+            'origin': origin,
+        }],
+    }
+    _persist_step(ctx, step_seq, result_event)
+    step_seq += 1
+    return step_seq, [call_event, result_event], raw_result, recovery_error
+
+
+def _saved_artifact_keys(
+    ctx: SubAgentContext,
+    db: Any,
+    required_output_keys: Optional[List[str]] = None,
+) -> set[str]:
+    """Combine artifacts written in this process with persisted resume state."""
+    saved = {str(key) for key in ctx.saved_keys() if str(key).strip()}
+    try:
+        persisted = db.load_artifacts(ctx.task_id, required_output_keys or None)
+    except Exception as exc:
+        LOG.warning('[SubAgent] failed to inspect persisted output artifacts: %s', exc)
+        return saved
+    for artifact in persisted or []:
+        if not isinstance(artifact, dict):
+            continue
+        key = str(artifact.get('slot') or artifact.get('key') or '').strip()
+        if key:
+            saved.add(key)
+    return saved
+
+
 def _persist_step(
     ctx: SubAgentContext, seq: int, event: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
     """Store and return the resume-safe representation of a tool step."""
     tag = event.get('tag')
+    event_origin = str(event.get('origin') or '').strip()
     if tag == 'tool_calls':
         tool_calls = []
         for tc in event.get('tool_calls', []) or []:
             if not isinstance(tc, dict):
                 continue
-            tool_calls.append({
+            tool_call = {
                 'id': tc.get('id', ''),
                 'name': tc.get('name') or (tc.get('function') or {}).get('name', ''),
                 'args': tc.get('args') or (tc.get('function') or {}).get('arguments', {}),
-            })
-        content = {'text': '', 'tool_calls': tool_calls}
+            }
+            origin = str(tc.get('origin') or event_origin).strip()
+            if origin:
+                tool_call['origin'] = origin
+            tool_calls.append(tool_call)
+        content: Dict[str, Any] = {'text': '', 'tool_calls': tool_calls}
+        if event_origin:
+            content['origin'] = event_origin
         ctx.db.append_step(ctx.task_id, seq, 'assistant', content)
         return content
     elif tag == 'tool_results':
@@ -901,12 +1150,18 @@ def _persist_step(
                 continue
             raw_result = tr.get('result', tr.get('content', ''))
             tool_name = tr.get('name', '')
-            results.append({
+            tool_result = {
                 'tool_call_id': tr.get('id', ''),
                 'name': tool_name,
                 'result': _truncate_tool_result(ctx, raw_result, tool_name),
-            })
+            }
+            origin = str(tr.get('origin') or event_origin).strip()
+            if origin:
+                tool_result['origin'] = origin
+            results.append(tool_result)
         content = {'tool_results': results}
+        if event_origin:
+            content['origin'] = event_origin
         ctx.db.append_step(ctx.task_id, seq, 'tool', content)
         return content
     return None
@@ -946,10 +1201,12 @@ def _workflow_control_from_tool_results(
     return selected
 
 
-def _terminal_tool_failure(event: Dict[str, Any], terminal_tool_names: set[str]) -> str:
-    """Return an error when a terminal tool lacks a structured success result."""
+def _terminal_tool_failure_details(
+    event: Dict[str, Any], terminal_tool_names: set[str],
+) -> tuple[str, str]:
+    """Return the failing tool name and message for a terminal/fail-fast result."""
     if event.get('tag') != 'tool_results' or not terminal_tool_names:
-        return ''
+        return '', ''
     for result in event.get('tool_results') or []:
         if not isinstance(result, dict):
             continue
@@ -961,10 +1218,174 @@ def _terminal_tool_failure(event: Dict[str, Any], terminal_tool_names: set[str])
             try:
                 payload = json.loads(payload)
             except (TypeError, ValueError, json.JSONDecodeError):
-                return f'{name} failed: {payload}'
+                try:
+                    payload = ast.literal_eval(payload)
+                except (SyntaxError, ValueError):
+                    return name, f'{name} failed: {payload}'
         if not isinstance(payload, dict):
-            return f'{name} failed without a structured result: {payload!r}'
-    return ''
+            return name, f'{name} failed without a structured result: {payload!r}'
+        if payload.get('ok') is False:
+            message = payload.get('msg') or payload.get('error') or payload.get('value')
+            return name, f'{name} failed: {message or repr(payload)}'
+    return '', ''
+
+
+def _terminal_tool_failure(event: Dict[str, Any], terminal_tool_names: set[str]) -> str:
+    """Return an error when a terminal tool lacks a structured success result."""
+    return _terminal_tool_failure_details(event, terminal_tool_names)[1]
+
+
+def _event_calls_tool(event: Dict[str, Any], tool_name: str) -> bool:
+    """Return whether a streamed tool event names the configured fallback."""
+    if not tool_name or event.get('tag') not in {'tool_calls', 'tool_results'}:
+        return False
+    items = event.get('tool_calls') if event.get('tag') == 'tool_calls' else event.get('tool_results')
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        name = item.get('name') or (item.get('function') or {}).get('name')
+        if str(name or '').strip() == tool_name:
+            return True
+    return False
+
+
+def _fallback_allowed_after_exception(
+    exc: BaseException,
+    *,
+    fallback_name: str,
+    fallback_attempted: bool,
+    model_failure_seen: bool,
+) -> bool:
+    """Limit exception recovery to local tool-shape and execution-budget failures."""
+    if not fallback_name or fallback_attempted or model_failure_seen:
+        return False
+    if isinstance(exc, asyncio.CancelledError):
+        return False
+    if isinstance(exc, AgentExecutionLimitError):
+        # The middleware normally streams the call before raising, but retain a
+        # fail-closed check for a fallback-specific limit error if that event was
+        # not delivered across the thread/async boundary.
+        return f'Tool {fallback_name} ' not in str(exc)
+    return (
+        isinstance(exc, _WorkflowToolResultError)
+        and exc.tool_name != fallback_name
+    )
+
+
+async def _invoke_publisher_fallback(
+    ctx: SubAgentContext,
+    name: str,
+    step_seq: int,
+) -> tuple[int, List[Dict[str, Any]], Any, Optional[BaseException]]:
+    """Invoke one exact pinned zero-argument publisher and persist an auditable pair."""
+    call_id = f'host-required-output-fallback-{uuid.uuid4().hex}'
+    origin = _HOST_REQUIRED_OUTPUT_FALLBACK_ORIGIN
+    call_event: Dict[str, Any] = {
+        'tag': 'tool_calls',
+        'origin': origin,
+        'tool_calls': [{
+            'id': call_id,
+            'name': name,
+            'args': {},
+            'origin': origin,
+        }],
+    }
+    _persist_step(ctx, step_seq, call_event)
+    step_seq += 1
+
+    raw_result: Any = None
+    fallback_error: Optional[BaseException] = None
+    try:
+        package_tools = load_workflow_tools(ctx.params or {}, [name])
+        fallback = package_tools.get(name)
+        if not callable(fallback) or str(getattr(fallback, '__name__', '') or '') != name:
+            raise RuntimeError(
+                f'Configured publisher fallback {name!r} is unavailable in the pinned Workflow package.'
+            )
+        try:
+            signature = inspect.signature(fallback)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f'Configured publisher fallback {name!r} has no inspectable zero-argument signature.'
+            ) from exc
+        if signature.parameters:
+            raise RuntimeError(
+                f'Configured publisher fallback {name!r} must declare exactly zero parameters.'
+            )
+        raw_result = fallback()
+        if inspect.isawaitable(raw_result):
+            raw_result = await raw_result
+        if isinstance(raw_result, dict) and raw_result.get('ok') is False:
+            message = raw_result.get('msg') or raw_result.get('error') or raw_result.get('value')
+            fallback_error = RuntimeError(
+                f'{name} failed: {message or repr(raw_result)}'
+            )
+            envelope = raw_result
+        else:
+            envelope = {'ok': True, 'value': raw_result}
+    except asyncio.CancelledError as exc:
+        fallback_error = exc
+        envelope = {'ok': False, 'value': f'{name} cancelled: {exc or "cancelled"}'}
+    except Exception as exc:  # noqa: BLE001 - package publishers are an isolation boundary.
+        fallback_error = exc
+        envelope = {'ok': False, 'value': f'{name} failed: {exc}'}
+
+    result_event: Dict[str, Any] = {
+        'tag': 'tool_results',
+        'origin': origin,
+        'tool_results': [{
+            'id': call_id,
+            'name': name,
+            'result': envelope,
+            'origin': origin,
+        }],
+    }
+    _persist_step(ctx, step_seq, result_event)
+    step_seq += 1
+    return step_seq, [call_event, result_event], raw_result, fallback_error
+
+
+def _publisher_fallback_sse_event(
+    task_id: str, event: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Translate a synthetic persisted fallback event to the public stream shape."""
+    origin = str(event.get('origin') or _HOST_REQUIRED_OUTPUT_FALLBACK_ORIGIN)
+    if event.get('tag') == 'tool_calls':
+        return {
+            'type': 'tool_calls',
+            'task_id': task_id,
+            'origin': origin,
+            'tool_calls': event.get('tool_calls') or [],
+        }
+    return {
+        'type': 'tool_results',
+        'task_id': task_id,
+        'origin': origin,
+        'tool_results': event.get('tool_results') or [],
+    }
+
+
+def _model_failure_fields(event: Dict[str, Any]) -> Dict[str, str]:
+    """Extract public failure metadata from one model-call runtime event."""
+    if event.get('tag') != 'runtime_event':
+        return {}
+    runtime_event = event.get('runtime_event')
+    if not isinstance(runtime_event, dict) or runtime_event.get('type') != 'model_call_finished':
+        return {}
+    data = runtime_event.get('data')
+    if not isinstance(data, dict) or data.get('kind') != 'failure':
+        return {}
+    failure = data.get('failure')
+    if not isinstance(failure, dict):
+        return {}
+    fields: Dict[str, str] = {}
+    error_code = str(failure.get('code') or '').strip()
+    diagnostic_id = str(failure.get('diagnostic_id') or '').strip()
+    if error_code:
+        fields['error_code'] = error_code
+    if diagnostic_id:
+        fields['diagnostic_id'] = diagnostic_id
+    return fields
 
 
 def _signal_task_cancel(task_id: str) -> bool:
@@ -1006,6 +1427,15 @@ async def run_subagent_stream(
     stream_merge_active = False
     clear_cancel_queue = True
     source_state: Dict[str, Any] = {}
+    failure_fields: Dict[str, str] = {}
+    ctx: Optional[SubAgentContext] = None
+    required_output_keys: List[str] = []
+    fallback_name = ''
+    fallback_attempted = False
+    model_failure_seen = False
+    executor_started = False
+    step_seq = 0
+    workflow_control: Dict[str, str] = {}
     reset_citation_state(source_state)
     last_sources_snapshot = '[]'
     outbound_text_type = ''
@@ -1132,6 +1562,7 @@ async def run_subagent_stream(
             emit=_emit,
         )
         ctx.ensure_workspace()
+        fallback_name = _publisher_fallback_tool_name(ctx, effective_agent_type)
 
         # For workflow_step tasks: remove {{slot}} placeholders from the objective
         # (artifact context is now injected as a summary section in _objective_prompt instead).
@@ -1189,6 +1620,9 @@ async def run_subagent_stream(
             visible_runtime_tools,
             attachment_configs,
             tools_only=bool(ctx.params.get('tools_only')),
+            include_artifact_reads=not bool(
+                _coerce_dict(ctx.params.get('execution_policy')).get('disable_artifact_reads')
+            ),
             include_artifact_writes=not _publisher_owns_outputs(ctx),
         )
         host_filesystem_enabled = bool(_cfg['trusted_local_mode']) or bool(agentic_config.get('_core_workspace_context'))
@@ -1250,10 +1684,16 @@ async def run_subagent_stream(
         workflow_control: Dict[str, str] = {}
         declared_workflow_tools = set(_coerce_str_list(ctx.params.get('legacy_tools')))
         terminal_workflow_tools = set(_coerce_str_list(ctx.params.get('terminal_tools')))
+        fail_fast_workflow_tools = set(_coerce_str_list(ctx.params.get('fail_fast_tools')))
         # Accumulate streaming text/think chunks; flush to DB when a tool step follows or at end.
         _pending_text: str = ''
         _pending_think: str = ''
         workflow_tool_in_flight = False
+        # Keep only native model text emitted after the most recent tool boundary.
+        # Translator-rendered tool markup must never be interpreted as a final
+        # save_artifacts payload.
+        _model_text_after_tool: str = ''
+        model_save_artifacts_attempted = False
 
         executor = AgentExecutor()
         # Package publisher tools can emit several durable artifacts during one
@@ -1264,6 +1704,7 @@ async def run_subagent_stream(
         merged_events = merge_agent_and_stream_events(
             executor.stream(llm, plan), stream_events,
         )
+        executor_started = True
         async for source, merged_payload in merged_events:
             if source == 'stream':
                 pending_event = _drain_outbound_text()
@@ -1281,11 +1722,22 @@ async def run_subagent_stream(
             if kind == 'event':
                 item = payload
                 tag = item.get('tag')
+                model_failure = _model_failure_fields(item)
+                if model_failure:
+                    model_failure_seen = True
+                    failure_fields = model_failure
+                if _event_calls_tool(item, fallback_name):
+                    # An Agent-originated fallback call consumes the single attempt,
+                    # including malformed arguments or a structured tool failure.
+                    fallback_attempted = True
+                if _event_calls_tool(item, 'save_artifacts'):
+                    model_save_artifacts_attempted = True
                 # Persist tool steps for resume / breakpoint recovery.
                 if tag in ('tool_calls', 'tool_results'):
                     pending_event = _drain_outbound_text()
                     if pending_event is not None:
                         yield _sse(pending_event)
+                    _model_text_after_tool = ''
                     # Flush accumulated text/think as a single step before tool call.
                     if _pending_think:
                         ctx.db.append_step(task_id, step_seq, 'think', {'content': _pending_think})
@@ -1298,15 +1750,17 @@ async def run_subagent_stream(
                     durable_step = _persist_step(ctx, step_seq, item)
                     step_seq += 1
                     if effective_agent_type == 'workflow_step' and tag == 'tool_results':
-                        terminal_error = _terminal_tool_failure(
-                            item, terminal_workflow_tools,
+                        terminal_name, terminal_error = _terminal_tool_failure_details(
+                            item, terminal_workflow_tools | fail_fast_workflow_tools,
                         )
                         if terminal_error:
                             # Agent execution runs in a worker thread. Cancelling this
                             # async iterator alone does not stop subsequent React rounds.
                             if _signal_task_cancel(task_id):
                                 clear_cancel_queue = False
-                            raise RuntimeError(terminal_error)
+                            if not failure_fields:
+                                failure_fields = {'error_code': 'workflow_tool_failed'}
+                            raise _WorkflowToolResultError(terminal_name, terminal_error)
                         candidate_control = _workflow_control_from_tool_results(
                             item, declared_workflow_tools,
                         )
@@ -1365,6 +1819,11 @@ async def run_subagent_stream(
                         progress = min(90, progress + 15)
                         yield _sse({'type': 'progress', 'task_id': task_id, 'progress': progress,
                                     'current_phase': '执行中...'})
+                if tag == 'text' and isinstance(item.get('delta'), str):
+                    # Preserve the provider-native bytes for strict JSON recovery.
+                    # The display translator may buffer or rewrite citations and is
+                    # intentionally not an artifact-protocol parser.
+                    _model_text_after_tool += item['delta']
                 # Translate all events (text/think/tool_calls/tool_results) via shared translator.
                 for frame in translator.feed(item):
                     # Tool calls/results already have compact structured SSE events. Some
@@ -1420,22 +1879,91 @@ async def run_subagent_stream(
             _auto_flush_drafts(ctx, db)
 
         # Completeness check: every required output key must have at least one artifact.
-        saved = set(ctx.saved_keys())
-        if _commit_prompt_only_text_output(
+        saved = _saved_artifact_keys(ctx, db, required_output_keys)
+        missing = [k for k in required_output_keys if k not in saved]
+        all_required_missing = bool(required_output_keys) and all(
+            key not in saved for key in required_output_keys
+        )
+        artifact_envelope_text = _model_text_after_tool
+        if not artifact_envelope_text and isinstance(final_result, str):
+            artifact_envelope_text = final_result
+        exact_artifacts = None
+        if missing and all_required_missing and not model_save_artifacts_attempted:
+            exact_artifacts = _parse_exact_artifact_envelope(
+                ctx, required_output_keys, saved, artifact_envelope_text,
+            )
+        if exact_artifacts is not None:
+            step_seq, recovery_events, _recovery_result, recovery_error = (
+                _recover_exact_artifact_envelope(ctx, exact_artifacts, step_seq)
+            )
+            for recovery_event in recovery_events:
+                yield _sse(_publisher_fallback_sse_event(task_id, recovery_event))
+            while emitted:
+                ev = emitted.pop(0)
+                ev['task_id'] = task_id
+                yield _sse(ev)
+            if recovery_error is not None:
+                LOG.warning(
+                    '[SubAgent] exact artifact envelope recovery failed for task=%s: %s',
+                    task_id, recovery_error,
+                )
+            else:
+                _auto_flush_drafts(ctx, db)
+                final_result = '所需产物已生成，等待确认。'
+            saved = _saved_artifact_keys(ctx, db, required_output_keys)
+        if not exact_artifacts and _commit_prompt_only_text_output(
             ctx, required_output_keys, saved, final_result,
         ):
             while emitted:
                 ev = emitted.pop(0)
                 ev['task_id'] = task_id
                 yield _sse(ev)
-            saved = set(ctx.saved_keys())
+            saved = _saved_artifact_keys(ctx, db, required_output_keys)
         missing = [k for k in required_output_keys if k not in saved]
+        all_required_missing = bool(required_output_keys) and all(
+            key not in saved for key in required_output_keys
+        )
+        if (
+            missing
+            and all_required_missing
+            and fallback_name
+            and not fallback_attempted
+            and not model_failure_seen
+        ):
+            fallback_attempted = True
+            step_seq, fallback_events, fallback_result, fallback_error = (
+                await _invoke_publisher_fallback(ctx, fallback_name, step_seq)
+            )
+            for fallback_event in fallback_events:
+                yield _sse(_publisher_fallback_sse_event(task_id, fallback_event))
+            while emitted:
+                ev = emitted.pop(0)
+                ev['task_id'] = task_id
+                yield _sse(ev)
+            if isinstance(fallback_error, asyncio.CancelledError):
+                raise fallback_error
+            if fallback_error is not None:
+                message = str(fallback_error) or type(fallback_error).__name__
+                yield _sse({
+                    'type': 'error', 'task_id': task_id, 'status': 'failed',
+                    'summary': message, 'message': message,
+                    'error_code': 'publisher_fallback_failed',
+                    'cost': round(time.time() - start_time, 3),
+                })
+                yield 'data: [DONE]\n\n'
+                return
+            _auto_flush_drafts(ctx, db)
+            saved = _saved_artifact_keys(ctx, db, required_output_keys)
+            missing = [k for k in required_output_keys if k not in saved]
+            if not missing:
+                final_result = fallback_result
         if missing:
             if effective_agent_type == 'workflow_step':
                 cost = round(time.time() - start_time, 3)
                 message = f'缺少必需产出素材: {", ".join(missing)}'
                 yield _sse({'type': 'error', 'task_id': task_id, 'status': 'failed',
-                            'summary': message, 'message': message, 'cost': cost})
+                            'summary': message, 'message': message, 'cost': cost,
+                            **failure_fields})
                 yield 'data: [DONE]\n\n'
                 return
             steps = db.load_steps(task_id)
@@ -1479,6 +2007,68 @@ async def run_subagent_stream(
         })
         yield 'data: [DONE]\n\n'
     except Exception as exc:  # noqa: BLE001
+        recovery_error: Optional[BaseException] = None
+        if (
+            executor_started
+            and ctx is not None
+            and _fallback_allowed_after_exception(
+                exc,
+                fallback_name=fallback_name,
+                fallback_attempted=fallback_attempted,
+                model_failure_seen=model_failure_seen,
+            )
+        ):
+            # Only a wholly absent publisher-owned output set is recoverable. A
+            # partial write may represent a non-atomic publisher bug and must stay
+            # failed for an operator to inspect rather than being overwritten.
+            _auto_flush_drafts(ctx, db)
+            saved = _saved_artifact_keys(ctx, db, required_output_keys)
+            missing = [key for key in required_output_keys if key not in saved]
+            all_required_missing = bool(required_output_keys) and all(
+                key not in saved for key in required_output_keys
+            )
+            if missing and all_required_missing:
+                fallback_attempted = True
+                step_seq, fallback_events, fallback_result, fallback_error = (
+                    await _invoke_publisher_fallback(ctx, fallback_name, step_seq)
+                )
+                for fallback_event in fallback_events:
+                    yield _sse(_publisher_fallback_sse_event(task_id, fallback_event))
+                while emitted:
+                    event = emitted.pop(0)
+                    event['task_id'] = task_id
+                    yield _sse(event)
+                if isinstance(fallback_error, asyncio.CancelledError):
+                    raise fallback_error
+                if fallback_error is None:
+                    _auto_flush_drafts(ctx, db)
+                    saved = _saved_artifact_keys(ctx, db, required_output_keys)
+                    missing = [key for key in required_output_keys if key not in saved]
+                    if not missing:
+                        source_event = _sources_event()
+                        if source_event is not None:
+                            yield _sse(source_event)
+                        while emitted:
+                            event = emitted.pop(0)
+                            event['task_id'] = task_id
+                            yield _sse(event)
+                        yield _sse({
+                            'type': 'done', 'task_id': task_id, 'status': 'succeeded',
+                            'summary': _result_summary(fallback_result, required_output_keys),
+                            'cost': round(time.time() - start_time, 3),
+                            **({'control': workflow_control} if workflow_control else {}),
+                        })
+                        yield 'data: [DONE]\n\n'
+                        return
+                    recovery_error = RuntimeError(
+                        f'{exc}; publisher fallback {fallback_name} completed but still '
+                        f'missed required outputs: {", ".join(missing)}'
+                    )
+                else:
+                    recovery_error = RuntimeError(
+                        f'{exc}; publisher fallback {fallback_name} failed: {fallback_error}'
+                    )
+
         LOG.exception('[SubAgent] run failed')
         pending_event = _drain_outbound_text()
         if pending_event is not None:
@@ -1486,16 +2076,33 @@ async def run_subagent_stream(
         source_event = _sources_event()
         if source_event is not None:
             yield _sse(source_event)
-        exc_summary = str(exc)
-        if db is not None:
+        exc_summary = str(recovery_error or exc)
+        stable_error_code = str(getattr(exc, 'error_code', '') or '').strip()
+        if stable_error_code and not failure_fields:
+            failure_fields = {'error_code': stable_error_code}
+        if recovery_error is not None:
+            failure_fields = {
+                'error_code': (
+                    'publisher_fallback_failed'
+                    if ' failed:' in str(recovery_error)
+                    else 'publisher_fallback_missing_output'
+                )
+            }
+        # Stable tool/provider failures are already actionable. Re-reading and
+        # rendering the whole execution trace only bloats the terminal event and
+        # delays the failure path; retain traces for otherwise-unclassified bugs.
+        if db is not None and not failure_fields:
             try:
                 steps = db.load_steps(task_id)
                 trace = _steps_to_trace(steps)
                 exc_summary = f'异常：{exc}\n执行路径：\n{trace}'
             except Exception:
                 pass
-        yield _sse({'type': 'error', 'task_id': task_id, 'status': 'failed',
-                    'summary': exc_summary, 'message': exc_summary})
+        yield _sse({
+            'type': 'error', 'task_id': task_id, 'status': 'failed',
+            'summary': exc_summary, 'message': exc_summary,
+            **failure_fields,
+        })
         yield 'data: [DONE]\n\n'
     finally:
         if clear_cancel_queue:
@@ -1573,6 +2180,25 @@ def _coerce_dict(value: Any) -> Dict[str, Any]:
         if isinstance(parsed, dict):
             return parsed
     return {}
+
+
+def _positive_int(value: Any, default: int, *, minimum: int = 1) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed >= minimum else default
+
+
+def _positive_int_map(value: Any) -> Dict[str, int]:
+    if not isinstance(value, dict):
+        return {}
+    result: Dict[str, int] = {}
+    for name, limit in value.items():
+        normalized = _positive_int(limit, 0)
+        if str(name).strip() and normalized:
+            result[str(name).strip()] = normalized
+    return result
 
 
 def _coerce_source_list(value: Any) -> List[Dict[str, Any]]:

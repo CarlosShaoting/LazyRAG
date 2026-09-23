@@ -132,6 +132,7 @@ def add_standard_system_sections(
     task_profile: TaskProfile | None = None,
     dynamic_prompt_modules: bool = False,
     include_editable_writing: bool = True,
+    workflow_selection_authoritative: bool = False,
 ) -> PromptBuilder:
     builder.system(
         'platform_identity', '', DEFAULT_SYSTEM_PROMPT, 'platform.guidance', priority=10,
@@ -199,13 +200,17 @@ def add_standard_system_sections(
             'task_request_analysis', '', REQUEST_ANALYSIS_GUIDANCE,
             'platform.task.request_analysis', priority=37,
             skip_if=(
-                task_profile.request_assessment.status == 'ready'
+                workflow_selection_authoritative
+                or task_profile.request_assessment.status == 'ready'
                 and task_profile.complexity != 'compound'
             ),
         ).system(
             'task_clarification', '', CLARIFICATION_GUIDANCE,
             'platform.task.clarification', priority=38,
-            skip_if=task_profile.request_assessment.interaction_need != 'blocking',
+            skip_if=(
+                workflow_selection_authoritative
+                or task_profile.request_assessment.interaction_need != 'blocking'
+            ),
         )
         assessment = task_profile.request_assessment
         excluded = task_profile.excluded_resources
@@ -224,7 +229,11 @@ def add_standard_system_sections(
                 ]),
                 'runtime.task.resources', priority=4, authoritative=True, content_kind='instruction',
             )
-        if assessment.status != 'ready':
+        # An explicit/active Workflow owns its declared startup-input policy. A
+        # generic heuristic assessment must not override that authoritative
+        # contract (for example by treating the phrase "no attachments" as a
+        # missing upload and blocking a text-only Workflow launch).
+        if assessment.status != 'ready' and not workflow_selection_authoritative:
             issue_lines = [
                 f'- {issue.issue_type} ({issue.impact}): {issue.description} '
                 f'[evidence: {issue.evidence}]'

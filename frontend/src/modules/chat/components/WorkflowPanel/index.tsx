@@ -5,11 +5,11 @@ import { executionPreview, executionPreviewTab } from './external/executionPrevi
 import { workflowEmptyStateKey } from './external/workflowEmptyState';
 import { useSlotCollapse } from './external/useSlotCollapse';
 import { buildDocumentFooterItems } from './documentFooter';
-import { getLocalizedErrorMessage } from "@/components/request";
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { message as antdMessage, Popconfirm, Tooltip, Dropdown } from 'antd';
+import { v4 as uuidv4 } from 'uuid';
 import {
   CopyOutlined,
   DownOutlined,
@@ -23,14 +23,24 @@ import {
 } from '@ant-design/icons';
 import { useWorkflowSession } from '@/modules/chat/hooks/useWorkflow';
 import {
+  buildChineseDesignRoutingSummary,
   filterWorkflowTabs,
+  filterFallbackWorkflowSlots,
+  filterWorkflowSlotIdsByConditions,
   workflowTabAllowsDownload,
   useWorkflowStore,
 } from '@/modules/chat/store/workflowPanel';
-import { isWorkflowReadyToStart } from '@/modules/chat/store/workflowStatus';
+import { isWorkflowReadyToStart, reconcileWorkflowSessionStatus } from '@/modules/chat/store/workflowStatus';
 import { useTaskCenterStore, type SubAgentTask, type TaskArtifactStream } from '@/modules/chat/store/taskCenter';
 import { uploadFileInChunks } from '@/modules/chat/utils/chunkUpload';
-import { WorkflowSessionApi } from '@/modules/chat/utils/request';
+import { getLocalizedErrorMessage } from '@/components/request';
+import {
+  WORKFLOW_CONTRACT_VERSION,
+  WorkflowSessionApi,
+  type ProductStageId,
+  type WorkflowRestartOnLatestRequest,
+  type WorkflowTransitionRequest,
+} from '@/modules/chat/utils/request';
 import StateGraphModal from '@/components/StateGraphModal';
 import {
   WORKFLOW_PANEL_EXPANDED_EVENT,
@@ -49,7 +59,6 @@ import type {
 } from '@/modules/chat/store/workflowPanel';
 import {
   resolveWorkflowTabStepId,
-  workflowSlotMatchesTabScope,
 } from './workflowTabScope';
 import {
   isWriterIrSource,
@@ -63,6 +72,19 @@ import { WorkflowPanelTabActiveContext, SlotEditingContext, type SlotFooterActio
 import { findWriterArtifactStream } from './writerArtifactStream';
 import { resolveCompletedContinueStep, resolveWorkflowContinueAction } from './workflowContinue';
 import { resolvePendingApprovalStep } from './workflowApproval';
+import {
+  resolveWorkflowCommandTarget,
+  resolveUniqueWorkflowStartTarget,
+  WorkflowCommandTargetError,
+  type WorkflowCommandAction,
+} from './workflowCommands';
+import { presentWorkflowStepLabel, presentWorkflowTabLabel } from './workflowStepPresentation';
+import { isProductWorkflow, ProductStageRelay } from './ProductStageRelay';
+import {
+  ProductCurrentStageView,
+  ProductProjectViews,
+  productWorkflowSectionKeys,
+} from './ProductProjectViews';
 import { moveSelectedCompositePages, sameCompositePageOrder } from './compositePageReorder';
 import { deliveryPending, type WorkflowActionIntent, type WorkflowControlView } from '@/modules/chat/utils/workflowControl';
 import {
@@ -353,6 +375,56 @@ function getTabStepId(tab: TabDef): string | undefined {
   return tab.step_id ?? tab.id;
 }
 
+const LEGACY_DESIGN_ROUTER_SLOT_IDS = [
+  'design_routing_summary',
+  'design_light_evidence',
+  'design_heavy_evidence',
+];
+
+function isDesignRouterTab(tab: TabDef): boolean {
+  const slotIds = new Set(tab.slots.map((slot) => slot.id));
+  return LEGACY_DESIGN_ROUTER_SLOT_IDS.every((slotId) => slotIds.has(slotId));
+}
+
+/** Keep pre-v12 product sessions compatible with the router's grouped step scope. */
+function getTabScopeStepIds(tab: TabDef): string[] {
+  if (tab.status_step_ids?.length) return tab.status_step_ids;
+  if (isDesignRouterTab(tab)) {
+    return [
+      tab.step_id ?? 'route_design_scope',
+      'collect_design_light_evidence',
+      'collect_design_heavy_evidence',
+    ];
+  }
+  return tab.step_id ? [tab.step_id] : [];
+}
+
+/** Backfill conditional evidence display for sessions created before the rule entered workflow.yaml. */
+function getEffectiveCompositeBehavior(tab: TabDef): TabDef['composite_behavior'] {
+  if (tab.composite_behavior?.visible_when?.length || !isDesignRouterTab(tab)) {
+    return tab.composite_behavior;
+  }
+  return {
+    ...tab.composite_behavior,
+    visible_when: [
+      { slot: 'design_light_evidence', material: 'design_routing_record', path: 'data.overall_effort', equals: 'light' },
+      { slot: 'design_heavy_evidence', material: 'design_routing_record', path: 'data.overall_effort', equals: 'heavy' },
+    ],
+  };
+}
+
+/**
+ * Lock slot editing only while the plugin session is actively running.
+ * When idle (waiting / failed / completed), editable artifact formats stay editable
+ * according to their workflow readOnly setting, so the user can revise and re-run
+ * a later step from the updated content.
+ */
+function isWorkflowSessionReadOnly(
+  session: WorkflowSession,
+  autoRunning = false,
+): boolean {
+  return autoRunning || session.status === 'active';
+}
 function revisionMatchesTabScope(
   session: WorkflowSession,
   tab: TabDef,
@@ -362,7 +434,13 @@ function revisionMatchesTabScope(
   if (scope === 'selected') {
     return Boolean(slot.selected);
   }
-  return workflowSlotMatchesTabScope(tab, session.steps, slot);
+  const declaredStepIds = getTabScopeStepIds(tab);
+  if (declaredStepIds.length > 0) return Boolean(slot.step_id && declaredStepIds.includes(slot.step_id));
+  const isStepTab = session.steps?.some((s) => s.step_id === tab.id);
+  if (isStepTab) {
+    return slot.step_id === tab.id;
+  }
+  return Boolean(slot.selected);
 }
 
 /** Slot ids that currently have at least one revision under the tab's empty-column scope. */
@@ -389,12 +467,16 @@ function resolveVisibleSlotIds(
   tab: TabDef,
   session: WorkflowSession,
 ): Set<string> | null {
-  const behavior = tab.composite_behavior;
+  const behavior = getEffectiveCompositeBehavior(tab);
   if (!behavior) return null;
 
   const scope = behavior.empty_column_scope === 'tab' ? 'tab' : 'selected';
   const present = getPresentSlotIds(tab, session, scope);
-  const allowed = new Set(tab.slots.map((s) => s.id));
+  const allowed = new Set(filterWorkflowSlotIdsByConditions(
+    tab.slots.map((slot) => slot.id),
+    session.slots,
+    behavior.visible_when,
+  ));
 
   for (const group of behavior.mutually_exclusive ?? []) {
     const members = (group.slots ?? []).filter((id) => allowed.has(id));
@@ -435,10 +517,48 @@ function getTabSlotRevisions(
   tab: TabDef,
   artifactKey: string,
 ): SlotRevision[] {
-  return (session.slots ?? []).filter(
-    (slot) => slot.slot === artifactKey
-      && workflowSlotMatchesTabScope(tab, session.steps, slot),
-  );
+  const slots = session.slots ?? [];
+  const declaredStepIds = getTabScopeStepIds(tab);
+  if (declaredStepIds.length > 0) {
+    return slots.filter((s) => s.slot === artifactKey && Boolean(s.step_id && declaredStepIds.includes(s.step_id)));
+  }
+  const isStepTab = session.steps?.some((s) => s.step_id === tab.id);
+  if (isStepTab) {
+    return slots.filter((s) => s.slot === artifactKey && s.step_id === tab.id);
+  }
+  return slots.filter((s) => s.slot === artifactKey && s.selected);
+}
+
+/** Render legacy model-authored English route summaries from their structured source record. */
+function localizeDesignRoutingSummaryRevisions(
+  session: WorkflowSession,
+  artifactKey: string,
+  revisions: SlotRevision[],
+): SlotRevision[] {
+  if (artifactKey !== 'design_routing_summary') return revisions;
+  const routingRecord = (session.slots ?? [])
+    .filter((slot) => slot.selected && slot.slot === 'design_routing_record')
+    .sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime())[0];
+  const chineseSummary = buildChineseDesignRoutingSummary(routingRecord?.artifact_value);
+  if (!chineseSummary) return revisions;
+
+  return revisions.map((revision) => {
+    const raw = revision.artifact_value;
+    const existingText = typeof raw === 'string'
+      ? raw
+      : raw && typeof raw === 'object'
+        ? String((raw as Record<string, unknown>).text ?? '')
+        : '';
+    if (!revision.selected || (!existingText.includes('Design Routing Summary') && !existingText.includes('Handoff:'))) {
+      return revision;
+    }
+    return {
+      ...revision,
+      artifact_value: raw && typeof raw === 'object' && !Array.isArray(raw)
+        ? { ...raw, text: chineseSummary }
+        : { text: chineseSummary },
+    };
+  });
 }
 
 function isStructuredArtifactRevision(slot: SlotRevision): boolean {
@@ -493,9 +613,16 @@ function getCompositeRows(
 ): number[] {
   const participating = new Set(tab.slots.map((s) => s.id));
   const orders = new Set<number>();
-  const scopeStepId = resolveWorkflowTabStepId(tab, session.steps);
+  const configuredStepIds = getTabScopeStepIds(tab);
+  const scopeStepIds = configuredStepIds.length > 0
+    ? configuredStepIds
+    : session.steps?.some((s) => s.step_id === tab.id)
+      ? [tab.id]
+      : [];
   for (const slot of session.slots ?? []) {
-    const matchesTabStep = scopeStepId ? slot.step_id === scopeStepId : slot.selected;
+    const matchesTabStep = scopeStepIds.length > 0
+      ? Boolean(slot.step_id && scopeStepIds.includes(slot.step_id))
+      : slot.selected;
     if (matchesTabStep && participating.has(slot.slot) && slot.sort_order !== undefined) {
       orders.add(slot.sort_order);
     }
@@ -1570,7 +1697,11 @@ function TabSlotGrid({
       />
       {visibleSlots.map((slotDef) => {
         const artifactKey = slotDef.id;
-        const revisions = getTabSlotRevisions(session, tab, artifactKey);
+        const revisions = localizeDesignRoutingSummaryRevisions(
+          session,
+          artifactKey,
+          getTabSlotRevisions(session, tab, artifactKey),
+        );
         const artifactStream = findWriterArtifactStream(
           session,
           getTabStepId(tab),
@@ -1611,6 +1742,18 @@ const STATUS_KEY: Record<string, string> = {
   stopped: 'chat.workflowStatusStopped',
 };
 
+const STEP_STATUS_KEY: Record<string, string> = {
+  succeeded: 'chat.workflowStatusDone',
+  completed: 'chat.workflowStatusDone',
+  pending: 'chat.workflowStatusRunning',
+  queued: 'chat.workflowStatusRunning',
+  running: 'chat.workflowStatusRunning',
+  waiting: 'chat.workflowStatusWaiting',
+  failed: 'chat.workflowStatusFailed',
+  interrupted: 'chat.workflowStatusStopped',
+  stopped: 'chat.workflowStatusStopped',
+};
+
 function readPersistedExpanded(conversationId: string): boolean {
   try {
     return localStorage.getItem(`${WORKFLOW_PANEL_EXPANDED_STORAGE_PREFIX}${conversationId}`) === 'true';
@@ -1632,8 +1775,8 @@ function persistExpanded(conversationId: string, expanded: boolean) {
 
 export function WorkflowPanel({
   conversationId,
-  onSendMessage,
   onReference,
+  onSendMessage,
   onStop,
   onDismissed,
   embedded = false, onRefresh, controlAdapter, externalPresentation,
@@ -1679,6 +1822,20 @@ export function WorkflowPanel({
   const flushFns = useRef<Map<string, () => Promise<boolean>>>(new Map());
   const [anySlotEditing, setAnySlotEditing] = useState(false);
   const [actionPending, setActionPending] = useState(false);
+  const [actionError, setActionError] = useState('');
+  // Preserve the exact command body after an uncertain network result. Replaying
+  // the same bytes and idempotency key is safe; inventing a second command is not.
+  const uncertainWorkflowCommand = useRef<{
+    fingerprint: string;
+    payload: WorkflowTransitionRequest;
+  } | null>(null);
+  const uncertainProductRestart = useRef<{
+    fingerprint: string;
+    payload: WorkflowRestartOnLatestRequest;
+  } | null>(null);
+  const [viewingProductSession, setViewingProductSession] = useState<string | null>(null);
+  const [requestedProductStage, setRequestedProductStage] = useState<{ sessionId: string; stage: ProductStageId; requestId: number } | null>(null);
+  const [productStateRevision, setProductStateRevision] = useState(0);
   const [footerActions, setFooterActions] = useState<Map<string, SlotFooterAction>>(new Map());
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const tabsRef = useRef<HTMLDivElement | null>(null);
@@ -1721,6 +1878,19 @@ export function WorkflowPanel({
     if (tab.left < viewport.left) container.scrollLeft += tab.left - viewport.left;
     else if (tab.right > viewport.right) container.scrollLeft += tab.right - viewport.right;
   }, [activeTabIdx, ui.tabs, collapsed]);
+  const documentFooter = useMemo(
+    () => buildDocumentFooterItems(footerActions),
+    [footerActions],
+  );
+
+  useEffect(() => {
+    setProductStateRevision(0);
+  }, [session?.session_id]);
+
+  const handleProductDecisionChanged = useCallback(() => {
+    setProductStateRevision((value) => value + 1);
+    refresh();
+  }, [refresh]);
 
   const setExpandedMode = useCallback((nextExpanded: boolean) => {
     if (nextExpanded) setCollapsed(false);
@@ -1819,6 +1989,9 @@ export function WorkflowPanel({
     setFooterActions(new Map());
     setAnySlotEditing(false);
     setActionPending(false);
+    setActionError('');
+    uncertainWorkflowCommand.current = null;
+    uncertainProductRestart.current = null;
   }, [session?.session_id]);
 
   useEffect(() => {
@@ -1883,6 +2056,189 @@ export function WorkflowPanel({
     setFocusedSortOrder(conversationId, sortOrder);
   }, [conversationId, setFocusedSortOrder]);
 
+  const runWorkflowCommand = useCallback(async (
+    targetSessionId: string,
+    action: WorkflowCommandAction,
+    options: {
+      completedContinueStepId?: string;
+      currentStepId?: string;
+      rollbackStepId?: string;
+    } = {},
+  ) => {
+    const fingerprint = JSON.stringify([targetSessionId, action, options]);
+    let payload: WorkflowTransitionRequest;
+    if (uncertainWorkflowCommand.current?.fingerprint === fingerprint) {
+      payload = uncertainWorkflowCommand.current.payload;
+    } else {
+      const response = await WorkflowSessionApi().getProjection(
+        targetSessionId,
+        { silentError: true } as never,
+      );
+      const snapshot = response.data?.data;
+      if (!snapshot || !Number.isInteger(snapshot.state_version) || !snapshot.projection) {
+        throw new WorkflowCommandTargetError(
+          'WORKFLOW_COMMAND_TARGET_MISSING',
+          action,
+          'The latest workflow projection is unavailable.',
+        );
+      }
+      const stepId = resolveWorkflowCommandTarget(action, snapshot.projection, options);
+      const commandId = uuidv4();
+      payload = {
+        contract_version: WORKFLOW_CONTRACT_VERSION,
+        command_id: commandId,
+        tool: 'advance_step_and_hand_off',
+        session_id: targetSessionId,
+        expected_state_version: snapshot.state_version,
+        retry_origin: 'user',
+        steps: [{ step_id: stepId }],
+      };
+      uncertainWorkflowCommand.current = { fingerprint, payload };
+    }
+
+    setAutoRunning(conversationId, true);
+    try {
+      const response = await WorkflowSessionApi().advanceStepAndHandOff(
+        targetSessionId,
+        payload,
+        { silentError: true } as never,
+      );
+      const result = response.data?.result;
+      if (!response.data?.ok || !result?.accepted) {
+        const commandError = new Error(result?.error?.message || response.data?.error?.message || 'Workflow command was rejected.');
+        Object.assign(commandError, { code: result?.error?.code || response.data?.error?.code });
+        throw commandError;
+      }
+      uncertainWorkflowCommand.current = null;
+      await Promise.allSettled([
+        useWorkflowStore.getState().loadActiveSession(conversationId, { silentError: true }),
+        useTaskCenterStore.getState().loadConversationTasks(conversationId),
+      ]);
+      const latest = useWorkflowStore.getState().sessionByConversation[conversationId];
+      if (!latest || latest.status !== 'active') setAutoRunning(conversationId, false);
+    } catch (cause) {
+      // An HTTP response is a definite rejection and must use a fresh projection
+      // on the next click. A timeout/network loss is uncertain, so keep and replay
+      // this exact idempotent command instead.
+      if ((cause as { response?: unknown })?.response) {
+        uncertainWorkflowCommand.current = null;
+      }
+      setAutoRunning(conversationId, false);
+      await Promise.allSettled([
+        useWorkflowStore.getState().loadActiveSession(conversationId, { silentError: true }),
+        useTaskCenterStore.getState().loadConversationTasks(conversationId),
+      ]);
+      throw cause;
+    }
+  }, [conversationId, setAutoRunning]);
+
+  const handleProductSessionReady = useCallback(async (sessionId: string, start: boolean) => {
+    // Read the acknowledged successor directly. Starting it is a typed workflow
+    // command; stage relay must never create a synthetic chat turn.
+    const [detail, projection] = await Promise.all([
+      WorkflowSessionApi().getSession(sessionId, { silentError: true } as never),
+      WorkflowSessionApi().getProjection(sessionId, { silentError: true } as never),
+    ]);
+    const next: WorkflowSession | undefined = detail.data?.data?.session;
+    if (!next || next.conversation_id !== conversationId) {
+      throw new Error(t('chat.productStageRelay.openFailed'));
+    }
+    next.projection = projection.data?.data?.projection ?? {};
+    next.status = reconcileWorkflowSessionStatus(next.status, next.projection);
+    const startTarget = start
+      ? resolveUniqueWorkflowStartTarget(next.projection)
+      : undefined;
+    if (startTarget && next.status === 'active') {
+      // A prepared successor can be persisted as active before its first task
+      // exists. Keep the local control state retryable if dispatch fails.
+      next.status = 'waiting';
+    }
+    useWorkflowStore.getState().setSession(conversationId, next);
+    setFocusedTab(conversationId, '');
+    setFocusedSortOrder(conversationId, undefined);
+    setActiveTabIdx(0);
+    if (startTarget) {
+      // Re-read inside runWorkflowCommand before dispatch so the target stays
+      // authoritative even if the projection changes between these requests.
+      await runWorkflowCommand(sessionId, 'continue');
+    }
+  }, [conversationId, runWorkflowCommand, setFocusedSortOrder, setFocusedTab, t]);
+
+  const retryProductWorkflow = useCallback(async (
+    sourceSessionId: string,
+    currentStepId: string,
+  ) => {
+    // A failed product session can be pinned to an older immutable package.
+    // Read both authoritative views before deciding whether this is a normal
+    // retry or a workspace-preserving restart on the current package head.
+    const [projectionResponse, relayResponse] = await Promise.all([
+      WorkflowSessionApi().getProjection(sourceSessionId, { silentError: true } as never),
+      WorkflowSessionApi().getProductStageRelay(sourceSessionId, { silentError: true } as never),
+    ]);
+    const snapshot = projectionResponse.data?.data;
+    if (!snapshot || !Number.isInteger(snapshot.state_version) || !snapshot.projection) {
+      throw new WorkflowCommandTargetError(
+        'WORKFLOW_COMMAND_TARGET_MISSING',
+        'retry',
+        'The latest workflow projection is unavailable.',
+      );
+    }
+    const fingerprint = JSON.stringify([sourceSessionId, 'restart-on-latest']);
+    const hasUncertainRestart = uncertainProductRestart.current?.fingerprint === fingerprint;
+    const relayState = relayResponse.data?.result;
+    if (!hasUncertainRestart && !relayState?.can_restart_on_latest) {
+      await runWorkflowCommand(sourceSessionId, 'retry', { currentStepId });
+      return;
+    }
+
+    if (!hasUncertainRestart) {
+      uncertainProductRestart.current = {
+        fingerprint,
+        payload: {
+          idempotency_key: uuidv4(),
+          expected_state_version: snapshot.state_version,
+        },
+      };
+    }
+    const restartPayload = uncertainProductRestart.current?.payload;
+    if (!restartPayload) {
+      throw new Error(t('chat.workflowRestartLatestFailed'));
+    }
+
+    let response;
+    try {
+      response = await WorkflowSessionApi().restartOnLatest(
+        sourceSessionId,
+        restartPayload,
+        { silentError: true } as never,
+      );
+    } catch (cause) {
+      // Keep the exact payload only when delivery is uncertain. Any HTTP
+      // response is an explicit rejection and the next click starts afresh.
+      if ((cause as { response?: unknown })?.response) {
+        uncertainProductRestart.current = null;
+      }
+      throw cause;
+    }
+
+    const result = response.data?.result;
+    if (
+      !result?.restarted
+      || !result.session_id
+      || result.source_session_id !== sourceSessionId
+    ) {
+      // The server answered definitively but did not acknowledge the restart.
+      uncertainProductRestart.current = null;
+      throw new Error(t('chat.workflowRestartLatestFailed'));
+    }
+
+    // Keep the restart command cached until the successor is loaded and its
+    // optional first dispatch finishes. A follow-up GET/dispatch failure must
+    // replay the acknowledged restart instead of creating another successor.
+    await handleProductSessionReady(result.session_id, true);
+    uncertainProductRestart.current = null;
+  }, [handleProductSessionReady, runWorkflowCommand, t]);
+
   if (loading && !session) {
     return (
       <div
@@ -1894,6 +2250,7 @@ export function WorkflowPanel({
   }
 
   if (!session) return null;
+  const renderedSession = session;
 
   const tabs = filterWorkflowTabs(
     ui.tabs ?? [],
@@ -1910,10 +2267,6 @@ export function WorkflowPanel({
     session.status === 'completed' ||
     session.status === 'failed' ||
     session.status === 'stopped';
-  const documentFooter = useMemo(
-    () => buildDocumentFooterItems(footerActions),
-    [footerActions],
-  );
   const displayStatus = autoRunning ? 'active' : session.status;
   const externalControl = controlAdapter?.control;
   const availableActions = new Set(externalControl?.available_actions ?? []);
@@ -1934,6 +2287,8 @@ export function WorkflowPanel({
   const sessionBusy = displayStatus === 'active' || autoRunning;
   const externalDeliveryBusy = externalControl ? deliveryPending(externalControl) : false;
   const buttonsDisabled = sessionBusy || actionPending || externalDeliveryBusy;
+  const viewingProductArtifact = viewingProductSession === session.session_id && isProductWorkflow(session.workflow_id);
+  const productSectionKeys = productWorkflowSectionKeys(session.session_id);
   const dismissDisabled = dismissing || anySlotEditing || actionPending;
   const collapseDisabled = (anySlotEditing || actionPending) && !collapsed;
   const completedContinueStepId = resolveCompletedContinueStep(
@@ -1941,7 +2296,10 @@ export function WorkflowPanel({
     tabs[visibleActiveTabIdx],
   );
   const continueAction = resolveWorkflowContinueAction(session, displayStatus, tabs[visibleActiveTabIdx]);
-  const showContinue = Boolean(continueAction);
+  const productReadyToStart = isProductWorkflow(session.workflow_id)
+    && displayStatus === 'waiting'
+    && Boolean(resolveUniqueWorkflowStartTarget(session.projection ?? {}));
+  const showContinue = Boolean(continueAction) || productReadyToStart;
   const showStepRollback =
     (session.status === 'completed' || session.status === 'failed')
     && Boolean(session.steps && session.steps.length > 0)
@@ -1960,12 +2318,24 @@ export function WorkflowPanel({
         ?.sort((a, b) => b.attempt - a.attempt)[0]?.status
       : undefined);
   const effectivePast = new Set(session.projection?.past ?? []);
+  const chineseUI = Boolean((i18n.resolvedLanguage || i18n.language)?.toLowerCase().startsWith('zh'));
   const rollbackSteps = showStepRollback ? session.steps!.filter((step, index, all) => effectivePast.has(step.step_id)
     && step.validity !== 'stale'
     && all.findIndex((candidate) => candidate.step_id === step.step_id && candidate.validity !== 'stale') === index) : [];
-  const stepLabel = (stepId: string) => tabs.find(tab => getTabStepId(tab) === stepId)?.label
-    ?? tabs.find(tab => tab.status_step_ids?.includes(stepId))?.label ?? stepId;
-  const continueDisabled = buttonsDisabled || currentStepStatus === 'failed';
+  const stepLabel = (stepId: string) => presentWorkflowStepLabel(
+    stepId,
+    renderedSession.workflow_id,
+    tabs.find(tab => getTabStepId(tab) === stepId)?.label
+      ?? tabs.find(tab => tab.status_step_ids?.includes(stepId))?.label,
+    0,
+    chineseUI,
+  );
+  const cachedContinueTargetAvailable = completedContinueStepId
+    ? Boolean(session.projection?.continue?.includes(completedContinueStepId))
+    : (session.projection?.ready?.length ?? 0) === 1;
+  const continueDisabled = buttonsDisabled || currentStepStatus === 'failed'
+    || (isProductWorkflow(session.workflow_id) && !cachedContinueTargetAvailable);
+  const showRetry = (session.projection?.retryable?.length ?? 0) > 0;
   const activeControlTab = tabs[visibleActiveTabIdx];
   const activeControlStepId = (activeControlTab
     ? resolveWorkflowTabStepId(activeControlTab, session.steps)
@@ -1975,10 +2345,17 @@ export function WorkflowPanel({
   async function runFooterAction(action: () => void | Promise<void>, flushKey?: string, flush = true, allowBusy = false) {
     if ((!allowBusy && sessionBusy) || actionPending) return;
     setActionPending(true);
+    setActionError('');
     try {
       const saved = !flush || await flushPendingEdits(flushKey);
       if (!saved) return;
       await action();
+    } catch (cause) {
+      setActionError(
+        cause instanceof WorkflowCommandTargetError
+          ? t('chat.workflowCommandTargetUnavailable')
+          : getLocalizedErrorMessage(cause),
+      );
     } finally {
       setActionPending(false);
     }
@@ -2035,7 +2412,13 @@ export function WorkflowPanel({
           scope,
           approval_required: false,
         });
-        if (isContinuationCurrent()) onSendMessage?.(t('chat.workflowContinue'));
+        if (isContinuationCurrent()) {
+          if (isProductWorkflow(renderedSession.workflow_id)) {
+            await runWorkflowCommand(renderedSession.session_id, 'continue', { completedContinueStepId });
+          } else {
+            onSendMessage?.(t('chat.workflowContinue'));
+          }
+        }
       } catch (error) {
         antdMessage.error(getLocalizedErrorMessage(error));
       }
@@ -2043,6 +2426,10 @@ export function WorkflowPanel({
   }
 
   function handleRetry() {
+    if (isProductWorkflow(renderedSession.workflow_id)) {
+      void runFooterAction(() => retryProductWorkflow(renderedSession.session_id, renderedSession.current_step_id));
+      return;
+    }
     if (controlAdapter) {
       void runFooterAction(() => controlAdapter.execute({ kind: 'retry', stepId: activeControlStepId }));
       return;
@@ -2051,6 +2438,10 @@ export function WorkflowPanel({
   }
 
   function handleRollback(stepId: string) {
+    if (isProductWorkflow(renderedSession.workflow_id)) {
+      void runFooterAction(() => runWorkflowCommand(renderedSession.session_id, 'rollback', { rollbackStepId: stepId }));
+      return;
+    }
     if (controlAdapter) {
       void runFooterAction(() => controlAdapter.execute({ kind: 'rewind', stepId }));
       return;
@@ -2197,8 +2588,23 @@ export function WorkflowPanel({
         </div>
       </div>
 
+      {!collapsed && isProductWorkflow(session.workflow_id) && (
+        <ProductProjectViews
+          key={productSectionKeys.projectViews}
+          sessionId={session.session_id}
+          refreshKey={`${session.updated_at}:${session.status}:${session.slots?.length ?? 0}:${productStateRevision}`}
+          stageRunning={session.status === 'active'}
+          disabled={actionPending}
+          beforeProjectMutation={flushPendingEdits}
+          onPreviewChange={setViewingProductSession}
+          onBusyChange={setActionPending}
+          onDecisionChanged={handleProductDecisionChanged}
+          onRequestStage={(stage) => setRequestedProductStage((previous) => ({ sessionId: session.session_id, stage, requestId: (previous?.requestId ?? 0) + 1 }))}
+        />
+      )}
+
       {/* Compact step navigation; long workflows scroll horizontally. */}
-      {!collapsed && hasTabs && (
+      {!collapsed && hasTabs && !viewingProductArtifact && (
         <div className='workflow-panel__tabs' role='tablist' aria-label={t('chat.workflowStages')} ref={setTabsScrollRef}
           onKeyDown={(event) => {
             const direction = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
@@ -2221,6 +2627,14 @@ export function WorkflowPanel({
                 || b.attempt - a.attempt
               ))[0];
             const stepStatus = step?.status;
+            const tabLabel = presentWorkflowTabLabel(
+              tab.label,
+              renderedSession.workflow_id,
+              chineseUI,
+            );
+            const stepStatusLabel = stepStatus
+              ? t(STEP_STATUS_KEY[stepStatus] ?? 'chat.workflowStatusWaiting')
+              : '';
             return (
               <React.Fragment key={tab.id}>
                 {idx > 0 && (
@@ -2239,12 +2653,12 @@ export function WorkflowPanel({
                   type='button'
                 >
                   <span className='workflow-panel__tab-badge' aria-hidden='true'>{idx + 1}</span>
-                  <span className='workflow-panel__tab-label'>{tab.label}</span>
+                  <span className='workflow-panel__tab-label'>{tabLabel}</span>
                   {stepStatus && stepStatus !== 'succeeded' && (
                     <span
                       className={`workflow-panel__step-status workflow-panel__step-status--${stepStatus}`}
-                      aria-label={`Step status: ${stepStatus}`}
-                      title={stepStatus}
+                      aria-label={t('chat.workflowStepStatusAria', { status: stepStatusLabel })}
+                      title={stepStatusLabel}
                     />
                   )}
                 </button>
@@ -2277,7 +2691,7 @@ export function WorkflowPanel({
 
       {/* Body */}
       {!collapsed && (
-        <div className='workflow-panel__body' key={session.session_id}>
+        <ProductCurrentStageView key={productSectionKeys.currentStage} sessionId={session.session_id} hidden={viewingProductArtifact}>
           {hasTabs ? (
             tabs.map((tab, idx) => {
               const preview = externalPresentation && !anySlotEditing ? executionPreview(session, tab, activities) : session;
@@ -2295,7 +2709,7 @@ export function WorkflowPanel({
                   <TabSlotGrid
                     tab={executionPreviewTab(tab, session, preview)}
                     session={preview}
-                    readOnly={previewing}
+                    readOnly={previewing || isWorkflowSessionReadOnly(session, autoRunning)}
                     tasks={taskCenterTasks}
                     onRefresh={refresh}
                     onReference={onReference}
@@ -2307,18 +2721,39 @@ export function WorkflowPanel({
             })
           ) : (
             <AutoSlotGrid
-              session={session}
+              session={{ ...session, slots: filterFallbackWorkflowSlots(session.workflow_id, session.slots ?? [], ui) }}
               onRefresh={refresh}
               onReference={onReference}
             />
           )}
-        </div>
+        </ProductCurrentStageView>
+      )}
+
+      {!collapsed && session.status === 'completed' && isProductWorkflow(session.workflow_id) && (
+        <ProductStageRelay
+          key={productSectionKeys.stageRelay}
+          sessionId={session.session_id}
+          refreshKey={productStateRevision}
+          disabled={buttonsDisabled}
+          beforeAction={flushPendingEdits}
+          onBusyChange={setActionPending}
+          onSessionReady={handleProductSessionReady}
+          preferredStage={requestedProductStage?.sessionId === session.session_id ? requestedProductStage : undefined}
+        />
       )}
 
       {/* Footer */}
-      {!collapsed && (showActions || controlAdapter) && (documentFooter.actionItems.length > 0 || documentFooter.statusMessages.length > 0
+      {!collapsed && !viewingProductArtifact && (showActions || controlAdapter) && (documentFooter.actionItems.length > 0 || documentFooter.statusMessages.length > 0
         || rollbackSteps.length > 0 || sessionBusy || (showContinue && !approvalStepId) || displayStatus === 'failed' || displayStatus === 'stopped') && (
         <div className='workflow-panel__footer' role='group' aria-label={t('chat.workflowSessionControls')}>
+          {actionError && (
+            <span
+              className='workflow-panel__footer-action-status workflow-panel__footer-action-status--error'
+              role='alert'
+            >
+              {actionError}
+            </span>
+          )}
           {documentFooter.actionItems.length > 0 || documentFooter.statusMessages.length > 0 ? (
             <div className='workflow-panel__footer-document'>
               {documentFooter.statusMessages.length > 0 || documentFooter.actionItems.some(item => item.kind === 'link') ? (
@@ -2419,7 +2854,7 @@ export function WorkflowPanel({
               {t('chat.workflowStop')}
             </button>
           )}
-          {(displayStatus === 'failed' || displayStatus === 'stopped') && supportsExternal('retry') && (
+          {((displayStatus === 'failed' || displayStatus === 'stopped') && supportsExternal('retry') || (isProductWorkflow(session.workflow_id) && showRetry)) && (
             <button
               type='button'
               className='workflow-panel__action-btn workflow-panel__action-btn--secondary'
@@ -2433,7 +2868,9 @@ export function WorkflowPanel({
                     ? t('chat.workflowBtnDisabledHint')
                     : anySlotEditing
                       ? t('chat.workflowRetryFlushHint')
-                      : t('chat.workflowRetry')
+                      : session.status === 'failed' && isProductWorkflow(session.workflow_id)
+                        ? t('chat.workflowRetryLatestHint')
+                        : t('chat.workflowRetry')
               }
             >
               {actionPending ? t('chat.workflowSavingBeforeAction') : t('chat.workflowRetry')}
@@ -2451,6 +2888,8 @@ export function WorkflowPanel({
               title={
                 currentStepStatus === 'failed'
                   ? t('chat.workflowContinueDisabledFailed')
+                  : isProductWorkflow(session.workflow_id) && !cachedContinueTargetAvailable
+                    ? t('chat.workflowCommandTargetUnavailable')
                   : actionPending
                     ? t('chat.workflowSavingBeforeAction')
                     : buttonsDisabled

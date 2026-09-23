@@ -114,6 +114,7 @@ runtime:
       label: Topic
       question: What is the presentation topic?
       type: text
+      binding: request_context
     - id: style
       label: Style
       question: Which visual style should be used?
@@ -131,11 +132,164 @@ runtime:
 	if policy.CompletedEditRouting != "Route insertions to b before using the fallback." {
 		t.Fatalf("completed edit routing was not compiled: %#v", policy)
 	}
-	if len(policy.ClarificationFields) != 2 || policy.ClarificationFields[0].ID != "topic" || policy.ClarificationFields[1].Choices[1] != "Minimal" || policy.ClarificationFields[1].ChoicePolicy != "subset" {
+	if len(policy.ClarificationFields) != 2 || policy.ClarificationFields[0].ID != "topic" || policy.ClarificationFields[0].Binding != "request_context" || policy.ClarificationFields[1].Choices[1] != "Minimal" || policy.ClarificationFields[1].ChoicePolicy != "subset" {
 		t.Fatalf("runtime clarification fields were not compiled: %#v", policy.ClarificationFields)
 	}
 	if len(policy.PostStepChecks) != 1 || policy.PostStepChecks[0].StepID != "b" || policy.PostStepChecks[0].Tool != "check_ready" || policy.PostStepChecks[0].Arguments["brief"] != "b_result" {
 		t.Fatalf("runtime post-step checks were not compiled: %#v", policy.PostStepChecks)
+	}
+}
+
+func TestCompilePreservesDistinctTerminalAndFailFastTools(t *testing.T) {
+	state := strings.Replace(validState, "  a: {outputs: []}", `  a:
+    outputs: []
+    tools: [save_artifacts, validate_output]
+    terminal_tools: [finalize_delivery]
+    fail_fast_tools: [save_artifacts, validate_output]`, 1)
+	result := Compile(validWorkflow, state, "", ProfilePublish)
+	if !result.Valid {
+		t.Fatalf("expected valid graph, diagnostics=%#v", result.Diagnostics)
+	}
+	node := result.Graph.Nodes["a"]
+	if len(node.TerminalTools) != 1 || node.TerminalTools[0] != "finalize_delivery" {
+		t.Fatalf("terminal tools were not compiled independently: %#v", node)
+	}
+	if len(node.FailFastTools) != 2 || node.FailFastTools[0] != "save_artifacts" ||
+		node.FailFastTools[1] != "validate_output" {
+		t.Fatalf("fail-fast tools were not compiled: %#v", node)
+	}
+}
+
+func TestCompilePreservesStepExecutionPolicy(t *testing.T) {
+	state := strings.Replace(validState, "  a: {outputs: []}", `  a:
+    outputs: []
+    execution:
+      max_rounds: 6
+      timeout_seconds: 150
+      hard_repeat_limit: 3
+      disable_artifact_reads: true
+      compact_summary: true
+      tool_call_limits: {validate_route: 2}`, 1)
+	result := Compile(validWorkflow, state, "", ProfilePublish)
+	if !result.Valid {
+		t.Fatalf("expected valid graph, diagnostics=%#v", result.Diagnostics)
+	}
+	policy := result.Graph.Nodes["a"].ExecutionPolicy
+	if policy.MaxRounds != 6 || policy.TimeoutSeconds != 150 || policy.HardRepeatLimit != 3 ||
+		!policy.DisableArtifactReads || !policy.CompactSummary || policy.ToolCallLimits["validate_route"] != 2 {
+		t.Fatalf("execution policy was not compiled: %#v", policy)
+	}
+}
+
+func TestCompileAcceptsPublisherFallbackPolicy(t *testing.T) {
+	workflowYAML := strings.Replace(validWorkflow, "id: graph-test", `id: graph-test
+runtime:
+  publisher_owned_slots: [final]`, 1)
+	stateYAML := strings.Replace(validState, "    outputs: [final]", `    outputs: [final]
+    tools: [publish_unavailable]
+    terminal_tools: [publish_unavailable]
+    fail_fast_tools: [publish_unavailable]
+    execution:
+      publisher_fallback_tool: publish_unavailable
+      tool_call_limits: {publish_unavailable: 1}`, 1)
+
+	result := Compile(workflowYAML, stateYAML, "", ProfilePublish)
+	if !result.Valid {
+		t.Fatalf("expected valid publisher fallback contract, diagnostics=%#v", result.Diagnostics)
+	}
+	policy := result.Graph.Nodes["f"].ExecutionPolicy
+	if policy.PublisherFallbackTool != "publish_unavailable" || policy.ToolCallLimits["publish_unavailable"] != 1 {
+		t.Fatalf("publisher fallback policy was not compiled: %#v", policy)
+	}
+}
+
+func TestCompileRejectsPublisherFallbackMissingToolDeclarations(t *testing.T) {
+	workflowYAML := strings.Replace(validWorkflow, "id: graph-test", `id: graph-test
+runtime:
+  publisher_owned_slots: [final]`, 1)
+	stateYAML := strings.Replace(validState, "    outputs: [final]", `    outputs: [final]
+    execution:
+      publisher_fallback_tool: publish_unavailable
+      tool_call_limits: {publish_unavailable: 1}`, 1)
+
+	result := Compile(workflowYAML, stateYAML, "", ProfilePublish)
+	want := map[string]string{
+		"E_STEP_PUBLISHER_FALLBACK_TOOL_NOT_IN_TOOLS":  "scenario/state.yml.steps.f.execution.publisher_fallback_tool",
+		"E_STEP_PUBLISHER_FALLBACK_TOOL_NOT_TERMINAL":  "scenario/state.yml.steps.f.execution.publisher_fallback_tool",
+		"E_STEP_PUBLISHER_FALLBACK_TOOL_NOT_FAIL_FAST": "scenario/state.yml.steps.f.execution.publisher_fallback_tool",
+	}
+	assertDiagnosticPaths(t, result.Diagnostics, want)
+}
+
+func TestCompileRejectsPublisherFallbackToolCallLimitOtherThanOne(t *testing.T) {
+	workflowYAML := strings.Replace(validWorkflow, "id: graph-test", `id: graph-test
+runtime:
+  publisher_owned_slots: [final]`, 1)
+	for _, execution := range []string{
+		"publisher_fallback_tool: publish_unavailable",
+		"publisher_fallback_tool: publish_unavailable\n      tool_call_limits: {publish_unavailable: 2}",
+	} {
+		stateYAML := strings.Replace(validState, "    outputs: [final]", `    outputs: [final]
+    tools: [publish_unavailable]
+    terminal_tools: [publish_unavailable]
+    fail_fast_tools: [publish_unavailable]
+    execution:
+      `+execution, 1)
+		result := Compile(workflowYAML, stateYAML, "", ProfilePublish)
+		assertDiagnosticPaths(t, result.Diagnostics, map[string]string{
+			"E_STEP_PUBLISHER_FALLBACK_TOOL_LIMIT_INVALID": "scenario/state.yml.steps.f.execution.tool_call_limits.publish_unavailable",
+		})
+	}
+}
+
+func TestCompileRejectsPublisherFallbackOutputContract(t *testing.T) {
+	workflowYAML := strings.Replace(validWorkflow, "id: graph-test", `id: graph-test
+runtime:
+  publisher_owned_slots: [d_result]`, 1)
+	stateYAML := strings.Replace(validState, "    outputs: [final]", `    outputs: [{material: final, required: false}]
+    tools: [publish_unavailable]
+    terminal_tools: [publish_unavailable]
+    fail_fast_tools: [publish_unavailable]
+    execution:
+      publisher_fallback_tool: publish_unavailable
+      tool_call_limits: {publish_unavailable: 1}`, 1)
+
+	result := Compile(workflowYAML, stateYAML, "", ProfilePublish)
+	assertDiagnosticPaths(t, result.Diagnostics, map[string]string{
+		"E_STEP_PUBLISHER_FALLBACK_REQUIRED_OUTPUT_MISSING":    "scenario/state.yml.steps.f.outputs",
+		"E_STEP_PUBLISHER_FALLBACK_OUTPUT_NOT_PUBLISHER_OWNED": "scenario/state.yml.steps.f.outputs[0]",
+	})
+}
+
+func assertDiagnosticPaths(t *testing.T, diagnostics []Diagnostic, want map[string]string) {
+	t.Helper()
+	got := map[string]string{}
+	for _, diagnostic := range diagnostics {
+		if _, expected := want[diagnostic.Code]; expected {
+			got[diagnostic.Code] = diagnostic.Path
+		}
+	}
+	for code, path := range want {
+		if got[code] != path {
+			t.Fatalf("expected diagnostic %s at %s, got paths=%#v diagnostics=%#v", code, path, got, diagnostics)
+		}
+	}
+}
+
+func TestCompileRejectsInvalidStepExecutionPolicy(t *testing.T) {
+	state := strings.Replace(validState, "  a: {outputs: []}", `  a:
+    outputs: []
+    execution: {max_rounds: 1, timeout_seconds: -1}`, 1)
+	result := Compile(validWorkflow, state, "", ProfilePublish)
+	if result.Valid {
+		t.Fatalf("expected invalid graph")
+	}
+	found := false
+	for _, diagnostic := range result.Diagnostics {
+		found = found || diagnostic.Code == "E_STEP_EXECUTION_POLICY_INVALID"
+	}
+	if !found {
+		t.Fatalf("missing execution policy diagnostic: %#v", result.Diagnostics)
 	}
 }
 
@@ -147,6 +301,7 @@ runtime:
       question: ""
       type: select
       choice_policy: anything
+      binding: anything
     - id: style
       question: Duplicate
       type: single`, 1)
@@ -161,6 +316,7 @@ runtime:
 		"E_RUNTIME_CLARIFICATION_ID_DUPLICATE",
 		"E_RUNTIME_CLARIFICATION_CHOICES_REQUIRED",
 		"E_RUNTIME_CLARIFICATION_CHOICE_POLICY_INVALID",
+		"E_RUNTIME_CLARIFICATION_BINDING_INVALID",
 	} {
 		if !codes[code] {
 			t.Fatalf("expected %s, diagnostics=%#v", code, result.Diagnostics)
@@ -777,11 +933,12 @@ func TestValidateUIDeclarativeHTMLSlideExport(t *testing.T) {
 }
 
 func TestValidateUITabVisibilityAndHTMLPreview(t *testing.T) {
-	known := map[string]bool{"plan": true, "skip_prototype": true, "prototype": true}
+	known := map[string]bool{"plan": true, "skip_prototype": true, "prototype": true, "effort": true}
 	specs := map[string]uiMaterialSpec{
 		"plan":           {Type: "json", Cardinality: "single"},
 		"skip_prototype": {Type: "text", Cardinality: "single"},
 		"prototype":      {Type: "file", Cardinality: "single"},
+		"effort":         {Type: "text", Cardinality: "single"},
 	}
 	ui := map[string]any{
 		"tab_visibility_ready_material": "plan",
@@ -791,6 +948,11 @@ func TestValidateUITabVisibilityAndHTMLPreview(t *testing.T) {
 		"tabs": []map[string]any{{
 			"id": "prototype", "hide_when_material": "skip_prototype",
 			"slots": []map[string]any{{"id": "prototype"}},
+			"composite_behavior": map[string]any{
+				"visible_when": []map[string]any{{
+					"slot": "prototype", "material": "effort", "equals": "heavy",
+				}},
+			},
 		}},
 	}
 
@@ -809,6 +971,38 @@ func TestValidateUITabVisibilityAndHTMLPreview(t *testing.T) {
 	}
 	if unknownCount != 2 {
 		t.Fatalf("expected both unknown visibility materials to be rejected: %#v", diagnostics)
+	}
+}
+
+func TestValidateUIRejectsInvalidSlotValueVisibility(t *testing.T) {
+	known := map[string]bool{"effort": true, "light": true}
+	specs := map[string]uiMaterialSpec{
+		"effort": {Type: "text", Cardinality: "single"},
+		"light":  {Type: "text", Cardinality: "single"},
+	}
+	ui := map[string]any{
+		"tabs": []map[string]any{{
+			"id":    "evidence",
+			"slots": []map[string]any{{"id": "light"}},
+			"composite_behavior": map[string]any{
+				"visible_when": []map[string]any{{
+					"slot": "missing", "material": "missing-effort",
+				}},
+			},
+		}},
+	}
+
+	diagnostics := validateUI(ui, known, map[string]bool{}, specs, ProfilePublish)
+	codes := map[string]bool{}
+	for _, diagnostic := range diagnostics {
+		codes[diagnostic.Code] = true
+	}
+	for _, code := range []string{
+		"E_UI_VISIBILITY_SLOT_UNKNOWN", "E_UI_MATERIAL_UNKNOWN", "E_UI_VISIBILITY_VALUE_REQUIRED",
+	} {
+		if !codes[code] {
+			t.Fatalf("expected %s, diagnostics=%#v", code, diagnostics)
+		}
 	}
 }
 

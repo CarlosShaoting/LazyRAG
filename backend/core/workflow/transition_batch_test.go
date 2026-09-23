@@ -46,6 +46,18 @@ func TestMergeAttemptWitnessesDeduplicatesOnlyExactBindings(t *testing.T) {
 	}
 }
 
+func TestHumanWorkflowStepAlwaysRequiresHandoff(t *testing.T) {
+	if !requiresWorkflowHandoff(false, graphengine.CompiledNode{Mode: "human"}) {
+		t.Fatal("a human step must keep its post-execution confirmation boundary")
+	}
+	if !requiresWorkflowHandoff(true, graphengine.CompiledNode{Mode: "auto"}) {
+		t.Fatal("an explicitly requested handoff must be preserved")
+	}
+	if requiresWorkflowHandoff(false, graphengine.CompiledNode{Mode: "auto"}) {
+		t.Fatal("an automatic step must not gain a handoff without a request")
+	}
+}
+
 func setupBatchTransitionSession(t *testing.T) (*orm.DB, string) {
 	t.Helper()
 	db := newTestDB(t)

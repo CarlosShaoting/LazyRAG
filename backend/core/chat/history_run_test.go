@@ -68,6 +68,50 @@ func TestChatStatusRejectsLateRunTerminal(t *testing.T) {
 	}
 }
 
+func TestFinalizeCancelledChatHistoryClosesOrphanedGeneratingRun(t *testing.T) {
+	_, db := newExternalChatTestApplication(t)
+	ctx := context.Background()
+	stateStore := newRunDecisionTestStore(t)
+	now := time.Now()
+	if err := db.Create(&orm.ChatHistory{
+		ID: "history-orphaned", ConversationID: "conversation-1", Seq: 1,
+		Result: "<think>partial reasoning", RunID: "run-orphaned", RunStatus: "generating",
+		TimeMixin: orm.TimeMixin{CreateTime: now, UpdateTime: now},
+	}).Error; err != nil {
+		t.Fatalf("create history: %v", err)
+	}
+	if err := setChatRuntimeStatus(
+		ctx, stateStore, "conversation-1", "history-orphaned", "generating", "", "run-orphaned", nil,
+	); err != nil {
+		t.Fatalf("set generating status: %v", err)
+	}
+	if err := finalizeCancelledChatHistory(
+		ctx, db, stateStore, "conversation-1", "history-orphaned", "run-orphaned", "",
+	); err != nil {
+		t.Fatalf("finalize cancellation: %v", err)
+	}
+
+	var history orm.ChatHistory
+	if err := db.First(&history, "id = ?", "history-orphaned").Error; err != nil {
+		t.Fatalf("load history: %v", err)
+	}
+	terminal, err := parseRunTerminal(history.RunTerminal)
+	if err != nil {
+		t.Fatalf("parse terminal: %v", err)
+	}
+	if history.RunStatus != "cancelled" || terminal.Reason != "user_cancelled" || !terminal.PartialOutput {
+		t.Fatalf("history was not cancelled: history=%#v terminal=%#v", history, terminal)
+	}
+	status, err := getChatStatus(ctx, stateStore, "conversation-1", "history-orphaned")
+	if err != nil {
+		t.Fatalf("load chat status: %v", err)
+	}
+	if status.Status != "cancelled" || status.RunTerminal == nil || !status.RunTerminal.PartialOutput ||
+		status.CurrentResult != history.Result {
+		t.Fatalf("chat status was not finalized: %#v", status)
+	}
+}
+
 func TestExternalRegenerationOwnerRejectsLatePreviousTerminal(t *testing.T) {
 	app, db := newExternalChatTestApplication(t)
 	ctx := context.Background()

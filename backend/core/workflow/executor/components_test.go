@@ -59,6 +59,9 @@ func TestDBContextLoaderBuildsNeutralPinnedAttempt(t *testing.T) {
 		Nodes: map[string]graphengine.CompiledNode{"write": {ID: "write", Prompt: "write report",
 			Acceptance: []string{"clear"}, Outputs: []string{"report", "notes"},
 			RequiredOutputs: []string{"report"}, Capabilities: []string{"web"},
+			TerminalTools: []string{"finalize_delivery"}, FailFastTools: []string{"validate_product_assessment"},
+			ExecutionPolicy: graphengine.StepExecutionPolicy{MaxRounds: 5, TimeoutSeconds: 720,
+				ToolCallLimits: map[string]int{"validate_product_assessment": 2}},
 			InputTransports: map[string]string{"brief": "path", "images": "reference"}}},
 		MaterialTypes:         map[string]string{"brief": "text", "images": "image"},
 		MaterialCardinalities: map[string]string{"report": "single", "notes": "list", "images": "list"}}
@@ -128,6 +131,14 @@ func TestDBContextLoaderBuildsNeutralPinnedAttempt(t *testing.T) {
 		value.DeclaredInputTypes["images"] != "image" || value.DeclaredInputTransports["brief"] != "path" ||
 		value.DeclaredInputTransports["images"] != "reference" {
 		t.Fatalf("context=%#v", value)
+	}
+	if !reflect.DeepEqual(value.TerminalTools, []string{"finalize_delivery"}) ||
+		!reflect.DeepEqual(value.FailFastTools, []string{"validate_product_assessment"}) {
+		t.Fatalf("tool stop policies were not loaded independently: %#v", value)
+	}
+	if value.ExecutionPolicy.MaxRounds != 5 || value.ExecutionPolicy.TimeoutSeconds != 720 ||
+		value.ExecutionPolicy.ToolCallLimits["validate_product_assessment"] != 2 {
+		t.Fatalf("execution policy was not loaded: %#v", value.ExecutionPolicy)
 	}
 	if value.Metadata["task_id"] != "task-1" || value.Metadata["controller_host"] != "lazymind" {
 		t.Fatalf("metadata=%v", value.Metadata)

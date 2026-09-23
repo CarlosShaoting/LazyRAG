@@ -15,7 +15,7 @@ import os
 import pathlib
 import re
 import threading
-from typing import Any, Dict, Optional
+from typing import Any, Awaitable, Callable, Dict, Optional
 from urllib.parse import urlparse
 
 import httpx
@@ -31,6 +31,135 @@ def _base_url() -> str:
     return str(config['core_service_url'] or config['core_api_url']).rstrip('/')
 
 
+class _BufferedTaskEventSender:
+    """Coalesce adjacent streaming deltas before crossing the HTTP boundary.
+
+    Only content-only events are buffered.  Every lifecycle, progress, tool,
+    artifact, and terminal event first flushes the pending content, so event
+    order and tool-call boundaries remain identical to the source stream.
+    """
+
+    _TEXT_FIELDS = {'text': 'text', 'think': 'think'}
+
+    def __init__(
+        self,
+        send: Callable[[Dict[str, Any]], Awaitable[Any]],
+        *,
+        max_chars: int,
+        flush_seconds: float,
+    ) -> None:
+        self._send = send
+        self._max_chars = max(1, max_chars)
+        self._flush_seconds = max(0.01, flush_seconds)
+        self._pending: Optional[Dict[str, Any]] = None
+        self._pending_chars = 0
+        self._flush_task: Optional[asyncio.Task[None]] = None
+        self._background_error: Optional[Exception] = None
+        self._closed = False
+        self._lock = asyncio.Lock()
+
+    @classmethod
+    def _content_field(cls, event: Dict[str, Any]) -> str:
+        kind = str(event.get('type') or '')
+        if kind in cls._TEXT_FIELDS:
+            field = cls._TEXT_FIELDS[kind]
+            return field if isinstance(event.get(field), str) and event.get(field) else ''
+        return ''
+
+    @classmethod
+    def _compatible(cls, pending: Dict[str, Any], event: Dict[str, Any]) -> bool:
+        field = cls._content_field(pending)
+        if not field or cls._content_field(event) != field:
+            return False
+        return (
+            {key: value for key, value in pending.items() if key != field}
+            == {key: value for key, value in event.items() if key != field}
+        )
+
+    async def send(self, event: Dict[str, Any]) -> None:
+        """Buffer a content delta or immediately forward a boundary event."""
+        field = self._content_field(event)
+        if not field:
+            await self.flush()
+            if self._closed:
+                raise RuntimeError('task event sender is closed')
+            await self._send(event)
+            return
+
+        async with self._lock:
+            self._raise_background_error_locked()
+            if self._closed:
+                raise RuntimeError('task event sender is closed')
+            if self._pending is not None and not self._compatible(self._pending, event):
+                await self._flush_locked()
+            remaining = str(event[field])
+            while remaining:
+                if self._pending is None:
+                    self._pending = dict(event)
+                    self._pending[field] = ''
+                    self._pending_chars = 0
+                    self._schedule_flush_locked()
+                capacity = self._max_chars - self._pending_chars
+                delta, remaining = remaining[:capacity], remaining[capacity:]
+                self._pending[field] = str(self._pending[field]) + delta
+                self._pending_chars += len(delta)
+                if self._pending_chars >= self._max_chars:
+                    await self._flush_locked()
+
+    async def flush(self) -> None:
+        """Forward pending content and surface deferred transport failures."""
+        async with self._lock:
+            self._raise_background_error_locked()
+            await self._flush_locked()
+            self._raise_background_error_locked()
+
+    async def close(self) -> None:
+        try:
+            await self.flush()
+        finally:
+            async with self._lock:
+                self._closed = True
+                task = self._flush_task
+                self._flush_task = None
+                if task is not None and task is not asyncio.current_task():
+                    task.cancel()
+
+    def _schedule_flush_locked(self) -> None:
+        if self._flush_task is not None:
+            return
+        self._flush_task = asyncio.create_task(self._flush_after_delay())
+
+    async def _flush_after_delay(self) -> None:
+        try:
+            await asyncio.sleep(self._flush_seconds)
+            async with self._lock:
+                if self._flush_task is asyncio.current_task():
+                    self._flush_task = None
+                try:
+                    await self._flush_locked()
+                except Exception as exc:  # surfaced on the producer task
+                    self._background_error = exc
+        except asyncio.CancelledError:
+            return
+
+    async def _flush_locked(self) -> None:
+        task = self._flush_task
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
+        self._flush_task = None
+        pending = self._pending
+        self._pending = None
+        self._pending_chars = 0
+        if pending is not None:
+            await self._send(pending)
+
+    def _raise_background_error_locked(self) -> None:
+        if self._background_error is not None:
+            error = self._background_error
+            self._background_error = None
+            raise error
+
+
 class RemoteWorkflowExecutor:
     def __init__(self) -> None:
         self.base_url = _base_url()
@@ -39,6 +168,12 @@ class RemoteWorkflowExecutor:
         self.poll_seconds = float(os.getenv('LAZYMIND_WORKFLOW_EXECUTOR_POLL_SECONDS', '0.5'))
         self.heartbeat_seconds = float(os.getenv('LAZYMIND_WORKFLOW_EXECUTOR_HEARTBEAT_SECONDS', '10'))
         self.concurrency = max(1, int(os.getenv('LAZYMIND_WORKFLOW_EXECUTOR_CONCURRENCY', '4')))
+        self.event_batch_chars = max(
+            1, int(os.getenv('LAZYMIND_WORKFLOW_EVENT_BATCH_CHARS', '512')),
+        )
+        self.event_flush_seconds = max(
+            0.01, float(os.getenv('LAZYMIND_WORKFLOW_EVENT_FLUSH_SECONDS', '0.15')),
+        )
         self.runtime = RemoteExecutorClient(self.base_url, self.executor_id, 'lazymind', self.token)
 
     async def run_forever(self) -> None:
@@ -133,9 +268,23 @@ class RemoteWorkflowExecutor:
             failure: Optional[str] = None
             terminal_event: Optional[Dict[str, Any]] = None
             post_step_checkpoint = None
+            step_timeout_seconds = 0.0
+            task_events = _BufferedTaskEventSender(
+                lambda event: self.runtime.task_event(client, task_id, lease, event),
+                max_chars=self.event_batch_chars,
+                flush_seconds=self.event_flush_seconds,
+            )
             try:
                 from lazymind.chat.engine.subagent.runner import run_subagent_stream
                 params = dict(spec.get('params') or {})
+                execution_policy = params.get('execution_policy')
+                if isinstance(execution_policy, dict):
+                    try:
+                        step_timeout_seconds = max(
+                            0.0, float(execution_policy.get('timeout_seconds') or 0),
+                        )
+                    except (TypeError, ValueError):
+                        step_timeout_seconds = 0.0
                 output_types = dict(context.get('declared_output_types') or {})
                 if output_types:
                     params['output_slot_types'] = output_types
@@ -191,7 +340,7 @@ class RemoteWorkflowExecutor:
                     control = dict(checkpoint.get('control') or {})
                     for artifact in artifacts:
                         await self.runtime.artifact(client, attempt_id, lease, artifact)
-                        await self.runtime.task_event(client, task_id, lease, {
+                        await task_events.send({
                             'type': 'artifact', **artifact,
                         })
                     terminal_event = {
@@ -200,7 +349,7 @@ class RemoteWorkflowExecutor:
                     }
                 else:
                     initial_steps = list(spec.get('steps') or [])
-                    async for frame in run_subagent_stream(
+                    frames = run_subagent_stream(
                         task_id=task_id,
                         resume=bool(initial_steps),
                         model_config=spec.get('llm_config'),
@@ -213,7 +362,8 @@ class RemoteWorkflowExecutor:
                             'generation': str(claim.get('fencing_generation') or ''),
                             'lease_token': lease,
                         },
-                    ):
+                    )
+                    async for frame in self._frames_with_timeout(frames, step_timeout_seconds):
                         event = self._parse_frame(frame)
                         if event is None:
                             continue
@@ -228,19 +378,20 @@ class RemoteWorkflowExecutor:
                             # host-neutral value as the Workflow artifact sink.  A raw
                             # path here points into this executor's temporary workspace
                             # and is inaccessible to Core after the attempt finishes.
-                            await self.runtime.task_event(client, task_id, lease, {
+                            await task_events.send({
                                 **event, 'value': artifact['value'],
                             })
                             await self.runtime.artifact(client, attempt_id, lease, artifact)
                             artifacts.append(artifact)
                         elif kind not in {'done', 'error'}:
-                            await self.runtime.task_event(client, task_id, lease, event)
+                            await task_events.send(event)
 
                         if kind in {'task_start', 'progress'}:
                             await self.runtime.progress(client, attempt_id, lease, {
                                 'progress': event.get('progress', 0),
                                 'phase': event.get('current_phase', kind)})
                         elif kind == 'done':
+                            await task_events.flush()
                             terminal_event = event
                             summary = str(event.get('summary') or '')
                             event_control = event.get('control')
@@ -249,6 +400,7 @@ class RemoteWorkflowExecutor:
                             if event.get('status') not in {None, '', 'succeeded'}:
                                 failure = summary or str(event.get('status'))
                         elif kind == 'error':
+                            await task_events.flush()
                             terminal_event = event
                             failure = str(event.get('message') or 'LazyMind SubAgent failed')
                 if not failure and not lease_lost.is_set():
@@ -266,26 +418,43 @@ class RemoteWorkflowExecutor:
                         terminal_event = {
                             'type': 'error', 'status': 'failed', 'message': failure,
                         }
+            except TimeoutError:
+                self._cancel_subagent(task_id)
+                failure = f'Workflow step exceeded its {step_timeout_seconds:g}-second deadline.'
+                terminal_event = {
+                    'type': 'error', 'status': 'failed', 'message': failure,
+                    'error_code': 'WORKFLOW_STEP_DEADLINE_EXCEEDED',
+                }
             except Exception as exc:
                 failure = str(exc)
                 terminal_event = {
                     'type': 'error', 'status': 'failed', 'message': failure,
                 }
             finally:
+                try:
+                    await task_events.close()
+                except Exception as exc:
+                    failure = failure or f'task event forwarding failed: {exc}'
+                    if terminal_event is None or terminal_event.get('type') == 'done':
+                        terminal_event = {
+                            'type': 'error', 'status': 'failed', 'message': failure,
+                        }
                 stopped.set()
                 heartbeat_thread.join(timeout=1)
 
             if lease_lost.is_set():
                 return
+            if failure and terminal_event is None:
+                terminal_event = {'type': 'error', 'status': 'failed', 'message': failure}
             try:
                 if failure:
-                    if post_step_checkpoint is not None:
-                        await self.runtime.fail(
-                            client, attempt_id, lease, failure,
-                            post_step_checkpoint=post_step_checkpoint,
-                        )
-                    else:
-                        await self.runtime.fail(client, attempt_id, lease, failure)
+                    error_code, diagnostic_id = self._terminal_failure_details(terminal_event)
+                    await self.runtime.fail(
+                        client, attempt_id, lease, failure,
+                        post_step_checkpoint=post_step_checkpoint,
+                        error_code=error_code,
+                        diagnostic_id=diagnostic_id,
+                    )
                 else:
                     await self.runtime.complete(client, attempt_id, lease, {
                         'summary': summary, 'executor_ref': task_id, 'artifacts': artifacts,
@@ -401,6 +570,34 @@ class RemoteWorkflowExecutor:
                     'result': {'ok': True, 'value': result},
                 }],
             })
+
+    @staticmethod
+    async def _frames_with_timeout(frames, timeout_seconds: float):
+        if timeout_seconds <= 0:
+            async for frame in frames:
+                yield frame
+            return
+        async with asyncio.timeout(timeout_seconds):
+            async for frame in frames:
+                yield frame
+
+    @staticmethod
+    def _terminal_failure_details(event: Optional[Dict[str, Any]]) -> tuple[str, str]:
+        """Return stable Runtime failure metadata from a SubAgent terminal event."""
+        if not isinstance(event, dict):
+            return 'LAZYMIND_EXECUTION_FAILED', ''
+        error_code = event.get('error_code')
+        if not isinstance(error_code, str) or not error_code.strip():
+            error_code = event.get('code')
+        diagnostic_id = event.get('diagnostic_id')
+        return (
+            error_code.strip()
+            if isinstance(error_code, str) and error_code.strip()
+            else 'LAZYMIND_EXECUTION_FAILED',
+            diagnostic_id.strip()
+            if isinstance(diagnostic_id, str) and diagnostic_id.strip()
+            else '',
+        )
 
     @staticmethod
     def _input_resource_binding(value: Any) -> bool:

@@ -88,11 +88,13 @@ type WorkflowStepParams struct {
 	// LegacyTools are immutable script-tool names compiled from the selected
 	// Workflow revision. They are resolved by the LazyMind Host when building
 	// the isolated Workflow SubAgent tool set; the model never supplies them.
-	LegacyTools       []string `json:"legacy_tools,omitempty"`
-	TerminalTools     []string `json:"terminal_tools,omitempty"`
-	ToolsOnly         bool     `json:"tools_only,omitempty"`
-	TerminalToolsOnly bool     `json:"terminal_tools_only,omitempty"`
-	StreamHeartbeat   bool     `json:"stream_heartbeat,omitempty"`
+	LegacyTools       []string                        `json:"legacy_tools,omitempty"`
+	TerminalTools     []string                        `json:"terminal_tools,omitempty"`
+	FailFastTools     []string                        `json:"fail_fast_tools,omitempty"`
+	ToolsOnly         bool                            `json:"tools_only,omitempty"`
+	TerminalToolsOnly bool                            `json:"terminal_tools_only,omitempty"`
+	ExecutionPolicy   graphengine.StepExecutionPolicy `json:"execution_policy,omitempty"`
+	StreamHeartbeat   bool                            `json:"stream_heartbeat,omitempty"`
 
 	// Runtime is the package-declared host behavior for this immutable revision.
 	// It replaces workflow-id conditionals in the LazyMind executor.
@@ -157,11 +159,17 @@ func (p WorkflowStepParams) asMap() map[string]any {
 	if len(p.TerminalTools) > 0 {
 		m["terminal_tools"] = p.TerminalTools
 	}
+	if len(p.FailFastTools) > 0 {
+		m["fail_fast_tools"] = p.FailFastTools
+	}
 	if p.ToolsOnly {
 		m["tools_only"] = true
 	}
 	if p.TerminalToolsOnly {
 		m["terminal_tools_only"] = true
+	}
+	if !p.ExecutionPolicy.IsZero() {
+		m["execution_policy"] = p.ExecutionPolicy
 	}
 	if p.StreamHeartbeat {
 		m["stream_heartbeat"] = true
@@ -579,11 +587,17 @@ func launchWorkflowAttempt(
 	if len(params.TerminalTools) > 0 {
 		rawParamsMap["terminal_tools"] = params.TerminalTools
 	}
+	if len(params.FailFastTools) > 0 {
+		rawParamsMap["fail_fast_tools"] = params.FailFastTools
+	}
 	if params.ToolsOnly {
 		rawParamsMap["tools_only"] = true
 	}
 	if params.TerminalToolsOnly {
 		rawParamsMap["terminal_tools_only"] = true
+	}
+	if !params.ExecutionPolicy.IsZero() {
+		rawParamsMap["execution_policy"] = params.ExecutionPolicy
 	}
 	if !params.Runtime.IsZero() {
 		rawParamsMap["workflow_runtime"] = params.Runtime
@@ -679,6 +693,9 @@ func launchWorkflowAttempt(
 		"step_id":     stepID,
 		"session_id":  sessionID,
 	}
+	if len(params.FailFastTools) > 0 {
+		runParams["fail_fast_tools"] = params.FailFastTools
+	}
 	if params.TraceID != "" && params.ParentSpanID != "" {
 		runParams["trace_id"] = params.TraceID
 		runParams["parent_span_id"] = params.ParentSpanID
@@ -705,11 +722,8 @@ func enqueueWorkflowAttemptRunner(ctx context.Context, db *gorm.DB, request suba
 	return enqueueCanonicalAttempt(ctx, db, request)
 }
 
-// OnSubAgentDone is called when a workflow_step task reaches terminal status.
-// It mirrors the step status and handles auto/dynamic advance logic.
-//
-// Successful v2 attempts freeze their route decision and let the graph
-// projector determine completion. Legacy sessions retain their waiting flow.
+// OnSubAgentDone preserves the status-only compatibility entry point used by
+// callers that do not have structured executor failure metadata.
 func OnSubAgentDone(
 	ctx context.Context,
 	db *gorm.DB,
@@ -718,10 +732,28 @@ func OnSubAgentDone(
 	onSSE func(eventType string, payload map[string]any),
 	pctx *WorkflowChatContext,
 ) {
+	onSubAgentDone(ctx, db, stateStore, taskID, status, summary, "", "", onSSE, pctx)
+}
+
+// onSubAgentDone mirrors a workflow_step terminal event and handles
+// auto/dynamic advancement. Stable failure metadata stays out of the summary
+// string so clients can make deterministic decisions without parsing prose.
+func onSubAgentDone(
+	ctx context.Context,
+	db *gorm.DB,
+	stateStore state.Store,
+	taskID, status, summary, errorCode, diagnosticID string,
+	onSSE func(eventType string, payload map[string]any),
+	pctx *WorkflowChatContext,
+) {
+	errorCode = strings.ToLower(strings.TrimSpace(errorCode))
+	diagnosticID = strings.TrimSpace(diagnosticID)
 	_ = UpdateStepStatus(ctx, db, taskID, status)
+	_ = UpdateStepTerminalCode(ctx, db, taskID, errorCode)
 	stepFailed := status != subagent.StatusSucceeded && status != subagent.StatusInterrupted
+	hasFailFastFailure := pctx != nil && sessionHasWorkflowFailFastFailure(ctx, db, pctx.SessionID)
 	sessionCompleted := false
-	if status == subagent.StatusSucceeded && pctx != nil && pctx.SessionID != "" {
+	if status == subagent.StatusSucceeded && pctx != nil && pctx.SessionID != "" && !hasFailFastFailure {
 		if err := freezeRouteDecision(ctx, db, pctx.SessionID, pctx.StepID, taskID); err != nil {
 			fmt.Printf("[plugin] freeze route decision failed session=%s step=%s err=%v\n", pctx.SessionID, pctx.StepID, err)
 			stepFailed = true
@@ -754,8 +786,8 @@ func OnSubAgentDone(
 
 	if stepFailed {
 		// Non-succeeded, non-interrupted (i.e. truly failed) steps: notify the frontend
-		// and mark the session failed. Auto mode still asks DriverAgent to diagnose
-		// and recommend retry/rewind; dynamic mode leaves the failure for the user.
+		// and mark the session failed. Retryable failures may still ask DriverAgent
+		// for a recovery choice in auto mode; deterministic failures stop here.
 		if pctx != nil && pctx.SessionID != "" {
 			_ = UpdateSessionStatus(ctx, db, pctx.SessionID, SessionStatusFailed)
 			_ = taskcenter.UpdateTaskStatusBySession(ctx, db, pctx.SessionID, "failed")
@@ -766,9 +798,11 @@ func OnSubAgentDone(
 		// the Session immediately when they receive this terminal event.
 		if pctx != nil {
 			onSSE("workflow_error", map[string]any{
-				"session_id": pctx.SessionID,
-				"step_id":    pctx.StepID,
-				"message":    summary,
+				"session_id":    pctx.SessionID,
+				"step_id":       pctx.StepID,
+				"message":       summary,
+				"error_code":    errorCode,
+				"diagnostic_id": diagnosticID,
 			})
 		}
 	}
@@ -794,6 +828,20 @@ func OnSubAgentDone(
 			})
 			return
 		}
+	}
+
+	// Provider account/configuration failures and explicitly fail-fast workflow
+	// tool failures cannot be repaired by another model turn. Keep the failed
+	// session retryable by the user, but never spend more time or quota on the
+	// DriverAgent, parent ChatAgent, or automatic advancement. The session query
+	// also covers a fail-fast sibling that finished before this final parallel
+	// step.
+	if isWorkflowFailFastErrorCode(errorCode) || hasFailFastFailure ||
+		sessionHasWorkflowFailFastFailure(ctx, db, pctx.SessionID) {
+		if !stepFailed {
+			go OnSubAgentDoneSnapshot(context.Background(), db, pctx)
+		}
+		return
 	}
 
 	if sessionCompleted {
@@ -862,6 +910,37 @@ func OnSubAgentDone(
 	}
 	// Write content_snapshot to all selected revisions for this step.
 	go OnSubAgentDoneSnapshot(context.Background(), db, pctx)
+}
+
+func isWorkflowFailFastErrorCode(code string) bool {
+	switch strings.ToLower(strings.TrimSpace(code)) {
+	case "authentication_failed", "permission_denied", "not_found", "usage_limit_exceeded",
+		"quota_exhausted", "balance_exhausted", "organization_spend_limit_exceeded",
+		"project_spend_limit_exceeded", "input_filtered", "output_filtered",
+		"workflow_tool_failed", "workflow_step_deadline_exceeded",
+		"workflow_execution_limit_exceeded":
+		return true
+	default:
+		return false
+	}
+}
+
+func sessionHasWorkflowFailFastFailure(ctx context.Context, db *gorm.DB, sessionID string) bool {
+	if db == nil || strings.TrimSpace(sessionID) == "" {
+		return false
+	}
+	var codes []string
+	if err := db.WithContext(ctx).Model(&orm.WorkflowSessionStep{}).
+		Where("session_id = ? AND status = ? AND validity = ?", sessionID, StepStatusFailed, "effective").
+		Pluck("terminal_code", &codes).Error; err != nil {
+		return false
+	}
+	for _, code := range codes {
+		if isWorkflowFailFastErrorCode(code) {
+			return true
+		}
+	}
+	return false
 }
 
 func clearGeneratingChatStatus(ctx context.Context, stateStore state.Store, convID string) {

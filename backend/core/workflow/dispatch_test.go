@@ -45,7 +45,7 @@ func seedDispatchStep(t *testing.T, db *gorm.DB, id string) {
 }
 
 func requestFor(id string) subagent.RunRequest {
-	return subagent.RunRequest{TaskID: "task-" + id, AgentType: "workflow_step", WorkspacePath: "/host/private", LLMConfig: map[string]any{"api_key": "secret"}, Params: map[string]any{"operation": "execute", "objective": "make report"}}
+	return subagent.RunRequest{TaskID: "task-" + id, AgentType: "workflow_step", WorkspacePath: "/host/private", LLMConfig: map[string]any{"api_key": "secret"}, Params: map[string]any{"operation": "execute", "objective": "make report", "fail_fast_tools": []string{"validate_product_assessment"}}}
 }
 
 func TestCanonicalQueueContainsNeutralContext(t *testing.T) {
@@ -64,6 +64,9 @@ func TestCanonicalQueueContainsNeutralContext(t *testing.T) {
 	}
 	if value.AttemptID != "a1" || value.Operation != "execute" || value.DeclaredOutputTypes["report"] != "file" {
 		t.Fatalf("context=%#v", value)
+	}
+	if len(value.FailFastTools) != 1 || value.FailFastTools[0] != "validate_product_assessment" {
+		t.Fatalf("fail-fast tools were not queued: %#v", value.FailFastTools)
 	}
 	text := string(row.PayloadJSON)
 	for _, secret := range []string{"/host/private", "api_key", "secret", "llm_config", "db_dsn"} {

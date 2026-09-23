@@ -42,6 +42,7 @@ type rawStep struct {
 	ID                string
 	Label             string
 	Route             string
+	RouteSelector     any
 	Inputs            any
 	InputExpression   any
 	OptionalInputs    any
@@ -52,8 +53,10 @@ type rawStep struct {
 	Capabilities      any
 	Tools             any
 	TerminalTools     any
+	FailFastTools     any
 	ToolsOnly         bool
 	TerminalToolsOnly bool
+	Execution         any
 	StreamHeartbeat   bool
 	Mode              string
 }
@@ -145,10 +148,18 @@ func Compile(workflowYAML, stateYAML, scenario string, profile Profile) CompileR
 		if _, ok := workflowSteps[id]; !ok {
 			result.Diagnostics = append(result.Diagnostics, nodeDiag("E_WORKFLOW_STEP_MISSING", "error", "workflow.yaml.steps", id, "state step is not declared in workflow.yaml"))
 		}
+		executionPolicy, executionErr := parseStepExecutionPolicy(step.Execution)
+		if executionErr != nil {
+			result.Diagnostics = append(result.Diagnostics, nodeDiag(
+				"E_STEP_EXECUTION_POLICY_INVALID", "error",
+				"scenario/state.yml.steps."+id+".execution", id, executionErr.Error()))
+		}
 		node := CompiledNode{ID: id, Label: step.Label, Route: step.Route, Prompt: step.Prompt,
 			Acceptance: stringList(step.Acceptance), Capabilities: stringList(step.Capabilities),
 			LegacyTools: stringList(step.Tools), TerminalTools: stringList(step.TerminalTools),
-			ToolsOnly: step.ToolsOnly, TerminalToolsOnly: step.TerminalToolsOnly,
+			FailFastTools: stringList(step.FailFastTools),
+			ToolsOnly:     step.ToolsOnly, TerminalToolsOnly: step.TerminalToolsOnly,
+			ExecutionPolicy: executionPolicy,
 			StreamHeartbeat: step.StreamHeartbeat, Mode: step.Mode}
 		if definition := workflowSteps[id]; definition != nil {
 			if len(node.Acceptance) == 0 {
@@ -166,6 +177,15 @@ func Compile(workflowYAML, stateYAML, scenario string, profile Profile) CompileR
 			node.Route = "all"
 		}
 		node.Outputs, node.RequiredOutputs = parseOutputs(step.Outputs)
+		if step.RouteSelector != nil {
+			encoded, err := yaml.Marshal(step.RouteSelector)
+			var selector RouteSelector
+			if err != nil || yaml.Unmarshal(encoded, &selector) != nil {
+				result.Diagnostics = append(result.Diagnostics, nodeDiag("E_ROUTE_SELECTOR_INVALID", "error", "scenario/state.yml.steps."+id+".route_selector", id, "route_selector must declare material, field, and targets"))
+			} else {
+				node.RouteSelector = &selector
+			}
+		}
 		if step.Inputs != nil {
 			inputPaths[id] = "scenario/state.yml.steps." + id + ".inputs"
 			node.Input, node.OptionalInputs, node.InputTransports, stepDiags = parseUnifiedInputs(step.Inputs, id)
@@ -194,6 +214,7 @@ func Compile(workflowYAML, stateYAML, scenario string, profile Profile) CompileR
 				node.SkipIf = expr
 			}
 		}
+		result.Diagnostics = append(result.Diagnostics, validatePublisherFallbackPolicy(node, graph.Runtime)...)
 		graph.Nodes[id] = node
 		if node.Input != nil {
 			graph.InputExpressions[id] = *node.Input
@@ -293,6 +314,7 @@ func Compile(workflowYAML, stateYAML, scenario string, profile Profile) CompileR
 		field.Question = strings.TrimSpace(field.Question)
 		field.Type = strings.ToLower(strings.TrimSpace(field.Type))
 		field.ChoicePolicy = strings.ToLower(strings.TrimSpace(field.ChoicePolicy))
+		field.Binding = strings.ToLower(strings.TrimSpace(field.Binding))
 		if field.Type == "" {
 			field.Type = "text"
 		}
@@ -348,6 +370,14 @@ func Compile(workflowYAML, stateYAML, scenario string, profile Profile) CompileR
 			result.Diagnostics = append(result.Diagnostics, diag(
 				"E_RUNTIME_CLARIFICATION_CHOICE_POLICY_INVALID", "error", path+".choice_policy",
 				"runtime clarification field choice_policy must be seed, subset, or fixed",
+			))
+		}
+		switch field.Binding {
+		case "", "request_context":
+		default:
+			result.Diagnostics = append(result.Diagnostics, diag(
+				"E_RUNTIME_CLARIFICATION_BINDING_INVALID", "error", path+".binding",
+				"runtime clarification field binding must be request_context when declared",
 			))
 		}
 	}
@@ -439,6 +469,7 @@ func Compile(workflowYAML, stateYAML, scenario string, profile Profile) CompileR
 	}
 
 	adj, reverse := adjacency(graph.ControlEdges, allNodes)
+	result.Diagnostics = append(result.Diagnostics, validateRouteSelectors(graph)...)
 	dominators := computeDominators("__start__", allNodes, reverse)
 	guaranteedMaterials := map[string]bool{}
 	for _, node := range graph.Nodes {
@@ -610,12 +641,104 @@ func normalizeSteps(value any) (map[string]rawStep, []Diagnostic) {
 
 func decodeRawStep(id string, raw map[string]any) rawStep {
 	return rawStep{ID: id, Label: scalar(raw["label"]), Route: scalar(raw["route"]),
-		Inputs: raw["inputs"], InputExpression: raw["input_expression"], OptionalInputs: raw["optional_inputs"],
+		RouteSelector: raw["route_selector"],
+		Inputs:        raw["inputs"], InputExpression: raw["input_expression"], OptionalInputs: raw["optional_inputs"],
 		Outputs: raw["outputs"], SkipIf: firstNonNil(raw["skip_if"], raw["skipif"]),
 		Prompt: scalar(raw["prompt"]), Acceptance: raw["acceptance_criteria"],
 		Capabilities: raw["capabilities"], Tools: raw["tools"], TerminalTools: raw["terminal_tools"],
-		ToolsOnly: boolValue(raw["tools_only"]), TerminalToolsOnly: boolValue(raw["terminal_tools_only"]),
+		FailFastTools: raw["fail_fast_tools"],
+		ToolsOnly:     boolValue(raw["tools_only"]), TerminalToolsOnly: boolValue(raw["terminal_tools_only"]),
+		Execution:       raw["execution"],
 		StreamHeartbeat: boolValue(raw["stream_heartbeat"]), Mode: scalar(raw["mode"])}
+}
+
+func parseStepExecutionPolicy(value any) (StepExecutionPolicy, error) {
+	if value == nil {
+		return StepExecutionPolicy{}, nil
+	}
+	data, err := yaml.Marshal(value)
+	if err != nil {
+		return StepExecutionPolicy{}, fmt.Errorf("execution policy must be a mapping")
+	}
+	var policy StepExecutionPolicy
+	if err := yaml.Unmarshal(data, &policy); err != nil {
+		return StepExecutionPolicy{}, fmt.Errorf("execution policy is invalid: %w", err)
+	}
+	if policy.MaxRounds != 0 && policy.MaxRounds < 2 {
+		return StepExecutionPolicy{}, fmt.Errorf("max_rounds must be at least 2")
+	}
+	if policy.TimeoutSeconds < 0 {
+		return StepExecutionPolicy{}, fmt.Errorf("timeout_seconds must be positive")
+	}
+	if policy.HardRepeatLimit != 0 && policy.HardRepeatLimit < 2 {
+		return StepExecutionPolicy{}, fmt.Errorf("hard_repeat_limit must be at least 2")
+	}
+	for name, limit := range policy.ToolCallLimits {
+		if strings.TrimSpace(name) == "" || limit < 1 {
+			return StepExecutionPolicy{}, fmt.Errorf("tool_call_limits must use non-empty names and positive limits")
+		}
+	}
+	policy.PublisherFallbackTool = strings.TrimSpace(policy.PublisherFallbackTool)
+	return policy, nil
+}
+
+func validatePublisherFallbackPolicy(node CompiledNode, runtime RuntimePolicy) []Diagnostic {
+	tool := node.ExecutionPolicy.PublisherFallbackTool
+	if tool == "" {
+		return nil
+	}
+
+	basePath := "scenario/state.yml.steps." + node.ID
+	policyPath := basePath + ".execution.publisher_fallback_tool"
+	var diagnostics []Diagnostic
+	if !containsString(node.LegacyTools, tool) {
+		diagnostics = append(diagnostics, nodeDiag(
+			"E_STEP_PUBLISHER_FALLBACK_TOOL_NOT_IN_TOOLS", "error", policyPath, node.ID,
+			"publisher_fallback_tool must also be declared in step tools: "+tool))
+	}
+	if !containsString(node.TerminalTools, tool) {
+		diagnostics = append(diagnostics, nodeDiag(
+			"E_STEP_PUBLISHER_FALLBACK_TOOL_NOT_TERMINAL", "error", policyPath, node.ID,
+			"publisher_fallback_tool must also be declared in step terminal_tools: "+tool))
+	}
+	if !containsString(node.FailFastTools, tool) {
+		diagnostics = append(diagnostics, nodeDiag(
+			"E_STEP_PUBLISHER_FALLBACK_TOOL_NOT_FAIL_FAST", "error", policyPath, node.ID,
+			"publisher_fallback_tool must also be declared in step fail_fast_tools: "+tool))
+	}
+	if limit, ok := node.ExecutionPolicy.ToolCallLimits[tool]; !ok || limit != 1 {
+		diagnostics = append(diagnostics, nodeDiag(
+			"E_STEP_PUBLISHER_FALLBACK_TOOL_LIMIT_INVALID", "error",
+			basePath+".execution.tool_call_limits."+tool, node.ID,
+			"publisher_fallback_tool must have a tool_call_limits value of exactly 1: "+tool))
+	}
+	if len(node.RequiredOutputs) == 0 {
+		diagnostics = append(diagnostics, nodeDiag(
+			"E_STEP_PUBLISHER_FALLBACK_REQUIRED_OUTPUT_MISSING", "error", basePath+".outputs", node.ID,
+			"a step with publisher_fallback_tool must declare at least one required output"))
+	}
+	publisherOwned := make(map[string]bool, len(runtime.PublisherOwnedSlots))
+	for _, slotID := range runtime.PublisherOwnedSlots {
+		publisherOwned[slotID] = true
+	}
+	for i, output := range node.Outputs {
+		if !publisherOwned[output] {
+			diagnostics = append(diagnostics, materialNodeDiag(
+				"E_STEP_PUBLISHER_FALLBACK_OUTPUT_NOT_PUBLISHER_OWNED", "error",
+				fmt.Sprintf("%s.outputs[%d]", basePath, i), node.ID, output,
+				"all outputs of a step with publisher_fallback_tool must be declared in runtime.publisher_owned_slots"))
+		}
+	}
+	return diagnostics
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func stringList(value any) []string {
@@ -1004,6 +1127,36 @@ func validateUI(
 				out = append(out, materialDiag("E_UI_MATERIAL_UNKNOWN", "error", fmt.Sprintf("workflow.yaml.ui.tabs[%d].slots", i), ref.Material, "UI references an unknown material"))
 			}
 			placed[ref.Material]++
+		}
+
+		behaviorBytes, _ := yaml.Marshal(tab["composite_behavior"])
+		var behavior map[string]any
+		if tab["composite_behavior"] != nil && yaml.Unmarshal(behaviorBytes, &behavior) != nil {
+			out = append(out, diag("E_UI_BEHAVIOR_INVALID", "error", fmt.Sprintf("workflow.yaml.ui.tabs[%d].composite_behavior", i), "composite_behavior must be a mapping"))
+		} else if behavior != nil && behavior["visible_when"] != nil {
+			conditionsBytes, _ := yaml.Marshal(behavior["visible_when"])
+			var conditions []map[string]any
+			if yaml.Unmarshal(conditionsBytes, &conditions) != nil {
+				out = append(out, diag("E_UI_VISIBILITY_CONDITIONS_INVALID", "error", fmt.Sprintf("workflow.yaml.ui.tabs[%d].composite_behavior.visible_when", i), "visible_when must be a list"))
+			} else {
+				for j, condition := range conditions {
+					path := fmt.Sprintf("workflow.yaml.ui.tabs[%d].composite_behavior.visible_when[%d]", i, j)
+					slotID := scalar(condition["slot"])
+					materialID := scalar(condition["material"])
+					if slotID == "" || !tabMaterials[slotID] {
+						out = append(out, materialDiag("E_UI_VISIBILITY_SLOT_UNKNOWN", "error", path+".slot", slotID, "visible_when slot must be placed in the same tab"))
+					}
+					if materialID == "" || !known[materialID] {
+						out = append(out, materialDiag("E_UI_MATERIAL_UNKNOWN", "error", path+".material", materialID, "visible_when references an unknown material"))
+					}
+					if rawPath, exists := condition["path"]; exists && scalar(rawPath) == "" {
+						out = append(out, diag("E_UI_VISIBILITY_PATH_INVALID", "error", path+".path", "visible_when path must be a non-empty dot-separated path"))
+					}
+					if _, exists := condition["equals"]; !exists || scalar(condition["equals"]) == "" {
+						out = append(out, diag("E_UI_VISIBILITY_VALUE_REQUIRED", "error", path+".equals", "visible_when requires a non-empty equals value"))
+					}
+				}
+			}
 		}
 
 		actionsBytes, _ := yaml.Marshal(tab["actions"])

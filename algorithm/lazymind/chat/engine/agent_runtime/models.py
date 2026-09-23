@@ -56,6 +56,8 @@ class AgentExecutionOptions:
     extra_stop_condition: Optional[Callable[..., Any]] = None
     max_retries: Optional[int] = None
     tool_failure_limits: Optional[dict[str, int]] = None
+    tool_call_limits: Optional[dict[str, int]] = None
+    hard_repeat_limit: Optional[int] = None
     llm_config: Optional[dict[str, Any]] = None
     max_input_tokens: Optional[Any] = None
     history_compactor: Optional[Callable[..., list[dict[str, Any]]]] = None
@@ -139,6 +141,7 @@ class AgentRunPlan:
     history: list[dict[str, Any]] = field(default_factory=list)
     tools: list[Any] = field(default_factory=list)
     stop_tools: list[str] = field(default_factory=list)
+    fail_fast_tools: list[str] = field(default_factory=list)
     force_summarize_context: str = ''
     execution_options: AgentExecutionOptions = field(default_factory=AgentExecutionOptions)
 

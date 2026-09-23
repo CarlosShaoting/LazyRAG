@@ -7,6 +7,12 @@ func DecideRoute(graph *CompiledStateGraph, from string, materials []MaterialVal
 	var decideFrom func(string)
 	decideFrom = func(source string) {
 		route := graph.StartRoute
+		selector := graph.Nodes[source].RouteSelector
+		selected, witnesses, selectorErr := ResolveRouteSelector(graph, source, materials)
+		if selector != nil && selectorErr != nil {
+			return
+		}
+		decision.Witnesses = append(decision.Witnesses, witnesses...)
 		if node, ok := graph.Nodes[source]; ok {
 			route = node.Route
 		}
@@ -15,7 +21,11 @@ func DecideRoute(graph *CompiledStateGraph, from string, materials []MaterialVal
 			if edge.From != source {
 				continue
 			}
-			llmDecided := edge.When != "" || edge.Legacy != ""
+			if selector != nil && edge.To != selected {
+				decision.Pruned = append(decision.Pruned, edge.To)
+				continue
+			}
+			llmDecided := selector == nil && (edge.When != "" || edge.Legacy != "")
 			evaluation := Evaluation{Satisfied: true}
 			if !llmDecided {
 				evaluation = Evaluate(edge.Condition, materials)
@@ -49,6 +59,9 @@ func DecideRoute(graph *CompiledStateGraph, from string, materials []MaterialVal
 // advances one of its candidates. Until then every hinted exit remains
 // Reachable. Machine-decided schema-v3 routes keep their existing behavior.
 func SelectRouteTarget(graph *CompiledStateGraph, from, target string, decision RouteDecision) RouteDecision {
+	if graph.Nodes[from].RouteSelector != nil {
+		return decision
+	}
 	route := graph.StartRoute
 	if node, ok := graph.Nodes[from]; ok {
 		route = node.Route

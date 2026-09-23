@@ -47,6 +47,10 @@ _RESULT_LOG_KEYS = (
 _REPEATED_CALL_THRESHOLD = 3
 
 
+class AgentExecutionLimitError(RuntimeError):
+    error_code = 'WORKFLOW_EXECUTION_LIMIT_EXCEEDED'
+
+
 def _requires_expanded_budget(tool_name: str) -> bool:
     return tool_name in _EXPANDED_BUDGET_TOOLS or tool_name.startswith('trigger_')
 
@@ -231,8 +235,9 @@ class FailureRetryPolicy:
 class ExactRepeatMonitor:
     """Emit soft runtime context for exact repeated observations."""
 
-    def __init__(self, threshold: int = _REPEATED_CALL_THRESHOLD):
+    def __init__(self, threshold: int = _REPEATED_CALL_THRESHOLD, hard_limit: int | None = None):
         self._threshold = max(2, int(threshold))
+        self._hard_limit = max(2, int(hard_limit)) if hard_limit else None
         self._previous_batch_digest: str | None = None
         self._batch_count = 0
 
@@ -289,6 +294,15 @@ class ExactRepeatMonitor:
             batch_ids=batch_ids,
             tool_names=[record.tool_name for record in eligible],
         )
+        if self._hard_limit is not None and repeat_count >= self._hard_limit:
+            append_event(
+                'exact_repeat_terminated',
+                streak=repeat_count,
+                tool_names=[record.tool_name for record in eligible],
+            )
+            raise AgentExecutionLimitError(
+                f'Identical tool calls reached the hard limit of {self._hard_limit}.'
+            )
         return (
             '[Internal runtime notice]\n'
             f'The same tool call batch has returned the same result {repeat_count} consecutive times. '
@@ -328,7 +342,8 @@ class ToolExecutionMiddleware:
                  notice_buffer: OneShotNoticeBuffer | None = None,
                  authorization_gate: Any = None,
                  workspace_permission=None, tool_context: ToolResolutionContext | None = None,
-                 trusted_opaque_tools=()):
+                 trusted_opaque_tools=(),
+                 tool_call_limits: dict[str, int] | None = None):
         self._manager = manager
         self._failure_policy = failure_policy or FailureRetryPolicy()
         self._expanded_round_limit = expanded_round_limit
@@ -341,6 +356,10 @@ class ToolExecutionMiddleware:
         self._tool_context = tool_context or ToolResolutionContext()
         self._trusted_opaque_tool_ids = frozenset(id(tool) for tool in trusted_opaque_tools)
         self._run_grants: set[str] = set()
+        self._tool_call_limits = {
+            str(name): max(1, int(limit)) for name, limit in (tool_call_limits or {}).items()
+        }
+        self._tool_call_counts: Counter[str] = Counter()
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._manager, name)
@@ -404,6 +423,20 @@ class ToolExecutionMiddleware:
         def select(prepared):
             nonlocal prepared_calls, decision, authorization_reasons, started_at
             prepared_calls = list(prepared)
+            requested = Counter(item.tool_name for item in prepared_calls)
+            for name, count in requested.items():
+                limit = self._tool_call_limits.get(name)
+                if limit is None:
+                    continue
+                attempted = self._tool_call_counts[name] + count
+                if attempted > limit:
+                    append_event(
+                        'tool_call_limit_exceeded', name=name, limit=limit, attempted=attempted,
+                    )
+                    raise AgentExecutionLimitError(
+                        f'Tool {name} exceeded its per-step call limit of {limit}.'
+                    )
+            self._tool_call_counts.update(requested)
             workspace_indices = {
                 index for index, item in enumerate(prepared_calls)
                 if workspace_active and item.ready and item.host_file_access is HostFileAccess.DECLARED

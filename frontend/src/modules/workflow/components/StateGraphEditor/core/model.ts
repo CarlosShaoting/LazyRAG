@@ -61,6 +61,8 @@ export interface StepNode {
   /** How to follow outgoing transitions. 'all' triggers all matching exits simultaneously (default).
    *  'choice' picks the first matching exit exclusively (conditional routing). */
   route?: 'all' | 'choice';
+  /** Preserve the server-validated selector contract when editing unrelated step properties. */
+  routeSelector?: unknown;
   /** Executable material condition under which this step is bypassed. */
   skipIf?: MaterialExpression;
   /** Preserved only while migrating an invalid natural-language skip condition. */
@@ -71,6 +73,12 @@ export interface StepNode {
   tools?: string[];
   /** Runtime capabilities required by this step. Preserved for publish/runtime validation. */
   capabilities?: string[];
+  /** Tools that end the Agent successfully after their result is returned. */
+  terminalTools?: string[];
+  /** Tools whose failed result ends the step, while successful calls continue normally. */
+  failFastTools?: string[];
+  /** Preserve the host-enforced execution policy when editing unrelated step properties. */
+  executionPolicy?: unknown;
   /** Natural-language quality criteria the agent must satisfy before completing this step. */
   acceptanceCriteria?: string;
 }

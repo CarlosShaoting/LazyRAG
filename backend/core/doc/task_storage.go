@@ -77,6 +77,12 @@ func buildTempUploadFileDir(userID, uploadID string) string {
 	return filepath.Join(uploadRoot(), "tmp", "users", safePathPart(userID), "files", safePathPart(uploadID))
 }
 
+// TempUserFilesRoot returns the owner-scoped root used by completed TEMP uploads.
+// Callers must still validate the exact upload session and physical file before use.
+func TempUserFilesRoot(userID string) string {
+	return filepath.Join(uploadRoot(), "tmp", "users", safePathPart(userID), "files")
+}
+
 func storedFileName(filename, documentID string) string {
 	ext := filepath.Ext(filename)
 	base := strings.TrimSuffix(filename, ext)

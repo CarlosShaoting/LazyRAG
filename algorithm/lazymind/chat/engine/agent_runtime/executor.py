@@ -151,7 +151,7 @@ class AgentExecutor:
             )
             if telemetry_enabled() else None
         )
-        repeat_monitor = ExactRepeatMonitor()
+        repeat_monitor = ExactRepeatMonitor(hard_limit=options.hard_repeat_limit)
         notice_buffer = OneShotNoticeBuffer()
         kwargs = {
             'stream': True,
@@ -205,6 +205,7 @@ class AgentExecutor:
             workspace_permission=permission,
             tool_context=options.tool_context,
             trusted_opaque_tools=trusted_opaque_tools,
+            tool_call_limits=options.tool_call_limits,
         )
         agent._agent_lab_run_id = run_id
         agent._runtime_llm = llm
@@ -229,6 +230,8 @@ class AgentExecutor:
                 sid=sid(),
             )
         agent.set_stop_tools(plan.stop_tools)
+        if plan.fail_fast_tools:
+            agent.set_fail_fast_tools(plan.fail_fast_tools)
         return agent
 
     @staticmethod

@@ -170,6 +170,15 @@ def _extract_length_constraints(query: str) -> dict[str, int]:
     }
 
 
+def _writer_max_workers(section_count: int) -> int:
+    """Bound section workers for one Writer invocation."""
+    try:
+        configured = int(os.getenv('LAZYMIND_WRITER_MAX_WORKERS', '3'))
+    except ValueError:
+        configured = 3
+    return min(max(1, section_count), max(1, min(4, configured)))
+
+
 _STRUCTURE_CLASSIFIER_PROMPT = """Classify the final presentation structure for a new
 Writer document. Return exactly one JSON object and nothing else:
 {"structure_mode":"flat|sectioned|unclear"}
@@ -362,7 +371,8 @@ _MARKDOWN_NO_MEDIA_PATTERNS = (
 class DraftMarkdownStreamEventEmitter:
     """Publish one attempt-scoped Markdown preview for a Writer artifact."""
 
-    MAX_DELTA_CHARS: ClassVar[int] = 2
+    FLUSH_DELTA_CHARS: ClassVar[int] = 64
+    MAX_DELTA_CHARS: ClassVar[int] = 256
 
     EVENT_TYPES: ClassVar[dict[str, str]] = {
         'start': 'artifact_stream_start',
@@ -383,6 +393,7 @@ class DraftMarkdownStreamEventEmitter:
         self._slot = slot.strip()
         self._stream_id = uuid.uuid4().hex
         self._chunk_index = 0
+        self._pending_delta = ''
         self._closed = False
         self._lock = RLock()
         with self._lock:
@@ -398,15 +409,8 @@ class DraftMarkdownStreamEventEmitter:
         with self._lock:
             if self._closed:
                 return
-            # Model providers and the IR/Markdown normalizers may deliver a
-            # whole sentence or paragraph in one callback. Keep the artifact
-            # stream's display contract stable by publishing small deltas while
-            # preserving the exact text and order.
-            for start in range(0, len(delta), self.MAX_DELTA_CHARS):
-                self._publish_locked(
-                    'delta',
-                    delta=delta[start:start + self.MAX_DELTA_CHARS],
-                )
+            self._pending_delta += delta
+            self._drain_delta_locked(force=False)
 
     def end(self) -> None:
         self._finish('end')
@@ -418,26 +422,45 @@ class DraftMarkdownStreamEventEmitter:
         """Replace an interrupted preview while keeping subsequent deltas live."""
         with self._lock:
             if not self._closed:
+                self._drain_delta_locked(force=True)
                 self._publish_locked(
                     'abort',
                     message='Interrupted section is being regenerated.',
                 )
             self._stream_id = uuid.uuid4().hex
             self._chunk_index = 0
+            self._pending_delta = ''
             self._closed = False
             self._publish_locked('start')
             if prefix:
-                self.feed(prefix)
+                self._pending_delta = prefix
+                self._drain_delta_locked(force=True)
 
     def flush(self) -> None:
-        """Compatibility no-op: deltas are already published immediately."""
+        """Publish a partial preview frame at a section boundary."""
+        with self._lock:
+            if not self._closed:
+                self._drain_delta_locked(force=True)
 
     def _finish(self, event: str, *, message: str = '') -> None:
         with self._lock:
             if self._closed:
                 return
+            self._drain_delta_locked(force=True)
             self._publish_locked(event, message=message)
             self._closed = True
+
+    def _drain_delta_locked(self, *, force: bool) -> None:
+        while len(self._pending_delta) >= self.MAX_DELTA_CHARS:
+            delta = self._pending_delta[:self.MAX_DELTA_CHARS]
+            self._pending_delta = self._pending_delta[self.MAX_DELTA_CHARS:]
+            self._publish_locked('delta', delta=delta)
+        if self._pending_delta and (
+            force or len(self._pending_delta) >= self.FLUSH_DELTA_CHARS
+        ):
+            delta = self._pending_delta
+            self._pending_delta = ''
+            self._publish_locked('delta', delta=delta)
 
     def _publish_locked(
         self, event: str, *, delta: str = '', message: str = ''
@@ -2196,16 +2219,20 @@ class WriterWritingCapabilities:
         )
         section_total_timeout = max(
             1.0,
-            float(os.getenv('LAZYMIND_WRITER_SECTION_TOTAL_TIMEOUT', '600')),
+            float(os.getenv('LAZYMIND_WRITER_SECTION_TOTAL_TIMEOUT', '240')),
         )
         section_stream_idle_timeout = max(
             1.0,
-            float(os.getenv('LAZYMIND_WRITER_SECTION_STREAM_IDLE_TIMEOUT', '180')),
+            float(os.getenv('LAZYMIND_WRITER_SECTION_STREAM_IDLE_TIMEOUT', '90')),
         )
         first_section_idle_timeout = max(
             section_stream_idle_timeout,
-            float(os.getenv('LAZYMIND_WRITER_FIRST_SECTION_IDLE_TIMEOUT', '180')),
+            float(os.getenv('LAZYMIND_WRITER_FIRST_SECTION_IDLE_TIMEOUT', '120')),
         )
+        document_total_timeout = max(
+            1.0, float(os.getenv('LAZYMIND_WRITER_DOCUMENT_TOTAL_TIMEOUT', '600')),
+        )
+        document_deadline = time.monotonic() + document_total_timeout
         section_started_at: list[float | None] = [None] * len(instructions)
         forward_progress(
             progress=5,
@@ -2474,7 +2501,7 @@ class WriterWritingCapabilities:
                 if not stop_event.is_set():
                     events.put(('error', exc))
 
-        executor = ThreadPoolExecutor(max_workers=min(3, max(1, len(instructions))))
+        executor = ThreadPoolExecutor(max_workers=_writer_max_workers(len(instructions)))
         futures: list[Any | None] = [None] * len(instructions)
         futures[0] = executor.submit(generate_one, 0, instructions[0])
         background_started = len(instructions) == 1
@@ -2504,10 +2531,16 @@ class WriterWritingCapabilities:
                 streamed_chars = 0
                 section_stream_started = False
                 while True:
-                    deadline = (
+                    section_deadline = (
                         section_started_at[index] or wait_started_at
                     ) + section_total_timeout
-                    if time.monotonic() >= deadline and not future.done():
+                    deadline = min(section_deadline, document_deadline)
+                    if time.monotonic() >= document_deadline and not future.done():
+                        raise TimeoutError(
+                            'Draft document exceeded total timeout '
+                            f'of {document_total_timeout:g} seconds.'
+                        )
+                    if time.monotonic() >= section_deadline and not future.done():
                         raise TimeoutError(
                             f'Draft section {index + 1} exceeded total timeout '
                             f'of {section_total_timeout:g} seconds.'
@@ -2520,7 +2553,12 @@ class WriterWritingCapabilities:
                             )
                         )
                     except Empty:
-                        if time.monotonic() >= deadline:
+                        if time.monotonic() >= document_deadline:
+                            raise TimeoutError(
+                                'Draft document exceeded total timeout '
+                                f'of {document_total_timeout:g} seconds.'
+                            )
+                        if time.monotonic() >= section_deadline:
                             raise TimeoutError(
                                 f'Draft section {index + 1} exceeded total timeout '
                                 f'of {section_total_timeout:g} seconds.'
