@@ -43,7 +43,7 @@ export default function PythonComponentDependencies() {
       await refresh();
     } catch (error) {
       if (!controller.signal.aborted) message.error(errorText(error));
-    } finally { setBusy(false); abort.current = undefined; }
+    } finally { setBusy(false); abort.current = undefined; await refresh(); }
   };
   const restart = async () => {
     setRestarting(true);
@@ -73,7 +73,7 @@ export default function PythonComponentDependencies() {
       </Space>
       {item.restartRequired && <p>重启将中断正在进行的任务，请完成任务后再操作。也可退出并重新打开应用。</p>}
     </section>)}
-    <Modal title={selected ? `安装${names[selected.id]}` : "安装组件"} open={!!selected}
+    <Modal maskClosable={!busy} keyboard={!busy} closable={!busy} title={selected ? `安装${names[selected.id]}` : "安装组件"} open={!!selected}
       okText={busy ? "正在下载并校验" : "下载并安装"}
       okButtonProps={{ loading: busy, disabled: busy || !selected?.url?.startsWith("https://") }}
       cancelText={busy ? "取消下载" : "取消"} onOk={() => void install()}

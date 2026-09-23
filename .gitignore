@@ -24,6 +24,7 @@ dist/
 tmp/
 build
 *.lock
+!desktop/python-components/*-requirements.lock
 *.db
 *.sqlite3
 mkdocs.yml

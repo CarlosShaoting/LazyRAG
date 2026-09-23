@@ -245,11 +245,19 @@ rm -rf "${RUNTIME_ROOT}/deps/python/channel-gateway"
 "${UV_BIN}" pip install --python "${RUNTIME_ROOT}/deps/python/channel-gateway/bin/python" --link-mode copy --strict -r "${ROOT}/backend/channel-gateway/requirements.txt"
 rm -rf "${RUNTIME_ROOT}/deps/python/algorithm"
 "${UV_BIN}" venv --managed-python --no-python-downloads --relocatable --seed --link-mode copy --python "${PYTHON}" "${RUNTIME_ROOT}/deps/python/algorithm"
-"${UV_BIN}" pip install --python "${RUNTIME_ROOT}/deps/python/algorithm/bin/python" --link-mode copy --strict 'setuptools<81' "lazyllm==${LAZYLLM_VERSION}"
-"${RUNTIME_ROOT}/deps/python/algorithm/bin/python" -c "import importlib.metadata as m; assert m.version('lazyllm') == '${LAZYLLM_VERSION}'"
-"${RUNTIME_ROOT}/deps/python/algorithm/bin/lazyllm" install rag
-"${UV_BIN}" pip install --python "${RUNTIME_ROOT}/deps/python/algorithm/bin/python" --link-mode copy --strict -r "${ROOT}/algorithm/requirements.txt"
-"${UV_BIN}" pip install --python "${RUNTIME_ROOT}/deps/python/algorithm/bin/python" --link-mode copy --strict -r "${ROOT}/algorithm/requirements-local.txt"
+if [[ "${TARGET_ARCH}" == "arm64" && "${LAZYMIND_DESKTOP_DEFER_PYTHON:-true}" != "false" ]]; then
+  echo "==> Installing frozen dependencies for the published Mac ARM64 RAG component"
+  "${UV_BIN}" pip install --python "${RUNTIME_ROOT}/deps/python/algorithm/bin/python" --link-mode copy --strict \
+    -r "${ROOT}/desktop/python-components/darwin-arm64-requirements.lock" \
+    -r "${ROOT}/algorithm/requirements.txt" -r "${ROOT}/algorithm/requirements-local.txt"
+  "${RUNTIME_ROOT}/deps/python/algorithm/bin/python" -c "import importlib.metadata as m; assert m.version('lazyllm') == '${LAZYLLM_VERSION}'"
+else
+  "${UV_BIN}" pip install --python "${RUNTIME_ROOT}/deps/python/algorithm/bin/python" --link-mode copy --strict 'setuptools<81' "lazyllm==${LAZYLLM_VERSION}"
+  "${RUNTIME_ROOT}/deps/python/algorithm/bin/python" -c "import importlib.metadata as m; assert m.version('lazyllm') == '${LAZYLLM_VERSION}'"
+  "${RUNTIME_ROOT}/deps/python/algorithm/bin/lazyllm" install rag
+  "${UV_BIN}" pip install --python "${RUNTIME_ROOT}/deps/python/algorithm/bin/python" --link-mode copy --strict -r "${ROOT}/algorithm/requirements.txt"
+  "${UV_BIN}" pip install --python "${RUNTIME_ROOT}/deps/python/algorithm/bin/python" --link-mode copy --strict -r "${ROOT}/algorithm/requirements-local.txt"
+fi
 make_internal_symlinks_relative "${RUNTIME_ROOT}"
 echo "==> Auditing and pruning bundled Python runtime"
 python_prune_args=("${RUNTIME_ROOT}" --report "${BUILD_ROOT}/python-size-report.json" --verify-ark)

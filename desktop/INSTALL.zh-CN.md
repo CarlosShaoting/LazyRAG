@@ -1,8 +1,18 @@
 # Mac 本地构建、上传依赖与安装验证
 
-适用于 **Apple Silicon Mac（M 系列，ARM64）**。在 Mac 获取本轮代码后，按“构建 → 本地验证 → 上传 RAG → 云端下载验证 → 安装试用”的顺序执行。下列命令均在 **LazyMind 仓库根目录**运行。
+适用于 **Apple Silicon Mac（M 系列，ARM64）**。2026-09-23 起，ARM64 默认使用已发布的固定 RAG 包，按“构建 → 自动校验固定组件 → 安装试用”执行，**不再每次构建生成或上传 RAG ZIP**。Workflow 演示案例仍在首次启动 warmup 时下载。
 
-安装包包含基础 Python、聊天和共用依赖；RAG 专用依赖独立生成 ZIP，用户在应用内按需安装。Workflow 演示案例在首次启动 warmup 时自动下载。两者是不同的资源、不同的下载时机。
+## Mac ARM64 固定云端版本（2026-09-23 更新）
+
+- 固定文件：`lazymind-python-rag-darwin-arm64-cp311-53a1c2e770966b71.zip`。
+- 固定清单：`desktop/python-components/darwin-arm64.json`；配套 173 项依赖锁：`darwin-arm64-requirements.lock`。
+- 本机/同事的 M 系列 Mac 执行 `make desktop-darwin-arm64`。默认后置模式安装锁定依赖，构建时下载或校验缓存中的已发布 ZIP，验证基础与 overlay 导入后写入固定清单。依赖冲突或校验失败停止构建。
+- 用户安装后在应用内下载 RAG，界面只展示固定来源。已上传文件无需替换；`LAZYMIND_PYTHON_COMPONENT_BASE_URL` 不控制 ARM64 固定来源。
+- 输出：`desktop/dist/LazyMind-darwin-arm64.zip`；解压得到 `LazyMind.app`，退出旧应用后放到“应用程序”安装测试。默认 ad-hoc 签名，仅供本地测试，没有 Developer ID 公证。
+- 缓存：`desktop/cache/published-python/darwin-arm64/`；`desktop/dist/python-components/darwin-arm64/` 输出固定清单、SHA 和来源说明，不生成新 ZIP。
+- Intel 仍使用独立的原生 x64 构建流程，不可使用上述 ARM64 组件。
+
+配套机制、下载地址与验证结果见 [Mac 固定组件记录](../docs/development/macos-published-rag.md)。**下文旧的 ARM64“同次构建生成/上传 RAG”步骤仅保留作历史记录，已由本节替代**。PDF 字体等其他资源沿用分支现有机制。
 
 ## Windows RAG 固定云端版本（2026-09-23 更新）
 
@@ -10,7 +20,7 @@ Windows 开启 `defer_python` 后，固定复用已上传的 `lazymind-python-ra
 
 GitHub Actions 的 `windows-python-components` 现在提供固定 `python-components.json`、`SHA256SUMS` 和来源说明，正常的干净构建不会生成新的内层 ZIP。已发布的旧 417 MiB 安装包仍使用旧清单，必须安装包含本次修改的新 installer 才会使用固定版本；修改网页链接不会更新已安装程序的清单。
 
-安装组件时界面只显示下载来源，点击“下载并安装”即可；下载失败可以重试/取消，不能编辑地址，API 也不接受自定义 URL。Mac 构建暂保持各自原有分包机制，界面同样只显示构建清单的来源。PDF 字体、FFmpeg、Workflow 案例上传机制不变。
+安装组件时界面只显示下载来源，点击“下载并安装”即可；下载失败可以重试/取消，不能编辑地址，API 也不接受自定义 URL。Mac ARM64 同样使用固定来源，Intel 暂保留原分包机制。PDF 字体、FFmpeg、Workflow 案例上传机制不变。
 
 固定下载地址：
 
@@ -18,7 +28,7 @@ GitHub Actions 的 `windows-python-components` 现在提供固定 `python-compon
 https://modelscope.cn/datasets/CarlosShaoting/lazymind-cst/resolve/master/lazymind-python-rag-windows-amd64-cp311-e262c0d2f05fe09d.zip
 ```
 
-大小 69,342,263 字节；SHA-256 `258944a85d5aa29c0eb662ab21888c5c2894fdfb2c503d51f2129efa4e083bed`。不要覆盖这个文件的内容或改名。普通业务更新复用；需要升级依赖时，由开发者明确更新锁文件与已发布组件清单并完成原生验证，不能绕过哈希。详细范围和测试见 [固定版本开发记录](../docs/development/windows-published-rag.md)。下文涉及“同次构建 RAG 上传”的流程继续适用于 Mac，不再适用于上述 Windows 固定版本。
+大小 69,342,263 字节；SHA-256 `258944a85d5aa29c0eb662ab21888c5c2894fdfb2c503d51f2129efa4e083bed`。不要覆盖这个文件的内容或改名。普通业务更新复用；需要升级依赖时，由开发者明确更新锁文件与已发布组件清单并完成原生验证，不能绕过哈希。详细范围和测试见 [固定版本开发记录](../docs/development/windows-published-rag.md)。下文涉及“同次构建 RAG 上传”的流程不再适用于 Windows 和 Mac ARM64 固定版本。
 
 ## 后续交付平台与实施交接
 
@@ -37,7 +47,7 @@ sw_vers -productVersion
 | 目标电脑 | 架构 | 当前流程 |
 | --- | --- | --- |
 | M 系列 Mac | `arm64` | 本文第 1～8 节可用；不同代 M 芯片无需分别打包 |
-| Intel Mac | `x86_64`，Node 显示 `x64` | 使用第 9 节原生 x64 入口，生成 Intel 应用和 `darwin-amd64` RAG 包；真机验收待完成 |
+| Intel Mac | `x86_64`，Node 显示 `x64` | 使用第 9 节原生 x64 入口，首次生成独立 `darwin-amd64` RAG 包，再按第 9 节接入固定复用；真机验收待完成 |
 
 **按目标架构选择入口，并在对应原生 Mac 上构建。** ARM64 使用 `make desktop-darwin-arm64`，Intel 使用 `make desktop-darwin-x64`。脚本检查宿主、Node、Go 和 Python 架构，拒绝 Rosetta 或交叉混用；内部共用流程按目标选择飞书 CLI、manifest、Electron 和输出路径。不能把 ARM64 ZIP 改名为 x64。
 
@@ -271,41 +281,15 @@ open desktop/dist/mac-arm64/LazyMind.app
 
 后续若改用 GitHub 构建安装包，也要上传那次 Actions 的 `macos-python-components` 附件中配套的原始 RAG ZIP，不能默认沿用这次本地产物。详细实现、体积记录和已知问题见 [开发文档](../docs/development/desktop-package-size-reduction.md)。
 
-## 9. Intel Mac 原生构建入口（代码已实现，真机验收待完成）
+## 9. Intel Mac 同事打包与固定 RAG 交接
 
-在原生 Intel Mac 上完成第 1 节依赖和源码准备：`uname -m` 应为 `x86_64`，`node -p process.arch` 为 `x64`，`go env GOHOSTARCH GOARCH` 均为 `amd64`。不要在 M 系列的 Rosetta 终端代替 Intel 真机验收。
+完整操作见 [Intel Mac 打包与固定 RAG 组件交接](../docs/development/macos-intel-packaging-handoff.md)。该文档是 Intel 首次发布与后续复用的执行入口，包含环境检查、首次打包、从完整中间环境导出依赖锁、上传校验、固定入口接入和第二次构建验收。
 
-沿用第 2 节的优化环境变量，选择一条命令：
-
-```bash
-# ad-hoc 测试 ZIP
-LAZYMIND_DESKTOP_PACKAGE_KIND=zip LAZYMIND_DESKTOP_SIGNING_MODE=adhoc make desktop-darwin-x64
-# 或已有 Developer ID 证书时构建 DMG
-make desktop-darwin-x64-dmg
-```
-
-| 产物 | Intel 路径 |
-| --- | --- |
-| 应用 | `desktop/dist/mac/LazyMind.app`（electron-builder x64 默认目录名是 `mac`） |
-| 应用 ZIP | `desktop/dist/LazyMind-darwin-x64.zip` |
-| DMG | `desktop/dist/LazyMind-macos-x64.dmg` |
-| RAG 组件目录 | `desktop/dist/python-components/darwin-amd64/` |
-| 中间环境与报告 | `desktop/build/darwin-x64/` |
-
-```bash
-MAC_RUNTIME="$(pwd)/desktop/dist/mac/LazyMind.app/Contents/Resources/runtime"
-MAC_PYTHON="$MAC_RUNTIME/deps/python/algorithm/bin/python"
-"$MAC_PYTHON" -B desktop/scripts/verify-python-components.py \
-  --runtime "$MAC_RUNTIME" \
-  --bundle-dir "$(pwd)/desktop/dist/python-components/darwin-amd64" \
-  --report "$(pwd)/desktop/dist/component-check/darwin-amd64/local-report.json"
-codesign --verify --deep --strict desktop/dist/mac/LazyMind.app
-(cd desktop/dist/python-components/darwin-amd64 && shasum -a 256 -c SHA256SUMS)
-```
-
-第 3 节 catalog 对照代码中的路径换成表内 Intel 路径，架构断言换为 `amd64`。按 catalog 打印的**实际文件名**上传原始 RAG ZIP，之后去掉 `--bundle-dir` 再做云端验证。复用同一份字体及案例资源，保留已上传的 ARM64、Windows RAG 文件。
-
-本机已验证 Intel 飞书 CLI 原始下载的 SHA 和 Mach-O `x86_64` 架构，并测试了 Intel manifest；**没有构建/运行完整 Intel 应用**，不能据此宣称 Intel 的 Python wheels、最低系统版本、签名或业务功能已验收。需由 Intel 机器完成原生构建及第 7 节回归。
+- M 系列同事执行 `make desktop-darwin-arm64`，复用已有 `53a1c2e770966b71` 固定包，无需重传。
+- Intel 同事在原生 `x86_64` Mac 执行 `make desktop-darwin-x64`，首次生成自己的 `darwin-amd64` 组件；不可使用 ARM64 ZIP。
+- **当前 Intel 固定入口尚未接入**。首次打包成功不等于已经固定：必须保存配套清单和完整依赖锁、上传验证，然后按交接文档第 5 节改三处代码，再进行第二次构建确认不生成新 ZIP。
+- Intel 原生构建、系统兼容和业务验收由同事完成。本机没有 Intel 真机，不预先声称通过。
+- 先拉取 `origin/cst/installer_opt` 最新完整代码，确认包含 Mac 固定清单、配套锁和本轮重启修复；只使用 `fa6e7094` 或更早提交不足以复现。
 
 ## 10. 本次 ARM64 已完成的参考结果
 
@@ -316,7 +300,7 @@ codesign --verify --deep --strict desktop/dist/mac/LazyMind.app
 - 已上传默认 ModelScope 目录；从云端实际下载后，六阶段验证全部通过，应用签名复查通过。
 - 应用为本地 ad-hoc 测试包；没有完成 Developer ID/公证、全部业务界面或其他 macOS 版本验证。
 
-这些记录用于核对本次交付，**不是另一台机器重新构建后必须得到的文件名或哈希**。重新构建仍以新应用中的 catalog 为准。
+以上是首次发布基线。2026-09-23 起 ARM64 固定使用这份 RAG 清单和配套依赖锁，普通重新构建仍应引用同一文件名与 SHA；应用 ZIP 的 SHA 可以变化。Intel 必须建立自己的发布基线。
 
 ## 11. 第二轮资源、共享开关与 Windows 操作
 

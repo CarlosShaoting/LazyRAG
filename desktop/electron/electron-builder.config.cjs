@@ -195,12 +195,17 @@ async function splitPythonComponents(runtimeRoot) {
       throw new Error(`Bundled Python architecture does not match native build: ${machine.trim()}`);
     }
     if (process.env.LAZYMIND_DESKTOP_DEFER_PYTHON !== "false") {
-      const { stdout } = await execFile(
-        path.join(stagedRuntime, "deps/python/algorithm/bin/python"),
-        [path.resolve(__dirname, "../scripts/build-python-components.py"), stagedRuntime,
-          "--output", path.resolve(__dirname, `../dist/python-components/darwin-${componentArch}`)],
-        { maxBuffer: 4 * 1024 * 1024 },
+      const published = componentArch === "arm64";
+      const componentArgs = [
+        path.resolve(__dirname, published ? "../scripts/stage-published-python-components.py" : "../scripts/build-python-components.py"),
+        stagedRuntime, "--output", path.resolve(__dirname, `../dist/python-components/darwin-${componentArch}`),
+      ];
+      if (published) componentArgs.push(
+        "--catalog", path.resolve(__dirname, "../python-components/darwin-arm64.json"),
+        "--lock", path.resolve(__dirname, "../python-components/darwin-arm64-requirements.lock"),
+        "--cache", path.resolve(__dirname, "../cache/published-python/darwin-arm64"),
       );
+      const { stdout } = await execFile(python, componentArgs, { maxBuffer: 4 * 1024 * 1024 });
       console.log(stdout);
     }
     const args = [path.resolve(__dirname, "../scripts/share-python-dependencies.py"), stagedRuntime];
