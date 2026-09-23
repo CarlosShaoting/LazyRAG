@@ -192,3 +192,47 @@ func TestPythonComponentInstallAPIRejectsCloudAndUnknownIDs(t *testing.T) {
 		t.Fatalf("got %d", response.Code)
 	}
 }
+
+func TestPythonComponentInstallAPIRejectsCustomURL(t *testing.T) {
+	t.Setenv("LAZYMIND_RUNTIME_MODE", "local")
+	response := httptest.NewRecorder()
+	InstallPythonComponent(response, httptest.NewRequest("POST", "/", bytes.NewBufferString(`{"id":"rag","url":"https://other.example/component.zip"}`)))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("custom URL accepted: %d", response.Code)
+	}
+}
+
+func TestPythonComponentInstallAPIUsesCatalogSource(t *testing.T) {
+	t.Setenv("LAZYMIND_RUNTIME_MODE", "local")
+	t.Setenv("LAZYMIND_RUNTIME_ROOT", t.TempDir())
+	called := false
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = r.URL.Path == "/published.zip"
+		// Invalid archive: verify source selection without launching Python.
+		_, _ = w.Write([]byte("test"))
+	}))
+	defer server.Close()
+	transport := http.DefaultTransport
+	http.DefaultTransport = server.Client().Transport
+	defer func() { http.DefaultTransport = transport }()
+	entry := testPythonEntry()
+	entry.URL = server.URL + "/published.zip"
+	catalog := pythonCatalog{SchemaVersion: 1, Platform: runtime.GOOS, Arch: runtime.GOARCH, Components: map[string]PythonComponent{"rag": entry}}
+	data, err := json.Marshal(catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "catalog.json")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LAZYMIND_PYTHON_COMPONENT_CATALOG", path)
+	response := httptest.NewRecorder()
+	InstallPythonComponent(response, httptest.NewRequest("POST", "/", bytes.NewBufferString(`{"id":"rag"}`)))
+	if !called {
+		t.Fatal("install did not download the catalog URL")
+	}
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("bad checksum accepted: %d", response.Code)
+	}
+}

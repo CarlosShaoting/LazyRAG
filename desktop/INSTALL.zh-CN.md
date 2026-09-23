@@ -4,6 +4,22 @@
 
 安装包包含基础 Python、聊天和共用依赖；RAG 专用依赖独立生成 ZIP，用户在应用内按需安装。Workflow 演示案例在首次启动 warmup 时自动下载。两者是不同的资源、不同的下载时机。
 
+## Windows RAG 固定云端版本（2026-09-23 更新）
+
+Windows 开启 `defer_python` 后，固定复用已上传的 `lazymind-python-rag-windows-amd64-cp311-e262c0d2f05fe09d.zip`，**不再动态生成 RAG ZIP，也不需要每次构建重新上传**。构建机按 `desktop/python-components/windows-amd64-requirements.lock` 安装配套版本，再从固定 URL 获取并验证组件；依赖不兼容时构建失败，不偷偷切换成新包。
+
+GitHub Actions 的 `windows-python-components` 现在提供固定 `python-components.json`、`SHA256SUMS` 和来源说明，正常的干净构建不会生成新的内层 ZIP。已发布的旧 417 MiB 安装包仍使用旧清单，必须安装包含本次修改的新 installer 才会使用固定版本；修改网页链接不会更新已安装程序的清单。
+
+安装组件时界面只显示下载来源，点击“下载并安装”即可；下载失败可以重试/取消，不能编辑地址，API 也不接受自定义 URL。Mac 构建暂保持各自原有分包机制，界面同样只显示构建清单的来源。PDF 字体、FFmpeg、Workflow 案例上传机制不变。
+
+固定下载地址：
+
+```text
+https://modelscope.cn/datasets/CarlosShaoting/lazymind-cst/resolve/master/lazymind-python-rag-windows-amd64-cp311-e262c0d2f05fe09d.zip
+```
+
+大小 69,342,263 字节；SHA-256 `258944a85d5aa29c0eb662ab21888c5c2894fdfb2c503d51f2129efa4e083bed`。不要覆盖这个文件的内容或改名。普通业务更新复用；需要升级依赖时，由开发者明确更新锁文件与已发布组件清单并完成原生验证，不能绕过哈希。详细范围和测试见 [固定版本开发记录](../docs/development/windows-published-rag.md)。下文涉及“同次构建 RAG 上传”的流程继续适用于 Mac，不再适用于上述 Windows 固定版本。
+
 ## 后续交付平台与实施交接
 
 目标发布平台为 **Windows x64 一个版本、Mac ARM64 与 Mac Intel x64 两个架构版本**。ARM64 继续按第 1～8 节操作，Intel 原生构建使用第 9 节新入口（本机没有 Intel 真机，尚待原生验收）。第二轮瘦身实现与平台验收记录见 [第二轮开发交接计划](../docs/development/desktop-package-size-next-phase.md)。
@@ -204,7 +220,7 @@ codesign --verify --deep --strict --verbose=2 desktop/dist/mac-arm64/LazyMind.ap
 https://modelscope.cn/datasets/CarlosShaoting/lazymind-cst/resolve/master/<第3步打印的Mac组件文件名>
 ```
 
-链接必须无需登录即可直接下载 ZIP。采用默认目录且文件名不变时，**上传后不需要改代码或重新打包**；该链接已经写入本次应用。若换了托管位置，可在应用的 RAG 安装输入框填写完整 HTTPS 地址，但下载的内容仍必须与本次 catalog 的 checksum 一致。
+链接必须无需登录即可直接下载 ZIP。采用默认目录且文件名不变时，**上传后不需要改代码或重新打包**；该链接已经写入本次应用。若换托管位置，由开发者更新构建清单中的固定来源并重新打包；安装界面不再提供 URL 编辑。
 
 ## 6. 验证刚上传的云端文件
 
@@ -244,7 +260,7 @@ open desktop/dist/mac-arm64/LazyMind.app
 | 现象 | 检查方式 |
 | --- | --- |
 | RAG 默认 URL 返回 404 | 对照第 3 步文件名，确认上传在 `master` 根目录且公开可读 |
-| 下载后大小/SHA 或兼容性校验失败 | 上传对应 `.app` 同次构建的原始 ZIP；自定义 URL 不能绕过校验 |
+| 下载后大小/SHA 或兼容性校验失败 | 上传对应 `.app` 同次构建的原始 ZIP；安装界面不提供自定义 URL |
 | 没有生成 `darwin-arm64` 组件 | 检查构建是否完整成功、`LAZYMIND_DESKTOP_DEFER_PYTHON` 是否为 true，以及最终 `.app` 是否有 catalog |
 | 验证脚本提示基础环境仍有 RAG | 检查使用的是最终 `.app` 的 Python，而不是中间 build runtime 或系统 Python |
 | DMG 提示找不到签名身份 | 使用已配置 Developer ID 的钥匙串，或改用第 2 步的 ad-hoc ZIP 做本机测试 |
@@ -347,7 +363,7 @@ $env:LAZYMIND_DESKTOP_SHARE_PYTHON = 'true'
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File desktop/scripts/build-windows-x64.ps1 installer
 ```
 
-RAG 产物在 `desktop/dist/python-components/windows-amd64/`；字体目录同上。新构建移除 staging 中的 Mac Core 开发二进制和 LazyLLM 文档，不删除源文件。解释器别名规范化使用唯一真实捆绑 Python，先检查三个 venv 都能启动，再删除 junction，输出 `runtime/config/python-aliases.json`；异常直接停止构建。
+固定 RAG 清单与来源说明在 `desktop/dist/python-components/windows-amd64/`，此目录不再生成新 RAG ZIP；字体目录同上。新构建移除 staging 中的 Mac Core 开发二进制和 LazyLLM 文档，不删除源文件。解释器别名规范化使用唯一真实捆绑 Python，先检查三个 venv 都能启动，再删除 junction，输出 `runtime/config/python-aliases.json`；异常直接停止构建。
 
 在 Windows 上还需要实际安装 EXE 到含中文/空格路径，确认原构建路径不可用时 warmup 能完成，三个 Python 服务、登录、聊天、飞书、Skill 与 RAG 均能启动；覆盖重复启动、覆盖升级、`resume-installer` 和 `python-runtime.zip` 内容检查。本机仅做了 Windows runtime-manager 测试二进制的交叉编译，不能替代这些原生运行测试。
 

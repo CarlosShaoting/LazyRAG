@@ -195,9 +195,9 @@ export async function getPythonComponents() {
   return unwrapApiData<PythonComponentStatus[]>(response.data);
 }
 
-export async function installPythonComponent(id: PythonComponentStatus["id"], url: string, signal?: AbortSignal) {
+export async function installPythonComponent(id: PythonComponentStatus["id"], signal?: AbortSignal) {
   const response = await axiosInstance.post(
-    `${basePath}/api/core/system-dependencies/python:install`, { id, url },
+    `${basePath}/api/core/system-dependencies/python:install`, { id },
     { timeout: 40 * 60 * 1000, signal },
   );
   return unwrapApiData<PythonComponentStatus>(response.data);
