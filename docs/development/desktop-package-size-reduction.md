@@ -6,6 +6,10 @@
 
 **术语澄清：ModelScope 是依赖包托管位置，不是 DashScope SDK。** 本轮保持 DashScope SDK 随基础包安装，不改变通义功能的依赖方式。此前 Linux 测得 SDK 加独占依赖压缩仅约 4.6 MiB，单独后置收益很小，已撤回该拆分。
 
+## 最新变更：Windows 固定复用已发布 RAG
+
+2026-09-23 起，Windows 后置模式使用仓库固定的 ModelScope `e262c0d2f05fe09d` 组件与配套依赖锁，不再每次构建生成新 ZIP；组件安装界面/API 移除自定义 URL，只展示清单下载来源。旧安装包需要升级才能采用新清单。详见 [固定版本开发记录](windows-published-rag.md)；下文旧的 Windows 动态分包/自定义链接说明属于历史实现，Mac 分包机制本次不变。
+
 ## 第二轮实施记录
 
 用户已确认继续考虑五项优化：Windows 排除 Mac 开发二进制、排除 LazyLLM 文档、解释器别名去重、相同 Python 依赖共享、PDF 字体后置。**执行端已实现五项代码及 Intel 原生构建入口，ARM64 已构建；Windows/Intel 原生验收仍待完成。** 具体的“做什么、为什么、怎么做”、Windows x64 / Mac ARM64 / Mac Intel 的适配与验收见 [第二轮跨电脑交接计划](desktop-package-size-next-phase.md)。现有已完成状态与下面历史记录保持不变。

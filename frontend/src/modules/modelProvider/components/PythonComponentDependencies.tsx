@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
-import { Alert, Button, Input, Modal, Space, Tag, message } from "antd";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Alert, Button, Modal, Space, Tag, message } from "antd";
 import { Link, useLocation } from "react-router-dom";
 import { restartRuntime } from "@/runtime/desktopBridge";
 import { getPythonComponents, installPythonComponent, type PythonComponentStatus } from "../api/systemDependencies";
@@ -18,7 +18,6 @@ export default function PythonComponentDependencies() {
   const [items, setItems] = useState<PythonComponentStatus[]>([]);
   const [loadError, setLoadError] = useState("");
   const [selected, setSelected] = useState<PythonComponentStatus | null>(null);
-  const [url, setURL] = useState("");
   const [busy, setBusy] = useState(false);
   const [restarting, setRestarting] = useState(false);
   const abort = useRef<AbortController>();
@@ -33,12 +32,12 @@ export default function PythonComponentDependencies() {
   }, [location.hash, items]);
 
   const install = async () => {
-    if (!selected) return;
+    if (!selected || busy) return;
     const controller = new AbortController();
     abort.current = controller;
     setBusy(true);
     try {
-      await installPythonComponent(selected.id, url.trim(), controller.signal);
+      await installPythonComponent(selected.id, controller.signal);
       setSelected(null);
       message.success("组件安装完成，重启本地服务后启用。");
       await refresh();
@@ -67,7 +66,7 @@ export default function PythonComponentDependencies() {
       <Space wrap>
         <span>下载约 {((item.sizeBytes || 0) / 1048576).toFixed(1)} MiB</span>
         {!item.installed && <Button type="primary" disabled={busy || item.installing} onClick={() => {
-          setSelected(item); setURL(item.url || "");
+          setSelected(item);
         }}>{item.installing ? "安装中" : "安装组件"}</Button>}
         {item.restartRequired && <Button onClick={() => void restart()} loading={restarting}>重启本地服务</Button>}
         <Button onClick={() => void refresh()}>刷新状态</Button>
@@ -75,14 +74,13 @@ export default function PythonComponentDependencies() {
       {item.restartRequired && <p>重启将中断正在进行的任务，请完成任务后再操作。也可退出并重新打开应用。</p>}
     </section>)}
     <Modal title={selected ? `安装${names[selected.id]}` : "安装组件"} open={!!selected}
-      okText={busy ? "正在下载并校验" : "下载并安装"} confirmLoading={busy}
-      okButtonProps={{ disabled: busy || !url.trim().startsWith("https://") }}
+      okText={busy ? "正在下载并校验" : "下载并安装"}
+      okButtonProps={{ loading: busy, disabled: busy || !selected?.url?.startsWith("https://") }}
       cancelText={busy ? "取消下载" : "取消"} onOk={() => void install()}
       onCancel={() => { abort.current?.abort(); if (!busy) setSelected(null); }}>
-      <p>填写此版本组件包的 HTTPS 下载地址。应用会自动校验版本和文件完整性。</p>
+      <p>将从以下来源下载此版本所需组件，并自动校验文件完整性。</p>
       <p style={{ overflowWrap: "anywhere" }}>{selected?.filename}</p>
-      <Input aria-label="组件下载地址" value={url} disabled={busy} placeholder="https://…/组件包.zip"
-        onChange={(event: ChangeEvent<HTMLInputElement>) => setURL(event.target.value)} />
+      <p aria-label="组件下载来源" style={{ overflowWrap: "anywhere" }}>{selected?.url || "下载来源暂不可用，请刷新后重试。"}</p>
     </Modal>
   </>;
 }

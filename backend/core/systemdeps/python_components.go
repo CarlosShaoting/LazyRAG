@@ -328,10 +328,11 @@ func InstallPythonComponent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request struct {
-		ID  string `json:"id"`
-		URL string `json:"url"`
+		ID string `json:"id"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&request); err != nil {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
 		common.ReplyErr(w, "invalid dependency install request", http.StatusBadRequest)
 		return
 	}
@@ -356,13 +357,9 @@ func InstallPythonComponent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	entry := catalog.Components[request.ID]
-	address := strings.TrimSpace(request.URL)
-	if address == "" {
-		address = entry.URL
-	}
 	ctx, cancel := context.WithTimeout(r.Context(), 40*time.Minute)
 	defer cancel()
-	if err := installPythonComponent(ctx, root, entry, address); err != nil {
+	if err := installPythonComponent(ctx, root, entry, entry.URL); err != nil {
 		common.ReplyErr(w, err.Error(), http.StatusBadRequest)
 		return
 	}

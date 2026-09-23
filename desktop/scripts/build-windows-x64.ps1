@@ -370,7 +370,21 @@ function New-DeferredPythonRuntimeStage {
     return $packagedRuntimeRoot
 }
 
+function Assert-PublishedPythonCatalog {
+    if ($env:LAZYMIND_DESKTOP_DEFER_PYTHON -eq 'false') { return }
+    $expected = (Get-Content -LiteralPath (Join-Path $repoRoot 'desktop\python-components\windows-amd64.json') -Raw | ConvertFrom-Json).components.rag
+    $catalogPath = Join-Path $runtimeRoot 'config\python-components.json'
+    if (-not (Test-Path -LiteralPath $catalogPath)) { throw 'Published RAG catalog missing; run a clean Windows build before resuming packaging.' }
+    $actual = (Get-Content -LiteralPath $catalogPath -Raw | ConvertFrom-Json).components.rag
+    foreach ($field in @('filename', 'sha256', 'url', 'revision', 'baseFingerprint', 'platform', 'arch', 'pythonAbi')) {
+        if ($actual.$field -cne $expected.$field) {
+            throw "Staged RAG $field does not match the pinned published release; run a clean Windows build."
+        }
+    }
+}
+
 function Finalize-Desktop([ValidateSet('zip', 'installer')][string]$PackageKind = 'zip') {
+    Assert-PublishedPythonCatalog
     $finalZipName = New-WindowsZipFileName
     Materialize-PythonAliases
     Prune-PythonTree (Join-Path $runtimeRoot 'runtimes\python')
@@ -527,11 +541,22 @@ function Build-Desktop([ValidateSet('zip', 'installer')][string]$PackageKind = '
     Invoke-Native 'uv.exe' @('venv', '--managed-python', '--no-python-downloads', '--relocatable', '--seed', '--link-mode', 'copy', '--python', $python, $algorithmVenv)
     $algorithmPython = Join-Path $algorithmVenv 'Scripts\python.exe'
     $lazyLLMVersion = if ($env:LAZYMIND_LAZYLLM_VERSION) { $env:LAZYMIND_LAZYLLM_VERSION } else { (Get-Content -LiteralPath (Join-Path $repoRoot 'LAZYLLM_VERSION') -Raw).Trim() }
-    Invoke-NativeWithRetry 'LazyLLM package install' 'uv.exe' @('pip', 'install', '--python', $algorithmPython, '--link-mode', 'copy', '--strict', 'setuptools<81', "lazyllm==$lazyLLMVersion")
-    Invoke-Native $algorithmPython @('-c', "import importlib.metadata as m; assert m.version('lazyllm') == '$lazyLLMVersion'")
-    Invoke-NativeWithRetry 'LazyLLM RAG dependencies' (Join-Path $algorithmVenv 'Scripts\lazyllm.exe') @('install', 'rag')
-    Invoke-NativeWithRetry 'Algorithm Python dependencies' 'uv.exe' @('pip', 'install', '--python', $algorithmPython, '--link-mode', 'copy', '--strict', '-r', (Join-Path $repoRoot 'algorithm\requirements.txt'))
-    Invoke-NativeWithRetry 'Algorithm local Python dependencies' 'uv.exe' @('pip', 'install', '--python', $algorithmPython, '--link-mode', 'copy', '--strict', '-r', (Join-Path $repoRoot 'algorithm\requirements-local.txt'))
+    if ($env:LAZYMIND_DESKTOP_DEFER_PYTHON -ne 'false') {
+        Write-Host '==> Installing the frozen environment for the published ModelScope RAG component'
+        Invoke-NativeWithRetry 'Published Windows algorithm dependencies' 'uv.exe' @(
+            'pip', 'install', '--python', $algorithmPython, '--link-mode', 'copy', '--strict',
+            '-r', (Join-Path $repoRoot 'desktop\python-components\windows-amd64-requirements.lock'),
+            '-r', (Join-Path $repoRoot 'algorithm\requirements.txt'),
+            '-r', (Join-Path $repoRoot 'algorithm\requirements-local.txt')
+        )
+        Invoke-Native $algorithmPython @('-c', "import importlib.metadata as m; assert m.version('lazyllm') == '$lazyLLMVersion'")
+    } else {
+        Invoke-NativeWithRetry 'LazyLLM package install' 'uv.exe' @('pip', 'install', '--python', $algorithmPython, '--link-mode', 'copy', '--strict', 'setuptools<81', "lazyllm==$lazyLLMVersion")
+        Invoke-Native $algorithmPython @('-c', "import importlib.metadata as m; assert m.version('lazyllm') == '$lazyLLMVersion'")
+        Invoke-NativeWithRetry 'LazyLLM RAG dependencies' (Join-Path $algorithmVenv 'Scripts\lazyllm.exe') @('install', 'rag')
+        Invoke-NativeWithRetry 'Algorithm Python dependencies' 'uv.exe' @('pip', 'install', '--python', $algorithmPython, '--link-mode', 'copy', '--strict', '-r', (Join-Path $repoRoot 'algorithm\requirements.txt'))
+        Invoke-NativeWithRetry 'Algorithm local Python dependencies' 'uv.exe' @('pip', 'install', '--python', $algorithmPython, '--link-mode', 'copy', '--strict', '-r', (Join-Path $repoRoot 'algorithm\requirements-local.txt'))
+    }
     Write-Host '==> Auditing and pruning bundled Python runtime'
     $pythonPruneArgs = @(
         (Join-Path $repoRoot 'desktop\scripts\prune-python-runtime.py'),
@@ -543,7 +568,7 @@ function Build-Desktop([ValidateSet('zip', 'installer')][string]$PackageKind = '
     Invoke-Native $algorithmPython $pythonPruneArgs
     if ($env:LAZYMIND_DESKTOP_DEFER_PYTHON -ne 'false') {
         Invoke-Native $algorithmPython @(
-            (Join-Path $repoRoot 'desktop\scripts\build-python-components.py'),
+            (Join-Path $repoRoot 'desktop\scripts\stage-published-python-components.py'),
             $runtimeRoot, '--output', (Join-Path $repoRoot 'desktop\dist\python-components\windows-amd64')
         )
     }

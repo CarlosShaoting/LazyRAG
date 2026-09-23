@@ -13,7 +13,7 @@ on:
         type: boolean
         default: true
       defer_python:
-        description: "Package RAG as a separately downloadable ModelScope component"
+        description: "Use the published RAG component from ModelScope (fixed version)"
         required: false
         type: boolean
         default: true
@@ -44,7 +44,7 @@ on:
         type: boolean
         default: true
       defer_python:
-        description: "Package RAG as a separately downloadable ModelScope component"
+        description: "Use the published RAG component from ModelScope (fixed version)"
         required: false
         type: boolean
         default: true
@@ -337,17 +337,28 @@ jobs:
             ('- Signature: `{0}`' -f $signature.Status)
             ('- Python pruning: {0}' -f $env:LAZYMIND_DESKTOP_PRUNE_PYTHON)
             ('- RAG deferred: {0}' -f $env:LAZYMIND_DESKTOP_DEFER_PYTHON)
+            ('- RAG source: {0}' -f $(if ($env:LAZYMIND_DESKTOP_DEFER_PYTHON -eq 'false') { 'bundled in installer' } else { 'fixed published ModelScope component; no new ZIP generated' }))
             ('- Workflow examples deferred: {0}' -f $env:LAZYMIND_DESKTOP_DEFER_HISTORY)
           ) | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
+          $catalogPath = 'desktop/build/windows-x64/runtime/config/python-components.json'
+          if (Test-Path -LiteralPath $catalogPath) {
+            $rag = (Get-Content -LiteralPath $catalogPath -Raw | ConvertFrom-Json).components.rag
+            @(
+              ('- Published RAG file: `{0}`' -f $rag.filename)
+              ('- Published RAG SHA-256: `{0}`' -f $rag.sha256)
+              ('- Published RAG download: {0}' -f $rag.url)
+            ) | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+          }
+
           Get-ChildItem -LiteralPath $publishDir | Format-Table Name, Length
 
-      - name: Upload optional Python components
+      - name: Upload published Python component catalog
         if: ${{ always() }}
         uses: actions/upload-artifact@v7
         with:
           name: windows-python-components
-          path: desktop/dist/python-components/
+          path: desktop/dist/python-components/windows-amd64/
           if-no-files-found: ignore
           retention-days: 14
 
@@ -360,6 +371,7 @@ jobs:
             desktop/dist/pdf-font/
             desktop/build/*/final-runtime-size.json
             desktop/build/*/runtime/config/python-sharing.json
+            desktop/build/*/runtime/config/published-python-verification.json
             desktop/dist/mac*/LazyMind.app/Contents/Resources/runtime/config/python-sharing.json
           if-no-files-found: ignore
 
