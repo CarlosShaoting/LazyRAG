@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Use a pinned, published Windows RAG bundle; never produce a new archive.
+"""Use a pinned, published RAG bundle; never produce a new archive.
 
 The published manifest is a release contract. The matching full algorithm lock
-is installed by the Windows build, then checked here before optional files are
+is installed by the native build, then checked here before optional files are
 removed. Archive hash/manifest checks and real base/overlay imports are required.
 """
 import argparse
@@ -75,11 +75,13 @@ def stage(runtime, output, catalog_path, lock_path, cache):
     site = Path(sysconfig.get_path('purelib')).resolve()
     if not site.is_relative_to((runtime / 'deps/python/algorithm').resolve()):
         raise RuntimeError('Run with the staged algorithm Python')
-    if sys.platform != 'win32' or platform.machine().lower() not in {'amd64', 'x86_64'} or sys.version_info[:3] != (3, 11, 15):
-        raise RuntimeError('Published Windows bundle requires Windows x64 CPython 3.11.15')
+    host_platform = 'windows' if sys.platform == 'win32' else sys.platform
+    host_arch = {'amd64': 'amd64', 'x86_64': 'amd64', 'arm64': 'arm64'}.get(platform.machine().lower())
+    if (host_platform, host_arch) not in {('windows', 'amd64'), ('darwin', 'arm64')} or sys.version_info[:3] != (3, 11, 15):
+        raise RuntimeError('Published bundle requires native Windows x64 or macOS arm64 CPython 3.11.15')
     catalog = json.loads(catalog_path.read_text(encoding='utf-8'))
     entry = catalog['components']['rag']
-    for key, value in [('schemaVersion', 1), ('platform', 'windows'), ('arch', 'amd64'), ('pythonAbi', 'cp311')]:
+    for key, value in [('schemaVersion', 1), ('platform', host_platform), ('arch', host_arch), ('pythonAbi', 'cp311')]:
         if catalog.get(key) != value or entry.get(key) != value:
             raise RuntimeError(f'Wrong published catalog {key}')
     if Path(entry['filename']).name != entry['filename']:

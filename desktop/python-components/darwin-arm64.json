@@ -1,0 +1,53 @@
+{
+  "arch": "arm64",
+  "baseFingerprint": "9e9f17cbea297a15b75a92decdd07663c6c8671d832bff8499c5f762002e633b",
+  "components": {
+    "rag": {
+      "arch": "arm64",
+      "baseFingerprint": "9e9f17cbea297a15b75a92decdd07663c6c8671d832bff8499c5f762002e633b",
+      "filename": "lazymind-python-rag-darwin-arm64-cp311-53a1c2e770966b71.zip",
+      "id": "rag",
+      "packages": {
+        "blis": "0.7.11",
+        "bm25s": "0.1.10",
+        "cachetools": "7.2.0",
+        "catalogue": "2.0.10",
+        "cloudpathlib": "0.25.0",
+        "confection": "0.1.5",
+        "cymem": "2.0.13",
+        "faiss-cpu": "1.15.1",
+        "langcodes": "3.5.1",
+        "milvus-lite": "3.0",
+        "murmurhash": "1.0.15",
+        "nltk": "3.10.3",
+        "orjson": "3.12.0",
+        "preshed": "3.0.13",
+        "pyarrow": "25.0.1",
+        "pymilvus": "3.0.0",
+        "pystemmer": "2.2.0.3",
+        "sentencepiece": "0.2.2",
+        "smart-open": "7.7.1",
+        "spacy": "3.7.5",
+        "spacy-legacy": "3.0.12",
+        "spacy-loggers": "1.0.5",
+        "srsly": "2.5.3",
+        "thinc": "8.2.5",
+        "typer-slim": "0.24.0",
+        "wasabi": "1.1.3",
+        "weasel": "0.4.3",
+        "wrapt": "2.4.1"
+      },
+      "platform": "darwin",
+      "pythonAbi": "cp311",
+      "revision": "53a1c2e770966b71ef97962322b143423b8f5835030373e82ce184317315aae1",
+      "schemaVersion": 1,
+      "sha256": "f90b5c00b43943b031d698fc939c81b24d77a738e357bb541fe74d7e768fb8d1",
+      "sizeBytes": 54515729,
+      "unpackedBytes": 191951224,
+      "url": "https://modelscope.cn/datasets/CarlosShaoting/lazymind-cst/resolve/master/lazymind-python-rag-darwin-arm64-cp311-53a1c2e770966b71.zip"
+    }
+  },
+  "platform": "darwin",
+  "pythonAbi": "cp311",
+  "schemaVersion": 1
+}

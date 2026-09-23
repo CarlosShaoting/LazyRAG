@@ -200,6 +200,8 @@ let frontendOpeningAllowed = false;
 let tray;
 let rendererReadyWait;
 let runtimeProcess;
+let runtimeRestartPromise;
+let runtimeStopping = false;
 let agentHostProcess;
 let agentHostRestartTimer;
 let agentHostStableTimer;
@@ -685,7 +687,7 @@ function runSidecar(command, extra = [], options = {}) {
       windowsHide: isWindows,
     }, (error, stdout, stderr) => {
       if (error) {
-        error.message = `${error.message}\n${stderr || ""}`;
+        error.message = `${error.message}\n${stdout || ""}\n${stderr || ""}`;
         reject(error);
         return;
       }
@@ -829,7 +831,7 @@ function runConnectorJSON(args, timeout, input) {
 }
 
 function scheduleAgentHostRestart() {
-  if (isQuitting || isInstallerWarmup || agentHostRestartTimer) {
+  if (runtimeStopping || isQuitting || isInstallerWarmup || agentHostRestartTimer) {
     return;
   }
   const delay = Math.min(1000 * (2 ** Math.min(agentHostRestartAttempts, 5)), agentHostRestartMaxDelayMs);
@@ -843,7 +845,7 @@ function scheduleAgentHostRestart() {
 }
 
 function startAgentHost() {
-  if (agentHostProcess || isQuitting || isInstallerWarmup || !fs.existsSync(agentConnectorPath)) {
+  if (runtimeStopping || agentHostProcess || isQuitting || isInstallerWarmup || !fs.existsSync(agentConnectorPath)) {
     return;
   }
   clearTimeout(agentHostRestartTimer);
@@ -1101,6 +1103,7 @@ function detachRuntimeMonitor() {
   proc.stdout?.removeAllListeners("data");
   proc.stderr?.removeAllListeners("data");
   proc.removeAllListeners("exit");
+  proc.removeAllListeners("close");
   proc.removeAllListeners("error");
   proc.stdout?.destroy();
   proc.stderr?.destroy();
@@ -1147,6 +1150,7 @@ function spawnDetachedShutdownHelper(reason) {
 }
 
 async function readStatus(options = {}) {
+  if (runtimeStopping && currentStatus) return currentStatus;
   if (isExternalRuntimeDev) {
     currentStatus = desktopDevRuntimeStatus(externalRuntimeURL);
     return currentStatus;
@@ -1252,7 +1256,16 @@ function resolveRequestedLocalFolder(folderPath, status, accessState) {
   return resolved;
 }
 
-async function restartRuntimeAfterFolderAccessChange() {
+function restartRuntimeAfterFolderAccessChange() {
+  if (runtimeRestartPromise) return runtimeRestartPromise;
+  runtimeRestartPromise = (async () => {
+    runtimeStopping = true;
+    clearTimeout(agentHostRestartTimer);
+    clearTimeout(agentHostStableTimer);
+    agentHostRestartTimer = undefined;
+    agentHostStableTimer = undefined;
+    agentHostProcess?.kill();
+    appendStartupLog("desktop", "runtime restart: stopping services and auxiliary processes");
   const monitor = runtimeProcess;
   let monitorClosed = Promise.resolve();
   if (monitor) {
@@ -1270,16 +1283,26 @@ async function restartRuntimeAfterFolderAccessChange() {
     });
   }
 
-  await runSidecar("down", [], { env: sidecarShutdownEnv() });
-  detachRuntimeMonitor();
-  await monitorClosed;
-  startRuntime();
-  const status = await waitForRuntimeReady();
-  const window = activeWindow();
-  if (window && !window.isDestroyed()) {
-    window.webContents.reload();
-  }
-  return status;
+    try {
+      await Promise.all([runSidecar("down", [], { env: sidecarShutdownEnv() }), monitorClosed]);
+      detachRuntimeMonitor();
+      runtimeStopping = false;
+      startRuntime();
+      const status = await waitForRuntimeReady();
+      const window = activeWindow();
+      if (window && !window.isDestroyed()) window.webContents.reload();
+      startAgentHost();
+      appendStartupLog("desktop", "runtime restart completed");
+      return status;
+    } catch (error) {
+      appendStartupLog("error", `runtime restart failed: ${serializeError(error)}`);
+      throw error;
+    } finally {
+      runtimeStopping = false;
+      runtimeRestartPromise = undefined;
+    }
+  })();
+  return runtimeRestartPromise;
 }
 
 function logStartupContext() {
@@ -1321,9 +1344,11 @@ function startRuntime() {
     detached: false,
     windowsHide: isWindows,
   });
+  const startedProcess = runtimeProcess;
   runtimeProcess.stdout?.on("data", (chunk) => captureSidecarChunk("sidecar.stdout", chunk));
   runtimeProcess.stderr?.on("data", (chunk) => captureSidecarChunk("sidecar.stderr", chunk));
   runtimeProcess.once("error", (error) => {
+    if (runtimeProcess !== startedProcess) return;
     runtimeProcessExit = { error: serializeError(error), detail: serializeError(error) };
     runtimeProcess = null;
     setStartupFailure(error, "Could not start desktop runtime sidecar");
@@ -1331,6 +1356,7 @@ function startRuntime() {
   // `close` fires after stdout/stderr are drained, so the final Go error cannot
   // race with ownership/status handling below.
   runtimeProcess.once("close", (code, signal) => {
+    if (runtimeProcess !== startedProcess) return;
     const detail = sidecarFailureDetail() || runtimeProcessExit?.detail || "";
     runtimeProcessExit = { code, signal, at: new Date().toISOString(), detail };
     appendStartupLog("sidecar", `local-runtime-manager exited with code ${code ?? "null"} signal ${signal ?? "null"}`);

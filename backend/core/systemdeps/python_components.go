@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"lazymind/core/common"
+	appLog "lazymind/core/log"
 )
 
 type PythonComponent struct {
@@ -261,8 +262,9 @@ import lazyllm.tools.rag, pymilvus, milvus_lite, spacy
 	return nil
 }
 
-func installPythonComponent(ctx context.Context, root string, entry PythonComponent, address string) error {
+func installPythonComponent(ctx context.Context, root string, entry PythonComponent, address string) (installErr error) {
 	if pythonComponentInstalled(root, entry) {
+		appLog.Logger.Info().Str("component", entry.ID).Str("revision", entry.Revision).Msg("python_component.install.reused")
 		return nil
 	}
 	deps := filepath.Join(root, "deps", "python-components")
@@ -275,6 +277,20 @@ func installPythonComponent(ctx context.Context, root string, entry PythonCompon
 	}
 	defer os.RemoveAll(stage)
 	archive := filepath.Join(stage, "component.zip")
+	started := time.Now()
+	appLog.Logger.Info().Str("component", entry.ID).Str("revision", entry.Revision).Str("filename", entry.Filename).Msg("python_component.download.started")
+	defer func() {
+		if installErr != nil {
+			event := "python_component.install.failed"
+			if ctx.Err() != nil {
+				event = "python_component.install.cancelled"
+			}
+			appLog.Logger.Warn().Err(installErr).Str("component", entry.ID).Dur("elapsed", time.Since(started)).Msg(event)
+		} else {
+			appLog.Logger.Info().Str("component", entry.ID).Str("revision", entry.Revision).Dur("elapsed", time.Since(started)).Msg("python_component.install.completed")
+		}
+	}()
+
 	if err := downloadPythonComponent(ctx, entry, address, archive); err != nil {
 		return err
 	}

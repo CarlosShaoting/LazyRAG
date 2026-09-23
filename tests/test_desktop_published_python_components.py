@@ -30,6 +30,12 @@ class PublishedComponentsTests(unittest.TestCase):
                     published.lock_versions(path)
 
     def test_import_failure_restores_optional_files_and_does_not_activate_catalog(self):
+        self.check_import_failure('win32', 'AMD64')
+
+    def test_mac_import_failure_restores_optional_files_and_does_not_activate_catalog(self):
+        self.check_import_failure('darwin', 'arm64')
+
+    def check_import_failure(self, host_platform, host_machine):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             runtime = root / 'runtime'
@@ -47,7 +53,8 @@ class PublishedComponentsTests(unittest.TestCase):
                     f'{module}/__init__.py', f'{info.name}/METADATA', f'{info.name}/RECORD']))
             lock = root / 'lock'
             lock.write_text(''.join(f'{n}==1.0\n' for n in optional | {'numpy'}))
-            entry = dict(schemaVersion=1, platform='windows', arch='amd64', pythonAbi='cp311',
+            entry = dict(schemaVersion=1, platform='windows' if host_platform == 'win32' else 'darwin',
+                         arch='amd64' if host_machine == 'AMD64' else 'arm64', pythonAbi='cp311',
                          filename='fixed.zip', packages={n: '1.0' for n in optional})
             catalog = root / 'catalog.json'
             catalog.write_text(json.dumps({**entry, 'components': {'rag': entry}}))
@@ -57,9 +64,9 @@ class PublishedComponentsTests(unittest.TestCase):
             def failed_import(*args):
                 self.assertFalse((site / 'spacy').exists())
                 raise RuntimeError('incompatible overlay')
-            with patch.object(published.sys, 'platform', 'win32'), \
+            with patch.object(published.sys, 'platform', host_platform), \
                  patch.object(published.sys, 'version_info', (3, 11, 15)), \
-                 patch.object(published.platform, 'machine', return_value='AMD64'), \
+                 patch.object(published.platform, 'machine', return_value=host_machine), \
                  patch.object(published.sysconfig, 'get_path', return_value=str(site)), \
                  patch.object(published.verification, 'acquire_bundle'), \
                  patch.object(published.verification, 'extract_bundle', return_value=root / 'overlay'), \
@@ -69,6 +76,38 @@ class PublishedComponentsTests(unittest.TestCase):
             self.assertTrue((site / 'spacy/__init__.py').exists())
             self.assertTrue((site / 'numpy/__init__.py').exists())
             self.assertFalse((runtime / 'config/python-components.json').exists())
+
+    def test_mac_rejects_windows_or_intel_catalog_before_removing_files(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            site = root / 'deps/python/algorithm/lib/python3.11/site-packages'
+            site.mkdir(parents=True)
+            sentinel = site / 'keep.py'
+            sentinel.write_text('# untouched')
+            for target, arch in [('windows', 'amd64'), ('darwin', 'amd64')]:
+                catalog = root / 'catalog.json'
+                entry = dict(schemaVersion=1, platform=target, arch=arch, pythonAbi='cp311')
+                catalog.write_text(json.dumps({**entry, 'components': {'rag': entry}}))
+                with self.subTest(target=target, arch=arch), \
+                     patch.object(published.sys, 'platform', 'darwin'), \
+                     patch.object(published.sys, 'version_info', (3, 11, 15)), \
+                     patch.object(published.platform, 'machine', return_value='arm64'), \
+                     patch.object(published.sysconfig, 'get_path', return_value=str(site)):
+                    with self.assertRaisesRegex(RuntimeError, 'Wrong published catalog'):
+                        published.stage(root, root / 'out', catalog, root / 'lock', root / 'cache')
+                self.assertTrue(sentinel.exists())
+
+    def test_mac_published_catalog_matches_original_release_and_lock(self):
+        catalog = json.loads((ROOT / 'desktop/python-components/darwin-arm64.json').read_text())
+        entry = catalog['components']['rag']
+        expected = published.lock_versions(ROOT / 'desktop/python-components/darwin-arm64-requirements.lock')
+        self.assertEqual(entry['filename'], 'lazymind-python-rag-darwin-arm64-cp311-53a1c2e770966b71.zip')
+        self.assertEqual(entry['sha256'], 'f90b5c00b43943b031d698fc939c81b24d77a738e357bb541fe74d7e768fb8d1')
+        self.assertEqual(entry['sizeBytes'], 54515729)
+        self.assertEqual(catalog['platform'], 'darwin')
+        self.assertEqual(catalog['arch'], 'arm64')
+        self.assertTrue(entry['url'].endswith('/' + entry['filename']))
+        published.validate_versions(entry['packages'], {name: expected[name] for name in entry['packages']})
 
     def test_published_catalog_has_fixed_identity_and_matching_pins(self):
         catalog = json.loads((ROOT / 'desktop/python-components/windows-amd64.json').read_text())

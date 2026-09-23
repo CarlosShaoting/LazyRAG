@@ -59,3 +59,24 @@ it("cancels a download and allows retrying the configured source", async () => {
   await waitFor(() => expect(mocks.install.mock.calls[0][1].aborted).toBe(true));
   await waitFor(() => expect(screen.getByRole("button", { name: /下载并安装/ })).toBeEnabled());
 });
+
+it("does not cancel an active download by clicking the backdrop or pressing Escape", async () => {
+  mocks.install.mockImplementation((_id, signal) => new Promise((_resolve, reject) => {
+    signal.addEventListener("abort", () => reject(new Error("cancelled")));
+  }));
+  render(<MemoryRouter><PythonComponentDependencies /></MemoryRouter>);
+  fireEvent.click(await screen.findByRole("button", { name: "安装组件" }));
+  fireEvent.click(screen.getByRole("button", { name: /下载并安装/ }));
+  await waitFor(() => expect(mocks.install).toHaveBeenCalledOnce());
+  const signal = mocks.install.mock.calls[0][1];
+  const backdrop = document.querySelector(".ant-modal-wrap")!;
+  fireEvent.mouseDown(backdrop);
+  fireEvent.mouseUp(backdrop);
+  fireEvent.click(backdrop);
+  fireEvent.keyDown(backdrop, { key: "Escape", keyCode: 27 });
+  expect(signal.aborted).toBe(false);
+  expect(screen.getByRole("button", { name: /取消下载/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "安装组件" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: /取消下载/ }));
+  await waitFor(() => expect(signal.aborted).toBe(true));
+});
