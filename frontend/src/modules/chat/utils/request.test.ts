@@ -5,13 +5,14 @@ import {
   parseChatEntryDefaults,
   parseThinkingDepth,
   resolveConversationThinkingDepth,
+  TaskServiceApi,
   WorkflowSessionApi,
 } from './request';
 
-const { patchMock, postMock, getMock } = vi.hoisted(() => ({
+const { getMock, patchMock, postMock } = vi.hoisted(() => ({
+  getMock: vi.fn(),
   patchMock: vi.fn(),
   postMock: vi.fn(),
-  getMock: vi.fn(),
 }));
 
 vi.mock('@/components/request', () => ({
@@ -23,6 +24,19 @@ vi.mock('@/components/request', () => ({
   },
   BASE_URL: '',
 }));
+
+describe('TaskServiceApi.listConversationArtifacts', () => {
+  beforeEach(() => {
+    getMock.mockReset();
+  });
+
+  it('requests the v2 projection through the backward-compatible endpoint', async () => {
+    const response = { data: { data: { artifacts: [] } } };
+    getMock.mockResolvedValueOnce(response);
+    await expect(TaskServiceApi().listConversationArtifacts('conversation/1')).resolves.toBe(response);
+    expect(getMock).toHaveBeenCalledWith('/api/core/conversations/conversation%2F1/artifacts?projection=v2', undefined);
+  });
+});
 
 describe('WorkflowSessionApi.convertDocument', () => {
   it.each([undefined, 0, 7])('preserves the optional draft baseline %s in the preview body', (draftVersion) => {

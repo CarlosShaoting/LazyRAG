@@ -381,6 +381,10 @@ export interface SlotWidgetConfig {
   widgetType?: string;
   readOnly?: boolean;
   maxHeight?: number;
+  /** Use the compact document treatment for short companion content such as speaker notes. */
+  compact?: boolean;
+  /** Keep the version entry discoverable without consuming a separate row. */
+  versionBadgePlacement?: 'flow' | 'bottom-left';
   collapsed?: boolean;
   itemLayout?: 'scroll' | 'grid';
   gridMaxCols?: number;
@@ -475,10 +479,16 @@ export function workflowTabAllowsDownload(
  * material exists. This avoids flashing the complete graph while an initial
  * planning step is still deriving skip materials from the launch parameters.
  */
+export interface WorkflowTabVisibilityContext {
+  steps?: WorkflowSessionStep[];
+  projection?: WorkflowRuntimeProjection;
+}
+
 export function filterWorkflowTabs(
   tabs: TabDef[] = [],
   slots: SlotRevision[] = [],
   readyMaterial?: string,
+  runtime?: WorkflowTabVisibilityContext,
 ): TabDef[] {
   const present = new Set(
     slots.filter((slot) => slot.selected).map((slot) => slot.slot),
@@ -486,6 +496,17 @@ export function filterWorkflowTabs(
   const visibilityReady = !readyMaterial || present.has(readyMaterial);
   return tabs.filter((tab) => {
     if (!tab.hide_when_material) return true;
+    const stepIds = new Set(
+      tab.status_step_ids?.length ? tab.status_step_ids : [tab.step_id ?? tab.id],
+    );
+    const hasEffectiveAttempt = runtime?.steps?.some((step) => (
+      step.validity !== 'stale' && stepIds.has(step.step_id)
+    ));
+    const hasRuntimePosition = [
+      ...(runtime?.projection?.current ?? []),
+      ...(runtime?.projection?.past ?? []),
+    ].some((stepId) => stepIds.has(stepId));
+    if (hasEffectiveAttempt || hasRuntimePosition) return true;
     if (!visibilityReady) return false;
     return !present.has(tab.hide_when_material);
   });
@@ -653,6 +674,10 @@ export function buildChineseDesignRoutingSummary(value: unknown): string | null 
 export interface WorkflowUI {
   name?: string;
   tabs?: TabDef[];
+  default_panel_mode?: 'compact' | 'expanded';
+  follow_mode?: {
+    default?: 'following' | 'free';
+  };
   /** Defer tabs with hide_when_material until this planning material exists. */
   tab_visibility_ready_material?: string;
   /** Global widget config keyed by slot id. */
@@ -732,6 +757,7 @@ export function hydrateWorkflowUI(raw: unknown, fallbackName?: string): Workflow
 export interface SlotVersionEntry {
   revision: number;
   draft_version?: number;
+  content_type?: string;
   /** User-visible version number. Writer working drafts are excluded from this sequence. */
   version?: number;
   change_source: "ai" | "human" | "provider_sync";

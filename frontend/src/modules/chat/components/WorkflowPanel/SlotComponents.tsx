@@ -62,7 +62,7 @@ import HtmlBlock from '@/modules/chat/components/MarkdownViewer/HtmlBlock';
 import i18n from '@/i18n';
 import { useTranslation } from 'react-i18next';
 import { localizeErrorCode } from '@/components/request';
-import { SlotHtmlSlide } from './ppt/SlotHtmlSlide';
+import { SlotHtmlSlide, type SlideNavigation } from './ppt/SlotHtmlSlide';
 import { SlotJsonSlide } from './ppt/SlotJsonSlide';
 import { isSlideSpecArtifact } from './ppt/slideSchema';
 import type { TaskArtifactStream } from '@/modules/chat/store/taskCenter';
@@ -171,8 +171,15 @@ function isBrowserReadyImageUrl(url: string): boolean {
 function preloadImageUrl(src: string): Promise<boolean> {
   return new Promise((resolve) => {
     const img = new Image();
-    img.onload = () => resolve(true);
-    img.onerror = () => resolve(false);
+    const finish = (ok: boolean) => {
+      window.clearTimeout(timer);
+      img.onload = null;
+      img.onerror = null;
+      resolve(ok);
+    };
+    const timer = window.setTimeout(() => finish(false), 15000);
+    img.onload = () => finish(true);
+    img.onerror = () => finish(false);
     img.src = src;
   });
 }
@@ -186,11 +193,28 @@ const MEDIA_LIBRARY_LOAD_RETRY_MS = 800;
  * Resolve a slot image URL and preload it before display.
  * Avoids flashing a broken <img> when the API returns a signed URL before the file exists.
  */
-function useSlotImageUrl(raw: Record<string, unknown> | undefined) {
+export function useSlotImageUrl(raw: Record<string, unknown> | undefined) {
   const pathForSign = String(raw?.path ?? raw?.url ?? '').trim();
   const apiUrlRaw = raw?.url ? String(raw.url).trim() : '';
   const [displayUrl, setDisplayUrl] = useState('');
   const [pending, setPending] = useState(Boolean(pathForSign));
+  const [reload, setReload] = useState(0);
+  const retry = useCallback(() => setReload((value) => value + 1), []);
+
+  useEffect(() => {
+    const recover = () => {
+      if (document.visibilityState !== 'hidden' && pathForSign && !displayUrl) retry();
+    };
+    window.addEventListener('online', recover);
+    window.addEventListener('focus', recover);
+    document.addEventListener('visibilitychange', recover);
+    return () => {
+      window.removeEventListener('online', recover);
+      window.removeEventListener('focus', recover);
+      document.removeEventListener('visibilitychange', recover);
+    };
+  }, [displayUrl, pathForSign, retry]);
+
 
   useEffect(() => {
     if (!pathForSign) {
@@ -239,13 +263,22 @@ function useSlotImageUrl(raw: Record<string, unknown> | undefined) {
       }
     }
 
-    load();
+    const deadline = window.setTimeout(() => {
+      if (!cancelled) {
+        cancelled = true;
+        setPending(false);
+      }
+    }, 20000);
+    void load().catch(() => {
+      if (!cancelled) setPending(false);
+    }).finally(() => window.clearTimeout(deadline));
     return () => {
       cancelled = true;
+      window.clearTimeout(deadline);
     };
-  }, [pathForSign, apiUrlRaw]);
+  }, [pathForSign, apiUrlRaw, reload]);
 
-  return { displayUrl, pending, hasSource: Boolean(pathForSign) };
+  return { displayUrl, pending, retry, hasSource: Boolean(pathForSign) };
 }
 
 function useArtifactFileUrl(
@@ -1038,6 +1071,7 @@ export function SlotVersionPopover({
 
   const isImage = contentType === 'image';
   const isFile = contentType === 'file';
+  const isHtmlSlide = contentType === 'html-slide';
 
   const handleVersionFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1101,16 +1135,6 @@ export function SlotVersionPopover({
   // Whether the previewed version is already the current one
   const isPreviewingCurrent = previewedVersion?.selected ?? false;
 
-  // Format date as MM/DD HH:mm
-  const formatDate = (isoStr: string) => {
-    const d = new Date(isoStr);
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const dd = String(d.getDate()).padStart(2, '0');
-    const hh = String(d.getHours()).padStart(2, '0');
-    const min = String(d.getMinutes()).padStart(2, '0');
-    return `${mm}/${dd} ${hh}:${min}`;
-  };
-
   // effectiveSelectedRevision: the revision number clicked in left list, or DRAFT_REVISION for the draft entry.
   // null means default to current version.
   const effectiveSelectedVersion =
@@ -1132,7 +1156,7 @@ export function SlotVersionPopover({
       role='presentation'
     >
       <div
-        className={`workflow-slot__version-popover${isImage ? ' workflow-slot__version-popover--image' : ''}${isFile ? ' workflow-slot__version-popover--file' : ''}`}
+        className={`workflow-slot__version-popover${isImage ? ' workflow-slot__version-popover--image' : ''}${isFile ? ' workflow-slot__version-popover--file' : ''}${isHtmlSlide ? ' workflow-slot__version-popover--slide' : ''}`}
         role='dialog'
         aria-label={historyTitle}
         aria-modal='true'
@@ -1151,91 +1175,126 @@ export function SlotVersionPopover({
         </div>
 
         {versionError && <div className='workflow-slot__version-compare-hint' role='alert'>{versionError}</div>}
-        {isImage ? (
-          /* ── Image mode: top-down layout ── */
-          <>
-            {currentVersion && (
-              <div className='workflow-slot__version-meta-row'>
-                <span className='workflow-slot__version-meta-label'>{tr('chat.slots.currentVersionLabel')}</span>
-                <span className='workflow-slot__version-meta-badge'>V{currentVersion.revision}</span>
-                <span className='workflow-slot__version-meta-time'>
-                  {tr('chat.slots.createdAt', { time: formatDate(currentVersion.created_at) })}
-                </span>
-              </div>
-            )}
+        {isHtmlSlide ? (
+          <div className='workflow-slot__version-popover-body workflow-slot__version-popover-body--slide'>
+            <ul className='workflow-slot__version-list' role='listbox' aria-label={tr('chat.slots.versionList')}>
+              {versions.map((version) => (
+                <li
+                  key={version.revision}
+                  role='option'
+                  aria-selected={effectiveSelectedVersion?.revision === version.revision}
+                  className={[
+                    'workflow-slot__version-item',
+                    version.selected ? 'workflow-slot__version-item--current' : '',
+                    effectiveSelectedVersion?.revision === version.revision ? 'workflow-slot__version-item--focused' : '',
+                  ].join(' ')}
+                  onClick={() => setSelectedRevision(version.revision)}
+                >
+                  <span className='workflow-slot__version-label'>
+                    <span className={`workflow-slot__version-source-badge workflow-slot__version-source-badge--${version.change_source}`}>
+                      {changeSourceLabel(version)}
+                    </span>
+                    {entryVersionLabel(version)}
+                    {version.selected && <span className='workflow-slot__version-current-tag'>{tr('chat.slots.current')}</span>}
+                  </span>
+                  <span className='workflow-slot__version-time'>
+                    {new Date(version.created_at).toLocaleString(i18n.language)}
+                  </span>
+                </li>
+              ))}
+            </ul>
 
-            <div className='workflow-slot__version-preview-area'>
-              {versions.length > 1 && (
-                <button
-                  className='workflow-slot__version-nav workflow-slot__version-nav--prev'
-                  onClick={() => setPreviewIndex((i) => Math.max(0, i - 1))}
-                  disabled={previewIndex === 0}
-                  aria-label={tr('chat.slots.previousVersion')}
-                >‹</button>
-              )}
-              <div className='workflow-slot__version-preview-img-wrap'>
-                {previewedVersion && extractText(previewedVersion.content_snapshot) ? (
-                  <img
-                    key={previewedVersion.revision}
-                    className='workflow-slot__version-preview-img'
-                    src={extractText(previewedVersion.content_snapshot)}
-                    alt=''
-                  />
-                ) : previewedVersion ? (
-                  <span className='workflow-slot__version-preview-empty'>{tr('chat.slots.noImage')}</span>
-                ) : null}
-              </div>
-              {versions.length > 1 && (
-                <button
-                  className='workflow-slot__version-nav workflow-slot__version-nav--next'
-                  onClick={() => setPreviewIndex((i) => Math.min(versions.length - 1, i + 1))}
-                  disabled={previewIndex === versions.length - 1}
-                  aria-label={tr('chat.slots.nextVersion')}
-                >›</button>
+            <div className='workflow-slot__version-slide-pane'>
+              {effectiveSelectedVersion ? (
+                <>
+                  <div className='workflow-slot__version-slide-preview'>
+                    <SlotHtmlSlide
+                      key={effectiveSelectedVersion.revision}
+                      slot={{
+                        slot: slotId,
+                        slot_id: slotId,
+                        list_index: listIndex >= 0 ? listIndex : undefined,
+                        sort_order: listIndex >= 0 ? listIndex + 1 : undefined,
+                        revision: effectiveSelectedVersion.revision,
+                        selected: effectiveSelectedVersion.selected,
+                        created_at: effectiveSelectedVersion.created_at,
+                        content_type: effectiveSelectedVersion.content_type ?? 'text',
+                        artifact_value: effectiveSelectedSnapshot,
+                      }}
+                      readOnly
+                      allowExpand={false}
+                    />
+                  </div>
+                  <div className='workflow-slot__version-slide-footer'>
+                    <span>
+                      {tr('chat.slots.versionSourceLabel', {
+                        version: entryVersionLabel(effectiveSelectedVersion),
+                        source: changeSourceLabel(effectiveSelectedVersion),
+                      })}
+                      {' · '}
+                      {new Date(effectiveSelectedVersion.created_at).toLocaleString(i18n.language)}
+                    </span>
+                    <button
+                      className='workflow-slot__version-apply-btn'
+                      disabled={rolling || readOnly || effectiveSelectedVersion.selected}
+                      onClick={() => handleRollback(effectiveSelectedVersion.revision)}
+                      aria-label={tr('chat.slots.applyVersionAria', { version: entryVersionLabel(effectiveSelectedVersion) })}
+                    >
+                      {effectiveSelectedVersion.selected
+                        ? tr('chat.slots.currentVersion')
+                        : rolling
+                          ? tr('chat.slots.rollingBack')
+                          : tr('chat.slots.applyVersion', { version: entryVersionLabel(effectiveSelectedVersion) })}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className='workflow-slot__version-compare-hint'>{tr('chat.slots.selectVersionPreview')}</div>
               )}
             </div>
-
-            <div className='workflow-slot__version-strip'>
-              {versions.map((v, idx) => (
-                <button
-                  key={v.revision}
-                  className={[
-                    'workflow-slot__version-thumb',
-                    idx === previewIndex ? 'workflow-slot__version-thumb--active' : '',
-                    v.selected ? 'workflow-slot__version-thumb--current' : '',
-                  ].join(' ')}
-                  onClick={() => setPreviewIndex(idx)}
-                  aria-label={tr('chat.slots.versionAria', { version: `V${v.revision}` })}
-                >
-                  <div className='workflow-slot__version-thumb-img-wrap'>
-                    {extractText(v.content_snapshot) ? (
-                      <img
-                        className='workflow-slot__version-thumb-img'
-                        src={extractText(v.content_snapshot)}
-                        alt=''
-                      />
-                    ) : (
-                      <span className='workflow-slot__version-thumb-empty'>—</span>
-                    )}
-                    <span className='workflow-slot__version-thumb-badge'>V{v.revision}</span>
-                  </div>
-                  {v.selected && (
-                    <span className='workflow-slot__version-thumb-current-tag'>{tr('chat.slots.currentVersion')}</span>
-                  )}
-                </button>
-              ))}
-              {/* Upload new version card */}
+          </div>
+        ) : isImage ? (
+          <div className='workflow-slot__version-popover-body workflow-slot__version-popover-body--image'>
+            <div className='workflow-slot__version-image-sidebar'>
+              <ul
+                className='workflow-slot__version-list workflow-slot__version-list--image'
+                role='listbox'
+                aria-label={tr('chat.slots.versionList')}
+              >
+                {versions.map((version, index) => (
+                  <li
+                    key={version.revision}
+                    role='option'
+                    aria-selected={index === previewIndex}
+                    className={[
+                      'workflow-slot__version-item',
+                      version.selected ? 'workflow-slot__version-item--current' : '',
+                      index === previewIndex ? 'workflow-slot__version-item--focused' : '',
+                    ].join(' ')}
+                    onClick={() => setPreviewIndex(index)}
+                  >
+                    <span className='workflow-slot__version-label'>
+                      <span className={`workflow-slot__version-source-badge workflow-slot__version-source-badge--${version.change_source}`}>
+                        {changeSourceLabel(version)}
+                      </span>
+                      {entryVersionLabel(version)}
+                      {version.selected && <span className='workflow-slot__version-current-tag'>{tr('chat.slots.current')}</span>}
+                    </span>
+                    <span className='workflow-slot__version-time'>
+                      {new Date(version.created_at).toLocaleString(i18n.language)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
               <button
-                className='workflow-slot__version-thumb workflow-slot__version-thumb--upload'
+                className='workflow-slot__version-image-upload'
                 onClick={handleVersionUploadClick}
                 disabled={uploading || readOnly}
                 aria-label={tr('chat.slots.uploadAndSelect')}
                 type='button'
               >
-                <span className='workflow-slot__version-thumb-upload-icon'>+</span>
-                <span className='workflow-slot__version-thumb-upload-label'>
-                  {uploading ? tr('chat.slots.uploading') : tr('chat.slots.uploadAndSelect')}
-                </span>
+                <span aria-hidden='true'>+</span>
+                {uploading ? tr('chat.slots.uploading') : tr('chat.slots.uploadAndSelect')}
               </button>
               <input
                 ref={versionUploadRef}
@@ -1247,24 +1306,40 @@ export function SlotVersionPopover({
               />
             </div>
 
-            <div className='workflow-slot__version-footer'>
-              <div className='workflow-slot__version-footer-actions'>
-                <button className='workflow-slot__version-footer-cancel' onClick={handleClose}>{tr('common.cancel')}</button>
+            <div className='workflow-slot__version-image-stage'>
+              <div className='workflow-slot__version-image-preview'>
+                {previewedVersion && extractText(previewedVersion.content_snapshot) ? (
+                  <img
+                    key={previewedVersion.revision}
+                    className='workflow-slot__version-image-preview-img'
+                    src={extractText(previewedVersion.content_snapshot)}
+                    alt=''
+                  />
+                ) : previewedVersion ? (
+                  <span className='workflow-slot__version-preview-empty'>{tr('chat.slots.noImage')}</span>
+                ) : null}
+              </div>
+              <div className='workflow-slot__version-image-footer'>
+                <span className='workflow-slot__version-image-caption'>
+                  {previewedVersion
+                    ? `${entryVersionLabel(previewedVersion)} · ${changeSourceLabel(previewedVersion)} · ${new Date(previewedVersion.created_at).toLocaleString(i18n.language)}`
+                    : ''}
+                </span>
                 <button
-                  className='workflow-slot__version-footer-apply'
+                  className={`workflow-slot__version-image-action${isPreviewingCurrent ? ' workflow-slot__version-image-action--current' : ''}`}
                   disabled={rolling || readOnly || isPreviewingCurrent || !previewedVersion}
                   onClick={() => previewedVersion && handleRollback(previewedVersion.revision)}
+                  aria-label={previewedVersion
+                    ? tr('chat.slots.applyVersionAria', { version: entryVersionLabel(previewedVersion) })
+                    : undefined}
                 >
-                  {rolling ? tr('chat.slots.rollingBack') : tr('chat.slots.setCurrentVersion')}
+                  {rolling
+                    ? tr('chat.slots.rollingBack')
+                    : (isPreviewingCurrent ? tr('chat.slots.currentVersion') : tr('chat.slots.setCurrentVersion'))}
                 </button>
               </div>
-              {previewedVersion && !isPreviewingCurrent && (
-                <p className='workflow-slot__version-footer-hint'>
-                  {tr('chat.slots.setCurrentVersionHint')}
-                </p>
-              )}
             </div>
-          </>
+          </div>
         ) : isFile ? (
           /* ── File mode: left version list + right file preview ── */
           <div className='workflow-slot__version-popover-body'>
@@ -1514,7 +1589,7 @@ export function SlotImage({
   hideMutationActions,
 }: SlotImageProps) {
   const raw = slot.artifact_value;
-  const { displayUrl: url, pending, hasSource } = useSlotImageUrl(raw);
+  const { displayUrl: url, pending, hasSource, retry } = useSlotImageUrl(raw);
   const downloadEnabled = useContext(SlotDownloadContext);
   const alt: string = slot.caption ?? raw?.alt ?? '';
   const { deleteSlotItem, patchSlotCaption, patchSlotItemValue } = useWorkflowStore();
@@ -1612,8 +1687,16 @@ export function SlotImage({
     if (e.key === 'Escape') setCaptionEditing(false);
   }, [handleCaptionSave]);
 
-  if (!hasSource || pending || !url) {
+  if (!hasSource || pending) {
     return <SlotPending type='image' cardMode={cardMode} />;
+  }
+  if (!url) {
+    return (
+      <div className='workflow-slot workflow-slot--image' role='status'>
+        <span>图片加载失败</span>
+        <button type='button' onClick={retry}>重试加载</button>
+      </div>
+    );
   }
 
   const hasActions = Boolean(sessionId && slotId && slot.list_index !== undefined) && !readOnly;
@@ -1883,6 +1966,10 @@ function rawTextOffsetAtPoint(
 export function SlotText({ slot, widget, sessionId, slotId, revisionCount, onRefresh, readOnly }: SlotTextProps) {
   const raw = slot.artifact_value;
   const isJsonBlock = widget?.widgetType === 'json-block';
+  const resolvedTextSlotId = slotId ?? slot.slot;
+  const isPreviewNotes = resolvedTextSlotId === 'preview_notes';
+  const compact = widget?.compact === true;
+  const versionBadgeBottomLeft = widget?.versionBadgePlacement === 'bottom-left';
   const { patchSlotCaption, patchSlotItemValue } = useWorkflowStore();
   const { setEditing: notifyEditing } = useContext(SlotEditingContext);
   const editingKey = `${sessionId}:${slotId}:${slot.list_index ?? -1}`;
@@ -2352,13 +2439,18 @@ export function SlotText({ slot, widget, sessionId, slotId, revisionCount, onRef
   ) : null;
 
   return (
-    <div className={`workflow-slot workflow-slot--text${isJsonBlock ? ' workflow-slot--json-block' : ''}`}>
+    <div className={`workflow-slot workflow-slot--text${isJsonBlock ? ' workflow-slot--json-block' : ''}${
+      isPreviewNotes ? ' workflow-slot--preview-notes' : ''
+    }${
+      versionBadgeBottomLeft ? ' workflow-slot--version-bottom-left' : ''
+    }`}>
       {canEditMarkdown ? (
         <>
           <MarkdownArtifactEditor
             markdown={displayText}
             sourceRevision={localRevision}
             maxHeight={widget?.maxHeight}
+            compact={compact}
             editingKey={`${editingKey}:markdown`}
             onSave={saveMarkdown}
             onRefresh={onRefresh}
@@ -5347,8 +5439,10 @@ export function SlotRenderer({
   onReference,
   readOnly,
   hideImageMutationActions,
+  slideNavigation,
 }: {
   slot: SlotRevision;
+  slideNavigation?: SlideNavigation;
   widget?: SlotWidgetConfig;
   originalFileSlot?: SlotRevision;
   cardMode?: boolean;
@@ -5408,15 +5502,49 @@ export function SlotRenderer({
     if (isSlideSpecArtifact(slot.artifact_value)) {
       return <SlotJsonSlide slot={slot} compact={cardMode} />;
     }
-    return (
-      <SlotHtmlSlide
-        slot={slot}
-        compact={cardMode}
-        sessionId={sessionId}
+    const showVersionHistory = Boolean(
+      sessionId
+      && artifactSlotKey
+      && Number.isInteger(slot.list_index)
+      && slot.revision > 0,
+    );
+    const versionHistoryCount = Math.max(1, revisionCount ?? 0);
+    const versionHistory = showVersionHistory ? (
+      <SlotVersionPopover
+        sessionId={sessionId!}
         slotId={artifactSlotKey}
-        readOnly={effectiveReadOnly}
-        onRefresh={onRefresh}
+        listIndex={slot.list_index ?? -1}
+        revisionCount={versionHistoryCount}
+        currentRevision={slot.revision}
+        currentVersionNumber={slot.version_number}
+        currentValue={slot.artifact_value}
+        currentChangeSource={slot.change_source}
+        contentType='html-slide'
+        onRollbackDone={onRefresh}
       />
+    ) : null;
+    return (
+      <div className={`workflow-slot workflow-slot--html-slide-artifact${
+        slideNavigation?.expanded ? ' workflow-slot--html-slide-artifact-expanded' : ''
+      }`}>
+        <SlotHtmlSlide
+          navigation={slideNavigation}
+          slot={slot}
+          compact={cardMode}
+          sessionId={sessionId}
+          slotId={artifactSlotKey}
+          readOnly={effectiveReadOnly}
+          onRefresh={onRefresh}
+          expandedAccessory={slideNavigation?.expanded && versionHistory ? (
+            <div>{versionHistory}</div>
+          ) : undefined}
+        />
+        {versionHistory && !slideNavigation?.expanded && (
+          <div className='workflow-slot__version-overlay-badge workflow-slot__version-overlay-badge--slide'>
+            {versionHistory}
+          </div>
+        )}
+      </div>
     );
   }
   if (normalized === 'image') {

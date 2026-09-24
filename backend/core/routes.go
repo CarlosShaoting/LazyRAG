@@ -10,9 +10,11 @@ import (
 	"strings"
 	"time"
 
+	"lazymind/core/academic"
 	"lazymind/core/acl"
 	"lazymind/core/agent"
 	"lazymind/core/agentinvocation"
+	"lazymind/core/artifact"
 	"lazymind/core/browser"
 	"lazymind/core/chat"
 	"lazymind/core/cloudbinding"
@@ -272,7 +274,20 @@ func registerAllRoutes(r *mux.Router) {
 	handleAPI(r, "DELETE", "/datasets/{dataset}", []string{"document.write"}, doc.DeleteDataset)
 	handleAPI(r, "PATCH", "/datasets/{dataset}", []string{"document.write"}, doc.UpdateDataset)
 	handleAPI(r, "PATCH", "/datasets/{dataset}/processing-level", []string{"document.write"}, doc.UpdateProcessingLevel)
+	handleAPI(r, "POST", "/datasets/{dataset}/documents/{document}:ensure-parsed", []string{"document.read"}, doc.EnsureParsed)
 	handleAPI(r, "GET", "/datasets/{dataset}/processing-status", []string{"document.read"}, doc.GetProcessingStatus)
+
+	// ----- Academic references and paper imports -----
+	handleAPI(r, "GET", "/academic/documents/{document_id}/references", []string{"document.read"}, academic.ListReferences)
+	handleAPI(r, "POST", "/academic/documents/{document_id}/references:extract", []string{"document.write"}, academic.ExtractReferences)
+	handleAPI(r, "POST", "/academic/references:resolve", []string{"document.write"}, academic.ResolveReferences)
+	handleAPI(r, "POST", "/academic/works:presence", []string{"document.read"}, academic.CheckPresence)
+	handleAPI(r, "POST", "/academic/imports:preview", []string{"document.read"}, academic.PreviewImport)
+	handleAPI(r, "POST", "/academic/imports", []string{"document.write"}, academic.CreateImport)
+	handleAPI(r, "GET", "/academic/imports", []string{"document.read"}, academic.ListImports)
+	handleAPI(r, "GET", "/academic/imports/{batch_id}", []string{"document.read"}, academic.GetImport)
+	handleAPI(r, "POST", "/academic/imports/{batch_id}:cancel", []string{"document.write"}, academic.CancelImport)
+	handleAPI(r, "POST", "/academic/imports/{batch_id}:retry", []string{"document.write"}, academic.RetryImport)
 	handleAPI(r, "POST", "/datasets/{dataset}:setDefault", []string{"document.write"}, doc.SetDefault)
 	handleAPI(r, "POST", "/datasets/{dataset}:unsetDefault", []string{"document.write"}, doc.UnsetDefault)
 	handleAPI(r, "GET", "/data-sources/local-fs-chat-setting", []string{"document.read"}, datasource.GetLocalFSChatSetting)
@@ -407,6 +422,9 @@ func registerAllRoutes(r *mux.Router) {
 	handleAPI(r, "POST", "/mcp_servers/{id}:check", []string{"qa.write"}, mcp.Check)
 	handleAPI(r, "POST", "/mcp_servers/{id}:discover", []string{"qa.write"}, mcp.Discover)
 	handleAPI(r, "PUT", "/mcp_servers/{id}/tools", []string{"qa.write"}, mcp.UpdateTools)
+	handleAPI(r, "POST", "/mcp_servers/{id}/oauth/authorize", []string{"qa.write"}, mcp.OAuthAuthorize)
+	handleAPI(r, "POST", "/mcp_servers/{id}/oauth/callback", []string{"qa.write"}, mcp.OAuthCallback)
+	handleAPI(r, "DELETE", "/mcp_servers/{id}/oauth", []string{"qa.write"}, mcp.OAuthDisconnect)
 
 	// ----- Explicit external Agent model/tool authorization -----
 	handleAPI(r, "GET", "/external-agent-capabilities", []string{"qa.read"}, externalcapability.List)
@@ -483,6 +501,15 @@ func registerAllRoutes(r *mux.Router) {
 	// ----- SubAgent (Task Center) -----
 	handleAPI(r, "GET", "/conversations/{conversation_id}/tasks", []string{"qa.read"}, subagent.ListConversationTasks)
 	handleAPI(r, "GET", "/conversations/{conversation_id}/artifacts", []string{"qa.read"}, chat.ListConversationArtifacts)
+	handleAPI(r, "GET", "/conversations/{conversation_id}/artifact-projection", []string{"qa.read"}, chat.ListConversationArtifactProjection)
+	handleAPI(r, "GET", "/artifacts/{id}", []string{"qa.read"}, artifact.GetArtifact)
+	handleAPI(r, "GET", "/artifacts/{id}/revisions", []string{"qa.read"}, artifact.ListRevisionsHTTP)
+	handleAPI(r, "GET", "/artifact-revisions/{id}", []string{"qa.read"}, artifact.GetRevisionHTTP)
+	handleAPI(r, "POST", "/artifacts/{id}/heads/{channel}:move", []string{"qa.write"}, artifact.MoveHeadHTTP)
+	handleAPI(r, "POST", "/artifact-revisions/{id}:download-url", []string{"qa.read"}, artifact.DownloadURLHTTP)
+	handleAPI(r, "GET", "/artifact-revisions:diff", []string{"qa.read"}, artifact.DiffHTTP)
+	handleAPI(r, "GET", "/internal/artifact-audit", []string{"qa.read"}, artifact.AuditHTTP)
+	handleAPI(r, "POST", "/conversations/{conversation_id}/artifacts", []string{"qa.write"}, chat.CreateConversationArtifact)
 	handleAPI(r, "GET", "/conversations/{conversation_id}/events", []string{"qa.read"}, chat.StreamConvEvents)
 	handleAPI(r, "GET", "/tasks/{task_id}:stream", []string{"qa.read"}, subagent.StreamTask)
 	handleAPI(r, "GET", "/tasks/{task_id}/artifacts", []string{"qa.read"}, subagent.GetTaskArtifacts)
@@ -587,6 +614,10 @@ func registerAllRoutes(r *mux.Router) {
 	handleAPI(r, "GET", "/workflow-authoring/v1/drafts/{draft_id}/diagnostics", []string{"qa.read"}, workflow.GetAuthoringWorkflowDiagnostics)
 	handleAPI(r, "POST", "/workflow-authoring/v1/drafts/{draft_id}:publish", []string{"qa.write"}, workflow.PublishAuthoringWorkflow)
 	handleAPI(r, "GET", "/workflow-authoring/v1/fixture", []string{"qa.read"}, workflow.GenerateAuthoringFixture)
+	handleAPI(r, "POST", "/external-agent/workflow-tasks", []string{"qa.write"}, workflow.CreateExternalAgentWorkflowTask)
+	handleAPI(r, "GET", "/external-agent/workflow-capabilities", []string{"qa.read"}, workflow.GetExternalWorkflowCapabilities)
+	handleAPI(r, "GET", "/external-agent/workflow-tasks/{task_id}", []string{"qa.read"}, workflow.GetExternalAgentWorkflowTask)
+	handleAPI(r, "GET", "/external-agent/workflow-tasks/{task_id}/result", []string{"qa.read"}, workflow.GetExternalAgentWorkflowTaskResult)
 	handleAPI(r, "POST", "/workflow-input-resources", []string{"qa.write"}, workflowFacade.ImportInputResource)
 	handleAPI(r, "GET", "/workflow-input-resources/{resource_id}", []string{"qa.read"}, workflowFacade.ReadInputResource)
 	handleAPI(r, "POST", "/workflow-preparations", []string{"qa.write"}, workflowFacade.Prepare)
@@ -725,6 +756,12 @@ func registerAllRoutes(r *mux.Router) {
 	handleAPI(r, "GET", "/skills", []string{"qa.read"}, skillv2handler.List)
 	handleAPI(r, "GET", "/skills:trash", []string{"qa.read"}, skillv2handler.ListTrash)
 	handleAPI(r, "DELETE", "/skills:trash", []string{"qa.write"}, skillv2handler.EmptyTrash)
+	handleAPI(r, "POST", "/skill-recordings/browser", []string{"qa.write"}, skillv2handler.RecordingBrowser)
+	handleAPI(r, "GET", "/skill-recordings/setup", []string{"qa.read"}, skillv2handler.RecordingSkillSetup)
+	handleAPI(r, "POST", "/skill-recordings/setup", []string{"qa.write"}, skillv2handler.RecordingSkillSetup)
+	handleAPI(r, "GET", "/skill-recordings", []string{"qa.read"}, skillv2handler.ListSkillRecordings)
+	handleAPI(r, "POST", "/skill-recordings", []string{"qa.write"}, skillv2handler.SubmitSkillRecording)
+	handleAPI(r, "POST", "/skill-recordings/decision", []string{"qa.write"}, skillv2handler.DecideSkillRecording)
 	handleAPI(r, "POST", "/skill_organize", []string{"qa.write"}, skillv2handler.SubmitSkillOrganize)
 	handleAPI(r, "GET", "/skills/maintenance-task", []string{"qa.read"}, skillv2handler.MaintenanceTaskStatus)
 	handleAPI(r, "GET", "/skills/tags", []string{"qa.read"}, skillv2handler.ListTags)
@@ -800,10 +837,14 @@ func registerAllRoutes(r *mux.Router) {
 	handleAPI(r, "POST", "/knowledge-market:update-all", []string{"qa.write"}, knowledge_market.MarketUpdateAll)
 	handleAPI(r, "GET", "/knowledge-market/tasks", []string{"qa.read"}, knowledge_market.MarketListInstallTasks)
 	handleAPI(r, "GET", "/knowledge-market/tasks/{job_id}", []string{"qa.read"}, knowledge_market.MarketGetInstallTask)
+	handleAPI(r, "DELETE", "/knowledge-market/tasks/{job_id}", []string{"qa.write"}, knowledge_market.MarketDeleteTask)
+	handleAPI(r, "POST", "/knowledge-market/tasks/{job_id}:retry", []string{"qa.write"}, knowledge_market.MarketRetryTask)
+	handleAPI(r, "POST", "/knowledge-market/tasks/{job_id}:cancel", []string{"qa.write"}, knowledge_market.MarketCancelTask)
 	handleAPI(r, "GET", "/knowledge-market/installs", []string{"qa.read"}, knowledge_market.MarketListInstalls)
 	handleAPI(r, "GET", "/skill-review:summary", []string{"qa.read"}, resourceupdate.GetSkillReviewSummary)
 	handleAPI(r, "POST", "/skill-review:run", []string{"qa.write"}, resourceupdate.RunSkillReview)
 	handleAPI(r, "GET", "/skill-review/tasks", []string{"qa.read"}, resourceupdate.ListSkillReviewTasks)
+	handleAPI(r, "POST", "/skill-review:when-to-use-choice", []string{"qa.write"}, resourceupdate.ResolveWhenToUseConflicts)
 	handleAPI(r, "GET", "/skill-organize/tasks", []string{"qa.read"}, resourceupdate.ListSkillOrganizeTasks)
 	handleAPI(r, "PATCH", "/conversations/{name}:search-config", []string{"qa.write"}, chat.PatchConversationSearchConfig)
 	handleAPI(r, "GET", "/conversations/{name}:detail", []string{"qa.read"}, chat.GetConversationDetail)
@@ -840,6 +881,7 @@ func registerAllRoutes(r *mux.Router) {
 	handleAPI(r, "POST", "/conversation-organizer-runs/{run_id}:undo", []string{"qa.write"}, conversationgroup.UndoOrganizer)
 	handleAPI(r, "PATCH", "/conversation-organizer-runs/{run_id}/items/{conversation_id}", []string{"qa.write"}, conversationgroup.CorrectOrganizerItem)
 	handleAPI(r, "POST", "/conversations:batchStatus", []string{"qa.read"}, chat.BatchConversationStatus)
+	handleAPI(r, "POST", "/conversations/{conversation_id}:readResult", []string{"qa.read"}, chat.ReadConversationResult)
 	handleAPI(r, "GET", "/conversations", []string{"qa.read"}, chat.ListConversations)
 	handleAPI(r, "POST", "/conversations:setChatHistory", []string{"qa.write"}, chat.SetChatHistory)
 	handleAPI(r, "POST", "/conversations:feedBackChatHistory", []string{"qa.write"}, chat.FeedBackChatHistory)
@@ -997,6 +1039,9 @@ func registerAllRoutes(r *mux.Router) {
 
 	// Algorithm service callbacks: no request-level RBAC, protected by internal service token at infra level.
 	handleAPI(r, "POST", "/skill/create", nil, skillv2handler.InternalCreate)
+	handleAPI(r, "POST", "/internal/skills:search", nil, skillv2handler.InternalSearch)
+	handleAPI(r, "POST", "/internal/skills:metadata", nil, skillv2handler.InternalMetadata)
+	handleAPI(r, "POST", "/internal/skills:metadata:update", nil, skillv2handler.InternalMetadataUpdate)
 	handleAPI(r, "GET", "/remote-fs/list", nil, remotefs.List)
 	handleAPI(r, "GET", "/remote-fs/info", nil, remotefs.Info)
 	handleAPI(r, "GET", "/remote-fs/exists", nil, remotefs.Exists)

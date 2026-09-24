@@ -82,6 +82,17 @@ def _is_plain_workflow_continue(value: Any) -> bool:
         'continue', 'confirm', 'approve', 'proceed', 'yes', 'ok',
     }
 
+def _ppt_step_user_input(value: Any, workflow_id: Any) -> str:
+    """Treat approval-only continue text as control input for PPT sessions only."""
+    text = str(value or '').strip()
+    selected_workflow = str(workflow_id or '').strip()
+    if selected_workflow not in {'ppt-workflow', 'builtin:ppt-workflow'}:
+        return text
+    normalized = re.sub(r'\s+', ' ', text).rstrip('。.!！').casefold()
+    if normalized in {'继续', '继续执行', 'continue', 'continue execution'}:
+        return ''
+    return text
+
 
 def _workflow_definition(workflow_id: str, revision_id: str = '') -> Dict[str, Any]:
     try:
@@ -191,6 +202,14 @@ def _handoff_tool(
                     focus_hints.append(
                         f'User is currently focused on artifact sort order {focused_sort_order}.'
                     )
+                bound_user_input = user_input() if callable(user_input) else user_input
+                current_user_input = _ppt_step_user_input(
+                    bound_user_input
+                    or cfg.get('workflow_current_query')
+                    or cfg.get('query')
+                    or '',
+                    cfg.get('workflow_id') or cfg.get('workflow_ref'),
+                )
                 response = client.advance(AdvanceRequest(
                     session_id=selected_session_id,
                     expected_state_version=int(frontier.get('state_version') or 0),
@@ -254,6 +273,21 @@ def _artifact_by_handle(toolkit: HostWorkflowToolkit, session_id: str,
             ]},
         )
     return matches[0]
+
+
+def _compact_model_frontier(result: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep runtime routing/approval evidence without replaying the compiled package.
+
+    The graph embeds every step prompt and schema. Its live projection already
+    carries the authoritative nodes, edge conditions and target classes needed
+    by the agent; sending both causes tool spilling and extra file-reading turns.
+    """
+    compact = dict(result)
+    for key in ('projection', 'workflow_state'):
+        value = compact.get(key)
+        if isinstance(value, dict) and 'graph' in value:
+            compact[key] = {k: v for k, v in value.items() if k != 'graph'}
+    return compact
 
 
 def _compact_transition_result(result: Dict[str, Any]) -> Dict[str, Any]:
@@ -391,7 +425,7 @@ def _safe_session_tools(
     @_register_host_file(capability)
     def get_ready_steps() -> Dict[str, Any]:
         """Read exact forward, retryable, and rewindable targets for this Session."""
-        return toolkit.get_ready_steps(session_id())
+        return _compact_model_frontier(toolkit.get_ready_steps(session_id()))
 
     @_register_host_file(capability)
     def advance_step(step_ids: List[str]) -> Dict[str, Any]:
@@ -434,11 +468,12 @@ def _safe_session_tools(
                         f'User is currently focused on artifact sort order {focused_sort_order}.'
                     )
                 bound_user_input = user_input() if callable(user_input) else user_input
-                current_user_input = str(
+                current_user_input = _ppt_step_user_input(
                     bound_user_input
                     or cfg.get('workflow_current_query')
                     or cfg.get('query')
-                    or ''
+                    or '',
+                    cfg.get('workflow_id') or cfg.get('workflow_ref'),
                 ).strip()
                 details = {
                     str(item.get('step_id') or ''): item
@@ -476,7 +511,7 @@ def _safe_session_tools(
                     result = _with_handoff_agent_control(result)
                 if any(value in rewindable for value in requested):
                     result = _compact_transition_result(result)
-                return result
+                return _compact_model_frontier(result)
             except WorkflowClientError as exc:
                 if exc.code != 'STATE_VERSION_CONFLICT' or attempt > 0:
                     raise

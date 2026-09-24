@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -100,6 +101,7 @@ class StyleRenderingRecipeTest(unittest.TestCase):
 
         self.assertEqual(state['steps']['plan_background_prompts']['mode'], 'auto')
         self.assertEqual(state['steps']['build_outline']['mode'], 'auto')
+        self.assertEqual(state['steps']['choose_style']['mode'], 'human')
         self.assertEqual(state['steps']['plan_page_prompts']['mode'], 'human')
         self.assertEqual(state['steps']['generate_backgrounds']['mode'], 'human')
         self.assertEqual(state['steps']['generate_ppt']['mode'], 'human')
@@ -124,30 +126,19 @@ class StyleRenderingRecipeTest(unittest.TestCase):
         self.assertEqual(slots['background_prompts']['cardinality'], 'list')
         self.assertIn('background_prompts', workflow['runtime']['publisher_owned_slots'])
         self.assertEqual(
-            state['transitions']['collect_materials'],
-            [
-                {
-                    'to': 'plan_background_prompts',
-                    'when': (
-                        'ppt_capability_requirements is exactly '
-                        'AI_BACKGROUND_IMAGES: enabled.\n'
-                    ),
-                },
-                {
-                    'to': 'build_outline',
-                    'when': (
-                        'ppt_capability_requirements is exactly '
-                        'AI_BACKGROUND_IMAGES: disabled.\n'
-                    ),
-                },
-            ],
+            [edge['to'] for edge in state['transitions']['collect_materials']],
+            ['choose_style', 'plan_background_prompts', 'build_outline'],
+        )
+        self.assertEqual(
+            [edge['to'] for edge in state['transitions']['choose_style']],
+            ['plan_background_prompts', 'build_outline'],
         )
         self.assertEqual(state['steps']['analyze_requirements']['route'], 'choice')
         self.assertEqual(state['steps']['collect_materials']['route'], 'choice')
         self.assertNotIn('skip_if', state['steps']['collect_materials'])
         self.assertEqual(
             [edge['to'] for edge in state['transitions']['analyze_requirements']],
-            ['collect_materials', 'plan_background_prompts', 'build_outline'],
+            ['collect_materials', 'choose_style', 'plan_background_prompts', 'build_outline'],
         )
         self.assertEqual(
             state['transitions']['generate_backgrounds'],
@@ -209,9 +200,13 @@ class StyleRenderingRecipeTest(unittest.TestCase):
             'tool': 'check_ppt_workflow_capabilities',
             'arguments': {
                 'capability_requirements': 'ppt_capability_requirements',
+                'style_flow': 'style_flow',
+                'generate_background_images': 'generate_background_images',
             },
         }])
         self.assertFalse(slots['ppt_capability_requirements']['exposed'])
+        self.assertFalse(slots['style_flow']['exposed'])
+        self.assertFalse(slots['generate_background_images']['exposed'])
 
 
 class OutlineReferenceImageRepairTest(unittest.TestCase):
@@ -394,6 +389,18 @@ class PagePromptModeTest(unittest.TestCase):
             rendered = (deck / 'pages' / 'page_001.html').read_text(encoding='utf-8')
             self.assertTrue(run_stage._html_has_background_image(rendered, relative))
 
+    def test_missing_background_is_restored_without_another_model_call(self) -> None:
+        html = "<html><head></head><body><div class='wrapper'><div id='bg'></div><div id='ct'>Keep layout</div></div></body></html>"
+        with tempfile.TemporaryDirectory() as temp, patch.object(run_stage, 'llm', return_value=html) as model:
+            deck = self._deck(Path(temp))
+            relative = self._attach_background_image(deck)
+            self.assertEqual(run_stage.cmd_page_html(deck, 1), 0)
+            self.assertEqual(model.call_count, 1)
+            rendered = (deck / 'pages' / 'page_001.html').read_text()
+            self.assertTrue(run_stage._html_has_background_image(rendered, relative))
+            self.assertIn('Keep layout', rendered)
+            self.assertIn('data-lazymind-background', rendered)
+
     def test_deterministic_mode_makes_one_model_call(self) -> None:
         html = "<!DOCTYPE html><html><head><title>快速生成</title></head><body><div class='wrapper'><div id='ct'>完成</div></div></body></html>"
         calls: list[tuple[str, str]] = []
@@ -483,3 +490,352 @@ class PagePromptModeTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CombinedStyleOutlineTest(unittest.TestCase):
+    def test_single_call_persists_style_and_retries_only_invalid_outline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            deck = Path(tmp)
+            (deck / 'task_pack.json').write_text(json.dumps({'params': {'page_count': 2}}))
+            (deck / 'info_pack.json').write_text('{}')
+            style = {
+                'design_style': {'id': 1}, 'palette': {'primary': '#fff'},
+                'typography': {'heading_font': 'Arial'},
+            }
+            with patch.object(run_stage, 'llm', return_value=json.dumps({
+                'style_spec': style, 'outline': {'pages': [{'page_no': 1}]},
+            })) as model:
+                code, result = run_stage._capture_cmd(run_stage.cmd_outline, deck, generate_style=True)
+            self.assertNotEqual(code, 0)
+            self.assertEqual(model.call_count, 3)
+            self.assertNotIn('=== style_spec requirements ===', model.call_args.args[0])
+            self.assertTrue((deck / 'style_spec.json').exists())
+            self.assertFalse((deck / 'outline.json').exists())
+            saved_style = (deck / 'style_spec.json').read_bytes()
+            with patch.object(run_stage, 'llm', return_value=json.dumps({
+                'pages': [{'page_no': 1, 'title': '封面'}, {'page_no': 2, 'title': '正文'}],
+            })) as retry:
+                code, result = run_stage._capture_cmd(run_stage.cmd_outline, deck)
+            self.assertEqual(code, 0)
+            retry.assert_called_once()
+            self.assertEqual((deck / 'style_spec.json').read_bytes(), saved_style)
+            self.assertEqual(len(json.loads((deck / 'outline.json').read_text())['pages']), 2)
+
+    def test_combined_output_rejects_missing_style(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            deck = Path(tmp)
+            (deck / 'task_pack.json').write_text('{}')
+            (deck / 'info_pack.json').write_text('{}')
+            with patch.object(run_stage, 'llm', return_value='{"outline":{"pages":[]}}'):
+                code, _ = run_stage._capture_cmd(run_stage.cmd_outline, deck, generate_style=True)
+            self.assertNotEqual(code, 0)
+            self.assertFalse((deck / 'style_spec.json').exists())
+            self.assertFalse((deck / 'outline.json').exists())
+
+    def test_combined_success_keeps_image_binding_and_style_recipe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            deck = Path(tmp)
+            image = deck / 'photo.png'
+            image.write_bytes(b'image')
+            (deck / 'task_pack.json').write_text(json.dumps({'params': {'page_count': 1}}))
+            (deck / 'info_pack.json').write_text(json.dumps({
+                'user_assets': {'reference_images': [str(image)]},
+            }))
+            with patch.object(run_stage, 'llm', return_value=json.dumps({
+                'style_spec': {
+                    'design_style': {'id': 3}, 'palette': {'primary': '#008000'},
+                    'typography': {'heading_font': 'Arial'},
+                },
+                'outline': {'pages': [{'page_no': 1, 'title': '周末'}]},
+            })) as model:
+                code, result = run_stage._capture_cmd(run_stage.cmd_outline, deck, generate_style=True)
+            self.assertEqual(code, 0)
+            model.assert_called_once()
+            style = json.loads((deck / 'style_spec.json').read_text())
+            self.assertIn('art_direction', style)
+            page = json.loads((deck / 'outline.json').read_text())['pages'][0]
+            self.assertEqual(page['use_image']['reference_image_index'], 0)
+
+    def test_combined_stage_does_not_bypass_standard_style_selection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            deck = Path(tmp)
+            (deck / 'task_pack.json').write_text('{"ppt_mode":"standard"}')
+            with patch.object(run_stage, 'llm') as model:
+                code, _ = run_stage._capture_cmd(run_stage.cmd_outline, deck, generate_style=True)
+            self.assertNotEqual(code, 0)
+            model.assert_not_called()
+            self.assertFalse((deck / 'style_spec.json').exists())
+
+
+class OutputNormalizationTest(unittest.TestCase):
+    def test_json_wrapper_and_trailing_commas_preserve_literal_text(self):
+        raw = '<think>example {not json}</think>说明： {"pages":[{"title":"literal ,} and ]",},],} 完成'
+        self.assertEqual(run_stage._parse_json_loose(raw), {'pages': [{'title': 'literal ,} and ]'}]})
+        self.assertEqual(run_stage._parse_json_loose('{"title":"<think>literal</think>"}'), {'title': '<think>literal</think>'})
+
+    def test_truncated_json_is_not_fabricated(self):
+        with self.assertRaises(json.JSONDecodeError):
+            run_stage._parse_json_loose('{"pages":[{"title":"unfinished')
+
+    def test_outline_representation_is_normalized_without_mutating_input(self):
+        source = [{'title': '封面', 'page_no': 0, 'narrative': None, 'bullets': ['短句', {'head': '清单', 'detail': None}]}]
+        result = run_stage._normalize_outline_pages(source)
+        self.assertEqual(result[0]['page_no'], 1)
+        self.assertEqual(result[0]['bullets'], [{'head': '短句', 'detail': ''}, {'head': '清单', 'detail': ''}])
+        self.assertEqual(source[0]['page_no'], 0)
+        with self.assertRaises(ValueError):
+            run_stage._normalize_outline_pages([{'bullets': []}])
+
+    def test_invalid_html_is_repaired_once_and_not_published_if_still_invalid(self):
+        valid = '<html><head></head><body><div class="wrapper">内容</div></body></html>'
+        for second, expected in [(valid, 0), ('still truncated <html>', 1)]:
+            with self.subTest(second=second), tempfile.TemporaryDirectory() as tmp:
+                deck = Path(tmp)
+                with patch.object(run_stage, 'llm', side_effect=['not html', second]) as model:
+                    code, result = run_stage._capture_cmd(
+                        run_stage._write_page_html_from_query, deck, 1, '内容',
+                        page_plan={}, inherited_image=None, background_image=None,
+                        prompt_mode='deterministic', language='zh',
+                    )
+                self.assertEqual(code, expected)
+                self.assertEqual(model.call_count, 2)
+                self.assertEqual((deck / 'pages/page_001.html').exists(), expected == 0)
+
+
+class DeferredStyleTest(unittest.TestCase):
+    def test_content_outline_needs_no_style_and_preserves_image_binding(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            deck = Path(tmp)
+            image = deck / 'photo.png'
+            image.write_bytes(b'image')
+            (deck / 'task_pack.json').write_text('{"params":{"page_count":1}}')
+            (deck / 'info_pack.json').write_text(json.dumps({
+                'user_query': '米白绿色，大图少字',
+                'user_assets': {'reference_images': [str(image)]},
+            }))
+            with patch.object(run_stage, 'llm', return_value='{"pages":[{"title":"周末"}]}') as model:
+                code, _ = run_stage._capture_cmd(run_stage.cmd_outline, deck, content_only=True)
+            self.assertEqual(code, 0)
+            self.assertFalse((deck / 'style_spec.json').exists())
+            system, query = model.call_args.args
+            self.assertNotIn('=== style_spec requirements ===', system)
+            self.assertEqual(json.loads(query)['style_spec'], {})
+            self.assertIn('米白绿色', query)
+            self.assertEqual(json.loads((deck / 'outline.json').read_text())['pages'][0]['use_image'],
+                             {'reference_image_index': 0})
+
+    def test_style_failure_preserves_outline_then_retry_reuses_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            deck = Path(tmp)
+            (deck / 'task_pack.json').write_text('{"ppt_mode":"fast"}')
+            (deck / 'info_pack.json').write_text('{}')
+            outline = b'{"pages":[{"title":"Keep me"}]}'
+            (deck / 'outline.json').write_bytes(outline)
+            style = {'design_style': {'id': 3}, 'palette': {'primary': '#fff'},
+                     'typography': {'heading_font': 'Arial'}}
+            with patch.object(run_stage, 'llm', side_effect=['{}', json.dumps(style)]) as model:
+                code, _ = run_stage._capture_cmd(run_stage.cmd_ensure_style, deck)
+                self.assertNotEqual(code, 0)
+                self.assertFalse((deck / 'style_spec.json').exists())
+                code, _ = run_stage._capture_cmd(run_stage.cmd_ensure_style, deck)
+                self.assertEqual(code, 0)
+                saved = (deck / 'style_spec.json').read_bytes()
+                code, payload = run_stage._capture_cmd(run_stage.cmd_ensure_style, deck)
+                self.assertEqual(code, 0)
+                self.assertTrue(payload['reused'])
+                self.assertEqual(model.call_count, 2)
+            self.assertEqual((deck / 'style_spec.json').read_bytes(), saved)
+            self.assertEqual((deck / 'outline.json').read_bytes(), outline)
+
+    def test_standard_deck_still_requires_manual_style_selection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            deck = Path(tmp)
+            (deck / 'task_pack.json').write_text('{"ppt_mode":"standard"}')
+            with patch.object(run_stage, 'llm') as model:
+                code, _ = run_stage._capture_cmd(run_stage.cmd_ensure_style, deck)
+            self.assertNotEqual(code, 0)
+            model.assert_not_called()
+
+
+class OutlineLocalCorrectionTest(unittest.TestCase):
+    def test_count_then_field_error_corrected_in_one_call(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            deck = Path(tmp)
+            (deck / 'task_pack.json').write_text('{"params":{"page_count":2}}')
+            (deck / 'info_pack.json').write_text('{}')
+            style = b'{"existing":"unchanged"}'
+            (deck / 'style_spec.json').write_bytes(style)
+            replies = [
+                '{"pages":[{"title":"Keep"}]}',
+                '{"pages":[{"title":"Keep"},{"bullets":[]}]}',
+                '{"pages":[{"title":"Keep","page_no":9},{"title":"Added","page_no":9}]}',
+            ]
+            with patch.object(run_stage, 'llm', side_effect=replies) as model:
+                code, result = run_stage._capture_cmd(run_stage.cmd_outline, deck, content_only=True)
+            self.assertEqual(code, 0)
+            self.assertEqual(result['attempts'], 3)
+            calls = model.call_args_list
+            self.assertIn('page_count mismatch', calls[1].args[1])
+            self.assertIn('non-empty title', calls[2].args[1])
+            self.assertTrue(all(c.kwargs['retries'] == 0 for c in calls))
+            self.assertLessEqual(calls[2].kwargs['timeout'], calls[0].kwargs['timeout'])
+            self.assertEqual((deck / 'style_spec.json').read_bytes(), style)
+            self.assertEqual([p['page_no'] for p in json.loads((deck / 'outline.json').read_text())['pages']], [1, 2])
+
+    def test_invalid_outputs_stop_at_three_without_overwriting_previous_outline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            deck = Path(tmp)
+            (deck / 'task_pack.json').write_text('{}')
+            (deck / 'info_pack.json').write_text('{}')
+            (deck / 'outline.json').write_text('previous version')
+            with patch.object(run_stage, 'llm', return_value='not JSON') as model:
+                code, result = run_stage._capture_cmd(run_stage.cmd_outline, deck, content_only=True)
+            self.assertNotEqual(code, 0)
+            self.assertEqual(model.call_count, 3)
+            self.assertEqual(result['attempts'], 3)
+            self.assertEqual((deck / 'outline.json').read_text(), 'previous version')
+
+    def test_provider_rejection_is_not_retried_as_content_correction(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            deck = Path(tmp)
+            (deck / 'task_pack.json').write_text('{}')
+            (deck / 'info_pack.json').write_text('{}')
+            with patch.object(run_stage, 'llm', side_effect=run_stage.ModelClientError('provider error')) as model:
+                code, _ = run_stage._capture_cmd(run_stage.cmd_outline, deck, content_only=True)
+            self.assertNotEqual(code, 0)
+            model.assert_called_once()
+
+
+class ApprovedOutlineInputTest(unittest.TestCase):
+    def test_generate_uses_approved_content_as_authoritative_input(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            deck = Path(tmp)
+            (deck / 'task_pack.json').write_text(json.dumps({'params': {'page_count': 1}}))
+            (deck / 'info_pack.json').write_text('{}')
+            (deck / 'approved_outline.md').write_text('## 修改后的标题\n保留用户新增条目')
+            with patch.object(run_stage, 'llm', return_value=json.dumps({
+                'pages': [{'page_no': 1, 'title': '修改后的标题'}],
+            })) as model:
+                code, _ = run_stage._capture_cmd(run_stage.cmd_outline, deck, content_only=True)
+            self.assertEqual(code, 0)
+            self.assertIn('authoritative', model.call_args.args[0])
+            self.assertIn('保留用户新增条目', json.loads(model.call_args.args[1])['approved_page_briefs'])
+
+
+class TaskModelIsolationAndMetaCopyTest(unittest.TestCase):
+    @staticmethod
+    def _outline(title: str = '结构化大纲') -> dict:
+        return {
+            'pages': [{
+                'page_no': 1,
+                'page_kind': 'cover',
+                'title': title,
+                'subtitle': '可靠提交',
+                'bullets': [{'head': '目标', 'detail': '验证任务级模型隔离'}],
+                'narrative': '面向读者呈现核心结论。',
+                'data_points': [],
+                'visual_hints': '居中标题配合简洁卡片',
+                'use_table': None,
+                'use_image': None,
+            }],
+        }
+
+    @staticmethod
+    def _deck(root: Path, name: str) -> Path:
+        deck = root / name
+        deck.mkdir()
+        fixtures = {
+            'task_pack.json': {'params': {'language': 'zh-Hans', 'page_count': 1}},
+            'info_pack.json': {'user_query': '生成一页测试幻灯片', 'user_assets': {}},
+            'style_spec.json': {
+                'palette': {'primary': '#2563EB'},
+                'typography': {'font_family': 'Noto Sans SC'},
+            },
+        }
+        for filename, payload in fixtures.items():
+            (deck / filename).write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
+        return deck
+
+    def test_two_concurrent_outline_tasks_keep_their_own_model(self):
+        barrier = threading.Barrier(2)
+        errors: list[Exception] = []
+
+        def generate(deck: Path, title: str) -> None:
+            def task_llm(*_args, **kwargs):
+                self.assertEqual(kwargs['request_name'], 'outline')
+                barrier.wait(2)
+                return json.dumps(self._outline(title), ensure_ascii=False)
+
+            try:
+                self.assertEqual(run_stage.cmd_outline(deck, llm_call=task_llm), 0)
+            except Exception as exc:  # pragma: no cover - assertion aid
+                errors.append(exc)
+
+        with tempfile.TemporaryDirectory() as temp, patch.object(run_stage, '_ok', return_value=0):
+            root = Path(temp)
+            first_deck = self._deck(root, 'first')
+            second_deck = self._deck(root, 'second')
+            first = threading.Thread(target=generate, args=(first_deck, '任务 A'))
+            second = threading.Thread(target=generate, args=(second_deck, '任务 B'))
+            first.start()
+            second.start()
+            first.join(3)
+            second.join(3)
+
+            self.assertFalse(errors)
+            self.assertEqual(json.loads((first_deck / 'outline.json').read_text())['pages'][0]['title'], '任务 A')
+            self.assertEqual(json.loads((second_deck / 'outline.json').read_text())['pages'][0]['title'], '任务 B')
+
+    def test_reader_visible_fields_reject_production_meta_copy(self):
+        outline = self._outline()
+        outline['pages'][0]['narrative'] = '本页作为开场，用于商务定位，并预告后续内容。'
+        outline['pages'][0]['bullets'][0]['detail'] = '画面采用左右布局，营造专业感。'
+
+        self.assertTrue(run_stage._contains_production_meta_copy(
+            outline['pages'][0]['narrative'],
+        ))
+        self.assertEqual(
+            run_stage._production_meta_copy_paths(outline['pages'][0]),
+            ['narrative', 'bullets[0].detail'],
+        )
+
+    def test_page_query_drops_internal_slide_intent(self):
+        query = run_stage._build_deterministic_page_query({
+            'page_no': 1,
+            'page_outline': {
+                'title': '商汤科技',
+                'slide_intent': '本页用于商务开场定位',
+                'narrative': '坚持原创，让人工智能引领人类进步。',
+                'visual_hints': '左侧标题，右侧品牌主视觉',
+            },
+            'style_spec': {},
+        })
+
+        self.assertNotIn('本页用于商务开场定位', query)
+        self.assertIn('坚持原创，让人工智能引领人类进步。', query)
+        self.assertIn('visual_hints only as internal layout guidance', query)
+
+    def test_page_query_strips_legacy_meta_copy_from_all_visible_fields(self):
+        query = run_stage._build_deterministic_page_query({
+            'page_no': 1,
+            'page_outline': {
+                'title': '本页用于介绍产品定位',
+                'subtitle': '可见副标题',
+                'bullets': [
+                    {'head': '核心能力', 'detail': '画面采用三栏布局进行展示'},
+                ],
+                'data_points': [
+                    {'label': '覆盖率', 'value': '90%', 'context': '向观众说明增长趋势'},
+                ],
+                'visual_hints': '三栏布局',
+            },
+            'style_spec': {},
+        })
+
+        self.assertNotIn('本页用于介绍产品定位', query)
+        self.assertNotIn('画面采用三栏布局进行展示', query)
+        self.assertNotIn('向观众说明增长趋势', query)
+        self.assertIn('可见副标题', query)
+        self.assertIn('核心能力', query)
+        self.assertIn('90%', query)
+        self.assertIn('三栏布局', query)

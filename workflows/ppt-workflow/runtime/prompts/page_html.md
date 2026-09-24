@@ -10,6 +10,12 @@
   `body_font`：标题使用 heading_font，正文使用 body_font。不得擅自统一替换为
   `system-ui`、Arial 或同一种标准字体；可编辑 PPTX 导出器会保留这里的字体名。
 
+## 素材图片数量（硬性）
+
+每页最多使用指定的一张内容素材图片，只放置一次；不新增其他素材图，不重复图片，不做多图拼贴。
+AI 底图属于单独的背景层，不计入这一张内容素材图。没有可用素材时使用文字、CSS/SVG 或有依据的图表，
+不虚构图片 URL，也不渲染空白图片占位；用户明确要求但缺失的指定图片不得伪称已提供。
+
 ## 语言锁定（硬性）
 
 HTML 中**所有面向读者可见的文字内容**（`<title>`、标题、副标题、段落、列表、表格单元、图表 axis label / series name / legend / data label / title、按钮、脚注、alt 文本等）必须与 **user message 的语言**完全一致。user message 用中文就全中文，用英文就全英文，**不得混用**。
@@ -17,6 +23,12 @@ HTML 中**所有面向读者可见的文字内容**（`<title>`、标题、副�
 - 不得把 user message 里明明是中文的原文翻译成英文再上图，也不得把英文翻译成中文。
 - 代码层面允许保留英文：CSS 类名 / id、CSS 变量名（`--primary`、`--text-main`）、`font-family` 里的字体名、JS 变量名、`<meta charset>` / `<html lang>` 属性值这些标识符不算"文字内容"，按常规写法。
 - ECharts 的 `xAxis.data` / `series.data.name` / `yAxis.axisLabel` / `legend.data` 这些是**面向读者的图表文字**，必须随 user message 语言切。
+
+## 内容与制作指令分离（硬性）
+
+- 只有标题、副标题、`narrative` 核心结论、要点、数据、表格内容和素材配文属于面向观众的可见文案。
+- `slide_intent`、`visual_hints`、`page_kind`、版面提示、构图/布局/风格描述都只是内部生成指令：必须落实，但禁止把字段名或指令原句渲染到 HTML 可见区域。
+- 禁止把“本页/该页/这一页……”“本页作为……”“用于商务开场/用于介绍/用于说明……”“画面采用……”“布局/版式……”“预告后续……”“向听众/观众说明……”及其英文等价表达当成页面正文。旧输入若混入此类元话语，只提炼其中可直接展示的业务结论。
 
 下列规则是下游 HTML→PPTX 转换器的**机械解析契约**，与视觉美感无关 —— 违反任何一条都会导致图表或版式在最终 PPT 里消失或错位。必须全部遵守。
 
@@ -162,5 +174,8 @@ CSS 声明顺序：
 其中 `.wrapper { width: 1600px; height: 900px; position: relative; overflow: hidden; margin: 0 auto; }`、`#bg { position: absolute; inset: 0; z-index: 0; }`、`#ct { position: absolute; inset: 0; z-index: 1; padding: 48px 60px 60px; box-sizing: border-box; display: flex; flex-direction: column; overflow: hidden; }` 这三条是必写项。
 
 ## 输出要求
+
+- 严格采用已给定的页面内容和密度；用户要求少字、大图、留白时，不补写摘要、解释段落、KPI 或重复要点来填空。封面没有要点时不自行生成卡片。
+- 复用 CSS 类表达重复元素，避免逐项复制相同内联样式；省略代码注释、调试脚本和不承载视觉的冗余容器。保留全部编辑锚点与导出契约，不能以精简为由删掉这些属性。
 
 完整 HTML 文档；不加解释文字；不加 markdown fence（`­­­html ...­­­`）；不加 `<think>...</think>` 或其他思考痕迹。

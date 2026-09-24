@@ -37,6 +37,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 from concurrent.futures import as_completed
 from pathlib import Path
 
@@ -190,17 +191,73 @@ def _sanitize_page_html(raw: str) -> str:
 
 
 def _parse_json_loose(s: str) -> dict:
-    """Best-effort JSON parse — strip fences and try to find an outer {...}."""
-    s = _strip_code_fences(s)
-    try:
-        return json.loads(s)
-    except json.JSONDecodeError:
-        # try to find the first {...} block
-        start = s.find("{")
-        end = s.rfind("}")
-        if start != -1 and end > start:
-            return json.loads(s[start:end + 1])
-        raise
+    """Accept response wrappers/trailing commas without altering JSON string values."""
+    s = _strip_code_fences(re.sub(r"(?is)^\s*<think\b[^>]*>[\s\S]*?</think>\s*", "", s).strip())
+    cleaned: list[str] = []
+    quoted = escaped = False
+    for i, char in enumerate(s):
+        if quoted:
+            cleaned.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                quoted = False
+            continue
+        if char == '"':
+            quoted = True
+        if char == ',' and s[i + 1:].lstrip().startswith(('}', ']')):
+            continue
+        cleaned.append(char)
+    cleaned_text = ''.join(cleaned)
+    decoder = json.JSONDecoder()
+    # Explanatory prefixes are tolerated, but truncated/malformed JSON is not
+    # invented or completed. raw_decode ignores prose after the complete object.
+    candidates = [cleaned_text.lstrip()]
+    first = cleaned_text.find('{')
+    if first > 0:
+        candidates.append(cleaned_text[first:])
+    error = None
+    for candidate in candidates:
+        try:
+            return decoder.raw_decode(candidate)[0]
+        except json.JSONDecodeError as exc:
+            error = exc
+    raise error
+
+
+def _normalize_outline_pages(pages: list) -> list[dict]:
+    """Normalize representational differences; never invent missing slide content."""
+    normalized = []
+    for index, value in enumerate(pages, 1):
+        if not isinstance(value, dict) or not isinstance(value.get('title'), str) or not value['title'].strip():
+            raise ValueError(f'page {index} requires a non-empty title')
+        page = dict(value)
+        page['page_no'] = index
+        for key in ('subtitle', 'narrative', 'visual_hints'):
+            if page.get(key) is None:
+                page[key] = ''
+            elif not isinstance(page[key], str):
+                raise ValueError(f'page {index}: {key} must be text')
+        bullets = page.get('bullets')
+        if bullets is None:
+            bullets = []
+        if not isinstance(bullets, list):
+            raise ValueError(f'page {index}: bullets must be an array')
+        page['bullets'] = []
+        for bullet in bullets:
+            if isinstance(bullet, str):
+                page['bullets'].append({'head': bullet, 'detail': ''})
+            elif isinstance(bullet, dict) and isinstance(bullet.get('head'), str):
+                detail = bullet.get('detail') or ''
+                if not isinstance(detail, str):
+                    raise ValueError(f'page {index}: bullet detail must be text')
+                page['bullets'].append({**bullet, 'detail': detail})
+            else:
+                raise ValueError(f'page {index}: invalid bullet')
+        normalized.append(page)
+    return normalized
 
 
 def _env_float(name: str, default: float) -> float:
@@ -232,14 +289,81 @@ def _page_prompt_mode() -> str:
     return "deterministic"
 
 
+_PRODUCTION_META_COPY_PATTERNS = (
+    re.compile(r"(?:本页|该页|此页|这一页).{0,24}(?:作为|用于|旨在|介绍|说明|展示|呈现|预告|建立|定位)"),
+    re.compile(r"(?:画面|布局|版式|构图).{0,20}(?:采用|使用|设计|呈现|安排|营造)"),
+    re.compile(r"(?:预告后续|向(?:听众|观众)说明|让(?:听众|观众)(?:了解|理解|认识))"),
+    re.compile(
+        r"\b(?:this|the) slide\b.{0,40}\b(?:is|serves|aims|introduces|explains|shows|previews)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\b(?:tell|show|explain to) the audience\b", re.IGNORECASE),
+)
+
+
+def _contains_production_meta_copy(value: object) -> bool:
+    return isinstance(value, str) and any(
+        pattern.search(value) for pattern in _PRODUCTION_META_COPY_PATTERNS
+    )
+
+
+def _production_meta_copy_paths(page: dict) -> list[str]:
+    """Return reader-visible fields that accidentally contain production prose."""
+    paths: list[str] = []
+    for key in ("title", "subtitle", "narrative"):
+        if _contains_production_meta_copy(page.get(key)):
+            paths.append(key)
+    for index, bullet in enumerate(page.get("bullets") or []):
+        if not isinstance(bullet, dict):
+            continue
+        for key in ("head", "detail"):
+            if _contains_production_meta_copy(bullet.get(key)):
+                paths.append(f"bullets[{index}].{key}")
+    for index, point in enumerate(page.get("data_points") or []):
+        if not isinstance(point, dict):
+            continue
+        for key in ("label", "value", "context"):
+            if _contains_production_meta_copy(point.get(key)):
+                paths.append(f"data_points[{index}].{key}")
+    return paths
+
+
+def _strip_production_meta_copy(page: dict) -> dict:
+    """Defensively remove leaked production prose from legacy stored outlines."""
+    clean = dict(page)
+    for key in ("title", "subtitle", "narrative"):
+        if _contains_production_meta_copy(clean.get(key)):
+            clean.pop(key, None)
+    for collection, fields in (
+        ("bullets", ("head", "detail")),
+        ("data_points", ("label", "value", "context")),
+    ):
+        values = clean.get(collection)
+        if not isinstance(values, list):
+            continue
+        clean_values = []
+        for value in values:
+            if not isinstance(value, dict):
+                clean_values.append(value)
+                continue
+            item = dict(value)
+            for key in fields:
+                if _contains_production_meta_copy(item.get(key)):
+                    item.pop(key, None)
+            clean_values.append(item)
+        clean[collection] = clean_values
+    return clean
+
+
 def _build_deterministic_page_query(payload: dict) -> str:
     """Build the page generator query without another model round trip."""
-    page = payload.get("page_outline") or {}
+    page = _strip_production_meta_copy(dict(payload.get("page_outline") or {}))
+    page.pop("slide_intent", None)
     style = payload.get("style_spec") or {}
     lines = [
         f"Create slide {payload.get('page_no')} from the exact content brief below.",
         "Preserve the supplied facts, labels, values, and language. Do not invent filler items.",
-        "Use visual_hints as layout guidance, while keeping every element inside the slide canvas.",
+        "Treat narrative as audience-visible core copy. Use visual_hints only as internal layout guidance; never render visual_hints, field names, or production instructions as visible slide text.",
         "",
         "CONTENT BRIEF (JSON):",
         json.dumps(page, ensure_ascii=False, indent=2),
@@ -928,7 +1052,24 @@ def cmd_preflight(deck: Path) -> int:
     )
 
 
-def cmd_style(deck: Path, sample_id: str | None = None) -> int:
+def _valid_deck_style(style: object) -> bool:
+    return isinstance(style, dict) and all(
+        isinstance(style.get(key), dict) and bool(style[key])
+        for key in ("design_style", "palette", "typography")
+    )
+
+
+def cmd_ensure_style(deck: Path, *, llm_call=None) -> int:
+    """Reuse the deck-wide style; generate only when it is absent or invalid."""
+    try:
+        if _valid_deck_style(_load_json(deck / "style_spec.json")):
+            return _ok(path="style_spec.json", reused=True)
+    except (OSError, ValueError):
+        pass
+    return cmd_style(deck, llm_call=llm_call)
+
+
+def cmd_style(deck: Path, sample_id: str | None = None, *, llm_call=None) -> int:
     tp = _load_json(deck / "task_pack.json")
     if tp.get("ppt_mode") == "standard":
         selected = sample_id or tp.get("params", {}).get("style_sample")
@@ -946,11 +1087,13 @@ def cmd_style(deck: Path, sample_id: str | None = None) -> int:
         "info_pack_document_digest": ip.get("document_digest"),
     }, ensure_ascii=False, indent=2)
     try:
-        raw = llm(system_prompt, user_prompt, request_name='style')
+        raw = (llm_call or llm)(system_prompt, user_prompt, request_name='style')
         data = _parse_json_loose(raw)
     except (ModelClientError, json.JSONDecodeError) as e:
         return _fail(f"style: {e}")
 
+    if not _valid_deck_style(data):
+        return _fail("style: expected non-empty design_style, palette, and typography objects")
     repair_notes: list[str] = []
     dims = _load_style_dimensions()
     if dims is not None:
@@ -970,7 +1113,7 @@ def cmd_style(deck: Path, sample_id: str | None = None) -> int:
     )
 
 
-def cmd_style_samples(deck: Path) -> int:
+def cmd_style_samples(deck: Path, *, llm_call=None) -> int:
     tp = _load_json(deck / "task_pack.json")
     if tp.get("ppt_mode") != "standard":
         return _fail("style-samples is only valid when ppt_mode == 'standard'")
@@ -983,7 +1126,7 @@ def cmd_style_samples(deck: Path) -> int:
         "info_pack_document_digest": ip.get("document_digest"),
     }, ensure_ascii=False, indent=2)
     try:
-        raw = llm(system_prompt, user_prompt, request_name='style-samples')
+        raw = (llm_call or llm)(system_prompt, user_prompt, request_name='style-samples')
         data = _parse_json_loose(raw)
     except (ModelClientError, json.JSONDecodeError) as e:
         return _fail(f"style-samples: {e}")
@@ -1145,11 +1288,28 @@ def _ensure_outline_reference_images(
     return repaired
 
 
-def cmd_outline(deck: Path) -> int:
+def cmd_outline(
+    deck: Path,
+    *,
+    generate_style: bool = False,
+    content_only: bool = False,
+    llm_call=None,
+) -> int:
     tp = _load_json(deck / "task_pack.json")
+    if generate_style and tp.get("ppt_mode") == "standard":
+        return _fail("standard mode requires an explicitly selected style sample")
     ip = _load_json(deck / "info_pack.json")
-    style = _load_deck_style(deck)
+    style = {} if generate_style or content_only else _load_deck_style(deck)
     system_prompt = _load_prompt("outline.md")
+    if generate_style:
+        system_prompt = (
+            "Generate the deck style and outline together in one response. "
+            "Return exactly one JSON object with keys style_spec and outline. "
+            "The sections below describe each nested object, not separate responses. "
+            "Choose style_spec first, then use it consistently for the outline.\n"
+            "=== style_spec requirements ===\n" + _load_prompt("style_spec.md")
+            + "\n=== outline requirements ===\n" + system_prompt
+        )
     raw_docs = _excerpt_raw_docs(ip, max_chars=4000)
 
     # Surface standalone user-uploaded / collect_materials reference images as
@@ -1179,7 +1339,16 @@ def cmd_outline(deck: Path) -> int:
             "caption": caption or None,
         })
 
+    approved_path = deck / "approved_outline.md"
+    approved = approved_path.read_text(encoding="utf-8") if approved_path.exists() else None
+    if approved:
+        system_prompt += (
+            "\nThe approved page briefs are authoritative. Convert them to the internal "
+            "schema without rewriting, dropping or adding facts, titles, list items or pages. "
+            "Respect their current order and user edits over the original request."
+        )
     user_prompt = json.dumps({
+        "approved_page_briefs": approved,
         "style_spec": style,
         "task_pack_params": tp.get("params", {}),
         "info_pack_query_normalized": ip.get("query_normalized"),
@@ -1192,19 +1361,83 @@ def cmd_outline(deck: Path) -> int:
         "OUTLINE_SN_TEXT_TIMEOUT",
         _env_float("SN_TEXT_TIMEOUT", _env_float("SN_CHAT_TIMEOUT", 300.0)),
     )
-    outline_retries = _env_int("OUTLINE_SN_TEXT_RETRIES", 1)
-    try:
-        raw = llm(
-            system_prompt, user_prompt,
-            timeout=outline_timeout, retries=outline_retries, request_name="outline",
-        )
-        data = _parse_json_loose(raw)
-    except (ModelClientError, json.JSONDecodeError) as e:
-        return _fail(f"outline: {e}")
-    pages = data.get("pages", [])
+    # Three attempts TOTAL, including the initial generation. Only malformed
+    # output is corrected here; provider failures/timeouts are not retried as
+    # if they were content errors. Share one wall-clock budget across attempts.
+    deadline = time.monotonic() + outline_timeout
     expected = int(tp.get("params", {}).get("page_count", 0))
-    if expected and len(pages) != expected:
-        return _fail(f"outline page_count mismatch: got {len(pages)}, expected {expected}")
+    attempt_prompt = user_prompt
+    combined = generate_style
+    for attempt in range(1, 4):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return _fail("outline: correction time budget exhausted", attempts=attempt - 1)
+        try:
+            raw = (llm_call or llm)(
+                system_prompt, attempt_prompt,
+                timeout=remaining, retries=0, request_name="outline",
+            )
+        except ModelClientError as exc:
+            return _fail(f"outline: {exc}", attempts=attempt)
+        try:
+            data = _parse_json_loose(raw)
+            if combined:
+                if not isinstance(data, dict):
+                    raise ValueError("expected style_spec and outline objects")
+                candidate_style = data.get("style_spec")
+                if not isinstance(candidate_style, dict) or not all(
+                    isinstance(candidate_style.get(key), dict) and candidate_style[key]
+                    for key in ("design_style", "palette", "typography")
+                ):
+                    raise ValueError("invalid generated style_spec")
+                style = candidate_style
+                dims = _load_style_dimensions()
+                if dims is not None:
+                    style, notes = _repair_style_triple(style, dims)
+                    if notes:
+                        style["_repairs"] = notes
+                style = _attach_style_rendering_recipe(style)
+                _write_text(deck / "style_spec.json", json.dumps(style, ensure_ascii=False, indent=2))
+                data = data.get("outline")
+                # Once style is valid, corrections only address the outline.
+                combined = False
+                system_prompt = _load_prompt("outline.md")
+                context = json.loads(user_prompt)
+                context['style_spec'] = style
+                user_prompt = json.dumps(context, ensure_ascii=False)
+            if not isinstance(data, dict) or not isinstance(data.get("pages"), list):
+                raise ValueError("expected a pages array")
+            pages = data['pages']
+            if not pages:
+                raise ValueError("pages must not be empty")
+            if expected and len(pages) != expected:
+                raise ValueError(f"page_count mismatch: got {len(pages)}, expected {expected}")
+            leaking_fields = {
+                index + 1: _production_meta_copy_paths(page)
+                for index, page in enumerate(pages)
+                if isinstance(page, dict) and _production_meta_copy_paths(page)
+            }
+            if leaking_fields:
+                raise ValueError(
+                    "reader-visible fields must contain presentation-ready audience copy, "
+                    f"not production metadata (fields: {leaking_fields})"
+                )
+            pages = _normalize_outline_pages(pages)
+            data['pages'] = pages
+            break
+        except (json.JSONDecodeError, ValueError) as exc:
+            if attempt == 3:
+                return _fail(f"outline: {exc}", attempts=attempt)
+            attempt_prompt = json.dumps({
+                'original_request': json.loads(user_prompt),
+                'previous_output': raw,
+                'validation_error': str(exc),
+                'instruction': (
+                    'Correct only the reported errors. Preserve valid content and the existing style. '
+                    'Return the complete corrected JSON object, without commentary. '
+                    'Do not restart the workflow or generate a new deck.'
+                ),
+            }, ensure_ascii=False)
     image_bindings_repaired = _ensure_outline_reference_images(
         pages,
         available_reference_images,
@@ -1214,6 +1447,7 @@ def cmd_outline(deck: Path) -> int:
         path="outline.json",
         pages=len(pages),
         image_bindings_repaired=image_bindings_repaired,
+        attempts=attempt,
     )
 
 
@@ -1317,6 +1551,20 @@ def _html_has_foreground_image(html: str, expected_path: str) -> bool:
         if src.rsplit('/', 1)[-1].split('?', 1)[0] == expected_basename:
             return True
     return False
+
+
+def _restore_background_image(html: str, expected_path: str) -> tuple[str, bool]:
+    """Repair a known background layer without asking the model to redraw text/layout."""
+    if not expected_path or _html_has_background_image(html, expected_path):
+        return html, False
+    if not re.search(r'<[^>]+\bid\s*=\s*(["\'])bg\1', html, re.IGNORECASE):
+        return html, False
+    if not re.search(r'</head\s*>', html, re.IGNORECASE):
+        return html, False
+    src = _page_relative_asset_path(expected_path)
+    # JSON quoting escapes special characters in the filesystem path for CSS strings.
+    css = '<style data-lazymind-background>#bg{background-image:url(' + json.dumps(src) + ')!important;background-size:cover!important;background-position:center!important}</style>'
+    return re.sub(r'</head\s*>', lambda m: css + m.group(0), html, count=1, flags=re.IGNORECASE), True
 
 
 def _html_has_background_image(html: str, expected_path: str) -> bool:
@@ -1574,7 +1822,7 @@ def _resolve_background_image(deck: Path, page_no: int) -> dict | None:
     return None
 
 
-def cmd_page_html(deck: Path, page_no: int) -> int:
+def cmd_page_html(deck: Path, page_no: int, *, llm_call=None) -> int:
     """Generate one HTML slide from its structured page plan.
 
     The default fast path deterministically assembles outline, style, and asset
@@ -1673,6 +1921,9 @@ def cmd_page_html(deck: Path, page_no: int) -> int:
     # Decorative T2I slots were removed; keep outline without asset_slots noise.
     outline_for_rewrite = dict(page_outline)
     outline_for_rewrite.pop('asset_slots', None)
+    outline_for_rewrite.pop('slide_intent', None)
+    if _contains_production_meta_copy(outline_for_rewrite.get('narrative')):
+        outline_for_rewrite.pop('narrative', None)
 
     # --- Step 1: assemble the page-generator query ---
     # Default fast path is deterministic and removes one LLM call per page.
@@ -1694,7 +1945,7 @@ def cmd_page_html(deck: Path, page_no: int) -> int:
     if prompt_mode == "llm-rewrite":
         rewrite_system = _load_prompt("page_html_rewrite.md")
         try:
-            rewritten_query = llm(
+            rewritten_query = (llm_call or llm)(
                 rewrite_system,
                 json.dumps(rewrite_user_payload, ensure_ascii=False, indent=2),
                 request_name=f'page-html-rewrite:{page_no}',
@@ -1729,10 +1980,17 @@ def cmd_page_html(deck: Path, page_no: int) -> int:
         background_image=background_image,
         prompt_mode=prompt_mode,
         language=_resolve_language(tp, ip),
+        llm_call=llm_call,
     )
 
 
-def cmd_page_html_from_brief(deck: Path, page_no: int, brief: str) -> int:
+def cmd_page_html_from_brief(
+    deck: Path,
+    page_no: int,
+    brief: str,
+    *,
+    llm_call=None,
+) -> int:
     """Generate one HTML slide from a pre-authored page brief (slide_outline).
 
     Used when the outline step published per-page briefs the user may have
@@ -1776,6 +2034,7 @@ def cmd_page_html_from_brief(deck: Path, page_no: int, brief: str) -> int:
         background_image=background_image,
         prompt_mode='slide-outline-brief',
         language=_resolve_language(tp, ip),
+        llm_call=llm_call,
     )
 
 
@@ -1789,6 +2048,7 @@ def _write_page_html_from_query(
     background_image: dict | None,
     prompt_mode: str,
     language: str,
+    llm_call=None,
 ) -> int:
     """Shared HTML generation path used by deterministic / rewrite / brief modes."""
     rewritten_query = (rewritten_query or '').strip()
@@ -1813,9 +2073,10 @@ def _write_page_html_from_query(
     query_path = deck / 'pages' / f'page_{page_no:03d}.query.txt'
     _write_text(query_path, rewritten_query)
 
+    started_at = time.monotonic()
     gen_system = _load_prompt('page_html.md')
     try:
-        html = llm(
+        html = (llm_call or llm)(
             gen_system,
             rewritten_query,
             request_name=f'page-html:{page_no}',
@@ -1833,6 +2094,7 @@ def _write_page_html_from_query(
 
     required_image_path = (inherited_image or {}).get('local_path')
     required_background_path = (background_image or {}).get('local_path')
+    html, background_restored = _restore_background_image(html, required_background_path)
     missing_foreground = bool(
         required_image_path
         and not _html_has_foreground_image(html, required_image_path)
@@ -1841,8 +2103,11 @@ def _write_page_html_from_query(
         required_background_path
         and not _html_has_background_image(html, required_background_path)
     )
-    if missing_foreground or missing_background:
+    invalid_document = not bool(_HTML_DOC_RE.fullmatch(html.strip()))
+    if missing_foreground or missing_background or invalid_document:
         corrections: list[str] = []
+        if invalid_document:
+            corrections.append('Return a complete HTML document from <!doctype html> through </html>, not prose, JSON, a fragment, or truncated markup.')
         if missing_foreground:
             required_src = _page_relative_asset_path(required_image_path)
             corrections.append(
@@ -1859,12 +2124,12 @@ def _write_page_html_from_query(
             )
         repair_query = (
             f'{rewritten_query}\n\n'
-            'MANDATORY CORRECTION: Your previous HTML omitted required image placement. '
+            'MANDATORY CORRECTION: Your previous output did not satisfy the HTML/image contract. '
             'Regenerate the complete HTML document and satisfy all of these requirements: '
             + ' '.join(corrections)
         )
         try:
-            html = llm(
+            html = (llm_call or llm)(
                 gen_system,
                 repair_query,
                 request_name=f'page-html-image-repair:{page_no}',
@@ -1872,10 +2137,14 @@ def _write_page_html_from_query(
         except ModelClientError as e:
             return _fail(f'page-html image repair p{page_no}: {e}', page_no=page_no)
         html = _sanitize_page_html(html)
+        if not _HTML_DOC_RE.fullmatch(html.strip()):
+            return _fail(f'page-html p{page_no}: incomplete HTML document after one repair attempt', page_no=page_no)
         html, retry_fixed = _normalize_img_srcs(html, page_plan, extra_paths=extra_paths)
         html, retry_dropped = _strip_missing_local_imgs(html, deck)
         fixed += retry_fixed
         imgs_dropped += retry_dropped
+        html, retry_background_restored = _restore_background_image(html, required_background_path)
+        background_restored = background_restored or retry_background_restored
         if required_image_path and not _html_has_foreground_image(html, required_image_path):
             required_src = _page_relative_asset_path(required_image_path)
             return _fail(
@@ -1902,6 +2171,8 @@ def _write_page_html_from_query(
         prompt_mode=prompt_mode,
         img_srcs_fixed=fixed,
         missing_imgs_stripped=imgs_dropped,
+        background_restored=background_restored,
+        elapsed_seconds=round(time.monotonic() - started_at, 3),
     )
 
 
@@ -2010,7 +2281,13 @@ def _screenshot_page(deck: Path, page_no: int, *, viewport: str = "1600x900") ->
     return out_path
 
 
-def cmd_refine_page(deck: Path, page_no: int) -> int:
+def cmd_refine_page(
+    deck: Path,
+    page_no: int,
+    *,
+    llm_call=None,
+    vlm_call=None,
+) -> int:
     """Three-step page refinement (screenshot → VLM critique → LLM apply).
 
     Outputs (per page):
@@ -2047,7 +2324,7 @@ def cmd_refine_page(deck: Path, page_no: int) -> int:
         "</draft_html>"
     )
     try:
-        review = vlm(review_system, review_user, images=[screenshot])
+        review = (vlm_call or vlm)(review_system, review_user, images=[screenshot])
     except ModelClientError as e:
         return _fail(f"refine p{page_no} review: {e}", page_no=page_no)
     review = (review or "").strip()
@@ -2069,7 +2346,7 @@ def cmd_refine_page(deck: Path, page_no: int) -> int:
         f"{review}"
     )
     try:
-        refined = llm(
+        refined = (llm_call or llm)(
             apply_system,
             apply_user,
             request_name=f'refine-page:{page_no}',
@@ -2156,7 +2433,8 @@ def _run_concurrent(tasks: list[tuple], concurrency: int) -> list[dict]:
 
 def cmd_batch_page_html(deck: Path, concurrency: int,
                         start_page: int | None = None,
-                        end_page: int | None = None) -> int:
+                        end_page: int | None = None,
+                        *, llm_call=None) -> int:
     outline_path = deck / "outline.json"
     if not outline_path.exists():
         return _fail("outline.json missing")
@@ -2170,7 +2448,12 @@ def cmd_batch_page_html(deck: Path, concurrency: int,
             continue
         if end_page is not None and pno > end_page:
             continue
-        tasks.append((cmd_page_html, (deck, pno), {}, f"p{pno:03d}/html"))
+        tasks.append((
+            cmd_page_html,
+            (deck, pno),
+            {'llm_call': llm_call},
+            f"p{pno:03d}/html",
+        ))
     if not tasks:
         return _fail("no pages in outline matching range")
     results = _run_concurrent(tasks, concurrency)
@@ -2189,7 +2472,13 @@ def cmd_batch_page_html(deck: Path, concurrency: int,
     )
 
 
-def cmd_batch_refine_page(deck: Path, concurrency: int) -> int:
+def cmd_batch_refine_page(
+    deck: Path,
+    concurrency: int,
+    *,
+    llm_call=None,
+    vlm_call=None,
+) -> int:
     """Fan out the standalone `refine-page` workflow over every page that has
     a built HTML file. Each per-page task does its own screenshot → VLM
     critique → LLM apply, three calls in series per worker. Workers run in
@@ -2211,7 +2500,12 @@ def cmd_batch_refine_page(deck: Path, concurrency: int) -> int:
             pno = int(hp.stem.split("_")[1])
         except (IndexError, ValueError):
             continue
-        tasks.append((cmd_refine_page, (deck, pno), {}, f"p{pno:03d}/refine"))
+        tasks.append((
+            cmd_refine_page,
+            (deck, pno),
+            {'llm_call': llm_call, 'vlm_call': vlm_call},
+            f"p{pno:03d}/refine",
+        ))
     if not tasks:
         return _fail("no page_*.html files to refine")
     results = _run_concurrent(tasks, concurrency)

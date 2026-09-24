@@ -28,6 +28,7 @@ import {
   DefaultApiFactory as CoreDefaultApiFactory,
   PromptsApiFactory as CorePromptsApiFactory,
   type ConversationHistoryListResponse,
+  type CreateChatExportRequest,
   type ConversationPinResponse,
   type ConversationTrailListResponse,
   type DefaultApiApiCoreConversationsNameHistoryGetRequest,
@@ -169,9 +170,15 @@ export function TaskServiceApi() {
         options,
       );
     },
+    createConversationArtifact(conversationId: string, body: CreateChatExportRequest) {
+      return axiosInstance.post(
+        `${coreApiBaseUrl}/conversations/${encodeURIComponent(conversationId)}/artifacts`, body,
+      );
+    },
     listConversationArtifacts(conversationId: string, options?: RawAxiosRequestConfig) {
+      const encodedId = encodeURIComponent(conversationId);
       return axiosInstance.get(
-        `${coreApiBaseUrl}/conversations/${encodeURIComponent(conversationId)}/artifacts`,
+        `${coreApiBaseUrl}/conversations/${encodedId}/artifacts?projection=v2`,
         options,
       );
     },
@@ -186,6 +193,57 @@ export function TaskServiceApi() {
         `${coreApiBaseUrl}/tasks/${encodeURIComponent(taskId)}/artifacts`,
         options,
       );
+    },
+  };
+}
+
+export interface ArtifactRevisionItem {
+  artifact_id: string;
+  revision_id: string;
+  revision_no: number;
+  content_type?: string;
+  content_hash?: string;
+  size?: number;
+  caption?: string | null;
+  producer_type?: string;
+  created_at?: string;
+  published?: boolean;
+  change_summary?: string;
+  head_version?: number;
+}
+
+export function ArtifactV2Api() {
+  return {
+    listRevisions(artifactId: string, options?: RawAxiosRequestConfig) {
+      return axiosInstance.get(
+        `${coreApiBaseUrl}/artifacts/${encodeURIComponent(artifactId)}/revisions`,
+        options,
+      );
+    },
+    downloadRevisionUrl(revisionId: string, options?: RawAxiosRequestConfig) {
+      return axiosInstance.post(
+        `${coreApiBaseUrl}/artifact-revisions/${encodeURIComponent(revisionId)}:download-url`,
+        {},
+        options,
+      );
+    },
+    moveHead(
+      artifactId: string,
+      channel: string,
+      body: { revision_id: string; version?: number },
+      options?: RawAxiosRequestConfig,
+    ) {
+      return axiosInstance.post(
+        `${coreApiBaseUrl}/artifacts/${encodeURIComponent(artifactId)}/heads/${encodeURIComponent(channel)}:move`,
+        body,
+        options,
+      );
+    },
+    diffRevisions(fromId: string, toId: string, options?: RawAxiosRequestConfig) {
+      return axiosInstance.get(`${coreApiBaseUrl}/artifact-revisions:diff`, {
+        ...options,
+        params: { from: fromId, to: toId, ...(options?.params || {}) },
+      });
     },
   };
 }
@@ -307,6 +365,26 @@ export interface SaveWriterDocumentResult extends RenderWriterDocumentResult {
   draft_version: number;
 }
 
+export interface PptHtmlComputedStyle {
+  font_size?: string;
+  width?: string;
+  height?: string;
+  line_height?: string;
+  letter_spacing?: string;
+  text_align?: string;
+  font_weight?: string;
+}
+
+export interface PptHtmlSelectionTarget {
+  el: string;
+  index?: number;
+  dom_path?: number[];
+  tag?: string;
+  group?: string;
+  selected_text?: string;
+  computed_style?: PptHtmlComputedStyle;
+}
+
 export type RewriteSelection =
   | { type: 'ir'; node_id: string; selected_text?: string }
   | { type: 'markdown'; selected_text: string }
@@ -316,17 +394,13 @@ export type RewriteSelection =
     el: string;
     /** 1-based occurrence among elements carrying the same data-el. */
     index?: number;
+    dom_path?: number[];
+    tag?: string;
     group?: string;
     selected_text?: string;
-    computed_style?: {
-      font_size?: string;
-      width?: string;
-      height?: string;
-      line_height?: string;
-      letter_spacing?: string;
-      text_align?: string;
-      font_weight?: string;
-    };
+    computed_style?: PptHtmlComputedStyle;
+    targets?: PptHtmlSelectionTarget[];
+    scope?: 'item' | 'multi';
   };
 
 export interface RewriteSelectionPreviewRequest {
@@ -359,6 +433,7 @@ export interface RewriteSelectionPreview {
     index?: number;
     group?: string;
     page?: number;
+    count?: number;
   };
   preview: {
     old_text: string;
@@ -1595,6 +1670,7 @@ interface ChatExecutorsResponse {
 }
 
 export interface ConversationRuntimeSettings {
+  thinking_depth?: ThinkingDepth;
   workflow_mode?: 'dynamic' | 'auto';
   enable_subagent?: boolean;
   enable_workflow?: boolean;
@@ -1799,7 +1875,7 @@ export function ConversationSettingsApi() {
     patchConversationSettings(
       conversationId: string,
       settings: ConversationRuntimeSettings,
-      options?: RawAxiosRequestConfig,
+      options?: RawAxiosRequestConfig & { silentError?: boolean },
     ) {
       return axiosInstance.patch(
         `${coreApiBaseUrl}/conversations/${encodeURIComponent(conversationId)}/settings`,
