@@ -112,6 +112,19 @@ if (!existsSync(featuredSkillAssets)) {
   console.error(`featured Skill assets are missing: ${featuredSkillAssets}`);
   process.exit(1);
 }
+// Deferred builds must never silently retain full-size showcase assets.
+const featuredDownloadsPath = path.join(runtimeRoot, "featured-skills", "downloads.json");
+if (existsSync(featuredDownloadsPath)) {
+  const downloads = JSON.parse(readFileSync(featuredDownloadsPath, "utf8"));
+  if (downloads.schemaVersion !== 1 || !downloads.local || !downloads.bundles) {
+    throw new Error("Invalid deferred featured asset catalog");
+  }
+  for (const filename of Object.keys(walk(featuredSkillAssets, featuredSkillAssets))) {
+    if (!Object.hasOwn(downloads.local, filename.replaceAll("\\", "/"))) {
+      throw new Error(`Full-size featured asset must not be bundled: ${filename}`);
+    }
+  }
+}
 const historyInjectionArchive = path.join(runtimeRoot, "history-injection.zip");
 const historyInjectionDescriptor = path.join(runtimeRoot, "history-injection-package.json");
 let historyInjectionDownload;

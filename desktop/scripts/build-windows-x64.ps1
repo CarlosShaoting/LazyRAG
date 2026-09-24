@@ -409,6 +409,7 @@ function Finalize-Desktop([ValidateSet('zip', 'installer')][string]$PackageKind 
     Invoke-Native 'node.exe' @((Join-Path $repoRoot 'desktop\scripts\stage-pdf-font.mjs'), $runtimeRoot)
     Write-Host '==> Materializing locked Skill previews and featured catalog'
     Materialize-OfflineSkills
+    Invoke-Native (Join-Path $runtimeRoot 'deps\python\algorithm\Scripts\python.exe') @((Join-Path $repoRoot 'desktop\scripts\stage-featured-assets.py'), $runtimeRoot)
     Write-Host '==> Preparing workflow example metadata (download during warmup by default)'
     Invoke-Native 'node.exe' @(
         (Join-Path $repoRoot 'desktop\scripts\stage-history-injection-package.mjs'),

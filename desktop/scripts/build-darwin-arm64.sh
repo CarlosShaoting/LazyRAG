@@ -342,6 +342,8 @@ BUILTIN_SKILL_BUNDLE_ARGS=(
 )
 (cd "${ROOT}/backend/core" && "${GO_BIN}" "${BUILTIN_SKILL_BUNDLE_ARGS[@]}")
 
+"${RUNTIME_ROOT}/deps/python/algorithm/bin/python" "${ROOT}/desktop/scripts/stage-featured-assets.py" "${RUNTIME_ROOT}"
+
 echo "==> Preparing workflow example metadata (download during warmup by default)"
 node "${ROOT}/desktop/scripts/stage-history-injection-package.mjs" "${RUNTIME_ROOT}"
 

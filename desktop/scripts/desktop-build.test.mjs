@@ -950,7 +950,7 @@ test("deferred example manifests contain download identity and no bundled ZIP re
   for (const target of [{ platform: "windows", arch: "amd64" }, { platform: "darwin", arch: "arm64" }]) {
     const root = mkdtempSync(path.join(os.tmpdir(), "lazymind-deferred-manifest-"));
     try {
-      writeOfflineSkillFixtures(root);
+      writeSkillCatalogFixtures(root);
       rmSync(path.join(root, "history-injection.zip"));
       const config = JSON.parse(readFileSync(path.join(scriptsDir, "../history-injection-package.json"), "utf8"));
       writeFileSync(path.join(root, "history-injection-package.json"), JSON.stringify(config));
@@ -960,7 +960,7 @@ test("deferred example manifests contain download identity and no bundled ZIP re
       assert.equal(manifest.paths.historyInjectionArchive, undefined);
       assert.equal(manifest.checksums["history-injection.zip"], undefined);
       assert.ok(manifest.checksums["history-injection-package.json"]);
-      assert.equal(manifest.features.offlineBuiltinSkills, true);
+      assert.equal(manifest.features.offlineBuiltinSkills, false);
     } finally { rmSync(root, { recursive: true, force: true }); }
   }
 });

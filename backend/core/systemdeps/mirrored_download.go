@@ -182,3 +182,9 @@ func downloadMirroredAsset(ctx context.Context, client *http.Client, primary, fa
 	}
 	return nil
 }
+
+// DownloadVerifiedAsset downloads a build-pinned public resource with mirror
+// fallback and verifies its exact size and SHA-256 before returning success.
+func DownloadVerifiedAsset(ctx context.Context, primary, fallback, filename, destination string, size int64, digest string) error {
+	return downloadMirroredAsset(ctx, &http.Client{Timeout: 3 * time.Minute}, primary, fallback, filename, destination, size, digest, primaryMirrorPolicy)
+}
