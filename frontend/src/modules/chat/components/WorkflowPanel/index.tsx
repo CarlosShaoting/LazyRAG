@@ -63,6 +63,18 @@ import { WorkflowPanelTabActiveContext, SlotEditingContext, type SlotFooterActio
 import { findWriterArtifactStream } from './writerArtifactStream';
 import { resolveCompletedContinueStep, resolveWorkflowContinueAction } from './workflowContinue';
 import { resolvePendingApprovalStep } from './workflowApproval';
+import {
+  parsePersistedPanelExpanded,
+  resolveInitialPanelExpanded,
+} from './panelExpansion';
+import {
+  parsePersistedFollowMode,
+  resolveInitialFollowMode,
+  resolveWorkflowActiveTabIndex,
+  resolveWorkflowRealTabIndex,
+  shouldShowStandaloneStepStatus,
+  type WorkflowFollowMode,
+} from './workflowFollowMode';
 import { moveSelectedCompositePages, sameCompositePageOrder } from './compositePageReorder';
 import { deliveryPending, type WorkflowActionIntent, type WorkflowControlView } from '@/modules/chat/utils/workflowControl';
 import {
@@ -72,6 +84,7 @@ import {
 import './WorkflowPanel.scss';
 
 const EMPTY_TASK_CENTER_TASKS: SubAgentTask[] = [];
+const WORKFLOW_FOLLOW_MODE_STORAGE_PREFIX = 'lazymind:workflow-follow-mode:';
 
 /** Parse a JSON intent context string and return the text field, or '' if empty/invalid. */
 function parseIntentText(raw?: string): string {
@@ -1621,11 +1634,31 @@ const STATUS_KEY: Record<string, string> = {
   stopped: 'chat.workflowStatusStopped',
 };
 
-function readPersistedExpanded(conversationId: string): boolean {
+function readPersistedExpanded(conversationId: string): boolean | null {
   try {
-    return localStorage.getItem(`${WORKFLOW_PANEL_EXPANDED_STORAGE_PREFIX}${conversationId}`) === 'true';
+    return parsePersistedPanelExpanded(
+      localStorage.getItem(`${WORKFLOW_PANEL_EXPANDED_STORAGE_PREFIX}${conversationId}`),
+    );
   } catch {
-    return false;
+    return null;
+  }
+}
+
+function readPersistedFollowMode(sessionId: string): WorkflowFollowMode | null {
+  try {
+    return parsePersistedFollowMode(
+      localStorage.getItem(`${WORKFLOW_FOLLOW_MODE_STORAGE_PREFIX}${sessionId}`),
+    );
+  } catch {
+    return null;
+  }
+}
+
+function persistFollowMode(sessionId: string, mode: WorkflowFollowMode) {
+  try {
+    localStorage.setItem(`${WORKFLOW_FOLLOW_MODE_STORAGE_PREFIX}${sessionId}`, mode);
+  } catch {
+    // The selected mode remains active for this page.
   }
 }
 
@@ -1664,7 +1697,7 @@ export function WorkflowPanel({
     conversationId ? (s.autoRunningByConversation[conversationId] ?? false) : false,
   );
   const setAutoRunning = useWorkflowStore((s) => s.setAutoRunning);
-  const [activeTabIdx, setActiveTabIdx] = React.useState(0);
+  const [activeTabId, setActiveTabId] = React.useState('');
   const [localCollapsed, setCollapsed] = useState(false);
   const collapsed = externalPresentation?.collapsed ?? localCollapsed;
   const toggleCollapsed = externalPresentation?.onToggleCollapse
@@ -1679,7 +1712,16 @@ export function WorkflowPanel({
   const [ui, setUI] = useState<WorkflowUI>({});
   const [dismissing, setDismissing] = useState(false);
   const [stateGraphOpen, setStateGraphOpen] = useState(false);
-  const [expanded, setExpanded] = useState(() => readPersistedExpanded(conversationId));
+  const persistedExpandedRef = useRef(readPersistedExpanded(conversationId));
+  const hasExplicitExpandedChoiceRef = useRef(persistedExpandedRef.current !== null);
+  const defaultPanelModeAppliedRef = useRef(false);
+  const [expanded, setExpanded] = useState(() =>
+    resolveInitialPanelExpanded(persistedExpandedRef.current),
+  );
+  const [followState, setFollowState] = useState<{
+    sessionId: string;
+    mode: WorkflowFollowMode;
+  } | null>(null);
   const panelExpanded = embedded ? Boolean(externalPresentation?.expanded) : expanded;
   const initialExpandedRef = useRef(expanded);
   // Track which slots are currently being edited; dismiss stays blocked until
@@ -1730,12 +1772,15 @@ export function WorkflowPanel({
     // Follow runtime stage changes without scrolling the conversation or editor.
     if (tab.left < viewport.left) container.scrollLeft += tab.left - viewport.left;
     else if (tab.right > viewport.right) container.scrollLeft += tab.right - viewport.right;
-  }, [activeTabIdx, ui.tabs, collapsed]);
+  }, [activeTabId, ui.tabs, collapsed]);
 
-  const setExpandedMode = useCallback((nextExpanded: boolean) => {
+  const setExpandedMode = useCallback((nextExpanded: boolean, persistUserChoice = true) => {
     if (nextExpanded) setCollapsed(false);
     setExpanded(nextExpanded);
-    persistExpanded(conversationId, nextExpanded);
+    if (persistUserChoice) {
+      hasExplicitExpandedChoiceRef.current = true;
+      persistExpanded(conversationId, nextExpanded);
+    }
     window.dispatchEvent(new CustomEvent(WORKFLOW_PANEL_EXPANDED_EVENT, {
       detail: { conversationId, expanded: nextExpanded },
     }));
@@ -1842,17 +1887,57 @@ export function WorkflowPanel({
     fetchWorkflowUI(session.workflow_id).then(setUI);
   }, [session?.workflow_id, fetchWorkflowUI, i18n.language]);
 
+  useEffect(() => {
+    if (
+      defaultPanelModeAppliedRef.current
+      || hasExplicitExpandedChoiceRef.current
+      || ui.default_panel_mode === undefined
+    ) return;
+    defaultPanelModeAppliedRef.current = true;
+    setExpandedMode(resolveInitialPanelExpanded(null, ui.default_panel_mode), false);
+  }, [setExpandedMode, ui.default_panel_mode]);
+
+  useEffect(() => {
+    const sessionId = session?.session_id;
+    const defaultFollowMode = ui.follow_mode?.default;
+    if (!sessionId || !defaultFollowMode) {
+      setFollowState(null);
+      return;
+    }
+    setFollowState({
+      sessionId,
+      mode: resolveInitialFollowMode(
+        readPersistedFollowMode(sessionId),
+        defaultFollowMode,
+      ),
+    });
+  }, [session?.session_id, ui.follow_mode?.default]);
+
+  const setSessionFollowMode = useCallback((mode: WorkflowFollowMode) => {
+    const sessionId = session?.session_id;
+    if (!sessionId || !ui.follow_mode?.default) return;
+    setFollowState({ sessionId, mode });
+    persistFollowMode(sessionId, mode);
+  }, [session?.session_id, ui.follow_mode?.default]);
+
+  const followingEnabled = Boolean(ui.follow_mode?.default);
+  const followMode = followState && followState.sessionId === session?.session_id
+    ? followState.mode
+    : 'free';
+
   // Restore the previously focused tab when UI loads.
   useEffect(() => {
     const tabs = filterWorkflowTabs(
       ui.tabs ?? [],
       session?.slots ?? [],
       ui.tab_visibility_ready_material,
+      { steps: session?.steps, projection: session?.projection },
     );
-    if (!tabs.length || !persistedFocusedTab) return;
-    const idx = tabs.findIndex((t) => t.id === persistedFocusedTab);
-    if (idx !== -1) setActiveTabIdx(idx);
-  }, [ui.tabs, ui.tab_visibility_ready_material, persistedFocusedTab, session?.slots]);
+    if (!tabs.length || !persistedFocusedTab || (followingEnabled && followMode === 'following')) return;
+    if (tabs.some((tab) => tab.id === persistedFocusedTab)) {
+      setActiveTabId(persistedFocusedTab);
+    }
+  }, [followMode, followingEnabled, ui.tabs, ui.tab_visibility_ready_material, persistedFocusedTab, session?.projection, session?.slots, session?.steps]);
 
   // Until the user explicitly chooses a visible tab, follow the runtime
   // frontier. This also moves focus immediately when a skip material removes
@@ -1862,7 +1947,13 @@ export function WorkflowPanel({
       ui.tabs ?? [],
       session?.slots ?? [],
       ui.tab_visibility_ready_material,
+      { steps: session?.steps, projection: session?.projection },
     );
+    if (followingEnabled && followMode === 'following' && session && tabs.length) {
+      const runtimeIndex = resolveWorkflowRealTabIndex(session, tabs);
+      if (runtimeIndex !== -1) setActiveTabId(tabs[runtimeIndex].id);
+      return;
+    }
     const focusedTabVisible = Boolean(
       persistedFocusedTab && tabs.some((tab) => tab.id === persistedFocusedTab),
     );
@@ -1871,23 +1962,38 @@ export function WorkflowPanel({
     if (idx === -1 && (session.status === 'completed' || session.status === 'failed')) {
       idx = tabs.length - 1;
     }
-    if (idx !== -1) setActiveTabIdx(idx);
+    if (idx !== -1) setActiveTabId(tabs[idx].id);
   }, [
     ui.tabs,
     ui.tab_visibility_ready_material,
+    followMode,
+    followingEnabled,
     persistedFocusedTab,
     session?.current_step_id,
+    session?.projection,
     session?.session_id,
     session?.slots,
     session?.status,
+    session?.steps,
   ]);
 
   // Track focused tab changes.
   const handleTabChange = useCallback((idx: number, tabId: string) => {
-    setActiveTabIdx(idx);
+    if (followingEnabled && followMode === 'following' && session) {
+      const visibleTabs = filterWorkflowTabs(
+        ui.tabs ?? [], session.slots ?? [], ui.tab_visibility_ready_material,
+        { steps: session.steps, projection: session.projection },
+      );
+      const runtimeIndex = resolveWorkflowRealTabIndex(session, visibleTabs);
+      if (runtimeIndex === -1 || idx !== runtimeIndex) {
+        setSessionFollowMode('free');
+        antdMessage.info(t('chat.workflowFreeBrowseActivatedMessage'));
+      }
+    }
+    setActiveTabId(tabId);
     setFocusedTab(conversationId, tabId);
     setFocusedSortOrder(conversationId, undefined);
-  }, [conversationId, setFocusedTab, setFocusedSortOrder]);
+  }, [conversationId, followMode, followingEnabled, session, setFocusedTab, setFocusedSortOrder, setSessionFollowMode, t, ui.tab_visibility_ready_material, ui.tabs]);
 
   const handleFocusSortOrder = useCallback((sortOrder: number | undefined) => {
     setFocusedSortOrder(conversationId, sortOrder);
@@ -1909,11 +2015,11 @@ export function WorkflowPanel({
     ui.tabs ?? [],
     session.slots ?? [],
     ui.tab_visibility_ready_material,
+    { steps: session.steps, projection: session.projection },
   );
   const hasTabs = tabs.length > 0;
-  const visibleActiveTabIdx = hasTabs
-    ? Math.min(activeTabIdx, tabs.length - 1)
-    : 0;
+  const visibleActiveTabIdx = resolveWorkflowActiveTabIndex(tabs, activeTabId);
+  const runtimeTabIdx = hasTabs ? resolveWorkflowRealTabIndex(session, tabs) : -1;
   const showActions =
     session.status === 'waiting' ||
     session.status === 'active' ||
@@ -2122,6 +2228,28 @@ export function WorkflowPanel({
               moreButtonRef.current?.focus();
             }} />}
           </div>
+          {followingEnabled && (
+            <div className='workflow-panel__follow-mode' role='group' aria-label={t('chat.workflowFollowModeLabel')}>
+              <button
+                type='button'
+                className={`workflow-panel__follow-option${followMode === 'following' ? ' workflow-panel__follow-option--active' : ''}`}
+                onClick={() => {
+                  setSessionFollowMode('following');
+                  if (runtimeTabIdx !== -1) {
+                    setActiveTabId(tabs[runtimeTabIdx].id);
+                    setFocusedSortOrder(conversationId, undefined);
+                  }
+                }}
+                aria-pressed={followMode === 'following'}
+              >{t('chat.workflowFollowProgress')}</button>
+              <button
+                type='button'
+                className={`workflow-panel__follow-option${followMode === 'free' ? ' workflow-panel__follow-option--active' : ''}`}
+                onClick={() => setSessionFollowMode('free')}
+                aria-pressed={followMode === 'free'}
+              >{t('chat.workflowFreeBrowse')}</button>
+            </div>
+          )}
           <button
             type='button'
             className='workflow-panel__expand-btn'
@@ -2231,6 +2359,7 @@ export function WorkflowPanel({
                 || b.attempt - a.attempt
               ))[0];
             const stepStatus = step?.status;
+            const runtimeMarkerVisible = idx === runtimeTabIdx && idx !== visibleActiveTabIdx;
             return (
               <React.Fragment key={tab.id}>
                 {idx > 0 && (
@@ -2244,13 +2373,19 @@ export function WorkflowPanel({
                   tabIndex={idx === visibleActiveTabIdx ? 0 : -1}
                   aria-selected={idx === visibleActiveTabIdx}
                   aria-controls={`workflow-tab-panel-${tab.id}`}
-                  className={`workflow-panel__tab${idx === visibleActiveTabIdx ? ' workflow-panel__tab--active' : ''}`}
+                  className={`workflow-panel__tab${idx === visibleActiveTabIdx ? ' workflow-panel__tab--active' : ''}${idx === runtimeTabIdx ? ' workflow-panel__tab--runtime-current' : ''}`}
                   onClick={() => handleTabChange(idx, tab.id)}
                   type='button'
                 >
                   <span className='workflow-panel__tab-badge' aria-hidden='true'>{idx + 1}</span>
                   <span className='workflow-panel__tab-label'>{tab.label}</span>
-                  {stepStatus && stepStatus !== 'succeeded' && (
+                  {runtimeMarkerVisible && (
+                    <span className='workflow-panel__tab-runtime-marker'>
+                      <span className='workflow-panel__tab-runtime-dot' aria-hidden='true' />
+                      {t('chat.workflowCurrentStep')}
+                    </span>
+                  )}
+                  {shouldShowStandaloneStepStatus(stepStatus, runtimeMarkerVisible) && (
                     <span
                       className={`workflow-panel__step-status workflow-panel__step-status--${stepStatus}`}
                       aria-label={`Step status: ${stepStatus}`}

@@ -74,6 +74,18 @@ def _result_text(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, default=str)
 
 
+def _ppt_step_user_input(value: Any, workflow_id: Any) -> str:
+    """Treat approval-only continue text as control input for PPT sessions only."""
+    text = str(value or '').strip()
+    selected_workflow = str(workflow_id or '').strip()
+    if selected_workflow not in {'ppt-workflow', 'builtin:ppt-workflow'}:
+        return text
+    normalized = re.sub(r'\s+', ' ', text).rstrip('。.!！').casefold()
+    if normalized in {'继续', '继续执行', 'continue', 'continue execution'}:
+        return ''
+    return text
+
+
 def _workflow_definition(workflow_id: str, revision_id: str = '') -> Dict[str, Any]:
     try:
         return _client().get_workflow(workflow_id, revision_id).result
@@ -168,12 +180,13 @@ def _handoff_tool(
                         f'User is currently focused on artifact sort order {focused_sort_order}.'
                     )
                 bound_user_input = user_input() if callable(user_input) else user_input
-                current_user_input = str(
+                current_user_input = _ppt_step_user_input(
                     bound_user_input
                     or cfg.get('workflow_current_query')
                     or cfg.get('query')
-                    or ''
-                ).strip()
+                    or '',
+                    cfg.get('workflow_id') or cfg.get('workflow_ref'),
+                )
                 response = client.advance(AdvanceRequest(
                     session_id=selected_session_id,
                     expected_state_version=int(frontier.get('state_version') or 0),
@@ -399,12 +412,13 @@ def _safe_session_tools(
                         f'User is currently focused on artifact sort order {focused_sort_order}.'
                     )
                 bound_user_input = user_input() if callable(user_input) else user_input
-                current_user_input = str(
+                current_user_input = _ppt_step_user_input(
                     bound_user_input
                     or cfg.get('workflow_current_query')
                     or cfg.get('query')
-                    or ''
-                ).strip()
+                    or '',
+                    cfg.get('workflow_id') or cfg.get('workflow_ref'),
+                )
                 result = toolkit.advance_step(
                     selected_session_id, int(frontier.get('state_version') or 0),
                     [
