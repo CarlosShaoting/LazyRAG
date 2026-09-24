@@ -139,6 +139,7 @@ const sessionBase: WorkflowSession = {
   session_id: 'same-product-session',
   conversation_id: 'conversation-1',
   workflow_id: 'product_solution_delivery',
+  workflow_mode: 'dynamic',
   status: 'active',
   current_step_id: 'write_product_solution_document',
   created_at: '2026-09-09T00:00:00Z',

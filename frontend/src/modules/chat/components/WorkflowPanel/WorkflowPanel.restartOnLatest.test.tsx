@@ -157,6 +157,7 @@ const failedProductSession: WorkflowSession = {
   session_id: 'product-session-old',
   conversation_id: 'conversation-1',
   workflow_id: 'product_solution_delivery',
+  workflow_mode: 'dynamic',
   status: 'failed',
   current_step_id: 'write_product_solution_document',
   created_at: '2026-09-10T00:00:00Z',
