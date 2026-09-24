@@ -371,7 +371,8 @@ assert_desktop_runtime_app "${RUNTIME_ROOT}/app"
 assert_no_absolute_symlinks "${RUNTIME_ROOT}"
 node "${ROOT}/desktop/scripts/stage-pdf-font.mjs" "${RUNTIME_ROOT}"
 
-echo "==> Materializing offline Skill packages and featured catalog"
+echo "==> Materializing locked Skill previews and featured catalog"
+remove_generated_path "${RUNTIME_ROOT}/builtin-skills"
 BUILTIN_SKILL_BUNDLE_ARGS=(
   run ./cmd/builtin-skill-bundle
   --sources "${ROOT}/skills/builtin-sources.yaml"
@@ -380,10 +381,9 @@ BUILTIN_SKILL_BUNDLE_ARGS=(
   --output "${RUNTIME_ROOT}/builtin-skills"
   --featured-sources "${ROOT}/skills/featured"
   --featured-output "${RUNTIME_ROOT}/featured-skills"
+  --frozen-lockfile
+  --catalog-only
 )
-if [[ "${RELEASE_BUILD}" == "true" ]]; then
-  BUILTIN_SKILL_BUNDLE_ARGS+=(--frozen-lockfile)
-fi
 (cd "${ROOT}/backend/core" && "${GO_BIN}" "${BUILTIN_SKILL_BUNDLE_ARGS[@]}")
 
 echo "==> Preparing workflow example metadata (download during warmup by default)"

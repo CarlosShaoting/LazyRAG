@@ -1879,5 +1879,6 @@
   "2003136": { "en-US": "Too many tool configuration actions", "zh-CN": "工具配置操作数量过多" },
   "2003137": { "en-US": "Could not acknowledge tool configuration", "zh-CN": "无法确认工具配置状态" },
   "2003138": { "en-US": "Unknown tool service", "zh-CN": "未知的工具服务" },
-  "2003139": { "en-US": "Tool configuration changed; retry", "zh-CN": "工具配置已发生变化，请重试" }
+  "2003139": { "en-US": "Tool configuration changed; retry", "zh-CN": "工具配置已发生变化，请重试" },
+  "2003147": {"en-US": "The Skill package could not be downloaded or verified. Retry, or update the Skill catalog if it keeps failing.", "zh-CN": "技能包下载或校验失败，请重试；若持续失败，请更新技能目录"}
 }
