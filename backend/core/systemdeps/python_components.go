@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -32,6 +31,7 @@ type PythonComponent struct {
 	Filename        string            `json:"filename"`
 	SHA256          string            `json:"sha256"`
 	URL             string            `json:"url"`
+	FallbackURL     string            `json:"fallbackUrl,omitempty"`
 	SizeBytes       int64             `json:"sizeBytes"`
 	UnpackedBytes   int64             `json:"unpackedBytes"`
 	Packages        map[string]string `json:"packages"`
@@ -53,6 +53,7 @@ type PythonComponentStatus struct {
 	Installing       bool   `json:"installing"`
 	Filename         string `json:"filename,omitempty"`
 	URL              string `json:"url,omitempty"`
+	FallbackURL      string `json:"fallbackUrl,omitempty"`
 	SizeBytes        int64  `json:"sizeBytes,omitempty"`
 	UnpackedBytes    int64  `json:"unpackedBytes,omitempty"`
 	Message          string `json:"message,omitempty"`
@@ -133,7 +134,7 @@ func pythonComponentStatus(root string, catalog *pythonCatalog, id string) Pytho
 		return status // Source/cloud and legacy full packages.
 	}
 	entry := catalog.Components[id]
-	status.Filename, status.URL = entry.Filename, entry.URL
+	status.Filename, status.URL, status.FallbackURL = entry.Filename, entry.URL, entry.FallbackURL
 	status.SizeBytes, status.UnpackedBytes = entry.SizeBytes, entry.UnpackedBytes
 	status.InstallSupported = IsLocalRuntime() && os.Getenv("LAZYMIND_ALGORITHM_PYTHON") != ""
 	status.Installed = pythonComponentInstalled(root, entry)
@@ -148,44 +149,13 @@ func pythonComponentStatus(root string, catalog *pythonCatalog, id string) Pytho
 }
 
 func downloadPythonComponent(ctx context.Context, entry PythonComponent, address, destination string) error {
-	parsed, err := url.Parse(address)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
-		return errors.New("dependency download URL must be an HTTPS URL without embedded credentials")
+	fallback := entry.FallbackURL
+	// Internal tests can supply a local source. The public API always uses the catalog.
+	if address != entry.URL {
+		fallback = ""
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
-	if err != nil {
-		return err
-	}
-	client := &http.Client{Timeout: 30 * time.Minute, CheckRedirect: func(req *http.Request, via []*http.Request) error {
-		if req.URL.Scheme != "https" || len(via) >= 10 {
-			return errors.New("dependency download redirect must remain HTTPS and within 10 redirects")
-		}
-		return nil
-	}}
-	response, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("dependency download returned HTTP %d", response.StatusCode)
-	}
-	file, err := os.Create(destination)
-	if err != nil {
-		return err
-	}
-	written, copyErr := io.Copy(file, io.LimitReader(response.Body, entry.SizeBytes+1))
-	closeErr := file.Close()
-	if copyErr != nil {
-		return copyErr
-	}
-	if closeErr != nil {
-		return closeErr
-	}
-	if written != entry.SizeBytes {
-		return errors.New("dependency download size does not match the build catalog")
-	}
-	return verifyEditablePPTBundleChecksum(destination, entry.SHA256)
+	return downloadMirroredAsset(ctx, &http.Client{Timeout: 30 * time.Minute}, address, fallback,
+		entry.Filename, destination, entry.SizeBytes, entry.SHA256, primaryMirrorPolicy)
 }
 
 func extractPythonComponent(ctx context.Context, archive, destination string, maxBytes int64) error {

@@ -101,9 +101,9 @@ class PublishedComponentsTests(unittest.TestCase):
         catalog = json.loads((ROOT / 'desktop/python-components/darwin-arm64.json').read_text())
         entry = catalog['components']['rag']
         expected = published.lock_versions(ROOT / 'desktop/python-components/darwin-arm64-requirements.lock')
-        self.assertEqual(entry['filename'], 'lazymind-python-rag-darwin-arm64-cp311-53a1c2e770966b71.zip')
-        self.assertEqual(entry['sha256'], 'f90b5c00b43943b031d698fc939c81b24d77a738e357bb541fe74d7e768fb8d1')
-        self.assertEqual(entry['sizeBytes'], 54515729)
+        self.assertEqual(entry['filename'], 'lazymind-python-rag-darwin-arm64-cp311-00d718af0b2065c5.zip')
+        self.assertEqual(entry['sha256'], '394a6d6b370eb6342d7524ee77fc7e8552fe83d3808ce003ece8f061a27538c5')
+        self.assertEqual(entry['sizeBytes'], 65714900)
         self.assertEqual(catalog['platform'], 'darwin')
         self.assertEqual(catalog['arch'], 'arm64')
         self.assertTrue(entry['url'].endswith('/' + entry['filename']))

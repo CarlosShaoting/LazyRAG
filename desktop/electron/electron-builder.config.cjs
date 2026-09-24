@@ -195,7 +195,8 @@ async function splitPythonComponents(runtimeRoot) {
       throw new Error(`Bundled Python architecture does not match native build: ${machine.trim()}`);
     }
     if (process.env.LAZYMIND_DESKTOP_DEFER_PYTHON !== "false") {
-      const published = componentArch === "arm64";
+      const rebuild = process.env.LAZYMIND_DESKTOP_REBUILD_PYTHON_COMPONENTS === "true";
+      const published = componentArch === "arm64" && !rebuild;
       const componentArgs = [
         path.resolve(__dirname, published ? "../scripts/stage-published-python-components.py" : "../scripts/build-python-components.py"),
         stagedRuntime, "--output", path.resolve(__dirname, `../dist/python-components/darwin-${componentArch}`),
@@ -205,8 +206,17 @@ async function splitPythonComponents(runtimeRoot) {
         "--lock", path.resolve(__dirname, "../python-components/darwin-arm64-requirements.lock"),
         "--cache", path.resolve(__dirname, "../cache/published-python/darwin-arm64"),
       );
+      if (rebuild) componentArgs.push("--slim-providers");
       const { stdout } = await execFile(python, componentArgs, { maxBuffer: 4 * 1024 * 1024 });
       console.log(stdout);
+      if (rebuild) {
+        const { stdout: verification } = await execFile(python, [
+          path.resolve(__dirname, "../scripts/verify-python-components.py"),
+          "--runtime", stagedRuntime,
+          "--bundle-dir", path.resolve(__dirname, `../dist/python-components/darwin-${componentArch}`),
+        ], { maxBuffer: 4 * 1024 * 1024 });
+        console.log(verification);
+      }
     }
     const args = [path.resolve(__dirname, "../scripts/share-python-dependencies.py"), stagedRuntime];
     if (process.env.LAZYMIND_DESKTOP_SHARE_PYTHON === "true") args.push("--apply");

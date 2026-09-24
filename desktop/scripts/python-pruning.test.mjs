@@ -13,13 +13,13 @@ test("Python pruning preserves SDK dependencies, runtime helpers and Skill asset
   ], { cwd: root, stdio: "pipe" });
 });
 
-test("both desktop builds verify Ark after pruning and support an unpruned comparison", () => {
+test("both desktop builds verify Doubao HTTP after pruning and support an unpruned comparison", () => {
   for (const name of ["build-darwin-arm64.sh", "build-windows-x64.ps1"]) {
     const source = readFileSync(path.join(root, "desktop/scripts", name), "utf8");
     const rag = Math.max(source.indexOf("install rag"), source.indexOf("'install', 'rag'"));
     assert.ok(rag >= 0 && source.indexOf("prune-python-runtime.py") > rag);
     assert.match(source, /LAZYMIND_DESKTOP_PRUNE_PYTHON/);
-    assert.match(source, /--verify-ark/);
+    assert.match(source, /--verify-doubao/);
     assert.match(source, /python-size-report\.json/);
   }
 });

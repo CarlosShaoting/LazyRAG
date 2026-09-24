@@ -312,22 +312,22 @@ open desktop/dist/mac-arm64/LazyMind.app
 
 最终体积报告：`desktop/build/<目标>/final-runtime-size.json`，区分应用、解释器、各 venv、shared、外置 RAG、字体与最终压缩产物。Mac 的报告在封装后生成；Windows 在 payload 封装前统计实际展开 runtime，完成后补记 EXE/ZIP 大小。不能把展开体积直接当成安装包节省。
 
-### 新增一次性的 PDF 字体上传
+### PDF 字体资源（已发布至 Hugging Face）
 
-三个平台共用 [ModelScope 数据集](https://modelscope.cn/datasets/CarlosShaoting/lazymind-cst) `master` 根目录。上传 `desktop/dist/pdf-font/` 中的以下 **TTF 原文件**，不用压成 ZIP；同时保留/分发 `NotoSansSC-OFL.txt` 许可证。
+三个平台共用 [Hugging Face 数据集](https://huggingface.co/datasets/LazyAGI/LazyMind/tree/main) 中的 **TTF 原文件**及 `NotoSansSC-OFL.txt` 许可证。2026-09-24 已上传，下载地址固定到提交 `cc06404137e907d8ab605f166bc19d673cc6cbd5`。不要把 ZIP 上传包地址配置成字体地址，下载器不会解压 ZIP。
 
 - 文件名：`lazymind-pdf-NotoSansSC-a3041811a78c361b.ttf`。
 - 大小：17,772,300 字节（16.95 MiB）。
 - SHA-256：`a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da`。
-- 上传后的目标 URL：`https://modelscope.cn/datasets/CarlosShaoting/lazymind-cst/resolve/master/lazymind-pdf-NotoSansSC-a3041811a78c361b.ttf`。
+- 备用下载 URL：`https://huggingface.co/datasets/LazyAGI/LazyMind/resolve/cc06404137e907d8ab605f166bc19d673cc6cbd5/lazymind-pdf-NotoSansSC-a3041811a78c361b.ttf`。
 
-该文件在本轮交付时**尚未上传**，URL 是构建描述中的目标地址。构建不访问此 URL。上传前新桌面包首次中文 PDF 导出会提示字体下载失败；上传后可直接重试，无需重打应用。用户缓存位于 runtime 的 `deps/pdf-font/<sha>/`，第二次可离线复用，损坏缓存会重新下载。普通 PDF 阅读不触发下载，Web/Docker 静态字体保持原样。
+`desktop/pdf-font.json` 保留 ModelScope 为主源，以此 HF 地址为备用源，构建时会写入 runtime 的 `config/pdf-font.json`。旧安装包仍携带原 ModelScope 地址，不能仅靠这次上传自动修复；需要更新其运行时字体 catalog，或后续安装包含新 catalog 的版本。不要直接修改已签名应用包中的文件。用户缓存位于 runtime 的 `deps/pdf-font/<sha>/`，第二次可离线复用，损坏缓存会重新下载。普通 PDF 阅读不触发下载，Web/Docker 静态字体保持原样。
 
 上传后先核对真实下载字节，再在应用中验证中文可搜索 PDF、翻译导出、重启后离线导出与 Mac 签名：
 
 ```bash
 curl --fail --location --proto '=https' --proto-redir '=https' \
-  'https://modelscope.cn/datasets/CarlosShaoting/lazymind-cst/resolve/master/lazymind-pdf-NotoSansSC-a3041811a78c361b.ttf' \
+  'https://huggingface.co/datasets/LazyAGI/LazyMind/resolve/cc06404137e907d8ab605f166bc19d673cc6cbd5/lazymind-pdf-NotoSansSC-a3041811a78c361b.ttf' \
   --output /tmp/lazymind-pdf-font-cloud.ttf
 shasum -a 256 /tmp/lazymind-pdf-font-cloud.ttf
 # 应与上面的完整 SHA-256 一致
@@ -352,3 +352,14 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File desktop/scripts/build-wi
 在 Windows 上还需要实际安装 EXE 到含中文/空格路径，确认原构建路径不可用时 warmup 能完成，三个 Python 服务、登录、聊天、飞书、Skill 与 RAG 均能启动；覆盖重复启动、覆盖升级、`resume-installer` 和 `python-runtime.zip` 内容检查。本机仅做了 Windows runtime-manager 测试二进制的交叉编译，不能替代这些原生运行测试。
 
 已有 Windows `milvus-lite==3.0` 的 `WinError 183` 尚未修复，本轮没有静默改第三方源码或旧组件校验值；显式 flush/重启持久化仍需单独验收。
+
+
+### 2026-09-24 RAG 与模型依赖更新
+
+Mac ARM64 已发布含 gRPC 的 RAG 组件：`lazymind-python-rag-darwin-arm64-cp311-00d718af0b2065c5.zip`，65,714,900 字节，SHA-256 为 `394a6d6b370eb6342d7524ee77fc7e8552fe83d3808ce003ece8f061a27538c5`。主地址为 ModelScope 原数据集，备用地址为 HF 的 `LazyAGI/LazyMind/resolve/main/` 下同名文件。Windows/Intel 本轮未发布新原生组件。
+
+应用下载 RAG 和字体时优先访问 ModelScope；HTTP/网络错误或完整性失败会切换 HF。有备用源时，主源 10 秒未收到内容，或随后 15 秒窗口速度低于 64 KiB/s，也会切换。直接验证实际 HTTPS 下载，不依赖 ICMP ping。两个源共用文件名、大小和 SHA-256；失败内容不会激活，缓存通过校验后可离线复用。构建期下载组件同样支持备用源，主源 socket 超时 10 秒、15 秒速度窗口低于 64 KiB/s 时回退。
+
+新版 Mac catalog 使用 `slim-providers-v1`：按冻结 lock 安装构建依赖，再移除桌面不需要的 OpenSearch 和火山 SDK，将 gRPC 随 RAG 后置。云端 requirements 保留原依赖。该配置要求配套 LazyLLM 的 `cst/install_opt` 分支（Doubao 图片/视频改用 requests，聊天及 embedding 保持原有路径）；主仓此次不更新子模块指针，构建前需单独检出配套 LazyLLM 分支。源码不匹配会在构建校验时失败。
+
+开发新组件可设置 `LAZYMIND_DESKTOP_REBUILD_PYTHON_COMPONENTS=true`；正常构建使用已发布 catalog。不要把新 ZIP 改成旧文件名。新版本完整安装包尚未重建。
