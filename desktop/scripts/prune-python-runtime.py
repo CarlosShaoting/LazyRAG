@@ -9,6 +9,8 @@ import os
 from pathlib import Path
 import re
 import stat
+import subprocess
+import sys
 
 
 SDK_NAME = 'volcengine-python-sdk'
@@ -251,6 +253,7 @@ def main():
     parser.add_argument('--report', type=Path, required=True)
     parser.add_argument('--apply', action='store_true', help='Without this flag, only report candidate savings')
     parser.add_argument('--verify-ark', action='store_true')
+    parser.add_argument('--verify-doubao', action='store_true')
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[2]
     report = trim_runtime(args.runtime, args.apply, [repo / 'algorithm/lazymind', repo / 'backend'])
@@ -259,6 +262,11 @@ def main():
             report['ark_mock_smoke'] = 'failed'
             verify_ark()
             report['ark_mock_smoke'] = 'passed'
+        if args.verify_doubao:
+            report['doubao_http_mock_smoke'] = 'failed'
+            subprocess.run([sys.executable, '-I', '-B', str(repo / 'desktop/scripts/desktop-python-profile.py'),
+                            '--verify-source', str(repo / 'algorithm/lazyllm')], check=True, timeout=90)
+            report['doubao_http_mock_smoke'] = 'passed'
     finally:
         write_report(report, args.report)
     print(f'Bundled Python: {report["python_bytes_before"] / 2**20:.2f} -> '

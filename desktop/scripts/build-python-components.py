@@ -4,6 +4,7 @@
 import argparse
 import hashlib
 import importlib.metadata as metadata
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -101,9 +102,10 @@ def distribution_files(dist, site):
 
 
 DEFAULT_BASE_URL = 'https://modelscope.cn/datasets/CarlosShaoting/lazymind-cst/resolve/master/'
+DEFAULT_FALLBACK_BASE_URL = 'https://huggingface.co/datasets/LazyAGI/LazyMind/resolve/main/'
 
 
-def split(runtime, output, base_url=DEFAULT_BASE_URL):
+def split(runtime, output, base_url=DEFAULT_BASE_URL, slim_providers=False):
     # Windows TEMP may use an 8.3 alias (e.g. CUISHA~1); compare canonical paths
     # against the resolved runtime root rather than rejecting the same directory.
     site = Path(sysconfig.get_path('purelib')).resolve()
@@ -111,6 +113,18 @@ def split(runtime, output, base_url=DEFAULT_BASE_URL):
         raise RuntimeError('Run this script with the staged algorithm Python, not the system Python')
     if base_url and urlparse(base_url).scheme != 'https':
         raise ValueError('Component download base URL must use HTTPS')
+    bootstrap_versions = {canonicalize_name(d.metadata['Name']): d.version
+                          for d in metadata.distributions(path=[str(site)]) if d.metadata.get('Name')}
+    if slim_providers:
+        spec = importlib.util.spec_from_file_location('desktop_profile',
+                                                     Path(__file__).with_name('desktop-python-profile.py'))
+        profile = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(profile)
+        source = runtime / 'app/algorithm/lazyllm'
+        if not source.is_dir():
+            source = Path(__file__).resolve().parents[2] / 'algorithm/lazyllm'
+        profile.verify_source(source)
+        profile.remove_providers(runtime, site)
     distributions = {canonicalize_name(d.metadata['Name']): d
                      for d in metadata.distributions(path=[str(site)]) if d.metadata.get('Name')}
     requirements = Path(__file__).resolve().parents[2] / 'algorithm/requirements.txt'
@@ -118,6 +132,8 @@ def split(runtime, output, base_url=DEFAULT_BASE_URL):
                  for line in requirements.read_text().splitlines() if line.strip() and not line.lstrip().startswith('#')}
     protected -= set.union(*SEEDS.values())
     groups = dependency_groups(distributions, protected)
+    if slim_providers and 'grpcio' not in groups['rag']:
+        raise RuntimeError('gRPC is still required by the desktop base; review the dependency boundary')
     full_versions = {name: dist.version for name, dist in sorted(distributions.items())}
     identity = {'schemaVersion': 1, 'platform': sys.platform if sys.platform != 'win32' else 'windows',
                 'arch': 'amd64' if platform.machine().lower() in {'amd64', 'x86_64'} else 'arm64',
@@ -128,6 +144,8 @@ def split(runtime, output, base_url=DEFAULT_BASE_URL):
     identity['baseFingerprint'] = digest(encoded({'identity': identity, 'versions': full_versions, 'records': records}))
     output.mkdir(parents=True, exist_ok=True)
     catalog = {**identity, 'components': {}}
+    if slim_providers:
+        catalog['desktopProfile'] = 'slim-providers-v1'
     planned = {}
     owners = {}
     for name, dist in distributions.items():
@@ -154,6 +172,7 @@ def split(runtime, output, base_url=DEFAULT_BASE_URL):
             **manifest, 'filename': filename, 'sha256': digest(archive.read_bytes()),
             'sizeBytes': archive.stat().st_size, 'unpackedBytes': sum(p.stat().st_size for p in paths),
             'url': base_url.rstrip('/') + '/' + filename if base_url else '',
+            'fallbackUrl': DEFAULT_FALLBACK_BASE_URL + filename,
         }
         planned[component] = paths
     # Do not remove anything until all complete, verifiable archives exist.
@@ -172,6 +191,8 @@ def split(runtime, output, base_url=DEFAULT_BASE_URL):
     (output / 'python-components.json').write_bytes(encoded(catalog))
     (output / 'SHA256SUMS').write_text(''.join(f'{v["sha256"]}  {v["filename"]}\n'
                                               for v in catalog['components'].values()))
+    (output / 'algorithm-requirements.lock').write_text(
+        ''.join(f'{name}=={version}\n' for name, version in sorted(bootstrap_versions.items())), encoding='utf-8')
     print(json.dumps(catalog, indent=2))
     return catalog
 
@@ -180,5 +201,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('runtime', type=Path)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--slim-providers', action='store_true',
+                        help='Remove unused desktop providers and include gRPC in the newly generated RAG bundle')
     args = parser.parse_args()
-    split(args.runtime.resolve(), args.output.resolve(), os.environ.get('LAZYMIND_PYTHON_COMPONENT_BASE_URL') or DEFAULT_BASE_URL)
+    split(args.runtime.resolve(), args.output.resolve(),
+          os.environ.get('LAZYMIND_PYTHON_COMPONENT_BASE_URL') or DEFAULT_BASE_URL, args.slim_providers)

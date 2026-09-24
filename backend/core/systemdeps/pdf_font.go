@@ -6,10 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -23,6 +21,7 @@ type pdfFontDescriptor struct {
 	SizeBytes     int64  `json:"sizeBytes"`
 	SHA256        string `json:"sha256"`
 	URL           string `json:"url"`
+	FallbackURL   string `json:"fallbackUrl,omitempty"`
 }
 
 // A cancellable single-flight gate serializes download and atomic activation.
@@ -44,8 +43,7 @@ func loadPDFFontDescriptor() (pdfFontDescriptor, error) {
 	if err = json.Unmarshal(raw, &entry); err != nil {
 		return entry, err
 	}
-	address, err := url.Parse(entry.URL)
-	if err != nil || address.Scheme != "https" || address.Host == "" || address.User != nil || entry.SchemaVersion != 1 ||
+	if validateAssetMirrors(entry.URL, entry.FallbackURL, entry.Filename) != nil || entry.SchemaVersion != 1 ||
 		!pythonComponentDigest.MatchString(entry.SHA256) || entry.SizeBytes <= 0 || entry.SizeBytes > 64*1024*1024 ||
 		filepath.Base(entry.Filename) != entry.Filename || filepath.Ext(entry.Filename) != ".ttf" {
 		return entry, errors.New("invalid PDF font descriptor")
@@ -88,31 +86,11 @@ func ensurePDFFont(ctx context.Context, root string, entry pdfFontDescriptor, cl
 		return "", err
 	}
 	defer os.Remove(tmp.Name())
-	defer tmp.Close()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, entry.URL, nil)
-	if err != nil {
+	if err := tmp.Close(); err != nil {
 		return "", err
 	}
-	response, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("PDF font download returned HTTP %d", response.StatusCode)
-	}
-	h := sha256.New()
-	n, err := io.Copy(io.MultiWriter(tmp, h), io.LimitReader(response.Body, entry.SizeBytes+1))
-	if err != nil {
-		return "", err
-	}
-	if n != entry.SizeBytes || hex.EncodeToString(h.Sum(nil)) != entry.SHA256 {
-		return "", errors.New("PDF font size or SHA-256 mismatch")
-	}
-	if err = tmp.Sync(); err != nil {
-		return "", err
-	}
-	if err = tmp.Close(); err != nil {
+	if err := downloadMirroredAsset(ctx, client, entry.URL, entry.FallbackURL, entry.Filename,
+		tmp.Name(), entry.SizeBytes, entry.SHA256, primaryMirrorPolicy); err != nil {
 		return "", err
 	}
 	// Remove only a corrupt cache; Windows rename cannot replace an existing file.

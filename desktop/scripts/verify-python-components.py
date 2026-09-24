@@ -39,8 +39,11 @@ class HTTPSRedirects(HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def base_imports():
-    for name in ('spacy', 'pymilvus', 'milvus_lite'):
+def base_imports(without_grpc=False):
+    forbidden = ('spacy', 'pymilvus', 'milvus_lite')
+    if without_grpc:
+        forbidden += ('grpc', 'opensearchpy', 'opensearch_protobufs', 'volcenginesdkarkruntime')
+    for name in forbidden:
         require(importlib.util.find_spec(name) is None, f'{name} still exists in base; this is not a slim runtime')
     for name in ('dashscope', 'numpy', 'pandas', 'sklearn', 'umap', 'fitz', 'docx', 'pptx', 'openpyxl'):
         importlib.import_module(name)
@@ -49,7 +52,7 @@ def base_imports():
 
 def overlay_imports(overlay):
     site.addsitedir(str(overlay))
-    for name in ('lazyllm.tools.rag', 'spacy', 'pymilvus', 'milvus_lite', 'bm25s', 'Stemmer', 'sentencepiece', 'nltk'):
+    for name in ('grpc', 'lazyllm.tools.rag', 'spacy', 'pymilvus', 'milvus_lite', 'bm25s', 'Stemmer', 'sentencepiece', 'nltk'):
         importlib.import_module(name)
         print(f'OVERLAY_IMPORT_OK {name}', flush=True)
 
@@ -140,28 +143,56 @@ def run_child(name, arguments, logs):
         raise RuntimeError(f'{name} failed (exit {result}): {detail}; see {log_path}')
 
 
-def acquire_bundle(entry, directory, bundle_dir):
-    if bundle_dir:
-        archive = bundle_dir / entry['filename']
-    else:
-        address = entry['url']
-        parsed = urlparse(address)
-        require(parsed.scheme == 'https' and not parsed.username and not parsed.password,
-                'Catalog must contain a direct HTTPS download URL without credentials')
-        archive = directory / 'download.zip'
-        size = 0
-        with build_opener(HTTPSRedirects()).open(address, timeout=45) as response, archive.open('wb') as target:
-            while chunk := response.read(1024 * 1024):
-                size += len(chunk)
-                require(size <= entry['sizeBytes'], 'Download exceeds catalog size')
-                target.write(chunk)
+def check_archive(archive, entry):
     require(archive.stat().st_size == entry['sizeBytes'], 'ZIP size does not match catalog')
     digest = hashlib.sha256()
     with archive.open('rb') as stream:
         while chunk := stream.read(1024 * 1024):
             digest.update(chunk)
     require(digest.hexdigest() == entry['sha256'], 'ZIP SHA-256 does not match catalog')
-    return archive
+
+
+def acquire_bundle(entry, directory, bundle_dir):
+    if bundle_dir:
+        archive = bundle_dir / entry['filename']
+        check_archive(archive, entry)
+        return archive
+    addresses = [entry['url']]
+    if entry.get('fallbackUrl') and entry['fallbackUrl'] != entry['url']:
+        addresses.append(entry['fallbackUrl'])
+    for address in addresses:
+        parsed = urlparse(address)
+        require(parsed.scheme == 'https' and parsed.hostname and not parsed.username
+                and not parsed.password and not parsed.fragment,
+                'Catalog must contain a direct HTTPS download URL without credentials')
+        if len(addresses) > 1:
+            require(Path(parsed.path).name == entry['filename'], 'Mirror filename differs from catalog')
+    archive = directory / 'download.zip'
+    for index, address in enumerate(addresses):
+        primary = index == 0 and len(addresses) > 1
+        try:
+            size = 0
+            window_start = time.monotonic()
+            window_bytes = 0
+            with build_opener(HTTPSRedirects()).open(address, timeout=10 if primary else 45) as response:
+                with archive.open('wb') as target:
+                    while chunk := response.read1(64 * 1024):
+                        size += len(chunk)
+                        require(size <= entry['sizeBytes'], 'Download exceeds catalog size')
+                        target.write(chunk)
+                        elapsed = time.monotonic() - window_start
+                        if primary and elapsed >= 15:
+                            require((size - window_bytes) / elapsed >= 64 * 1024,
+                                    'Primary download is slower than 64 KiB/s')
+                            window_start = time.monotonic()
+                            window_bytes = size
+            check_archive(archive, entry)
+            return archive
+        except (OSError, RuntimeError, ValueError) as exc:
+            archive.unlink(missing_ok=True)
+            if index == len(addresses) - 1:
+                raise
+            print(f'Primary component source failed; using fallback: {exc}', flush=True)
 
 
 def extract_bundle(archive, directory, entry):
@@ -195,10 +226,15 @@ def main():
     parser.add_argument('--data', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--logs', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--port', type=int, help=argparse.SUPPRESS)
+    parser.add_argument('--without-grpc', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.worker:
+        if args.runtime:
+            source = args.runtime / 'app/algorithm/lazyllm'
+            if (source / 'lazyllm').is_dir():
+                sys.path.insert(0, str(source))
         if args.worker == 'base':
-            base_imports()
+            base_imports(args.without_grpc)
         elif args.worker == 'overlay':
             overlay_imports(args.overlay)
         elif args.worker == 'milvus':
@@ -243,12 +279,16 @@ def main():
                           source=str(args.bundle_dir) if args.bundle_dir else entry['url'])
             return entry
         entry = check('runtime compatibility', preflight)
-        check('slim base imports', lambda: run_child('base', [], logs))
+        base_args = ['--runtime', str(args.runtime.resolve())]
+        if 'grpcio' in entry['packages']:
+            base_args.append('--without-grpc')
+        check('slim base imports', lambda: run_child('base', base_args, logs))
         with tempfile.TemporaryDirectory(prefix='lazymind-component-check-') as temporary:
             root = Path(temporary)
             archive = check('bundle download/local file + SHA256', lambda: acquire_bundle(entry, root, args.bundle_dir))
             overlay = check('bundle extraction + manifest', lambda: extract_bundle(archive, root / 'payload', entry))
-            check('RAG overlay imports', lambda: run_child('overlay', ['--overlay', str(overlay)], logs))
+            check('RAG overlay imports', lambda: run_child(
+                'overlay', ['--overlay', str(overlay), '--runtime', str(args.runtime.resolve())], logs))
             check('Milvus insert + flush + restart + search + drop', lambda: run_child(
                 'milvus', ['--overlay', str(overlay), '--data', str(root / 'milvus'), '--logs', str(logs)], logs))
         report['passed'] = True

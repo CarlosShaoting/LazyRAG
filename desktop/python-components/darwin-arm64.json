@@ -1,11 +1,12 @@
 {
   "arch": "arm64",
-  "baseFingerprint": "9e9f17cbea297a15b75a92decdd07663c6c8671d832bff8499c5f762002e633b",
+  "baseFingerprint": "772bd8a61a0a297c2b4f69d036893b806f69efa5c62a9e02d7a98bfd9e655fe0",
   "components": {
     "rag": {
       "arch": "arm64",
-      "baseFingerprint": "9e9f17cbea297a15b75a92decdd07663c6c8671d832bff8499c5f762002e633b",
-      "filename": "lazymind-python-rag-darwin-arm64-cp311-53a1c2e770966b71.zip",
+      "baseFingerprint": "772bd8a61a0a297c2b4f69d036893b806f69efa5c62a9e02d7a98bfd9e655fe0",
+      "fallbackUrl": "https://huggingface.co/datasets/LazyAGI/LazyMind/resolve/main/lazymind-python-rag-darwin-arm64-cp311-00d718af0b2065c5.zip",
+      "filename": "lazymind-python-rag-darwin-arm64-cp311-00d718af0b2065c5.zip",
       "id": "rag",
       "packages": {
         "blis": "0.7.11",
@@ -16,6 +17,7 @@
         "confection": "0.1.5",
         "cymem": "2.0.13",
         "faiss-cpu": "1.15.1",
+        "grpcio": "1.84.0",
         "langcodes": "3.5.1",
         "milvus-lite": "3.0",
         "murmurhash": "1.0.15",
@@ -39,14 +41,15 @@
       },
       "platform": "darwin",
       "pythonAbi": "cp311",
-      "revision": "53a1c2e770966b71ef97962322b143423b8f5835030373e82ce184317315aae1",
+      "revision": "00d718af0b2065c565ea74645b38d4604bef42edd3ef7f5c1b8373a6ca2e7d45",
       "schemaVersion": 1,
-      "sha256": "f90b5c00b43943b031d698fc939c81b24d77a738e357bb541fe74d7e768fb8d1",
-      "sizeBytes": 54515729,
-      "unpackedBytes": 191951224,
-      "url": "https://modelscope.cn/datasets/CarlosShaoting/lazymind-cst/resolve/master/lazymind-python-rag-darwin-arm64-cp311-53a1c2e770966b71.zip"
+      "sha256": "394a6d6b370eb6342d7524ee77fc7e8552fe83d3808ce003ece8f061a27538c5",
+      "sizeBytes": 65714900,
+      "unpackedBytes": 227804171,
+      "url": "https://modelscope.cn/datasets/CarlosShaoting/lazymind-cst/resolve/master/lazymind-python-rag-darwin-arm64-cp311-00d718af0b2065c5.zip"
     }
   },
+  "desktopProfile": "slim-providers-v1",
   "platform": "darwin",
   "pythonAbi": "cp311",
   "schemaVersion": 1

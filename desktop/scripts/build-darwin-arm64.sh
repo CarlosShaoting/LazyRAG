@@ -260,7 +260,7 @@ else
 fi
 make_internal_symlinks_relative "${RUNTIME_ROOT}"
 echo "==> Auditing and pruning bundled Python runtime"
-python_prune_args=("${RUNTIME_ROOT}" --report "${BUILD_ROOT}/python-size-report.json" --verify-ark)
+python_prune_args=("${RUNTIME_ROOT}" --report "${BUILD_ROOT}/python-size-report.json" --verify-doubao)
 if [[ "${LAZYMIND_DESKTOP_PRUNE_PYTHON:-true}" == "true" ]]; then
   python_prune_args+=(--apply)
 fi

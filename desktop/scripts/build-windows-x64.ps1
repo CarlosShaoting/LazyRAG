@@ -372,6 +372,15 @@ function New-DeferredPythonRuntimeStage {
 
 function Assert-PublishedPythonCatalog {
     if ($env:LAZYMIND_DESKTOP_DEFER_PYTHON -eq 'false') { return }
+    if ($env:LAZYMIND_DESKTOP_REBUILD_PYTHON_COMPONENTS -eq 'true') {
+        $profile = Join-Path $runtimeRoot 'config\desktop-python-profile.json'
+        if (-not (Test-Path -LiteralPath $profile)) { throw 'Slim Python profile missing; run a clean component rebuild.' }
+        Invoke-Native (Join-Path $runtimeRoot 'deps\python\algorithm\Scripts\python.exe') @(
+            (Join-Path $repoRoot 'desktop\scripts\verify-python-components.py'),
+            '--runtime', $runtimeRoot, '--bundle-dir', (Join-Path $repoRoot 'desktop\dist\python-components\windows-amd64')
+        )
+        return
+    }
     $expected = (Get-Content -LiteralPath (Join-Path $repoRoot 'desktop\python-components\windows-amd64.json') -Raw | ConvertFrom-Json).components.rag
     $catalogPath = Join-Path $runtimeRoot 'config\python-components.json'
     if (-not (Test-Path -LiteralPath $catalogPath)) { throw 'Published RAG catalog missing; run a clean Windows build before resuming packaging.' }
@@ -562,15 +571,23 @@ function Build-Desktop([ValidateSet('zip', 'installer')][string]$PackageKind = '
         (Join-Path $repoRoot 'desktop\scripts\prune-python-runtime.py'),
         $runtimeRoot,
         '--report', (Join-Path $targetRoot 'python-size-report.json'),
-        '--verify-ark'
+        '--verify-doubao'
     )
     if ($env:LAZYMIND_DESKTOP_PRUNE_PYTHON -ne 'false') { $pythonPruneArgs += '--apply' }
     Invoke-Native $algorithmPython $pythonPruneArgs
     if ($env:LAZYMIND_DESKTOP_DEFER_PYTHON -ne 'false') {
-        Invoke-Native $algorithmPython @(
-            (Join-Path $repoRoot 'desktop\scripts\stage-published-python-components.py'),
-            $runtimeRoot, '--output', (Join-Path $repoRoot 'desktop\dist\python-components\windows-amd64')
-        )
+        if ($env:LAZYMIND_DESKTOP_REBUILD_PYTHON_COMPONENTS -eq 'true') {
+            Invoke-Native $algorithmPython @(
+                (Join-Path $repoRoot 'desktop\scripts\build-python-components.py'),
+                $runtimeRoot, '--output', (Join-Path $repoRoot 'desktop\dist\python-components\windows-amd64'),
+                '--slim-providers'
+            )
+        } else {
+            Invoke-Native $algorithmPython @(
+                (Join-Path $repoRoot 'desktop\scripts\stage-published-python-components.py'),
+                $runtimeRoot, '--output', (Join-Path $repoRoot 'desktop\dist\python-components\windows-amd64')
+            )
+        }
     }
     Finalize-Desktop $PackageKind
 }

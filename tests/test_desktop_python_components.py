@@ -21,6 +21,21 @@ class Distribution:
 
 
 class DependencyGroupsTests(unittest.TestCase):
+    def test_grpc_moves_to_rag_only_after_opensearch_is_removed(self):
+        deps = {name: Distribution(name) for name in set.union(*components.SEEDS.values())}
+        deps['pymilvus'].requires = ['grpcio>=1.66']
+        deps['milvus-lite'].requires = ['grpcio>=1.50']
+        deps['grpcio'] = Distribution('grpcio', ['typing-extensions'])
+        deps['typing-extensions'] = Distribution('typing-extensions')
+        deps['core'] = Distribution('core', ['typing-extensions'])
+        deps['opensearch-py'] = Distribution('opensearch-py', ['opensearch-protobufs'])
+        deps['opensearch-protobufs'] = Distribution('opensearch-protobufs', ['grpcio'])
+        self.assertNotIn('grpcio', components.dependency_groups(deps, set())['rag'])
+        del deps['opensearch-py'], deps['opensearch-protobufs']
+        group = components.dependency_groups(deps, set())['rag']
+        self.assertIn('grpcio', group)
+        self.assertNotIn('typing-extensions', group)
+
     def test_transitive_shared_and_protected_dependencies_stay_in_core(self):
         deps = {name: Distribution(name) for name in set.union(*components.SEEDS.values())}
         deps.update({name: Distribution(name) for name in ['numpy', 'shared', 'native', 'native-child', 'core', 'core-child']})

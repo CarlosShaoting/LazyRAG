@@ -92,6 +92,12 @@ def stage(runtime, output, catalog_path, lock_path, cache):
             raise RuntimeError(f'Published package differs from lock: {name}')
     distributions = {canonicalize_name(d.metadata['Name']): d for d in metadata.distributions(path=[str(site)])}
     validate_versions(expected, {n: d.version for n, d in distributions.items()})
+    slim = catalog.get('desktopProfile') == 'slim-providers-v1'
+    if slim:
+        profile = load_script('desktop-python-profile')
+        profile.verify_source(ROOT / 'algorithm/lazyllm')
+        profile.remove_providers(runtime, site)
+        distributions = {canonicalize_name(d.metadata['Name']): d for d in metadata.distributions(path=[str(site)])}
     protected = {canonicalize_name(Requirement(line.strip()).name)
                  for line in (ROOT / 'algorithm/requirements.txt').read_text().splitlines()
                  if line.strip() and not line.lstrip().startswith('#')}
@@ -127,7 +133,7 @@ def stage(runtime, output, catalog_path, lock_path, cache):
                 path.replace(backup)
                 moved.append((path, backup))
             remove_empty_dirs(site)
-            verification.run_child('base', [], logs)
+            verification.run_child('base', ['--without-grpc'] if slim else [], logs)
             verification.run_child('overlay', ['--overlay', str(overlay)], logs)
         except BaseException:
             for path, backup in reversed(moved):
