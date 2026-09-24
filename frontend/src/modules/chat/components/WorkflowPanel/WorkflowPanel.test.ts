@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import type { TabDef, WorkflowSession } from '@/modules/chat/store/workflowPanel';
 import { resolveCompletedContinueStep, resolveWorkflowContinueAction } from './workflowContinue';
+import {
+  parsePersistedPanelExpanded,
+  resolveInitialPanelExpanded,
+} from './panelExpansion';
 
 const outlineTab: TabDef = {
   id: 'outline',
@@ -10,6 +14,24 @@ const outlineTab: TabDef = {
   slots: [],
   completed_continue_step: 'write_document',
 };
+
+describe('workflow panel default expansion', () => {
+  it('uses the workflow default when the user has no saved choice', () => {
+    expect(resolveInitialPanelExpanded(null, 'expanded')).toBe(true);
+    expect(resolveInitialPanelExpanded(null, 'compact')).toBe(false);
+  });
+
+  it('keeps an explicit user choice over the workflow default', () => {
+    expect(resolveInitialPanelExpanded(false, 'expanded')).toBe(false);
+    expect(resolveInitialPanelExpanded(true, 'compact')).toBe(true);
+  });
+
+  it('ignores invalid persisted values', () => {
+    expect(parsePersistedPanelExpanded('true')).toBe(true);
+    expect(parsePersistedPanelExpanded('false')).toBe(false);
+    expect(parsePersistedPanelExpanded('invalid')).toBeNull();
+  });
+});
 
 describe('resolveCompletedContinueStep', () => {
   it('uses the workflow-declared completed continuation', () => {
