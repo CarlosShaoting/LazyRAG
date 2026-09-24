@@ -15,6 +15,7 @@ from unittest.mock import patch
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
+# The SDK entry only cleans older cached environments; new dependency locks omit it.
 REMOVED = {'volcengine-python-sdk', 'opensearch-py', 'opensearch-protobufs'}
 
 

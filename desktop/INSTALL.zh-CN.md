@@ -2,10 +2,10 @@
 
 适用于 **Apple Silicon Mac（M 系列，ARM64）**。2026-09-23 起，ARM64 默认使用已发布的固定 RAG 包，按“构建 → 自动校验固定组件 → 安装试用”执行，**不再每次构建生成或上传 RAG ZIP**。Workflow 演示案例仍在首次启动 warmup 时下载。
 
-## Mac ARM64 固定云端版本（2026-09-23 更新）
+## Mac ARM64 固定云端版本（2026-09-24 更新）
 
-- 固定文件：`lazymind-python-rag-darwin-arm64-cp311-53a1c2e770966b71.zip`。
-- 固定清单：`desktop/python-components/darwin-arm64.json`；配套 173 项依赖锁：`darwin-arm64-requirements.lock`。
+- 固定文件：`lazymind-python-rag-darwin-arm64-cp311-00d718af0b2065c5.zip`。
+- 固定清单：`desktop/python-components/darwin-arm64.json`；配套 172 项依赖锁：`darwin-arm64-requirements.lock`。
 - 本机/同事的 M 系列 Mac 执行 `make desktop-darwin-arm64`。默认后置模式安装锁定依赖，构建时下载或校验缓存中的已发布 ZIP，验证基础与 overlay 导入后写入固定清单。依赖冲突或校验失败停止构建。
 - 用户安装后在应用内下载 RAG，界面只展示固定来源。已上传文件无需替换；`LAZYMIND_PYTHON_COMPONENT_BASE_URL` 不控制 ARM64 固定来源。
 - 输出：`desktop/dist/LazyMind-darwin-arm64.zip`；解压得到 `LazyMind.app`，退出旧应用后放到“应用程序”安装测试。默认 ad-hoc 签名，仅供本地测试，没有 Developer ID 公证。
@@ -360,6 +360,8 @@ Mac ARM64 已发布含 gRPC 的 RAG 组件：`lazymind-python-rag-darwin-arm64-c
 
 应用下载 RAG 和字体时优先访问 ModelScope；HTTP/网络错误或完整性失败会切换 HF。有备用源时，主源 10 秒未收到内容，或随后 15 秒窗口速度低于 64 KiB/s，也会切换。直接验证实际 HTTPS 下载，不依赖 ICMP ping。两个源共用文件名、大小和 SHA-256；失败内容不会激活，缓存通过校验后可离线复用。构建期下载组件同样支持备用源，主源 socket 超时 10 秒、15 秒速度窗口低于 64 KiB/s 时回退。
 
-新版 Mac catalog 使用 `slim-providers-v1`：按冻结 lock 安装构建依赖，再移除桌面不需要的 OpenSearch 和火山 SDK，将 gRPC 随 RAG 后置。云端 requirements 保留原依赖。该配置要求配套 LazyLLM 的 `cst/install_opt` 分支（Doubao 图片/视频改用 requests，聊天及 embedding 保持原有路径）；主仓此次不更新子模块指针，构建前需单独检出配套 LazyLLM 分支。源码不匹配会在构建校验时失败。
+新版 Mac catalog 使用 `slim-providers-v1`：按冻结 lock 安装构建依赖，再移除桌面不需要的 OpenSearch，将 gRPC 随 RAG 后置。应用 requirements 及 Mac/Windows 冻结 lock 均已移除火山 SDK，新构建不再下载或安装它；缓存与依赖测试目录的通用裁剪仍保留。该配置要求配套 LazyLLM 的 `cst/install_opt` 分支（Doubao 图片/视频改用 requests，聊天及 embedding 保持原有路径）；主仓子模块已固定到配套提交 `fb0da5aa`，分支 Actions 会检出该提交。源码不匹配会在构建校验时失败。
 
 开发新组件可设置 `LAZYMIND_DESKTOP_REBUILD_PYTHON_COMPONENTS=true`；正常构建使用已发布 catalog。不要把新 ZIP 改成旧文件名。新版本完整安装包尚未重建。
+
+火山 SDK 的逐服务裁剪和 `--verify-ark` 校验已删除，保留不依赖 SDK 的 `--verify-doubao` 校验。旧缓存环境的整包清理兼容逻辑仍保留。已有 RAG ZIP 不含火山 SDK，此次无需重打或重新上传。此前报告中的 185.18 MiB 属于历史裁剪收益，不能重复计入本次收益。

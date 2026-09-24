@@ -50,10 +50,12 @@ Windows 对照来自相同源码基线的两次不同仓库构建，依赖和构
 ## 本轮补充：模型 SDK 精简与 gRPC 后置
 
 - LazyLLM 独立分支 `cst/install_opt` 将 Doubao 图片和视频生成迁移到 requests，保留前端经 LazyLLM supplier 调用的路径，覆盖动态模型地址、鉴权、任务轮询及错误处理。未调用付费真实模型 API。
-- 桌面移除 OpenSearch 及火山 SDK；解除 OpenSearch 对 gRPC 的依赖后，将 gRPC 放入 RAG 按需包。云端依赖配置不变。
+- 桌面移除 OpenSearch 及火山 SDK；解除 OpenSearch 对 gRPC 的依赖后，将 gRPC 放入 RAG 按需包。后续清理已从应用 requirements 和 Mac/Windows lock 中直接删除火山 SDK，避免先安装再裁剪；OpenSearch 仍仅在桌面移除。
 - 新 Mac ARM64 RAG ZIP 为 **62.67 MiB**，展开约 **217.25 MiB**；比旧组件 51.99 MiB 增大，因为更多依赖从基础包移入。基础导入、组件 SHA/manifest、RAG 导入、Milvus 写入/flush/重启/查询/删除均已通过真实原生验证。
 - 用户已将新 ZIP 上传 HF，公开仓库返回的文件大小和 SHA-256 与本地一致。应用优先下载 ModelScope，同名文件缺失、下载过慢或校验失败时自动切换 HF。字体使用相同机制。
 - 新版完整安装包尚未生成，不能把展开依赖体积直接当作安装包压缩收益。Windows 与 Intel 本轮未发布新的原生组件；既有完整业务验收范围不扩大。
-- LazyMind 与 LazyLLM 分别提交；主仓不包含子模块指针更新，构建需配套检出 LazyLLM 优化分支。
+- LazyMind 与 LazyLLM 分别提交，随后主仓已更新子模块指针到 `fb0da5aa`，Actions 分支构建可检出配套源码。
 
 精选案例素材及内置 Skill 的后置工作由其他同事推进，不计入本轮成果。当前仍是构建时预置、点击后导入用户 Skill 库。
+
+火山 SDK 已从安装输入中彻底排除，旧的按服务裁剪逻辑已删除。此项继续优化的是构建下载、安装和清理开销；上一版最终包已移除 SDK，不能再次宣称节省 185 MiB 或据此推算 DMG 节省。缓存和测试目录的通用裁剪保留。

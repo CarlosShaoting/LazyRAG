@@ -30,66 +30,11 @@ class PrunePythonRuntimeTest(unittest.TestCase):
         path.write_text(content, encoding='utf-8')
         return path
 
-    def sdk(self):
-        files = {
-            'volcenginesdkarkruntime/__init__.py': 'import volcenginesdkcore\n',
-            'volcenginesdkcore/__init__.py': 'import volcenginesdkark\n',
-            'volcenginesdkark/__init__.py': 'import volcenginesdkcore\n',
-            'volcenginesdkecs/__init__.py': '# unused compute service\n',
-            'volcenginesdkecs/models.py': '# unused models\n',
-        }
-        for name, content in files.items():
-            self.put(name, content)
-        self.put('volcengine_python_sdk-5.0.50.dist-info/METADATA',
-                 'Metadata-Version: 2.1\nName: volcengine-python-sdk\nVersion: 5.0.50\n')
-        self.put('volcengine_python_sdk-5.0.50.dist-info/LICENSE', 'license')
-        self.put('volcengine_python_sdk-5.0.50.dist-info/RECORD',
-                 ''.join(f'{name},,\n' for name in files))
-
-    def test_sdk_dependency_closure_and_metadata_are_preserved(self):
-        self.sdk()
-        report = pruning.trim_runtime(self.runtime, True)
-        self.assertEqual(report['volcengine'][0]['retained_modules'],
-                         ['volcenginesdkark', 'volcenginesdkarkruntime', 'volcenginesdkcore'])
-        self.assertFalse((self.site / 'volcenginesdkecs').exists())
-        self.assertTrue((self.site / 'volcenginesdkark/__init__.py').is_file())
-        self.assertTrue((self.site / 'volcengine_python_sdk-5.0.50.dist-info/LICENSE').is_file())
-        self.assertGreater(report['python_bytes_before'], report['python_bytes_after'])
-
-    def test_references_from_other_packages_and_application_keep_services(self):
-        self.sdk()
-        self.put('consumer.py', "module = 'volcenginesdkecs'\n")
-        pruning.trim_runtime(self.runtime, True)
-        self.assertTrue((self.site / 'volcenginesdkecs/models.py').is_file())
-        (self.site / 'consumer.py').unlink()
-        app = self.root / 'app'
-        app.mkdir()
-        (app / 'other.py').write_text('from volcenginesdkecs import models\n')
-        pruning.trim_runtime(self.runtime, True, [app])
-        self.assertTrue((self.site / 'volcenginesdkecs/models.py').is_file())
-
-    def test_only_owned_files_are_removed(self):
-        self.sdk()
-        unowned = self.put('volcenginesdkecs/custom.json')
-        self.put('another-1.dist-info/METADATA', 'Metadata-Version: 2.1\nName: another\nVersion: 1\n')
-        self.put('another-1.dist-info/RECORD', 'volcenginesdkecs/models.py,,\n')
-        pruning.trim_runtime(self.runtime, True)
-        self.assertTrue(unowned.exists())
-        self.assertTrue((self.site / 'volcenginesdkecs/models.py').exists())
-        self.assertTrue((self.site / 'volcenginesdkecs/__init__.py').exists())
-
-    def test_missing_sdk_record_fails_without_removing_files(self):
-        self.sdk()
-        (self.site / 'volcengine_python_sdk-5.0.50.dist-info/RECORD').unlink()
-        with self.assertRaisesRegex(RuntimeError, 'no RECORD'):
-            pruning.trim_runtime(self.runtime, True)
-        self.assertTrue((self.site / 'volcenginesdkecs/models.py').is_file())
-
     def test_dry_run_is_non_mutating_and_idempotent_apply(self):
-        self.sdk()
+        self.put("numpy/tests/test_example.py")
         first = pruning.trim_runtime(self.runtime, False)
         self.assertEqual(first['python_bytes_before'], first['python_bytes_after'])
-        self.assertTrue((self.site / 'volcenginesdkecs/models.py').exists())
+        self.assertTrue((self.site / 'numpy/tests/test_example.py').exists())
         applied = pruning.trim_runtime(self.runtime, True)
         self.assertEqual(first['candidate_removed_bytes'], applied['candidate_removed_bytes'])
         again = pruning.trim_runtime(self.runtime, True)
@@ -205,24 +150,8 @@ class PrunePythonRuntimeTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             pruning.trim_runtime(self.root, True)
 
-    def test_record_does_not_follow_symlinked_sdk_subdirectories(self):
-        self.sdk()
-        outside = self.root / 'external-models'
-        outside.mkdir()
-        target = outside / 'generated.py'
-        target.write_text('fixture')
-        try:
-            (self.site / 'volcenginesdkecs/linked').symlink_to(outside, target_is_directory=True)
-        except OSError:
-            self.skipTest('Creating symlinks requires permission on this Windows host')
-        record = self.site / 'volcengine_python_sdk-5.0.50.dist-info/RECORD'
-        with record.open('a') as stream:
-            stream.write('volcenginesdkecs/linked/generated.py,,\n')
-        pruning.trim_runtime(self.runtime, True)
-        self.assertTrue(target.exists())
-
     def test_reports_are_machine_and_human_readable(self):
-        self.sdk()
+        self.put("numpy/tests/test_example.py")
         report = pruning.trim_runtime(self.runtime, True)
         output = self.root / 'report.json'
         pruning.write_report(report, output)

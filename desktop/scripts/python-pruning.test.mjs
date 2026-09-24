@@ -7,7 +7,7 @@ import test from "node:test";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
-test("Python pruning preserves SDK dependencies, runtime helpers and Skill assets", () => {
+test("Python pruning preserves runtime helpers and Skill assets", () => {
   execFileSync(process.platform === "win32" ? "python" : "python3", [
     "-m", "unittest", "discover", "-s", "tests", "-p", "test_desktop_python_pruning.py", "-v",
   ], { cwd: root, stdio: "pipe" });
