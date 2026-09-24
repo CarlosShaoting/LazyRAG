@@ -430,6 +430,8 @@ interface MarkdownArtifactEditorProps {
   numberingDocument?: string;
   sourceRevision: number;
   maxHeight?: number;
+  /** Removes long-document chrome and spacing for compact companion content. */
+  compact?: boolean;
   /** Compact chat presentation hides Workflow-only document chrome. */
   presentation?: 'workflow' | 'chat';
   readOnly?: boolean;
@@ -507,6 +509,7 @@ export function MarkdownArtifactEditor({
   numberingDocument,
   sourceRevision,
   maxHeight,
+  compact = false,
   presentation = 'workflow',
   readOnly = false,
   editingKey,
@@ -1676,7 +1679,9 @@ export function MarkdownArtifactEditor({
         emptyHeadingLevel ? ' writer-markdown-editor--empty-heading-toolbar' : ''
       }${
         !readOnly ? ' writer-markdown-editor--editable' : ''
-      }${chatPresentation ? ' writer-markdown-editor--chat' : ''}`}
+      }${chatPresentation ? ' writer-markdown-editor--chat' : ''}${
+        compact ? ' writer-markdown-editor--compact' : ''
+      }`}
       aria-label={t('chat.writerMarkdown.documentRegion')}
       ref={rootRef}
       style={editorStyle}
@@ -2032,7 +2037,7 @@ export function MarkdownArtifactEditor({
           )}
         </aside>}
         <div className={`writer-markdown-editor__main${editorMode !== 'rich' ? ' writer-markdown-editor__main--source' : ''}`}>
-          <div className='writer-document-toolbar'>
+          {!compact && <div className='writer-document-toolbar'>
             {!chatPresentation && hasOutline && !outlineOpen && (
               <button
                 type='button'
@@ -2050,7 +2055,7 @@ export function MarkdownArtifactEditor({
             {toolbarActions}
             <WriterDocumentOptions width={pageWidth} onWidth={setPageWidth} sourceMode={editorMode === 'source'}
               onSourceMode={() => setEditorMode(editorMode === 'rich' ? 'source' : 'rich')} />
-          </div>
+          </div>}
           {editorMode === 'source' && (sourcePreview === undefined
             ? <div className='writer-markdown-editor__notice writer-markdown-editor__notice--error' role='alert'>
               {t('chat.writerMarkdown.saveFailed')}
