@@ -77,8 +77,8 @@ def stage(runtime, published, output=None):
                         bundle.writestr(info, (assets / name).read_bytes())
                 entry = {'filename': filename, 'sha256': digest(archive.read_bytes()),
                          'sizeBytes': archive.stat().st_size, 'files': files,
-                         'url': 'https://modelscope.cn/datasets/CarlosShaoting/lazymind-cst/resolve/master/' + filename,
-                         'fallbackUrl': 'https://huggingface.co/datasets/LazyAGI/LazyMind/resolve/main/' + filename}
+                         'url': 'https://modelscope.cn/datasets/CarlosShaoting/lazymind-cst/resolve/master/featured-assets/' + filename,
+                         'fallbackUrl': 'https://huggingface.co/datasets/LazyAGI/LazyMind/resolve/main/featured-assets/' + filename}
             else:
                 entry = expected['bundles'].get(key)
                 if not entry or entry['filename'] != filename or entry['files'] != files:
