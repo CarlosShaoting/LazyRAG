@@ -314,12 +314,12 @@ open desktop/dist/mac-arm64/LazyMind.app
 
 ### PDF 字体资源（已发布至 Hugging Face）
 
-三个平台共用 [Hugging Face 数据集](https://huggingface.co/datasets/LazyAGI/LazyMind/tree/main) 中的 **TTF 原文件**及 `NotoSansSC-OFL.txt` 许可证。2026-09-24 已上传，下载地址固定到提交 `cc06404137e907d8ab605f166bc19d673cc6cbd5`。不要把 ZIP 上传包地址配置成字体地址，下载器不会解压 ZIP。
+三个平台共用 [Hugging Face 数据集](https://huggingface.co/datasets/LazyAGI/LazyMind/tree/main) 中的 **TTF 原文件**及 `NotoSansSC-OFL.txt` 许可证。2026-09-24 已上传，下载地址固定到提交 `211752ef6607f899e94f1b01e4c0bfb7285240ac`。不要把 ZIP 上传包地址配置成字体地址，下载器不会解压 ZIP。
 
 - 文件名：`lazymind-pdf-NotoSansSC-a3041811a78c361b.ttf`。
 - 大小：17,772,300 字节（16.95 MiB）。
 - SHA-256：`a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da`。
-- 备用下载 URL：`https://huggingface.co/datasets/LazyAGI/LazyMind/resolve/cc06404137e907d8ab605f166bc19d673cc6cbd5/lazymind-pdf-NotoSansSC-a3041811a78c361b.ttf`。
+- 备用下载 URL：`https://huggingface.co/datasets/LazyAGI/LazyMind/resolve/211752ef6607f899e94f1b01e4c0bfb7285240ac/lazymind-pdf-NotoSansSC-a3041811a78c361b.ttf`。
 
 `desktop/pdf-font.json` 保留 ModelScope 为主源，以此 HF 地址为备用源，构建时会写入 runtime 的 `config/pdf-font.json`。旧安装包仍携带原 ModelScope 地址，不能仅靠这次上传自动修复；需要更新其运行时字体 catalog，或后续安装包含新 catalog 的版本。不要直接修改已签名应用包中的文件。用户缓存位于 runtime 的 `deps/pdf-font/<sha>/`，第二次可离线复用，损坏缓存会重新下载。普通 PDF 阅读不触发下载，Web/Docker 静态字体保持原样。
 
@@ -327,7 +327,7 @@ open desktop/dist/mac-arm64/LazyMind.app
 
 ```bash
 curl --fail --location --proto '=https' --proto-redir '=https' \
-  'https://huggingface.co/datasets/LazyAGI/LazyMind/resolve/cc06404137e907d8ab605f166bc19d673cc6cbd5/lazymind-pdf-NotoSansSC-a3041811a78c361b.ttf' \
+  'https://huggingface.co/datasets/LazyAGI/LazyMind/resolve/211752ef6607f899e94f1b01e4c0bfb7285240ac/lazymind-pdf-NotoSansSC-a3041811a78c361b.ttf' \
   --output /tmp/lazymind-pdf-font-cloud.ttf
 shasum -a 256 /tmp/lazymind-pdf-font-cloud.ttf
 # 应与上面的完整 SHA-256 一致
@@ -372,6 +372,8 @@ Mac ARM64 已发布含 gRPC 的 RAG 组件：`lazymind-python-rag-darwin-arm64-c
 
 精选图片/HTML 使用 `desktop/featured-assets.json` 固定清单：46 个案例 ZIP、MS 主源和 HF 备用源、ZIP 及逐文件 SHA-256。`stage-featured-assets.py` 校验编译素材与发布清单一致，生成小封面缩略图后移出完整素材。素材变化时构建失败，必须显式重新发布对应资源，不能静默使用旧包。
 
-发布步骤：先用 `builtin-skill-bundle --catalog-only --frozen-lockfile` 生成完整 featured 目录，再运行 `stage-featured-assets.py <runtime> --publish <zip-output>`，上传输出 ZIP 到 HF 数据集根目录，保留文件名，提交更新后的清单。正常构建不带 `--publish`，无需下载案例 ZIP。HTTP `/showcase-assets/` 在 desktop 通过 Core 提供缩略图或按案例缓存的资源；其他环境仍由原静态路由处理。
+发布步骤：先用 `builtin-skill-bundle --catalog-only --frozen-lockfile` 生成完整 featured 目录，再运行 `stage-featured-assets.py <runtime> --publish <zip-output>`，上传输出 ZIP 到 HF 数据集 `featured-assets/` 目录，保留文件名，提交更新后的清单。正常构建不带 `--publish`，无需下载案例 ZIP。HTTP `/showcase-assets/` 在 desktop 通过 Core 提供缩略图或按案例缓存的资源；其他环境仍由原静态路由处理。
 
 缓存位置：`<用户 runtime>/cache/featured-assets/<ZIP SHA-256>/`。断网时已有缓存和首页封面仍可使用；首次未缓存的详情资源下载失败后，恢复网络并刷新页面重试。图片和 HTML 仅作为案例展示素材分发，HTML 预览继续使用前端 sandbox iframe。
+
+精选下载顺序：Chat 历史样例先下载并导入，再由 Core 后台预取首页 Chat 前 8 个精选、Work 前 8 个精选，最后按展示顺序下载其余可见案例。顺序与首页 placement.order 一致；后台预取不阻塞界面就绪。下载失败跳过，点击详情时自动重试；关闭应用取消下载，下次启动复用已校验缓存。

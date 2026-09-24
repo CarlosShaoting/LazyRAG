@@ -47,6 +47,7 @@ import (
 	"lazymind/core/recovery"
 	"lazymind/core/resourceupdate"
 	"lazymind/core/scheduler"
+	"lazymind/core/showcase"
 	"lazymind/core/state"
 	"lazymind/core/store"
 	"lazymind/core/subagent"
@@ -887,6 +888,8 @@ func run(ctx context.Context) error {
 	if !startBackgroundJobs {
 		log.Logger.Info().Msg("core background jobs are disabled")
 	} else {
+		// History samples have already been downloaded and imported above.
+		backgroundDone = append(backgroundDone, showcase.StartAssetPrefetch(runtimeCtx))
 		asyncConfig := evalset.LoadAsyncJobRuntimeConfigFromEnv()
 		excludedJobs := append([]string(nil), chat.ConversationTitleJobTypes...)
 		if !systemdeps.PythonComponentActive("rag") {
