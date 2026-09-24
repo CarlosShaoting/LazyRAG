@@ -365,3 +365,13 @@ Mac ARM64 已发布含 gRPC 的 RAG 组件：`lazymind-python-rag-darwin-arm64-c
 开发新组件可设置 `LAZYMIND_DESKTOP_REBUILD_PYTHON_COMPONENTS=true`；正常构建使用已发布 catalog。不要把新 ZIP 改成旧文件名。新版本完整安装包尚未重建。
 
 火山 SDK 的逐服务裁剪和 `--verify-ark` 校验已删除，保留不依赖 SDK 的 `--verify-doubao` 校验。旧缓存环境的整包清理兼容逻辑仍保留。已有 RAG ZIP 不含火山 SDK，此次无需重打或重新上传。此前报告中的 185.18 MiB 属于历史裁剪收益，不能重复计入本次收益。
+
+### 精选案例资源按需下载
+
+当前分支集成 PR #778，远端 Skill ZIP 不再进入 installer。构建以 `--catalog-only --frozen-lockfile` 生成预览目录；Skill 安装/使用请求才获取实际包。
+
+精选图片/HTML 使用 `desktop/featured-assets.json` 固定清单：46 个案例 ZIP、MS 主源和 HF 备用源、ZIP 及逐文件 SHA-256。`stage-featured-assets.py` 校验编译素材与发布清单一致，生成小封面缩略图后移出完整素材。素材变化时构建失败，必须显式重新发布对应资源，不能静默使用旧包。
+
+发布步骤：先用 `builtin-skill-bundle --catalog-only --frozen-lockfile` 生成完整 featured 目录，再运行 `stage-featured-assets.py <runtime> --publish <zip-output>`，上传输出 ZIP 到 HF 数据集根目录，保留文件名，提交更新后的清单。正常构建不带 `--publish`，无需下载案例 ZIP。HTTP `/showcase-assets/` 在 desktop 通过 Core 提供缩略图或按案例缓存的资源；其他环境仍由原静态路由处理。
+
+缓存位置：`<用户 runtime>/cache/featured-assets/<ZIP SHA-256>/`。断网时已有缓存和首页封面仍可使用；首次未缓存的详情资源下载失败后，恢复网络并刷新页面重试。图片和 HTML 仅作为案例展示素材分发，HTML 预览继续使用前端 sandbox iframe。

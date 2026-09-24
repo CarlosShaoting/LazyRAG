@@ -102,6 +102,7 @@ func handleAgentThreadAPI(r *mux.Router, method, path string, perms []string, h 
 
 // registerAllRoutes text OpenAPI text（text Job），text handleAPI textPermissiontext（text extract_api_permissions.py text Kong RBAC）。
 func registerAllRoutes(r *mux.Router) {
+	r.HandleFunc("/showcase-assets/{asset:.*}", showcase.ServeAsset).Methods(http.MethodGet, http.MethodHead)
 	handleAPI(r, "GET", "/local-workspaces", []string{"qa.read"}, localworkspace.List)
 	handleAPI(r, "POST", "/local-workspaces/{workspace_id}:revoke", []string{"qa.write"}, localworkspace.Revoke)
 	handleAPI(r, "GET", "/conversations/{conversation_id}:workspace", []string{"qa.read"}, localworkspace.ConversationBinding)
