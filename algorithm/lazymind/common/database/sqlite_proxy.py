@@ -421,7 +421,8 @@ def install_lazyllm_sqlite_proxy():
             if not hasattr(table, 'finished_at'):
                 return queue_peek(queue, filter_by)
             # The Go proxy adds UTC to naive DATETIME values. Preserve the stored
-            # wall time and explicit offsets before LazyLLM schedules callbacks.
+            # wall time, then normalize explicit offsets to local naive time
+            # for the pinned LazyLLM callback scheduler.
             with queue._sql_manager.get_session() as session:
                 record = queue._build_query(session, filter_by).add_columns(
                     sqlalchemy.cast(table.finished_at, sqlalchemy.String),
@@ -429,7 +430,10 @@ def install_lazyllm_sqlite_proxy():
                 if record is None:
                     return None
                 result = _orm_to_dict(record[0])
-                result['finished_at'] = record[1]
+                finished_at = datetime.datetime.fromisoformat(record[1]) if record[1] else None
+                if finished_at is not None and finished_at.tzinfo is not None:
+                    finished_at = finished_at.astimezone().replace(tzinfo=None)
+                result['finished_at'] = finished_at
                 return result
 
         def proxied_manager_engine(manager):

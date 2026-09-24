@@ -47,7 +47,10 @@ def test_proxy_queue_preserves_stored_time_and_callback_deadline(tmp_path, proxy
             with engine.begin() as conn:
                 conn.execute(sqlalchemy.text('UPDATE finished_time_test SET finished_at=:value'), {'value': stored})
             result = queue.peek({'task_id': 'task'})
-            assert result['finished_at'] == stored
+            expected_time = datetime.fromisoformat(stored)
+            if expected_time.tzinfo is not None:
+                expected_time = expected_time.astimezone().replace(tzinfo=None)
+            assert result['finished_at'] == expected_time
             assert impl._is_callback_due(result) is expected
         assert queue.peek({'task_id': 'missing'}) is None
     finally:
