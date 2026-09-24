@@ -1778,6 +1778,7 @@ async def _handle_chat_impl(
         ),
         task_profile=task_profile,
         dynamic_prompt_modules=_cfg['dynamic_prompt_modules'],
+        workflow_selection_authoritative=workflow_turn_is_bound,
     )
     if enable_chat_exports:
         prompt_builder.runtime(

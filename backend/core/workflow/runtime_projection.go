@@ -104,7 +104,15 @@ func decodeSessionRevisionGraph(session *orm.WorkflowSession, revision *orm.Work
 	return &graph, nil
 }
 
-func loadRuntimeSnapshot(ctx context.Context, db *gorm.DB, sessionID string) (graphengine.RuntimeSnapshot, error) {
+func loadRuntimeSnapshot(ctx context.Context, db *gorm.DB, sessionID string, graphs ...*graphengine.CompiledStateGraph) (graphengine.RuntimeSnapshot, error) {
+	selectorMaterials := map[string]bool{}
+	for _, graph := range graphs {
+		for _, node := range graph.Nodes {
+			if node.RouteSelector != nil {
+				selectorMaterials[node.RouteSelector.Material] = true
+			}
+		}
+	}
 	var attempts []orm.WorkflowSessionStep
 	if err := db.WithContext(ctx).Where("session_id = ?", sessionID).Order("created_at ASC").Find(&attempts).Error; err != nil {
 		return graphengine.RuntimeSnapshot{}, err
@@ -166,7 +174,15 @@ func loadRuntimeSnapshot(ctx context.Context, db *gorm.DB, sessionID string) (gr
 				}
 			}
 		}
-		snapshot.Materials = append(snapshot.Materials, graphengine.MaterialValue{MaterialID: row.SlotID, RevisionID: row.ID, Valid: valid})
+		material := graphengine.MaterialValue{MaterialID: row.SlotID, RevisionID: row.ID, Valid: valid}
+		if material.Valid && selectorMaterials[row.SlotID] {
+			value, err := LoadSlotRevisionValue(ctx, db, row)
+			if err != nil {
+				return graphengine.RuntimeSnapshot{}, fmt.Errorf("load Router decision %s: %w", row.SlotID, err)
+			}
+			material.Value = value
+		}
+		snapshot.Materials = append(snapshot.Materials, material)
 	}
 	for _, row := range inputBindings {
 		snapshot.Materials = append(snapshot.Materials, graphengine.MaterialValue{
@@ -214,7 +230,7 @@ func projectSession(ctx context.Context, db *gorm.DB, session *orm.WorkflowSessi
 	if err != nil {
 		return projectionResponse{}, err
 	}
-	snapshot, err := loadRuntimeSnapshot(ctx, db, session.ID)
+	snapshot, err := loadRuntimeSnapshot(ctx, db, session.ID, graph)
 	if err != nil {
 		return projectionResponse{}, err
 	}
@@ -339,8 +355,11 @@ func freezeRouteDecision(ctx context.Context, db *gorm.DB, sessionID, from, task
 		if err != nil {
 			return err
 		}
-		snapshot, err := loadRuntimeSnapshot(ctx, tx, sessionID)
+		snapshot, err := loadRuntimeSnapshot(ctx, tx, sessionID, graph)
 		if err != nil {
+			return err
+		}
+		if _, _, err := graphengine.ResolveRouteSelector(graph, from, snapshot.Materials); err != nil {
 			return err
 		}
 		decision := graphengine.DecideRoute(graph, from, snapshot.Materials)

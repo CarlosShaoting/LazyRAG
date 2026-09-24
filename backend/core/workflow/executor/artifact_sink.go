@@ -200,6 +200,7 @@ func (sink DBArtifactSink) Save(ctx context.Context, attempt AttemptContext, art
 		if err != nil {
 			return err
 		}
+		atomicProduct := session.WorkflowID == "product_solution_delivery"
 		exists, err = artifactRevisionExists(tx, attempt.AttemptID, artifact.Slot, artifact.Seq)
 		if err != nil {
 			return err
@@ -226,31 +227,33 @@ func (sink DBArtifactSink) Save(ctx context.Context, attempt AttemptContext, art
 		if err != nil {
 			return err
 		}
-		selected := tx.Model(&orm.WorkflowSlotRevision{}).Where(
-			"session_id = ? AND slot_id = ? AND selected = ?", attempt.SessionID, artifact.Slot, true,
-		)
-		if cardinality == "list" {
-			selected = selected.Where("list_index = ?", *listIndex)
-		}
-		var replaced []orm.WorkflowSlotRevision
-		if err := selected.Select("id").Find(&replaced).Error; err != nil {
-			return err
-		}
-		replacedIDs := make([]string, 0, len(replaced))
-		for _, revision := range replaced {
-			replacedIDs = append(replacedIDs, revision.ID)
-		}
-		if err := artifactgraph.InvalidateConsumers(ctx, tx, attempt.SessionID, replacedIDs...); err != nil {
-			return err
-		}
-		selected = tx.Model(&orm.WorkflowSlotRevision{}).Where(
-			"session_id = ? AND slot_id = ? AND selected = ?", attempt.SessionID, artifact.Slot, true,
-		)
-		if cardinality == "list" {
-			selected = selected.Where("list_index = ?", *listIndex)
-		}
-		if err := selected.Update("selected", false).Error; err != nil {
-			return err
+		if !atomicProduct {
+			selected := tx.Model(&orm.WorkflowSlotRevision{}).Where(
+				"session_id = ? AND slot_id = ? AND selected = ?", attempt.SessionID, artifact.Slot, true,
+			)
+			if cardinality == "list" {
+				selected = selected.Where("list_index = ?", *listIndex)
+			}
+			var replaced []orm.WorkflowSlotRevision
+			if err := selected.Select("id").Find(&replaced).Error; err != nil {
+				return err
+			}
+			replacedIDs := make([]string, 0, len(replaced))
+			for _, revision := range replaced {
+				replacedIDs = append(replacedIDs, revision.ID)
+			}
+			if err := artifactgraph.InvalidateConsumers(ctx, tx, attempt.SessionID, replacedIDs...); err != nil {
+				return err
+			}
+			selected = tx.Model(&orm.WorkflowSlotRevision{}).Where(
+				"session_id = ? AND slot_id = ? AND selected = ?", attempt.SessionID, artifact.Slot, true,
+			)
+			if cardinality == "list" {
+				selected = selected.Where("list_index = ?", *listIndex)
+			}
+			if err := selected.Update("selected", false).Error; err != nil {
+				return err
+			}
 		}
 		seq := artifact.Seq
 		if err := tx.Create(&orm.WorkflowHumanArtifact{ID: valueID, SessionID: attempt.SessionID,
@@ -259,11 +262,18 @@ func (sink DBArtifactSink) Save(ctx context.Context, attempt AttemptContext, art
 			return err
 		}
 		row := orm.WorkflowSlotRevision{ID: uuid.NewString(), SessionID: attempt.SessionID, SlotID: artifact.Slot,
-			Revision: revision, ListIndex: listIndex, Selected: true, ArtifactSeq: &seq, HumanArtifactID: &valueID,
+			Revision: revision, ListIndex: listIndex, Selected: !atomicProduct, ArtifactSeq: &seq, HumanArtifactID: &valueID,
 			ChangeSource: "host", Slot: artifact.Slot, StepID: attempt.StepID, Attempt: attempt.AttemptNo,
 			Validity: "effective", ProducerAttemptID: attempt.AttemptID, CreatedAt: now}
 		if err := tx.Create(&row).Error; err != nil {
 			return err
+		}
+		// The model's selected=true default overrides a zero bool on Create.
+		if atomicProduct {
+			if err := tx.Model(&orm.WorkflowSlotRevision{}).Where("id = ?", row.ID).
+				Update("selected", false).Error; err != nil {
+				return err
+			}
 		}
 		// Keep list membership durable even when a package publisher supplies an
 		// explicit list_index. appendArtifactListOrder is idempotent, so ordinary

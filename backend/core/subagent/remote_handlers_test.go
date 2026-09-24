@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"gorm.io/gorm"
 
 	"lazymind/core/common/orm"
 	"lazymind/core/localworkspace"
@@ -130,6 +131,34 @@ func TestRemoteTaskEventsRequireBoundAttemptLease(t *testing.T) {
 		if rec.Code != http.StatusConflict && rec.Code != http.StatusUnauthorized {
 			t.Fatalf("lease=%q status=%d body=%s", lease, rec.Code, rec.Body.String())
 		}
+	}
+}
+
+func TestRemoteFailureEventPreservesWorkflowDiagnostics(t *testing.T) {
+	remoteSubagentFixture(t)
+	previousHooks := EventHooks
+	EventHooks = &eventHooks{}
+	t.Cleanup(func() { EventHooks = previousHooks })
+
+	type terminalEvent struct {
+		taskID, status, message, errorCode, diagnosticID string
+	}
+	var got terminalEvent
+	EventHooks.RegisterTerminalStatusHook(func(_ context.Context, _ *gorm.DB, _ state.Store,
+		taskID, status, message, errorCode, diagnosticID string) {
+		got = terminalEvent{taskID, status, message, errorCode, diagnosticID}
+	})
+
+	rec := postRemoteTaskEvent(t, "lease-live", map[string]any{
+		"type": "error", "status": StatusFailed, "message": "model balance exhausted",
+		"error_code": "balance_exhausted", "diagnostic_id": "diag-402",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	want := terminalEvent{"task-remote", StatusFailed, "model balance exhausted", "balance_exhausted", "diag-402"}
+	if got != want {
+		t.Fatalf("terminal event=%#v want=%#v", got, want)
 	}
 }
 
@@ -448,7 +477,6 @@ func TestAppendRemoteStepSerializesConcurrentSQLiteWriters(t *testing.T) {
 	close(start)
 	wg.Wait()
 	close(errs)
-
 	for err := range errs {
 		if err != nil {
 			t.Fatalf("append concurrent step: %v", err)

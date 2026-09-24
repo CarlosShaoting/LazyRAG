@@ -130,7 +130,8 @@ func NotifyWorkflowRuntimeUpdated(
 }
 
 // onTerminalStatus is called by the subagent runner when a task reaches terminal status.
-func onTerminalStatus(ctx context.Context, db *gorm.DB, stateStore state.Store, taskID, status, message string) {
+func onTerminalStatus(ctx context.Context, db *gorm.DB, stateStore state.Store,
+	taskID, status, message, errorCode, diagnosticID string) {
 	if status == subagent.StatusRunning {
 		_ = UpdateStepStatus(ctx, db, taskID, status)
 		return
@@ -150,7 +151,7 @@ func onTerminalStatus(ctx context.Context, db *gorm.DB, stateStore state.Store, 
 			subagent.EventHooks.CallConversationEvent(context.Background(), stateStore, pctx.ConvID, "", eventType, payload)
 		}
 	}
-	OnSubAgentDone(ctx, db, stateStore, taskID, status, message, onSSE, pctx)
+	onSubAgentDone(ctx, db, stateStore, taskID, status, message, errorCode, diagnosticID, onSSE, pctx)
 }
 
 // loadWorkflowChatContextFromDB loads the plugin context for a task from the database.

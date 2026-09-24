@@ -76,6 +76,8 @@ type TaskEvent struct {
 	Status       string          `json:"status,omitempty"`
 	Summary      string          `json:"summary,omitempty"`
 	Message      string          `json:"message,omitempty"`
+	ErrorCode    string          `json:"error_code,omitempty"`
+	DiagnosticID string          `json:"diagnostic_id,omitempty"`
 	// Tool step events forwarded from SubAgent runner for frontend display.
 	ToolCalls   json.RawMessage `json:"tool_calls,omitempty"`
 	ToolResults json.RawMessage `json:"tool_results,omitempty"`
@@ -326,7 +328,7 @@ func routeEventWithWorkflowHooks(ctx context.Context, db *gorm.DB, stateStore st
 		_ = WriteStatus(ctx, stateStore, ev.TaskID, map[string]any{"status": StatusRunning, "progress": 0})
 		// Mirror running status into workflow_session_steps if this is a workflow_step task.
 		if terminalHook {
-			routeWorkflowStepStatus(ctx, db, stateStore, ev.TaskID, StatusRunning, "")
+			routeWorkflowStepStatus(ctx, db, stateStore, ev.TaskID, StatusRunning, "", "", "")
 		}
 	case "progress":
 		if err := UpdateProgress(ctx, db, ev.TaskID, ev.Progress, ev.CurrentPhase, ev.EstimatedSec); err != nil {
@@ -380,7 +382,7 @@ func routeEventWithWorkflowHooks(ctx context.Context, db *gorm.DB, stateStore st
 		})
 		// Handle plugin step completion (auto-advance or step_waiting).
 		if terminalHook {
-			routeWorkflowStepStatus(ctx, db, stateStore, ev.TaskID, status, ev.Summary)
+			routeWorkflowStepStatus(ctx, db, stateStore, ev.TaskID, status, ev.Summary, ev.ErrorCode, ev.DiagnosticID)
 		}
 	case "error":
 		status := ev.Status
@@ -396,7 +398,7 @@ func routeEventWithWorkflowHooks(ctx context.Context, db *gorm.DB, stateStore st
 		}
 		_ = WriteStatus(ctx, stateStore, ev.TaskID, map[string]any{"status": status, "summary": ev.Message})
 		if terminalHook {
-			routeWorkflowStepStatus(ctx, db, stateStore, ev.TaskID, status, ev.Message)
+			routeWorkflowStepStatus(ctx, db, stateStore, ev.TaskID, status, ev.Message, ev.ErrorCode, ev.DiagnosticID)
 		}
 	case "artifact_stream_start", "artifact_stream", "artifact_stream_end", "artifact_stream_abort":
 		// Draft preview events are intentionally ephemeral: append to the Task
@@ -424,7 +426,7 @@ func routeError(ctx context.Context, db *gorm.DB, stateStore state.Store, taskID
 	_ = WriteStatus(ctx, stateStore, taskID, map[string]any{"status": StatusFailed, "summary": message})
 	_ = AppendStreamEvent(ctx, stateStore, taskID, ev)
 	PublishConversationTaskEvent(ctx, db, stateStore, ev)
-	routeWorkflowStepStatus(ctx, db, stateStore, taskID, StatusFailed, message)
+	routeWorkflowStepStatus(ctx, db, stateStore, taskID, StatusFailed, message, "", "")
 }
 
 // PublishConversationTaskEvent keeps the conversation stream limited to bounded
@@ -474,7 +476,8 @@ var EventHooks = &eventHooks{}
 
 type eventHooks struct {
 	onArtifact       func(ctx context.Context, db *gorm.DB, stateStore state.Store, taskID, artifactKey string)
-	onTerminalStatus func(ctx context.Context, db *gorm.DB, stateStore state.Store, taskID, status, message string)
+	onTerminalStatus func(ctx context.Context, db *gorm.DB, stateStore state.Store,
+		taskID, status, message, errorCode, diagnosticID string)
 	// onConversationEvent is called when a plugin lifecycle event should be pushed to the
 	// main conversation SSE stream. convID and historyID identify the target stream;
 	// eventType is a bounded workflow lifecycle notification such as
@@ -488,7 +491,8 @@ func (h *eventHooks) RegisterArtifactHook(fn func(ctx context.Context, db *gorm.
 }
 
 // RegisterTerminalStatusHook registers a hook called when a task reaches terminal status.
-func (h *eventHooks) RegisterTerminalStatusHook(fn func(ctx context.Context, db *gorm.DB, stateStore state.Store, taskID, status, message string)) {
+func (h *eventHooks) RegisterTerminalStatusHook(fn func(ctx context.Context, db *gorm.DB, stateStore state.Store,
+	taskID, status, message, errorCode, diagnosticID string)) {
 	h.onTerminalStatus = fn
 }
 
@@ -515,9 +519,10 @@ func (h *eventHooks) CallConversationEventChecked(ctx context.Context, stateStor
 	return h.onConversationEvent(ctx, stateStore, convID, historyID, eventType, payload)
 }
 
-func routeWorkflowStepStatus(ctx context.Context, db *gorm.DB, stateStore state.Store, taskID, status, message string) {
+func routeWorkflowStepStatus(ctx context.Context, db *gorm.DB, stateStore state.Store,
+	taskID, status, message, errorCode, diagnosticID string) {
 	if EventHooks.onTerminalStatus != nil {
-		EventHooks.onTerminalStatus(ctx, db, stateStore, taskID, status, message)
+		EventHooks.onTerminalStatus(ctx, db, stateStore, taskID, status, message, errorCode, diagnosticID)
 	}
 }
 

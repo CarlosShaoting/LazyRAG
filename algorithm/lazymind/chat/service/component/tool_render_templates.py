@@ -688,6 +688,22 @@ TOOL_RENDER_PROFILES: dict[str, dict[str, Any]] = (
                                 'failure': {'en': 'Step batch {value} could not be '
                                                   'queued.',
                                             'zh': '步骤批次 {value} 排队失败'}},
+ 'trigger_product_solution_delivery_workflow': {
+     'call': {
+         'en': 'Preparing the product workflow around your request.',
+         'zh': '正在根据你的需求准备产品流程…',
+     },
+     'success': {
+         'en': 'The product workflow is ready. Your starting point and '
+               'available materials are shown below.',
+         'zh': '产品流程已准备好。下面会说明本次从哪里开始，以及会沿用哪些资料。',
+     },
+     'failure': {
+         'en': 'The product workflow could not be prepared. Your request has '
+               'been kept; please try again.',
+         'zh': '产品流程暂时未能启动。你的需求已保留，请重试。',
+     },
+ },
  'regex:get_(.+)_methods': {'call': {'en': 'Expanding the {match} Toolkit.',
                                      'zh': '正在展开{match}工具箱。'},
                             'success': {'en': 'The {match} Toolkit has been '

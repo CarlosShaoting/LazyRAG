@@ -486,6 +486,270 @@ export interface ExecuteArtifactActionResult {
 type PublicationRequestOptions = RawAxiosRequestConfig & { silentError?: boolean };
 
 // Workflow Session API.
+export type ProductStageId = 'direction' | 'competitive' | 'design' | 'prd' | 'prototype' | 'review' | 'handoff';
+
+export interface ProductProjectArtifact {
+  artifact_id: string;
+  stage: ProductStageId;
+  title: string;
+  version: string;
+  status: string;
+  source_session_id: string;
+  slot_id: string;
+  revision_id: string;
+  revision: number;
+  available: boolean;
+  available_formats?: Array<'html' | 'markdown'>;
+  stale: boolean;
+  reason?: string;
+}
+
+export interface ProductProjectDecision {
+  id?: string;
+  decision_id?: string;
+  title?: string;
+  summary?: string;
+  statement?: string;
+  decision?: string;
+  status?: string;
+  risk?: string;
+  owner?: string;
+  rationale?: string;
+  decision_hash?: string;
+  confirmation_required?: boolean;
+  deferred?: boolean;
+  value?: unknown;
+  decision_question?: string;
+  question?: string;
+  has_accepted_baseline?: boolean;
+  accepted_baseline_value?: unknown;
+  decision_content?: Record<string, unknown>;
+  hard_gates?: string[];
+  artifact_title?: string;
+  artifact_version?: string;
+}
+
+export interface ProductDecisionRequest {
+  action: 'accept' | 'defer';
+  expected_state_version: number;
+  expected_decision_hash: string;
+  idempotency_key: string;
+  handling?: string;
+}
+
+export interface ProductDecisionResult {
+  session_id: string;
+  state_version: number;
+  decision_id: string;
+  status: 'accepted' | 'proposed';
+  deferred: boolean;
+}
+
+export interface ProductProjectSummary {
+  workspace_id: string;
+  conversation_id: string;
+  current_session_id: string;
+  artifacts: ProductProjectArtifact[];
+  decisions: ProductProjectDecision[];
+  can_update_decisions?: boolean;
+  open_questions: Array<{ id?: string; question_id?: string; question?: string; title?: string; description?: string; owner?: string; status?: string; handling?: string }>;
+}
+
+export interface ProductProjectArtifactContent extends ProductProjectArtifact {
+  content: string;
+  content_format: 'markdown' | 'html' | 'text';
+  mime_type: string;
+  slot_key: string;
+  editable?: boolean;
+  html_sync_required?: boolean;
+}
+
+export interface ProductMarkdownUpdateRequest {
+  base_revision_id: string;
+  base_revision: number;
+  markdown: string;
+  idempotency_key: string;
+}
+
+export interface ProductMarkdownUpdateResult {
+  session_id: string;
+  stage: ProductStageId;
+  state_version: number;
+  markdown: string;
+  revision_id: string;
+  revision: number;
+  slot_id: string;
+  html_synced: boolean;
+  html_sync_required: boolean;
+  html_revision_id?: string;
+  html_revision?: number;
+}
+
+export interface ProductStageRelayState {
+  supported: boolean;
+  can_relay: boolean;
+  pending_hard_stops?: number;
+  can_accept_current_artifact?: boolean;
+  /** A newer immutable product-workflow package can restart this failed session. */
+  can_restart_on_latest?: boolean;
+  /** The session is pinned to an older product-workflow package revision. */
+  update_available?: boolean;
+  reason?: string;
+  session_id: string;
+  state_version: number;
+  current_stage: ProductStageId;
+  run_status: string;
+  next_stages: Array<{ id: ProductStageId; label: string }>;
+  actions: Array<'continue' | 'switch-stage' | 'finish'>;
+  artifacts: Array<{ title: string; version: string; status: string }>;
+  next_session_id?: string;
+  project?: ProductProjectSummary;
+}
+
+export interface ProductStageRelayRequest {
+  action: 'continue' | 'switch-stage' | 'finish';
+  selected_stage?: ProductStageId;
+  idempotency_key: string;
+  expected_state_version: number;
+  request_context?: string;
+  accept_current_artifact?: boolean;
+}
+
+export interface ProductStageRelayResult {
+  session_id: string;
+  source_session_id: string;
+  status: string;
+  selected_stage?: ProductStageId;
+  state_version: number;
+  ready_steps: string[];
+  approval_id: string;
+}
+
+export interface WorkflowRestartOnLatestRequest {
+  idempotency_key: string;
+  expected_state_version: number;
+}
+
+export interface WorkflowRestartOnLatestResult {
+  source_session_id: string;
+  session_id: string;
+  restarted: true;
+  status: string;
+  state_version: number;
+  ready_steps: string[];
+}
+
+export const WORKFLOW_CONTRACT_VERSION = 'workflow.v1' as const;
+
+export interface WorkflowProjectionNode {
+  id?: string;
+  mode?: string;
+  requires_approval: boolean;
+  execution: string;
+  validity: string;
+  reachability: string;
+  readiness: string;
+  branch: string;
+}
+
+/** Server-authoritative control state used to resolve workflow commands. */
+export interface WorkflowProjection {
+  completed?: boolean;
+  end_reached?: boolean;
+  past?: string[];
+  current?: string[];
+  reachable?: string[];
+  ready?: string[];
+  retryable?: string[];
+  rewindable?: string[];
+  continue?: string[];
+  blocked?: string[];
+  stale?: string[];
+  pruned?: string[];
+  bypassed?: string[];
+  nodes?: Record<string, WorkflowProjectionNode>;
+}
+
+/** Payload nested under the Core API's historical `{ code, message, data }` envelope. */
+export interface WorkflowProjectionResult {
+  session_id: string;
+  status?: 'active' | 'completed' | 'failed' | 'waiting' | 'stopped';
+  current_step_id?: string;
+  state_version: number;
+  graph_hash: string;
+  schema_version: string;
+  projection: WorkflowProjection;
+  graph?: Record<string, unknown>;
+  attempt_history?: Record<string, Array<{
+    attempt: number;
+    task_id: string;
+    status: string;
+    validity: string;
+    started_at: string;
+    updated_at?: string;
+    intent_context?: string;
+  }>>;
+  input_witnesses?: Record<string, unknown[]>;
+}
+
+export interface WorkflowProjectionEnvelope {
+  code: number;
+  message: string;
+  data: WorkflowProjectionResult;
+}
+
+export interface WorkflowTransitionStep {
+  step_id: string;
+  task_id?: string;
+  objective?: string;
+  user_input?: string;
+  runtime_instruction?: string;
+  partial_indices?: Record<string, number[]>;
+}
+
+export interface WorkflowTransitionRequest {
+  contract_version: typeof WORKFLOW_CONTRACT_VERSION;
+  command_id: string;
+  tool: 'advance_step_and_hand_off';
+  session_id: string;
+  expected_state_version: number;
+  retry_origin: 'user' | 'automatic';
+  steps: WorkflowTransitionStep[];
+}
+
+export interface WorkflowTransitionTask {
+  step_id: string;
+  task_id: string;
+  step_state: string;
+}
+
+export interface WorkflowTransitionError {
+  code: string;
+  message: string;
+  retryable: boolean;
+  details?: Record<string, unknown>;
+}
+
+export interface WorkflowTransitionResult {
+  accepted: boolean;
+  command_id: string;
+  session_id?: string;
+  task_id?: string;
+  state_version: number;
+  step_state?: string;
+  tasks?: WorkflowTransitionTask[];
+  error?: WorkflowTransitionError;
+  projection: WorkflowProjection;
+}
+
+export interface WorkflowTransitionResponse {
+  contract_version: typeof WORKFLOW_CONTRACT_VERSION;
+  request_id: string;
+  ok: boolean;
+  result?: WorkflowTransitionResult;
+  error?: WorkflowTransitionError;
+}
+
 export function WorkflowSessionApi() {
   return {
     getControl(sessionId: string, options?: RawAxiosRequestConfig) {
@@ -529,6 +793,56 @@ export function WorkflowSessionApi() {
     executeDocumentAction(artifactId: string, body: ApiCoreWorkflowArtifactsArtifactIdDocumentActionsExecutePostRequest, options?: RawAxiosRequestConfig) {
       return axiosInstance.post<DocumentRewriteExecuteOpenAPIResponse>(`${coreApiBaseUrl}/workflow-artifacts/${encodeURIComponent(artifactId)}/document-actions:execute`, body, options);
     },
+    getProductStageRelay(sessionId: string, options?: RawAxiosRequestConfig) {
+      return axiosInstance.get<{ result: ProductStageRelayState }>(
+        `${coreApiBaseUrl}/workflow-sessions/${encodeURIComponent(sessionId)}/product-stage-relay`,
+        options,
+      );
+    },
+    getProductProjectArtifact(sessionId: string, stage: ProductStageId, options?: RawAxiosRequestConfig, format: 'html' | 'markdown' = 'html') {
+      return axiosInstance.get<{ result: ProductProjectArtifactContent }>(
+        `${coreApiBaseUrl}/workflow-sessions/${encodeURIComponent(sessionId)}/product-artifacts/${encodeURIComponent(stage)}`,
+        { ...options, params: { ...options?.params, format } },
+      );
+    },
+    updateProductProjectMarkdown(sessionId: string, stage: ProductStageId, payload: ProductMarkdownUpdateRequest, options?: RawAxiosRequestConfig) {
+      return axiosInstance.patch<{ result: ProductMarkdownUpdateResult }>(
+        `${coreApiBaseUrl}/workflow-sessions/${encodeURIComponent(sessionId)}/product-artifacts/${encodeURIComponent(stage)}/markdown`,
+        payload,
+        options,
+      );
+    },
+    updateProductDecision(sessionId: string, decisionId: string, payload: ProductDecisionRequest, options?: RawAxiosRequestConfig) {
+      return axiosInstance.post<{ result: ProductDecisionResult }>(
+        `${coreApiBaseUrl}/workflow-sessions/${encodeURIComponent(sessionId)}/product-decisions/${encodeURIComponent(decisionId)}`,
+        payload,
+        options,
+      );
+    },
+    relayProductStage(sessionId: string, payload: ProductStageRelayRequest, options?: RawAxiosRequestConfig) {
+      return axiosInstance.post<{ result: ProductStageRelayResult }>(
+        `${coreApiBaseUrl}/workflow-sessions/${encodeURIComponent(sessionId)}/product-stage-relay`,
+        payload,
+        options,
+      );
+    },
+    restartOnLatest(
+      sessionId: string,
+      payload: WorkflowRestartOnLatestRequest,
+      options?: RawAxiosRequestConfig,
+    ) {
+      return axiosInstance.post<{ result: WorkflowRestartOnLatestResult }>(
+        `${coreApiBaseUrl}/workflow-sessions/${encodeURIComponent(sessionId)}:restart-on-latest`,
+        payload,
+        {
+          ...options,
+          headers: {
+            ...options?.headers,
+            'Idempotency-Key': payload.idempotency_key,
+          },
+        },
+      );
+    },
     getLatestSession(conversationId: string, options?: RawAxiosRequestConfig) {
       return axiosInstance.get(
         `${coreApiBaseUrl}/conversations/${encodeURIComponent(conversationId)}/workflow-sessions:latest`,
@@ -560,7 +874,7 @@ export function WorkflowSessionApi() {
       );
     },
     getProjection(sessionId: string, options?: RawAxiosRequestConfig) {
-      return axiosInstance.get(
+      return axiosInstance.get<WorkflowProjectionEnvelope>(
         `${coreApiBaseUrl}/workflow-sessions/${encodeURIComponent(sessionId)}/projection`,
         options,
       );
@@ -574,6 +888,24 @@ export function WorkflowSessionApi() {
         `${coreApiBaseUrl}/workflow-sessions/${encodeURIComponent(sessionId)}:approval-preference`,
         payload,
         options,
+      );
+    },
+    advanceStepAndHandOff(
+      sessionId: string,
+      payload: WorkflowTransitionRequest,
+      options?: RawAxiosRequestConfig,
+    ) {
+      return axiosInstance.post<WorkflowTransitionResponse>(
+        `${coreApiBaseUrl}/workflow-sessions/${encodeURIComponent(sessionId)}:advance-step-and-hand-off`,
+        payload,
+        {
+          ...options,
+          headers: {
+            ...options?.headers,
+            'Workflow-Contract-Version': WORKFLOW_CONTRACT_VERSION,
+            'Idempotency-Key': payload.command_id,
+          },
+        },
       );
     },
     patchSlot(sessionId: string, slotId: string, selectedRevision: number, options?: RawAxiosRequestConfig) {

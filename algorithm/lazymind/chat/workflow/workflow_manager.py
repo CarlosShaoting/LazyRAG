@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import uuid
 from dataclasses import asdict, dataclass
 from typing import Any, Callable, Dict, List, Optional, Union
 
@@ -73,6 +74,13 @@ def _result_text(value: Any) -> str:
         value = value.result
     return json.dumps(value, ensure_ascii=False, default=str)
 
+
+def _is_plain_workflow_continue(value: Any) -> bool:
+    normalized = re.sub(r'[\s，。！？!?,.;；]+', '', str(value or '')).lower()
+    return normalized in {
+        '继续', '确认', '确认继续', '保存并继续', '同意', '批准',
+        'continue', 'confirm', 'approve', 'proceed', 'yes', 'ok',
+    }
 
 def _ppt_step_user_input(value: Any, workflow_id: Any) -> str:
     """Treat approval-only continue text as control input for PPT sessions only."""
@@ -145,7 +153,7 @@ def _handoff_tool(
     def advance_step_and_hand_off(step_id: str) -> str:
         """Execute one Ready Workflow step, then hand off for result approval."""
         selected_session_id = session() if callable(session) else session
-        selected_session_id = str(selected_session_id or '').strip()
+        selected_session_id = _relayed_session_id(str(selected_session_id or '').strip())
         if not selected_session_id:
             raise WorkflowClientError(
                 'WORKFLOW_SESSION_NOT_INITIALIZED',
@@ -155,21 +163,36 @@ def _handoff_tool(
         state_refreshed = False
         for attempt in range(2):
             frontier = client.get_ready_steps(selected_session_id)
-            allowed = set(frontier.get('ready_steps') or [])
-            allowed.update(frontier.get('retryable_steps') or [])
+            ready_steps = list(frontier.get('ready_steps') or [])
+            retryable = set(frontier.get('retryable_steps') or [])
             rewindable = set(frontier.get('rewindable_steps') or [])
-            allowed.update(rewindable)
-            allowed.update(frontier.get('continue_steps') or [])
-            if step_id not in allowed:
+            continue_steps = list(frontier.get('continue_steps') or [])
+            cfg = _agentic_config()
+            bound_user_input = user_input() if callable(user_input) else user_input
+            current_user_input = str(
+                bound_user_input
+                or cfg.get('workflow_current_query')
+                or cfg.get('query')
+                or ''
+            ).strip()
+            generic_continue = _is_plain_workflow_continue(current_user_input)
+            resolved_step_id = step_id
+            forward_steps = [*continue_steps, *ready_steps]
+            if generic_continue and step_id in (rewindable | retryable) and forward_steps:
+                # A plain approval must move along the Runtime-projected forward
+                # frontier. Small models occasionally copy the completed step ID
+                # from chat history, which otherwise turns "continue" into a retry.
+                resolved_step_id = forward_steps[0]
+            allowed = set(ready_steps) | retryable | rewindable | set(continue_steps)
+            if resolved_step_id not in allowed:
                 if state_refreshed:
-                    return _result_text(_state_changed_result(frontier, [step_id]))
+                    return _result_text(_state_changed_result(frontier, [resolved_step_id]))
                 raise WorkflowClientError(
                     'WORKFLOW_TARGET_NOT_PROJECTED',
                     'Handoff target is not currently actionable.',
-                    details={'step_id': step_id, 'allowed': sorted(allowed)},
+                    details={'step_id': resolved_step_id, 'allowed': sorted(allowed)},
                 )
             try:
-                cfg = _agentic_config()
                 focus_hints = []
                 focused_tab = str(cfg.get('focused_tab') or '').strip()
                 focused_sort_order = cfg.get('focused_sort_order')
@@ -191,7 +214,7 @@ def _handoff_tool(
                     session_id=selected_session_id,
                     expected_state_version=int(frontier.get('state_version') or 0),
                     steps=[StepCommand(
-                        step_id=step_id,
+                        step_id=resolved_step_id,
                         user_input=current_user_input,
                         runtime_instruction=' '.join(focus_hints),
                     )],
@@ -205,9 +228,14 @@ def _handoff_tool(
                     ),
                 ))
                 result = dict(response.result)
+                if resolved_step_id != step_id:
+                    result['resolved_step_id'] = resolved_step_id
+                    result['user_notice'] = (
+                        '已根据当前工作流状态继续到下一前向步骤，未重复执行已完成步骤。'
+                    )
                 if state_refreshed:
                     result.update(_state_refresh_notice())
-                if step_id in rewindable:
+                if resolved_step_id in rewindable:
                     result = _compact_transition_result(result)
                 return _result_text(result)
             except WorkflowClientError as exc:
@@ -328,6 +356,34 @@ def _with_terminal_agent_control(result: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _with_handoff_agent_control(result: Dict[str, Any], *, initial: bool = False) -> Dict[str, Any]:
+    """Stop the current model turn after a human-review step was launched."""
+    if str(result.get('status') or '').strip().lower() in {
+        'failed', 'cancelled', 'canceled', 'interrupted', 'error',
+    }:
+        return result
+    return {
+        **result,
+        '_agent_control': {
+            'stop': True,
+            'reason': 'workflow_handoff_started',
+            'final_text': (
+                '第一步已启动，完成后会停下来等待你确认。'
+                if initial else
+                '当前步骤已完成，工作流正在等待你确认后再继续。'
+            ),
+        },
+    }
+
+
+def _relayed_session_id(selected: str) -> str:
+    """Honor a Host-created successor for tools already bound during this model turn."""
+    relay = _agentic_config().get('product_stage_relay') or {}
+    if isinstance(relay, dict) and relay.get('source_session_id') == selected:
+        return str(relay.get('session_id') or selected)
+    return selected
+
+
 def _safe_session_tools(
     toolkit: HostWorkflowToolkit,
     session: Union[str, Callable[[], str]],
@@ -359,7 +415,7 @@ def _safe_session_tools(
                 'Do not infer that an attachment is required; the trigger determines '
                 'whether any external input is actually required.',
             )
-        return selected
+        return _relayed_session_id(selected)
 
     @_register_host_file(capability)
     def get_workflow_state() -> Dict[str, Any]:
@@ -418,6 +474,16 @@ def _safe_session_tools(
                     or cfg.get('query')
                     or '',
                     cfg.get('workflow_id') or cfg.get('workflow_ref'),
+                ).strip()
+                details = {
+                    str(item.get('step_id') or ''): item
+                    for item in (frontier.get('ready_step_details') or [])
+                    if isinstance(item, dict)
+                }
+                requires_handoff = any(
+                    bool(details.get(value, {}).get('requires_approval'))
+                    or str(details.get(value, {}).get('mode') or '').strip().lower() == 'human'
+                    for value in requested
                 )
                 result = toolkit.advance_step(
                     selected_session_id, int(frontier.get('state_version') or 0),
@@ -436,10 +502,13 @@ def _safe_session_tools(
                     workflow_mode=(
                         'auto' if cfg.get('workflow_mode') == 'auto' else 'dynamic'
                     ),
+                    handoff=requires_handoff,
                 )
                 if state_refreshed:
                     result = {**result, **_state_refresh_notice()}
                 result = _with_terminal_agent_control(result)
+                if requires_handoff and '_agent_control' not in result:
+                    result = _with_handoff_agent_control(result)
                 if any(value in rewindable for value in requested):
                     result = _compact_transition_result(result)
                 return _compact_model_frontier(result)
@@ -475,9 +544,66 @@ def _safe_session_tools(
             artifact_id, int(artifact.get('revision') or 0), value, content_type, caption,
         )
 
+    def get_product_stage_options() -> Dict[str, Any]:
+        """Read this product project's shared views, versions and stage choices.
+        Available while a stage runs; contains no internal Workspace or Manifest.
+        """
+        return _client().get_product_stage_relay(session_id())
+
+    def read_product_project_artifact(stage: str) -> Dict[str, Any]:
+        """Read the selected shared view from this same product project.
+        stage: direction, competitive, design, prd, prototype, review or handoff.
+        Use for earlier-stage content even after switching stages. This is read-only:
+        do not start a new task or relay a stage merely to view its document. Read
+        get_product_stage_options first to check availability and stale/draft status.
+        To revise, ask for an explicit stage switch and preserve the prior version.
+        """
+        return _client().get_product_project_artifact(session_id(), stage)
+
+    def relay_product_stage(action: str, selected_stage: str = '') -> Dict[str, Any]:
+        """Only after the CURRENT user explicitly asks to continue, switch stage or finish,
+        record that user choice and prepare the next stage in the SAME conversation
+        and shared product project; no new task/window or manual re-upload. Never use merely
+        because a stage is complete, export was requested, or a stage chain was planned.
+        Read get_product_stage_options first; continue must target a recommended stage.
+        After success execute the returned exact Ready router with the normal step tools.
+        """
+        cfg = _agentic_config()
+        query = str(cfg.get('workflow_current_query') or cfg.get('query') or '').strip()
+        if not query:
+            raise WorkflowClientError(
+                'PRODUCT_APPROVAL_NOT_FOUND', 'A current user message is required for stage handoff.',
+            )
+        source_id = session_id()
+        client = _client()
+        # The same turn and choice retain an idempotency key after a transport failure.
+        pending = cfg.setdefault('product_stage_relay_commands', {})
+        key = json.dumps([source_id, action, selected_stage, query], ensure_ascii=False)
+        command = pending.get(key)
+        if not command:
+            summary = client.get_product_stage_relay(source_id)
+            if not summary.get('can_relay'):
+                raise WorkflowClientError(
+                    'PRODUCT_STAGE_NOT_READY', str(summary.get('reason') or 'Current stage is not complete.'),
+                )
+            command = {
+                'id': str(uuid.uuid4()), 'state_version': int(summary.get('state_version') or 0),
+            }
+            pending[key] = command
+        result = client.relay_product_stage(
+            source_id, action=action, selected_stage=selected_stage,
+            expected_state_version=command['state_version'],
+            command_id=command['id'], request_context=query, user_message=query,
+        )
+        if result.get('session_id') and result['session_id'] != source_id:
+            cfg['product_stage_relay'] = result
+            cfg['workflow_session_id'] = result['session_id']
+        return result
+
     return [
         get_workflow_state, get_ready_steps, advance_step, list_workflow_inputs,
         list_artifacts, read_artifact, patch_artifact,
+        get_product_stage_options, read_product_project_artifact, relay_product_stage,
     ]
 
 
@@ -699,6 +825,9 @@ def _runtime_clarification_fields(runtime_policy: Any) -> List[Dict[str, Any]]:
         choice_policy = _clean_workflow_text(raw.get('choice_policy')).lower() or 'seed'
         if choice_policy not in {'seed', 'subset', 'fixed'}:
             choice_policy = 'seed'
+        binding = _clean_workflow_text(raw.get('binding')).lower()
+        if binding not in {'', 'request_context'}:
+            binding = ''
         field = {
             'id': field_id,
             'label': _clean_workflow_text(raw.get('label')) or field_id,
@@ -706,6 +835,7 @@ def _runtime_clarification_fields(runtime_policy: Any) -> List[Dict[str, Any]]:
             'type': question_type,
             'choices': choices,
             'choice_policy': choice_policy,
+            'binding': binding,
         }
         if question_type in {'single', 'multiple'}:
             # Fixed package choices are closed by definition. This default also
@@ -945,6 +1075,57 @@ def _merge_startup_clarification_context(
     )
 
 
+def _is_workflow_continuation_ack(value: Any) -> bool:
+    """Recognize a message that authorizes work but carries no new task scope."""
+    normalized = re.sub(r'[\W_]+', '', str(value or '').strip().lower(), flags=re.UNICODE)
+    return normalized in {
+        '继续', '继续执行', '开始', '开始执行', '执行', '确认', '确认继续', '允许继续',
+        '好的', '好', '可以', '同意', 'yes', 'ok', 'okay', 'continue', 'proceed',
+        'goahead', 'start', 'confirm', 'confirmed',
+    }
+
+
+def _latest_substantive_user_request(current_query: str, conversation_history: Any) -> str:
+    history = conversation_history if isinstance(conversation_history, list) else []
+    current = str(current_query or '').strip()
+    skipped_current = False
+    for message in reversed(history):
+        if not isinstance(message, dict) or message.get('role') != 'user':
+            continue
+        content = str(message.get('content') or '').strip()
+        if not content:
+            continue
+        # Some callers include the current turn in history while others do not.
+        if not skipped_current and content == current:
+            skipped_current = True
+            continue
+        if _is_workflow_continuation_ack(content):
+            continue
+        return content
+    return ''
+
+
+def _workflow_trigger_request_context(
+    current_query: str,
+    conversation_history: Any,
+    runtime_policy: Any,
+) -> str:
+    """Preserve an earlier task brief when a later acknowledgement starts it."""
+    clarified = _merge_startup_clarification_context(
+        current_query, conversation_history, runtime_policy,
+    )
+    current = str(current_query or '').strip()
+    if clarified != current or not _is_workflow_continuation_ack(current):
+        return clarified
+    original = _latest_substantive_user_request(current, conversation_history)
+    if not original:
+        return current
+    return (
+        f'Original workflow request:\n{original}\n\n'
+        f'Continuation authorization:\n{current}'
+    )
+
+
 def _is_explicit_merged_request_context(value: Any) -> bool:
     """Recognize a caller-supplied original-request + clarification envelope."""
     text = str(value or '').strip().lower()
@@ -970,8 +1151,12 @@ def _startup_clarification_guidance(runtime_policy: Any) -> str:
         'unambiguously inferable. Do not ask for fields that are already present. If one or '
         'more fields are missing, call ask_user exactly once TOTAL with only those missing fields, '
         'putting all of them in that single card, then stop without triggering the Workflow in '
-        'that turn. Include each '
-        'declared field id in its question object. Whenever meaningful, generate 2-4 concise, '
+        'that turn. Every ask_user questions item MUST use the actual tool schema: '
+        '{"text": "<question>", "type": "text|boolean|single|multiple", '
+        '"choices": [...]}. Never copy the declaration-only keys id, label, question, or '
+        'choice_policy, or binding into an ask_user questions item. Use each missing field\'s '
+        'declared question text verbatim so explicitly selected and automatically matched '
+        'Workflow entry points show the same question granularity. Whenever meaningful, generate 2-4 concise, '
         'context-specific suggested answers from the current request and use type=single so the '
         'user can click one. For choice_policy=subset, choose only the 2-4 most relevant declared '
         'choices, copy them verbatim, and never invent or rename an option. For '
@@ -1077,7 +1262,10 @@ def build_workflow_discovery_context(
         'Workflow is clearly appropriate, or when the user explicitly asks to run/open/start '
         'that Workflow. For a matching Workflow with startup_clarification_fields, inspect the '
         'request and prior conversation first. If fields are missing, call ask_user once with '
-        'only the missing declared questions and stop; if none are missing, trigger immediately. '
+        'only the missing declared questions and stop; use every declared question verbatim, and '
+        'for choice_policy=fixed use every declared choice verbatim. Apply this same rule whether '
+        'the Workflow was explicitly selected or automatically matched. If none are missing, '
+        'trigger immediately. '
         'After the user answers, pass the trigger a merged request_context containing the original '
         'request plus the answers. Do not trigger a Workflow merely because it exists, and do not ask the '
         'user to list Workflows before making this routing decision. A triggered Workflow '
@@ -1120,9 +1308,16 @@ def _workflow_trigger_tools(
         used_names.add(name)
 
         package_hint: Dict[str, Any] = {}
+        declared_clarification_fields = _runtime_clarification_fields(item.get('runtime'))
+        explicitly_bound_fields = [
+            field for field in declared_clarification_fields
+            if field.get('binding') == 'request_context'
+        ]
         input_types_hint: Dict[str, str] = {
             str(field['id']): 'text'
-            for field in _runtime_clarification_fields(item.get('runtime'))
+            for field in (
+                explicitly_bound_fields or declared_clarification_fields
+            )
         }
         # An explicitly selected Workflow can afford one package read before
         # the model call so its complete typed input contract is visible. In
@@ -1139,7 +1334,7 @@ def _workflow_trigger_tools(
         def make_trigger(
             bound_id: str, bound_ref: str, bound_revision: str, bound_query: str,
             bound_clarification_answer: bool, bound_package: Optional[Dict[str, Any]],
-            supports_scalar_bindings: bool,
+            supports_scalar_bindings: bool, auto_binding_field: str,
         ) -> Any:
             def run_trigger(
                 input_bindings: Optional[Dict[str, str]] = None,
@@ -1158,6 +1353,17 @@ def _workflow_trigger_tools(
                     if _is_explicit_merged_request_context(supplied_context)
                     else bound_query or supplied_context
                 )
+                effective_bindings = dict(input_bindings or {})
+                if (
+                    auto_binding_field
+                    and auto_binding_field not in effective_bindings
+                    and effective_context
+                ):
+                    # A single declared text startup field has no ambiguity: the
+                    # authoritative request context is that field's exact value.
+                    # Auto-binding lets small/local models call the trigger with
+                    # no nested JSON arguments and avoids invented relay metadata.
+                    effective_bindings[auto_binding_field] = effective_context
                 if session_holder is not None:
                     # Keep the immutable launch brief available to the first
                     # Ready steps in this same Chat turn. In particular, an Ask
@@ -1190,7 +1396,7 @@ def _workflow_trigger_tools(
                 package = bound_package or client.get_workflow(bound_id, bound_revision).result
                 input_types = workflow_package_input_types(package)
                 resolved_bindings: Dict[str, Any] = {}
-                for material_id, attachment_ref in (input_bindings or {}).items():
+                for material_id, attachment_ref in effective_bindings.items():
                     binding = str(attachment_ref or '').strip()
                     if not binding:
                         raise WorkflowClientError(
@@ -1274,12 +1480,52 @@ def _workflow_trigger_tools(
                 continue_steps = step_ids(
                     projection.get('continue') or projection.get('continue_steps')
                 )
+                ready_step_details = [
+                    detail for detail in (prepared.get('ready_step_details') or [])
+                    if isinstance(detail, dict)
+                    and str(detail.get('step_id') or '').strip() in ready_steps
+                ]
+                handoff_step = next((
+                    str(detail.get('step_id') or '').strip()
+                    for detail in ready_step_details
+                    if (
+                        detail.get('requires_approval') is True
+                        or str(detail.get('mode') or '').strip().lower() == 'human'
+                        or str(detail.get('default_approval') or '').strip().lower() == 'required'
+                    )
+                ), '')
+                handoff_result: Dict[str, Any] = {}
+                if handoff_step:
+                    # The selected Workflow is already authorized. Human mode
+                    # means review the step result, not approve starting it. Do
+                    # this deterministic first handoff in the Host because small
+                    # models frequently turn the post-result checkpoint into an
+                    # extra pre-execution question and leave the Session idle.
+                    raw_handoff = _handoff_tool(
+                        session_id, user_input=effective_context,
+                    )(handoff_step)
+                    try:
+                        decoded_handoff = json.loads(raw_handoff)
+                    except (TypeError, json.JSONDecodeError):
+                        decoded_handoff = {'result': raw_handoff}
+                    if isinstance(decoded_handoff, dict):
+                        handoff_result = decoded_handoff
+                next_tool = None if handoff_step else 'advance_step'
+                next_instruction = (
+                    f'Ready step {handoff_step!r} has started with post-execution human handoff. '
+                    'Do not ask for permission to start it and do not call another Workflow tool.'
+                    if handoff_step else
+                    'Call advance_step using only exact members of ready_steps, retryable_steps, '
+                    'rewindable_steps, or continue_steps; Runtime resolves the operation.'
+                )
                 return {
                     **prepared,
                     'status': 'prepared',
-                    'outcome': 'ready' if ready_steps else 'waiting',
+                    'outcome': (
+                        'step_started' if handoff_step else 'ready' if ready_steps else 'waiting'
+                    ),
                     'reason': (
-                        'Workflow session was initialized; select an exact Ready step and call advance_step.'
+                        f'Workflow session was initialized; {next_instruction}'
                         if ready_steps else
                         'Workflow session was initialized but no step is currently Ready.'
                     ),
@@ -1297,12 +1543,17 @@ def _workflow_trigger_tools(
                     'retryable_steps': retryable_steps,
                     'rewindable_steps': rewindable_steps,
                     'continue_steps': continue_steps,
+                    'handoff_result': handoff_result or None,
+                    **(
+                        {'_agent_control': _with_handoff_agent_control(
+                            {}, initial=True,
+                        )['_agent_control']}
+                        if handoff_step else {}
+                    ),
                     'next_action': {
-                        'tool': 'advance_step',
-                        'instruction': (
-                            'Call advance_step using only exact members of ready_steps, '
-                            'retryable_steps, rewindable_steps, or continue_steps; Runtime resolves the operation.'
-                        ),
+                        'tool': next_tool,
+                        'step_id': handoff_step or None,
+                        'instruction': next_instruction,
                     },
                 }
             if attachments_available:
@@ -1313,6 +1564,12 @@ def _workflow_trigger_tools(
                 ) -> Dict[str, Any]:
                     """Initialize with optional attachments and a merged clarified request."""
                     return run_trigger(input_bindings, request_context)
+            elif auto_binding_field:
+                def bound_trigger(
+                    request_context: Optional[str] = None,
+                ) -> Dict[str, Any]:
+                    """Initialize by binding the exact request to the sole startup text field."""
+                    return run_trigger(request_context=request_context)
             elif supports_scalar_bindings:
                 @fc_register(host_file='NONE')
                 def bound_trigger(
@@ -1328,10 +1585,28 @@ def _workflow_trigger_tools(
                     return run_trigger(request_context=request_context)
             return bound_trigger
 
-        trigger_query = _merge_startup_clarification_context(
+        trigger_query = _workflow_trigger_request_context(
             current_query,
             conversation_history,
             item.get('runtime'),
+        )
+        clarification_fields = _runtime_clarification_fields(item.get('runtime'))
+        explicitly_bound_fields = [
+            field for field in clarification_fields
+            if field.get('binding') == 'request_context'
+            and field.get('type') == 'text'
+        ]
+        auto_binding_field = (
+            str(explicitly_bound_fields[0].get('id') or '').strip()
+            if not attachments_available and len(explicitly_bound_fields) == 1
+            else str(clarification_fields[0].get('id') or '').strip()
+            if (
+                not attachments_available
+                and not explicitly_bound_fields
+                and len(clarification_fields) == 1
+                and clarification_fields[0].get('type') == 'text'
+            )
+            else ''
         )
         trigger_workflow = make_trigger(
             workflow_id,
@@ -1341,11 +1616,16 @@ def _workflow_trigger_tools(
             trigger_query != str(current_query or '').strip(),
             package_hint,
             any(kind in {'text', 'json'} for kind in input_types_hint.values()),
+            auto_binding_field,
         )
 
         trigger_workflow.__name__ = name
         description = str(item.get('tool_description') or '').strip()
         input_contract = (
+            f' The Host automatically binds the exact request context to startup field '
+            f'{auto_binding_field!r}; call this trigger without input_bindings. Do not synthesize '
+            'optional relay fields such as workspace_seed or stage_approval.'
+            if auto_binding_field else
             ' Exact external material IDs and types: '
             + ', '.join(
                 f'{material_id} ({material_type})'
@@ -1358,6 +1638,8 @@ def _workflow_trigger_tools(
             ' File/image input_bindings use exact filenames listed in conversation attachments; '
             'text/json input_bindings use literal values, never filesystem paths.'
             if attachments_available else
+            ' No user attachments are available; do not invent or bind file materials.'
+            if auto_binding_field else
             ' No user attachments are available: do not bind file materials, but pass literal '
             'values for required text/json input_bindings.'
         )
@@ -1489,6 +1771,44 @@ def resolve_workflow_injection(
         *toolkit.tools(),
     ]
     projection = _state(session_id) if session_id else {}
+    auto_continue_step = ''
+    auto_continue_result: Dict[str, Any] = {}
+    state_projection = (
+        projection.get('projection')
+        if isinstance(projection.get('projection'), dict) else projection
+    )
+    waiting_at_forward_frontier = (
+        str(projection.get('status') or context.get('status') or '') == 'waiting'
+        or (
+            not state_projection.get('current')
+            and bool(state_projection.get('ready') or state_projection.get('ready_steps'))
+            and bool(state_projection.get('past'))
+        )
+    )
+    if (
+        session_id
+        and waiting_at_forward_frontier
+        and _is_plain_workflow_continue(current_query)
+    ):
+        try:
+            frontier = _client().get_ready_steps(session_id)
+            forward_steps = list(frontier.get('ready_steps') or [])
+            details = {
+                str(item.get('step_id') or ''): item
+                for item in (frontier.get('ready_step_details') or [])
+                if isinstance(item, dict)
+            }
+            if len(forward_steps) == 1:
+                candidate = forward_steps[0]
+                detail = details.get(candidate, {})
+                if bool(detail.get('requires_approval')) or detail.get('mode') == 'human':
+                    auto_continue_step = candidate
+                    auto_continue_result = json.loads(
+                        _handoff_tool(session_id, user_input=current_query)(candidate)
+                    )
+                    projection = _state(session_id)
+        except (WorkflowClientError, ValueError, TypeError):
+            LOG.exception('deterministic plain-continue handoff failed session=%s', session_id)
     tools = AgentWorkflowToolProjection(
         session_id=session_id,
         session_status=str(projection.get('status') or context.get('status') or ''),
@@ -1577,6 +1897,13 @@ def resolve_workflow_injection(
             'focused_sort_order': context.get('focused_sort_order'),
         })
         tools.append(_handoff_tool(session_id))
+        if auto_continue_step:
+            tools = [
+                tool for tool in tools
+                if str(getattr(tool, '__name__', '')) not in {
+                    'advance_step', 'advance_step_and_hand_off',
+                }
+            ]
         session_projection = (
             projection.get('projection')
             if isinstance(projection.get('projection'), dict) else {}
@@ -1626,6 +1953,13 @@ def resolve_workflow_injection(
                     )
         runtime_context = (
             '## Workflow Runtime [AUTHORITATIVE]\n'
+            + (
+                f'The Host already accepted this plain continuation and started the sole '
+                f'forward Ready step {auto_continue_step!r} with post-execution handoff. '
+                'Do not call another Workflow transition tool and do not ask permission to start it. '
+                f'Host receipt: {json.dumps(auto_continue_result, ensure_ascii=False, default=str)}\n'
+                if auto_continue_step else ''
+            )
             + 'The Host owns session/version concurrency fields. Never ask the user for '
             + 'state_version or expected_state_version. '
             + _SERIAL_WORKFLOW_EXECUTION_POLICY
@@ -1706,7 +2040,10 @@ def resolve_workflow_injection(
             + 'Workflow step requires human approval, execute it with advance_step_and_hand_off so '
             + 'the Host stops after execution for output review. Do not ask whether to execute it, '
             + 'and do not merely announce that later steps will run. For recovery, '
-            + 'use only exact retryable_steps, rewindable_steps, or continue_steps returned by Runtime.\n'
+            + 'use only exact retryable_steps, rewindable_steps, or continue_steps returned by Runtime. '
+            + 'For a plain continue/confirm approval, always choose a forward ready_steps or '
+            + 'continue_steps target; never choose retryable_steps or rewindable_steps unless the '
+            + 'user explicitly requested retry, revision, repair, or regeneration.\n'
             + json.dumps({
                 'current_query': current_query,
                 'allowed_workflow_refs': sorted(allowed_refs),

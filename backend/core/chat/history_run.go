@@ -9,6 +9,7 @@ import (
 
 	"lazymind/core/common/orm"
 	"lazymind/core/log"
+	"lazymind/core/state"
 )
 
 // claimChatHistoryRun transfers a reused history row to a new run before that
@@ -54,6 +55,48 @@ func updateOwnedChatHistory(ctx context.Context, db *gorm.DB, historyID, runID s
 		return false, nil
 	}
 	return true, nil
+}
+
+// finalizeCancelledChatHistory makes the stop endpoint authoritative even when
+// the original streaming handler no longer exists (for example after a desktop
+// restart). A live handler can still persist a later partial-result snapshot;
+// the run-decision guard will resolve that terminal to the same cancellation.
+func finalizeCancelledChatHistory(
+	ctx context.Context,
+	db *gorm.DB,
+	stateStore state.Store,
+	conversationID, historyID, runID, currentResult string,
+) error {
+	terminal := &RunTerminal{Status: "cancelled", Reason: "user_cancelled"}
+	if db != nil {
+		var history orm.ChatHistory
+		err := db.WithContext(ctx).
+			Where("id = ? AND conversation_id = ? AND run_id = ?", historyID, conversationID, runID).
+			Take(&history).Error
+		if err != nil && err != gorm.ErrRecordNotFound {
+			return err
+		}
+		if err == nil {
+			if strings.TrimSpace(currentResult) == "" {
+				currentResult = history.Result
+			}
+			terminal.PartialOutput = strings.TrimSpace(currentResult) != ""
+			updated, updateErr := updateOwnedChatHistory(ctx, db, historyID, runID, map[string]any{
+				"run_status": terminal.Status, "run_terminal": terminalJSON(terminal), "update_time": time.Now(),
+			})
+			if updateErr != nil {
+				return updateErr
+			}
+			if !updated {
+				return nil
+			}
+		}
+	}
+	terminal.PartialOutput = terminal.PartialOutput || strings.TrimSpace(currentResult) != ""
+	if stateStore != nil {
+		return setChatRuntimeStatus(ctx, stateStore, conversationID, historyID, terminal.Status, currentResult, runID, terminal)
+	}
+	return nil
 }
 
 func updateOwnedMultiAnswerHistory(ctx context.Context, db *gorm.DB, historyID, runID string, values any) (bool, error) {

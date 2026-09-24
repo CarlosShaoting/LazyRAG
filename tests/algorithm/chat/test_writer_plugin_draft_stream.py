@@ -176,6 +176,7 @@ def test_prepare_control_distinguishes_reference_from_edit_source(
 
 def test_write_document_revision_emits_markdown_draft_stream(monkeypatch, tmp_path):
     from lazymind.document_tools import revision as document_revision
+    from lazymind.document_tools import writing as writer
 
     tools = _load_tools_module()
     runtime = tools
@@ -223,7 +224,23 @@ def test_write_document_revision_emits_markdown_draft_stream(monkeypatch, tmp_pa
         if event['type'] == 'artifact_stream'
     ]
     assert ''.join(deltas) == '# Revised title\n\nUpdated body.\n'
-    assert all(0 < len(delta) <= 2 for delta in deltas)
+    assert all(0 < len(delta) <= writer.DraftMarkdownStreamEventEmitter.MAX_DELTA_CHARS for delta in deltas)
+
+
+def test_markdown_preview_coalesces_tiny_provider_deltas_without_losing_text():
+    from lazymind.document_tools import writing as writer
+
+    emitted: list[dict] = []
+    emitter = writer.DraftMarkdownStreamEventEmitter(emitted.append)
+    expected = '流' * 257
+    for character in expected:
+        emitter.feed(character)
+    emitter.end()
+
+    deltas = [event['delta'] for event in emitted if event['type'] == 'artifact_stream']
+    assert ''.join(deltas) == expected
+    assert len(deltas) < len(expected)
+    assert all(0 < len(delta) <= emitter.MAX_DELTA_CHARS for delta in deltas)
     assert [event['chunk_index'] for event in events] == list(
         range(1, len(events) + 1),
     )

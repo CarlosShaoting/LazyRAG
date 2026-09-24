@@ -379,6 +379,19 @@ func UpdateStepStatus(ctx context.Context, db *gorm.DB, taskID, status string) e
 	}).Error
 }
 
+// UpdateStepTerminalCode preserves the stable machine-readable reason emitted
+// by the executor. It is separate from UpdateStepStatus so legacy status-only
+// callers never erase a code already committed by Workflow Runtime.
+func UpdateStepTerminalCode(ctx context.Context, db *gorm.DB, taskID, code string) error {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return nil
+	}
+	return db.WithContext(ctx).Model(&orm.WorkflowSessionStep{}).
+		Where("task_id = ?", taskID).
+		Update("terminal_code", code).Error
+}
+
 // GetLatestStep returns the most recent execution instance of step_id within a session.
 func GetLatestStep(ctx context.Context, db *gorm.DB, sessionID, stepID string) (*orm.WorkflowSessionStep, error) {
 	var row orm.WorkflowSessionStep

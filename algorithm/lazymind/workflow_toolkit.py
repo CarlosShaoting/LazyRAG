@@ -313,7 +313,8 @@ class HostWorkflowToolkit:
 
     def advance_step(self, session_id: str, expected_state_version: int,
                      steps: List[StepCommandInput], command_id: str = '',
-                     retry_origin: str = 'automatic', workflow_mode: str = '') -> Dict[str, Any]:
+                     retry_origin: str = 'automatic', workflow_mode: str = '',
+                     handoff: bool = False) -> Dict[str, Any]:
         """Submit Ready targets; command_id is top-level and never belongs inside steps."""
         commands = [StepCommand(**item.model_dump()) if isinstance(item, StepCommandInput)
                     else StepCommand(**item) for item in steps]
@@ -324,6 +325,7 @@ class HostWorkflowToolkit:
             command_id=resolved_command_id,
             retry_origin=retry_origin,
             workflow_mode=workflow_mode,
+            handoff=handoff,
         )).result
         statuses = result.get('attempt_statuses') if isinstance(result, dict) else None
         if isinstance(statuses, dict):

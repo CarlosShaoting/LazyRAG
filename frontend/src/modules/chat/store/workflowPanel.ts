@@ -333,6 +333,8 @@ export interface WorkflowRuntimeProjection {
   current?: string[];
   reachable?: string[];
   ready?: string[];
+  retryable?: string[];
+  rewindable?: string[];
   continue?: string[];
   blocked?: string[];
   stale?: string[];
@@ -364,6 +366,7 @@ export interface SlotDef {
   label: string;
   type: "image" | "text" | "file";
   cardinality?: "single" | "list";
+  exposed?: boolean;
   /** Whether this list slot supports drag-reorder. */
   ordered?: boolean;
   /** The slot key used for the caption of this slot's items. */
@@ -516,11 +519,21 @@ export interface CompositeMutuallyExclusiveGroup {
   prefer?: string[];
 }
 
+/** Show one configured slot only when another selected material has the expected scalar value. */
+export interface CompositeVisibleWhenCondition {
+  slot: string;
+  material: string;
+  /** Optional dot-separated path inside the artifact value. */
+  path?: string;
+  equals: string | number | boolean;
+}
+
 /**
  * Workflow-declared composite display behavior (UI schema).
  * - hide_empty_columns: drop columns with no matching revisions
  * - empty_column_scope: which revisions count as non-empty
  * - mutually_exclusive: among a group, show only one winner column
+ * - visible_when: show a slot only when a selected material equals the declared value
  */
 export interface CompositeBehavior {
   hide_empty_columns?: boolean;
@@ -528,6 +541,134 @@ export interface CompositeBehavior {
   /** Reuse a slot's sole revision on every composite page when no exact sort_order exists. */
   repeat_single_slots?: string[];
   mutually_exclusive?: CompositeMutuallyExclusiveGroup[];
+  visible_when?: CompositeVisibleWhenCondition[];
+}
+
+function unwrapWorkflowArtifactScalar(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  for (const key of ['text', 'value', 'data']) {
+    const candidate = record[key];
+    if (candidate === null || ['string', 'number', 'boolean'].includes(typeof candidate)) {
+      return candidate;
+    }
+  }
+  return value;
+}
+
+function normalizeWorkflowArtifactScalar(value: unknown): string {
+  const scalar = unwrapWorkflowArtifactScalar(value);
+  return typeof scalar === 'string'
+    ? scalar.trim().toLowerCase()
+    : String(scalar ?? '').trim().toLowerCase();
+}
+
+function readWorkflowArtifactPath(value: unknown, path?: string): unknown {
+  if (!path) return value;
+  let current = value;
+  for (const segment of path.split('.')) {
+    if (!segment || !current || typeof current !== 'object' || Array.isArray(current)) {
+      return undefined;
+    }
+    current = (current as Record<string, unknown>)[segment];
+  }
+  return current;
+}
+
+/** Match declarative UI conditions against the latest selected material revision. */
+export function workflowMaterialEquals(
+  slots: SlotRevision[] = [],
+  material: string,
+  expected: string | number | boolean,
+  path?: string,
+): boolean {
+  const latest = slots
+    .filter((slot) => slot.selected && slot.slot === material)
+    .sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime())[0];
+  if (!latest) return false;
+  return normalizeWorkflowArtifactScalar(readWorkflowArtifactPath(latest.artifact_value, path))
+    === normalizeWorkflowArtifactScalar(expected);
+}
+
+/** Apply value-based slot visibility without coupling the renderer to a workflow id. */
+export function filterWorkflowSlotIdsByConditions(
+  slotIds: string[],
+  slots: SlotRevision[] = [],
+  conditions: CompositeVisibleWhenCondition[] = [],
+): string[] {
+  const allowed = new Set(slotIds);
+  for (const condition of conditions) {
+    if (!allowed.has(condition.slot)) continue;
+    if (!workflowMaterialEquals(slots, condition.material, condition.equals, condition.path)) {
+      allowed.delete(condition.slot);
+    }
+  }
+  return slotIds.filter((slotId) => allowed.has(slotId));
+}
+
+const DESIGN_DOMAIN_LABELS: Record<string, string> = {
+  domain_state: '领域对象与状态',
+  behavior_policy_trust: '行为、策略与信任',
+  ia_semantics: '信息架构与语义',
+  journey_interaction_service: '用户旅程、交互与服务',
+  ui_visual_system: '界面与视觉系统',
+  content_communication: '内容与沟通',
+};
+
+const DESIGN_GATE_LABELS: Record<string, string> = {
+  privacy: '隐私数据',
+  identity: '企业身份',
+  permission: '权限控制',
+  silent_write: '静默写入外部系统',
+  cross_tenant: '跨租户隔离',
+  high_loss_irreversible: '高损失或不可逆操作',
+};
+
+/** Build a Chinese display summary from the authoritative design-routing record. */
+export function buildChineseDesignRoutingSummary(value: unknown): string | null {
+  const wrapper = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+  const record = wrapper?.data && typeof wrapper.data === 'object' && !Array.isArray(wrapper.data)
+    ? wrapper.data as Record<string, unknown>
+    : wrapper;
+  if (!record || !Array.isArray(record.decisions)) return null;
+
+  const decisions = record.decisions.filter(
+    (decision): decision is Record<string, unknown> => Boolean(decision && typeof decision === 'object' && !Array.isArray(decision)),
+  );
+  const heavyCount = decisions.filter((decision) => String(decision.effort).toLowerCase() === 'heavy').length;
+  const lightCount = decisions.filter((decision) => String(decision.effort).toLowerCase() === 'light').length;
+  const route = String(record.overall_effort).toLowerCase() === 'heavy' ? '重型' : '轻量';
+  const domains = Array.isArray(record.primary_domains)
+    ? record.primary_domains.map((domain) => DESIGN_DOMAIN_LABELS[String(domain)] ?? String(domain)).join('、')
+    : '尚待确认';
+  const gates = Array.from(new Set(decisions.flatMap((decision) =>
+    Array.isArray(decision.hard_gates) ? decision.hard_gates.map(String) : [],
+  )));
+  const gateSummary = gates.length
+    ? gates.map((gate) => DESIGN_GATE_LABELS[gate] ?? gate).join('、')
+    : '未触发强制升级门槛';
+  const goal = typeof record.product_goal_basis === 'string' && record.product_goal_basis.trim()
+    ? record.product_goal_basis.trim()
+    : '沿用当前项目的产品目标与已有材料';
+  const nextEvidence = route === '重型'
+    ? '后续仅展示并执行重型证据流程，重点核验权限、隐私、跨租户隔离、外部写入与不可逆风险。'
+    : '后续仅展示并执行轻量证据流程，聚焦已有事实、关键假设与低成本验证。';
+
+  return [
+    '## 产品方案内部路由',
+    '',
+    `- **产品目标依据：** ${goal}`,
+    `- **研究路径：** ${route}`,
+    `- **方案覆盖范围：** ${domains}`,
+    `- **子决策：** 共 ${decisions.length} 项，其中重型 ${heavyCount} 项、轻量 ${lightCount} 项`,
+    `- **关键风险门槛：** ${gateSummary}`,
+    '',
+    nextEvidence,
+    '',
+    '路由已完成并通过校验。当前在证据收集前暂停，等待你确认方案范围。',
+  ].join('\n');
 }
 
 export interface WorkflowUI {
@@ -541,6 +682,27 @@ export interface WorkflowUI {
   tab_visibility_ready_material?: string;
   /** Global widget config keyed by slot id. */
   slots?: Record<string, Record<string, unknown>>;
+  /** Authoritative root-slot visibility, retained for the layout-free fallback. */
+  exposed_slot_ids?: string[];
+}
+
+const PRODUCT_FALLBACK_ARTIFACTS = new Set([
+  'direction_document', 'direction_brief', 'competitive_analysis',
+  'design_document', 'product_design_spec', 'prd_document', 'prd',
+  'prototype', 'review_document', 'review_report',
+  'handoff_document', 'development_handoff', 'delivery_summary',
+]);
+
+/** A missing tab layout must not turn internal state into user-visible artifacts. */
+export function filterFallbackWorkflowSlots(
+  workflowId: string, slots: SlotRevision[], ui: WorkflowUI,
+): SlotRevision[] {
+  const exposed = ui.exposed_slot_ids !== undefined ? new Set(ui.exposed_slot_ids) : undefined;
+  const allowed = exposed ?? (
+    workflowId === 'product_solution_delivery' || workflowId === 'product-solution-delivery'
+      ? PRODUCT_FALLBACK_ARTIFACTS : undefined
+  );
+  return allowed ? slots.filter((slot) => allowed.has(slot.slot_id)) : slots;
 }
 
 /**
@@ -552,9 +714,7 @@ export function hydrateWorkflowUI(raw: unknown, fallbackName?: string): Workflow
   if (!raw || typeof raw !== 'object') return {};
   const spec = raw as Record<string, unknown>;
   const rawUI = spec.ui;
-  if (!rawUI || typeof rawUI !== 'object' || Array.isArray(rawUI)) return {};
-
-  const ui = rawUI as WorkflowUI;
+  const ui = rawUI && typeof rawUI === 'object' && !Array.isArray(rawUI) ? rawUI as WorkflowUI : {};
   const slotDefs = new Map<string, SlotDef>();
   if (Array.isArray(spec.slots)) {
     for (const value of spec.slots) {
@@ -565,16 +725,19 @@ export function hydrateWorkflowUI(raw: unknown, fallbackName?: string): Workflow
   }
 
   const name = typeof spec.name === 'string' ? spec.name : fallbackName;
+  const visibility = Array.isArray(spec.slots)
+    ? { exposed_slot_ids: [...slotDefs.values()].filter((slot) => slot.exposed !== false).map((slot) => slot.id) }
+    : {};
+  const base = name === undefined && !Array.isArray(spec.slots) ? ui : { ...ui, ...visibility, ...(name === undefined ? {} : { name }) };
   if (!Array.isArray(ui.tabs)) {
-    return name === undefined ? ui : { ...ui, name };
+    return base;
   }
   const hasWidgetConfigs = Boolean(ui.slots && Object.keys(ui.slots).length > 0);
   if (slotDefs.size === 0 && !hasWidgetConfigs) {
-    return name === undefined ? ui : { ...ui, name };
+    return base;
   }
   return {
-    ...ui,
-    ...(name === undefined ? {} : { name }),
+    ...base,
     tabs: ui.tabs.map((tab) => ({
       ...tab,
       slots: Array.isArray(tab.slots)

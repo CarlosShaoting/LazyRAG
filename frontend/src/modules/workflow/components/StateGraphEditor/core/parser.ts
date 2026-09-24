@@ -26,11 +26,15 @@ interface RawStep {
   outputs?: unknown;
   transitions?: unknown;
   route?: unknown;
+  route_selector?: unknown;
   skipif?: unknown;
   skip_if?: unknown;
   prompt?: unknown;
   tools?: unknown;
   capabilities?: unknown;
+  terminal_tools?: unknown;
+  fail_fast_tools?: unknown;
+  execution?: unknown;
   acceptance_criteria?: unknown;
 }
 
@@ -181,6 +185,12 @@ function parseOutputs(raw: unknown): StepOutputRef[] {
   });
 }
 
+function parseStringList(raw: unknown): string[] | undefined {
+  const values = Array.isArray(raw) ? raw : raw == null ? [] : [raw];
+  const parsed = values.map(String).map((value) => value.trim()).filter(Boolean);
+  return parsed.length > 0 ? parsed : undefined;
+}
+
 function parseStep(raw: RawStep, topLevelTransitions?: Record<string, unknown>): StepNode | null {
   if (!raw.id) return null;
   const stepId = String(raw.id);
@@ -199,6 +209,8 @@ function parseStep(raw: RawStep, topLevelTransitions?: Record<string, unknown>):
     : undefined;
   const tools = Array.isArray(raw.tools) ? raw.tools.map(String) : undefined;
   const capabilities = Array.isArray(raw.capabilities) ? raw.capabilities.map(String) : undefined;
+  const terminalTools = parseStringList(raw.terminal_tools);
+  const failFastTools = parseStringList(raw.fail_fast_tools);
   const acceptanceCriteria = raw.acceptance_criteria !== undefined && raw.acceptance_criteria !== null && String(raw.acceptance_criteria).trim()
     ? String(raw.acceptance_criteria)
     : undefined;
@@ -216,11 +228,15 @@ function parseStep(raw: RawStep, topLevelTransitions?: Record<string, unknown>):
     outputs,
     transitions: parseTransitions(transitionsRaw),
     ...(route !== undefined && { route }),
+    ...(raw.route_selector !== undefined && { routeSelector: raw.route_selector }),
     ...(skipIf ? { skipIf } : {}),
     ...(legacySkipIf ? { legacySkipIf } : {}),
     ...(prompt !== undefined && { prompt }),
     ...(tools !== undefined && { tools }),
     ...(capabilities !== undefined && { capabilities }),
+    ...(terminalTools !== undefined && { terminalTools }),
+    ...(failFastTools !== undefined && { failFastTools }),
+    ...(raw.execution !== undefined && { executionPolicy: raw.execution }),
     ...(acceptanceCriteria !== undefined && { acceptanceCriteria }),
   };
 }
