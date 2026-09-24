@@ -58,6 +58,19 @@
   text-underline-offset: 2px;
 }
 
+.writer-markdown-editor--compact {
+  max-height: 200px;
+}
+
+.writer-markdown-editor--compact .writer-markdown-editor__surface .mdxeditor-root-contenteditable {
+  min-height: 0;
+  padding: 12px 18px 36px;
+}
+
+.writer-markdown-editor--compact .writer-markdown-editor__surface .mdxeditor-root-contenteditable > :first-child {
+  margin-top: 0;
+}
+
 .writer-markdown-editor__document-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);

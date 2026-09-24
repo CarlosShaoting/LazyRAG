@@ -39,6 +39,7 @@ vi.mock('./MarkdownArtifactEditor', () => ({
     onSave: (markdown: string, revision: number, mode: 'draft') => Promise<unknown>;
     sourceRevision: number;
     maxHeight?: number;
+    compact?: boolean;
     editingKey?: string;
     onRewritePreviewApplied?: (revision?: number, draftVersion?: number) => void;
   }) => {
@@ -48,6 +49,7 @@ vi.mock('./MarkdownArtifactEditor', () => ({
       onSave,
       sourceRevision,
       maxHeight,
+      compact,
       editingKey,
     } = props;
     return (
@@ -57,6 +59,7 @@ vi.mock('./MarkdownArtifactEditor', () => ({
           data-markdown={markdown}
           data-source-revision={sourceRevision}
           data-max-height={maxHeight}
+          data-compact={compact ? 'true' : 'false'}
           data-editing-key={editingKey}
           onClick={() => void onSave('# Edited draft', sourceRevision, 'draft')}
         >
@@ -462,6 +465,39 @@ describe('SlotWriterDocument render refresh', () => {
 });
 
 describe('SlotText editing', () => {
+  it('uses compact notes chrome and anchors the version entry at the bottom left', () => {
+    const slot: SlotRevision = {
+      slot_id: 'preview_notes',
+      revision: 2,
+      version_number: 2,
+      selected: true,
+      slot: 'preview_notes',
+      created_at: '2026-09-09T00:00:00Z',
+      artifact_value: { text: 'Speaker notes' },
+      content_type: 'text',
+    };
+
+    const { container } = render(
+      <SlotRenderer
+        slot={slot}
+        widget={{
+          widgetType: 'text-markdown',
+          maxHeight: 200,
+          compact: true,
+          versionBadgePlacement: 'bottom-left',
+        }}
+        sessionId='ppt-session'
+        slotId='preview_notes'
+        revisionCount={2}
+      />,
+    );
+
+    expect(container.querySelector('.workflow-slot--preview-notes')).toBeInTheDocument();
+    expect(container.querySelector('.workflow-slot--version-bottom-left')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'save markdown draft' }))
+      .toHaveAttribute('data-compact', 'true');
+  });
+
   it('marks json-block slots as their own scroll container', () => {
     const slot: SlotRevision = {
       slot_id: 'generation_parameters',
@@ -658,6 +694,162 @@ describe('SlotText editing', () => {
     expect(editor.selectionStart).toBe(targetOffset);
     expect(document.activeElement).toBe(editor);
     expect(scrollContainer.scrollTop).toBe(84);
+  });
+});
+
+describe('PPT slide version history', () => {
+  it('keeps the history entry visible for a persisted slide when revision_count is absent', () => {
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      disconnect() {}
+    });
+    const slot: SlotRevision = {
+      slot: 'preview_html',
+      slot_id: 'preview_html',
+      list_index: 0,
+      sort_order: 1,
+      revision: 1,
+      selected: true,
+      created_at: '2026-09-09T01:00:00Z',
+      content_type: 'text',
+      artifact_value: { text: '<!doctype html><html><body><h1>第一页</h1></body></html>' },
+    };
+
+    const { container } = render(
+      <SlotRenderer
+        slot={slot}
+        widget={{ widgetType: 'html-slide' }}
+        sessionId='ppt-session'
+        slotId='preview_html'
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: '版本历史（1 个版本）' })).toHaveTextContent('v1');
+    expect(container.querySelector('.workflow-slot__version-overlay-badge--slide')).toBeInTheDocument();
+    expect(container.querySelector('.workflow-slot__artifact-footer')).not.toBeInTheDocument();
+  });
+
+  it('previews an older slide without nested zoom and applies it through the rollback API', async () => {
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      disconnect() {}
+    });
+    const getSlotVersions = vi.fn().mockResolvedValue([
+      {
+        revision: 1,
+        change_source: 'ai',
+        created_at: '2026-09-08T01:00:00Z',
+        selected: false,
+        content_type: 'text',
+        content_snapshot: { text: '<!doctype html><html><body><h1>旧版幻灯片</h1></body></html>' },
+      },
+      {
+        revision: 2,
+        change_source: 'ai',
+        created_at: '2026-09-08T02:00:00Z',
+        selected: true,
+        content_type: 'text',
+        content_snapshot: { text: '<!doctype html><html><body><h1>当前幻灯片</h1></body></html>' },
+      },
+    ]);
+    const rollbackSlotItem = vi.fn().mockResolvedValue(undefined);
+    useWorkflowStore.setState({ getSlotVersions, rollbackSlotItem });
+    const slot: SlotRevision = {
+      slot: 'preview_html',
+      slot_id: 'preview_html',
+      list_index: 0,
+      sort_order: 1,
+      revision: 2,
+      selected: true,
+      created_at: '2026-09-08T02:00:00Z',
+      content_type: 'text',
+      artifact_value: { text: '<!doctype html><html><body><h1>当前幻灯片</h1></body></html>' },
+    };
+
+    render(
+      <SlotRenderer
+        slot={slot}
+        widget={{ widgetType: 'html-slide' }}
+        sessionId='ppt-session'
+        slotId='preview_html'
+        revisionCount={2}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: '版本历史（2 个版本）' }));
+    await screen.findByRole('dialog', { name: '版本历史' });
+    const versionItems = document.querySelectorAll<HTMLElement>('.workflow-slot__version-item');
+    expect(versionItems).toHaveLength(2);
+    expect(document.querySelector('.workflow-slot__version-slide-preview .slot-html-slide__expand-button')).toBeNull();
+
+    fireEvent.click(versionItems[1]);
+    await waitFor(() => {
+      expect(document.querySelector('.workflow-slot__version-slide-preview iframe'))
+        .toHaveAttribute('srcdoc', expect.stringContaining('旧版幻灯片'));
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '应用版本 v1' }));
+    await waitFor(() => {
+      expect(rollbackSlotItem).toHaveBeenCalledWith('ppt-session', 'preview_html', 0, 1);
+    });
+  });
+});
+
+describe('PPT rendered image version history', () => {
+  it('uses a left version list and full image preview while preserving source, time and current state', async () => {
+    const getSlotVersions = vi.fn().mockResolvedValue([
+      {
+        revision: 1,
+        change_source: 'human',
+        created_at: '2026-09-17T08:25:21Z',
+        selected: false,
+        content_snapshot: { url: 'https://example.com/slide-v1.png' },
+      },
+      {
+        revision: 2,
+        change_source: 'ai',
+        created_at: '2026-09-17T08:42:14Z',
+        selected: true,
+        content_snapshot: { url: 'https://example.com/slide-v2.png' },
+      },
+    ]);
+    useWorkflowStore.setState({ getSlotVersions });
+
+    const { container } = render(
+      <SlotVersionPopover
+        sessionId='ppt-session'
+        slotId='preview_images'
+        listIndex={0}
+        revisionCount={2}
+        currentRevision={2}
+        currentValue={{ url: 'https://example.com/slide-v2.png' }}
+        currentChangeSource='ai'
+        contentType='image'
+      />,
+    );
+
+    fireEvent.click(container.querySelector<HTMLButtonElement>('.workflow-slot__version-btn')!);
+    await waitFor(() => expect(document.querySelector('.workflow-slot__version-popover--image')).not.toBeNull());
+
+    const items = document.querySelectorAll('.workflow-slot__version-list--image .workflow-slot__version-item');
+    expect(items).toHaveLength(2);
+    expect(items[0]).toHaveTextContent('v2');
+    expect(items[0]).toHaveTextContent('当前');
+    expect(document.querySelector('.workflow-slot__version-image-preview-img')).toHaveAttribute(
+      'src',
+      'https://example.com/slide-v2.png',
+    );
+    expect(document.querySelector('.workflow-slot__version-image-caption')).toHaveTextContent('v2');
+    expect(document.querySelector('.workflow-slot__version-image-caption')).toHaveTextContent('AI');
+    expect(document.querySelector('.workflow-slot__version-image-action')).toBeDisabled();
+
+    fireEvent.click(items[1]);
+    expect(document.querySelector('.workflow-slot__version-image-preview-img')).toHaveAttribute(
+      'src',
+      'https://example.com/slide-v1.png',
+    );
+    expect(document.querySelector('.workflow-slot__version-image-caption')).toHaveTextContent('手动');
+    expect(document.querySelector('.workflow-slot__version-image-action')).not.toBeDisabled();
   });
 });
 

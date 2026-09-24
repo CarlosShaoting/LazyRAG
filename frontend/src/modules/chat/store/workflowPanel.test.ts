@@ -134,6 +134,121 @@ describe('filterWorkflowTabs', () => {
 
     expect(filterWorkflowTabs(tabs, slots)).toEqual(tabs);
   });
+
+  it('reveals a previously skipped tab when the runtime actually enters it', () => {
+    const tabs = [
+      { id: 'analysis', step_id: 'analyze', label: '分析', slots: [] },
+      {
+        id: 'materials', step_id: 'collect', label: '素材收集', slots: [],
+        hide_when_material: 'skip_materials',
+      },
+      { id: 'outline', step_id: 'outline', label: '大纲', slots: [] },
+    ];
+    const slots = [
+      {
+        slot_id: 'plan-id', revision: 1, selected: true,
+        slot: 'execution_plan', created_at: '2026-09-10T00:00:00Z',
+      },
+      {
+        slot_id: 'skip-id', revision: 1, selected: true,
+        slot: 'skip_materials', created_at: '2026-09-10T00:00:00Z',
+      },
+    ];
+
+    expect(filterWorkflowTabs(
+      tabs,
+      slots,
+      'execution_plan',
+      {
+        steps: [{
+          id: 'attempt-collect', session_id: 'session-1', step_id: 'collect',
+          attempt: 2, task_id: 'task-collect', status: 'running', validity: 'effective',
+          created_at: '2026-09-10T00:01:00Z', updated_at: '2026-09-10T00:01:30Z',
+        }],
+      },
+    ).map((tab) => tab.id)).toEqual(['analysis', 'materials', 'outline']);
+  });
+
+  it('reveals a newly entered tab from the runtime projection before its attempt arrives', () => {
+    const tabs = [
+      { id: 'analysis', step_id: 'analyze', label: '分析', slots: [] },
+      {
+        id: 'materials', step_id: 'collect', label: '素材收集', slots: [],
+        hide_when_material: 'skip_materials',
+      },
+      { id: 'outline', step_id: 'outline', label: '大纲', slots: [] },
+    ];
+    const slots = [{
+      slot_id: 'skip-id', revision: 1, selected: true,
+      slot: 'skip_materials', created_at: '2026-09-10T00:00:00Z',
+    }];
+
+    expect(filterWorkflowTabs(tabs, slots, undefined, {
+      projection: { current: ['collect'] },
+    }).map((tab) => tab.id)).toEqual(['analysis', 'materials', 'outline']);
+  });
+
+  it('keeps a dynamically added completed step while later skipped steps stay hidden', () => {
+    const tabs = [
+      { id: 'analysis', step_id: 'analyze', label: '分析', slots: [] },
+      {
+        id: 'materials', step_id: 'collect', label: '素材收集', slots: [],
+        hide_when_material: 'skip_materials',
+      },
+      {
+        id: 'background', step_id: 'background', label: '底图生成', slots: [],
+        hide_when_material: 'skip_background',
+      },
+      { id: 'outline', step_id: 'outline', label: '大纲', slots: [] },
+    ];
+    const slots = [
+      {
+        slot_id: 'plan-id', revision: 1, selected: true,
+        slot: 'execution_plan', created_at: '2026-09-10T00:00:00Z',
+      },
+      {
+        slot_id: 'skip-materials-id', revision: 1, selected: true,
+        slot: 'skip_materials', created_at: '2026-09-10T00:00:00Z',
+      },
+      {
+        slot_id: 'skip-background-id', revision: 1, selected: true,
+        slot: 'skip_background', created_at: '2026-09-10T00:00:00Z',
+      },
+    ];
+
+    expect(filterWorkflowTabs(
+      tabs,
+      slots,
+      'execution_plan',
+      {
+        steps: [{
+          id: 'attempt-collect', session_id: 'session-1', step_id: 'collect',
+          attempt: 2, task_id: 'task-collect', status: 'succeeded', validity: 'effective',
+          created_at: '2026-09-10T00:01:00Z', updated_at: '2026-09-10T00:02:00Z',
+        }],
+        projection: { past: ['collect'], current: ['outline'] },
+      },
+    ).map((tab) => tab.id)).toEqual(['analysis', 'materials', 'outline']);
+  });
+
+  it('does not revive a conditional tab from stale execution history alone', () => {
+    const tabs = [{
+      id: 'materials', step_id: 'collect', label: '素材收集', slots: [],
+      hide_when_material: 'skip_materials',
+    }];
+    const slots = [{
+      slot_id: 'skip-id', revision: 1, selected: true,
+      slot: 'skip_materials', created_at: '2026-09-10T00:00:00Z',
+    }];
+
+    expect(filterWorkflowTabs(tabs, slots, undefined, {
+      steps: [{
+        id: 'attempt-stale', session_id: 'session-1', step_id: 'collect',
+        attempt: 1, task_id: 'task-stale', status: 'succeeded', validity: 'stale',
+        created_at: '2026-09-10T00:00:00Z', updated_at: '2026-09-10T00:01:00Z',
+      }],
+    })).toEqual([]);
+  });
 });
 
 describe('workflowTabAllowsDownload', () => {
