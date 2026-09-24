@@ -165,7 +165,6 @@ tzdata==2026.4
 umap-learn==0.5.12
 urllib3==2.8.0
 uvicorn==0.53.0
-volcengine-python-sdk==5.0.50
 wasabi==1.1.3
 weasel==0.4.3
 webencodings==0.6.1
