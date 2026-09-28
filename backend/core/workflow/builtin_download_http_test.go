@@ -85,7 +85,7 @@ func TestBuiltinWorkflowEntryPointsReportDownloadFailure(t *testing.T) {
 			var envelope struct {
 				Code int `json:"code"`
 			}
-			if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil || envelope.Code != 2003116 {
+			if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil || envelope.Code != 2003147 {
 				t.Fatalf("error code=%d decode err=%v body=%s", envelope.Code, err, rec.Body.String())
 			}
 		})

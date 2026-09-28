@@ -176,13 +176,15 @@ def test_doubao_seedance_preserves_first_and_last_frame_roles():
 
 def test_doubao_seedance_submits_render_options_as_top_level_api_fields():
     module = DoubaoText2Video(api_key='test-key')
+    client = mock.Mock()
+    client.content_generation.tasks.create.return_value.id = 'task-1'
+    client.content_generation.tasks.get.return_value = mock.Mock(
+        status='succeeded', content=mock.Mock(video_url='https://cdn.example.com/out.mp4'),
+    )
     with mock.patch.object(
-        doubao_supplier, '_ark_request', side_effect=[
-            {'id': 'task-1'},
-            {'status': 'succeeded', 'content': {'video_url': 'https://cdn.example.com/out.mp4'}},
-        ],
-    ) as request_http, mock.patch.object(
-        doubao_supplier, '_download_generated_file', return_value=b'video-bytes',
+        module, '_ark_client', return_value=client,
+    ), mock.patch.object(
+        doubao_supplier.requests, 'get', return_value=mock.Mock(content=b'video-bytes'),
     ), mock.patch.object(doubao_supplier, 'bytes_to_file', return_value=['/tmp/out.mp4']):
         module._forward(
             input='Use the supplied subject as a visual reference.',
@@ -195,7 +197,9 @@ def test_doubao_seedance_submits_render_options_as_top_level_api_fields():
             model='doubao-seedance-2-5-260628',
         )
 
-    request = request_http.call_args_list[0].kwargs['payload']
+    client.content_generation.tasks.create.assert_called_once()
+    client.content_generation.tasks.get.assert_called_once_with(task_id='task-1')
+    request = client.content_generation.tasks.create.call_args.kwargs
     assert request['model'] == 'doubao-seedance-2-5-260628'
     assert request['resolution'] == '720p'
     assert request['duration'] == 5
