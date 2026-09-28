@@ -555,6 +555,9 @@ func catalogSkillsBySource(catalog skillbuiltin.Catalog) map[string]skillbuiltin
 }
 
 func catalogSkillsEqual(left, right skillbuiltin.CatalogSkill) bool {
+	// Preview content is retained for catalog-only installs, but is not a
+	// package identity change. Match upstream's incremental lock comparison;
+	// package contents remain covered by TreeSHA256 and frozen validation.
 	left.ArchiveSHA256 = ""
 	right.ArchiveSHA256 = ""
 	left.ArchiveSize = 0
@@ -570,7 +573,6 @@ func catalogSkillsEqual(left, right skillbuiltin.CatalogSkill) bool {
 		left.Version == right.Version &&
 		left.Name == right.Name &&
 		left.Description == right.Description &&
-		left.Content == right.Content &&
 		left.Category == right.Category &&
 		left.Provider == right.Provider &&
 		left.TreeSHA256 == right.TreeSHA256 &&

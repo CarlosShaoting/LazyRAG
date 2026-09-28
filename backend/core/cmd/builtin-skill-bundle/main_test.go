@@ -274,6 +274,30 @@ func TestVerifyChangedLockEntriesFailsChangedSourceTreeMismatch(t *testing.T) {
 	}
 }
 
+func TestVerifyChangedLockEntriesPreviewBackfillDoesNotScopeUnchangedPackages(t *testing.T) {
+	baseA := testLockEntry("https://example.test/a.zip", "bsk_old_a")
+	baseB := testLockEntry("https://example.test/b.zip", "bsk_b")
+	currentA := testLockEntry(baseA.SourceURL, "bsk_new_a")
+	currentB := baseB
+	currentB.Content = "preview backfilled for catalog-only installs"
+	generatedB := currentB
+	generatedB.UID = "bsk_remote_update_b"
+	generatedB.TreeSHA256 = strings.Repeat("c", 64)
+
+	err := verifyChangedLockEntries(
+		testLockCatalog(baseA, baseB),
+		testLockCatalog(currentA, currentB),
+		testLockCatalog(currentA, generatedB),
+		[]sourceInput{{URL: baseA.SourceURL}, {URL: baseB.SourceURL}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if currentB.Content == "" {
+		t.Fatal("lock comparison must preserve catalog-only previews")
+	}
+}
+
 func TestVerifyChangedLockEntriesFailsChangedSourceMismatch(t *testing.T) {
 	base := testLockCatalog(testLockEntry("https://example.test/a.zip", "bsk_old_a"))
 	current := testLockCatalog(testLockEntry("https://example.test/a.zip", "bsk_current_a"))
