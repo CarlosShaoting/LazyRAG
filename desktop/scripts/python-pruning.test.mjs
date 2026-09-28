@@ -13,13 +13,14 @@ test("Python pruning preserves runtime helpers and Skill assets", () => {
   ], { cwd: root, stdio: "pipe" });
 });
 
-test("Mac pruning retains its optional size audit", () => {
+test("Mac pruning retains functional gates without the verbose size audit", () => {
   const source = readFileSync(path.join(root, "desktop/scripts/build-darwin-arm64.sh"), "utf8");
+  const workflow = readFileSync(path.join(root, ".github/workflows/macos-installer.yml"), "utf8");
   const rag = source.indexOf("install rag");
   assert.ok(rag >= 0 && source.indexOf("prune-python-runtime.py") > rag);
   assert.match(source, /LAZYMIND_DESKTOP_PRUNE_PYTHON/);
   assert.match(source, /--verify-doubao/);
-  assert.match(source, /python-size-report\.json/);
+  assert.doesNotMatch(source + workflow, /python-size-report/);
 });
 
 test("Windows uses stable packaging with functional gates and no size audit", () => {
