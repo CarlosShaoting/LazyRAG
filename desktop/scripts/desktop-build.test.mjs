@@ -726,7 +726,7 @@ test("selected Desktop folders become dynamic allowed roots without confirmation
 
 test("Desktop waits for the previous runtime monitor to close before restarting", () => {
   const source = readFileSync(electronMainScript, "utf8");
-  const start = source.indexOf("function restartRuntimeAfterFolderAccessChange()");
+  const start = source.indexOf("function restartRuntimeAfterFolderAccessChange(");
   const end = source.indexOf("function logStartupContext()", start);
   const restart = source.slice(start, end);
 

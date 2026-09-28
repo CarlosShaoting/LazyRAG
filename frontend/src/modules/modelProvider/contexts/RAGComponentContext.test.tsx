@@ -4,6 +4,8 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 import { RAGComponentProvider, useRAGComponent } from "./RAGComponentContext";
 const mocks = vi.hoisted(() => ({ get: vi.fn(), mode: "desktop" }));
+vi.mock("@/components/request", () => ({ setTransientRequestErrorsSuppressed: vi.fn() }));
+vi.mock("@/runtime/desktopBridge", () => ({ restartRuntime: vi.fn() }));
 vi.mock("../api/systemDependencies", () => ({ getPythonComponents: mocks.get }));
 vi.mock("@/runtime/mode", () => ({
   getRuntimeMode: () => mocks.mode,

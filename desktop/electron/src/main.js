@@ -1256,7 +1256,7 @@ function resolveRequestedLocalFolder(folderPath, status, accessState) {
   return resolved;
 }
 
-function restartRuntimeAfterFolderAccessChange() {
+function restartRuntimeAfterFolderAccessChange({ reload = true } = {}) {
   if (runtimeRestartPromise) return runtimeRestartPromise;
   runtimeRestartPromise = (async () => {
     runtimeStopping = true;
@@ -1290,7 +1290,7 @@ function restartRuntimeAfterFolderAccessChange() {
       startRuntime();
       const status = await waitForRuntimeReady();
       const window = activeWindow();
-      if (window && !window.isDestroyed()) window.webContents.reload();
+      if (reload && window && !window.isDestroyed()) window.webContents.reload();
       startAgentHost();
       appendStartupLog("desktop", "runtime restart completed");
       return status;
@@ -2541,8 +2541,8 @@ ipcMain.on("lazymind:notificationSessionRestore", (event, value) => {
   event.returnValue = !isQuitting && isTrustedNotificationSender(event, mainWindow, notificationFrontendOrigin())
     ? notificationSession.restore(value) : null;
 });
-ipcMain.handle("lazymind:restartRuntime", async () => {
-  return restartRuntimeAfterFolderAccessChange();
+ipcMain.handle("lazymind:restartRuntime", async (_event, options) => {
+  return restartRuntimeAfterFolderAccessChange({ reload: options?.reload !== false });
 });
 ipcMain.handle("lazymind:resetRuntime", async (_event, scope = "kb") => {
   await runSidecar("reset", ["--scope", scope]);

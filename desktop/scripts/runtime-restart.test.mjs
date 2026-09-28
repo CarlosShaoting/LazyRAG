@@ -5,14 +5,14 @@ import vm from 'node:vm';
 import { EventEmitter } from 'node:events';
 const source = readFileSync(new URL('../electron/src/main.js', import.meta.url), 'utf8');
 function fn(name, next) { return source.slice(source.indexOf(`function ${name}`), source.indexOf(`\n${next}`, source.indexOf(`function ${name}`))); }
-test('restart pauses auxiliary respawn, stops before starting, and coalesces clicks', async () => {
+for (const reload of [true, false]) test(`restart stops before starting, coalesces clicks, and reload=${reload}`, async () => {
   let release;
   const events = [];
   const monitor = new EventEmitter();
   const down = new Promise(r => { release = r; });
   const context = vm.createContext({ runtimeRestartPromise: undefined, runtimeStopping: false,
     agentHostRestartTimer: undefined, agentHostStableTimer: undefined,
-    runtimeProcess: monitor, runtimeOwnershipHandoffTimeoutMs: 1000, setTimeout, sidecarShutdownEnv: () => ({}), activeWindow: () => null,
+    runtimeProcess: monitor, runtimeOwnershipHandoffTimeoutMs: 1000, setTimeout, sidecarShutdownEnv: () => ({}), activeWindow: () => ({ isDestroyed: () => false, webContents: { reload() { events.push('reload'); } } }),
     agentHostProcess: { kill() { events.push('agent-stop'); } }, clearTimeout,
     appendStartupLog() {}, serializeError: String,
     runSidecar: async () => { assert.equal(context.runtimeStopping, true); events.push('down'); await down; },
@@ -22,7 +22,7 @@ test('restart pauses auxiliary respawn, stops before starting, and coalesces cli
     startAgentHost() { events.push('agent-start'); },
   });
   vm.runInContext(fn('restartRuntimeAfterFolderAccessChange', 'function logStartupContext'), context);
-  const first = context.restartRuntimeAfterFolderAccessChange();
+  const first = context.restartRuntimeAfterFolderAccessChange(reload ? undefined : { reload: false });
   assert.equal(first, context.restartRuntimeAfterFolderAccessChange());
   assert.deepEqual(events, ['agent-stop', 'down']);
   release();
@@ -30,7 +30,7 @@ test('restart pauses auxiliary respawn, stops before starting, and coalesces cli
   assert.deepEqual(events, ['agent-stop', 'down']);
   monitor.emit('close');
   await first;
-  assert.deepEqual(events, ['agent-stop', 'down', 'detach', 'start', 'ready', 'agent-start']);
+  assert.deepEqual(events, ['agent-stop', 'down', 'detach', 'start', 'ready', ...(reload ? ['reload'] : []), 'agent-start']);
   assert.equal(context.runtimeRestartPromise, undefined);
 });
 test('detached old monitor cannot publish a late close into the next generation', () => {

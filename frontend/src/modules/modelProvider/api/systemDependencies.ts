@@ -190,15 +190,17 @@ export interface PythonComponentStatus {
   unpackedBytes?: number;
 }
 
+const pythonComponentRequestOptions = { timeout: 30000, silentError: true };
+
 export async function getPythonComponents() {
-  const response = await axiosInstance.get(`${basePath}/api/core/system-dependencies/python`);
+  const response = await axiosInstance.get(`${basePath}/api/core/system-dependencies/python`, pythonComponentRequestOptions);
   return unwrapApiData<PythonComponentStatus[]>(response.data);
 }
 
 export async function installPythonComponent(id: PythonComponentStatus["id"], signal?: AbortSignal) {
   const response = await axiosInstance.post(
     `${basePath}/api/core/system-dependencies/python:install`, { id },
-    { timeout: 40 * 60 * 1000, signal },
+    { ...pythonComponentRequestOptions, timeout: 40 * 60 * 1000, signal },
   );
   return unwrapApiData<PythonComponentStatus>(response.data);
 }
