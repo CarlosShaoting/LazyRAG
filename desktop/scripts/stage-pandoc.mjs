@@ -18,6 +18,7 @@ import process from "node:process";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const execFile = promisify(execFileCallback);
@@ -173,6 +174,25 @@ function expectedPlatform(target) {
   return "";
 }
 
+// A finished --version process or a Windows scanner can retain a file handle.
+// Replace in one rename: never delete the installed executable before promotion.
+async function replaceExecutable(source, destination, platform) {
+  const maxRetries = 10;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await rename(source, destination);
+      return;
+    } catch (error) {
+      if (platform !== "win32" || !["EBUSY", "EPERM", "EACCES"].includes(error.code) || attempt >= maxRetries) {
+        throw error;
+      }
+      const waitMs = Math.min(250 * (attempt + 1), 1000);
+      console.warn(`Pandoc executable replacement blocked (${error.code}); retry ${attempt + 1}/${maxRetries} in ${waitMs}ms`);
+      await delay(waitMs);
+    }
+  }
+}
+
 export async function stagePandoc(runtimeRoot, target, options = {}) {
   if (!runtimeRoot) throw new Error("runtime root is required");
   if (!target) throw new Error("Pandoc desktop target is required");
@@ -223,8 +243,7 @@ export async function stagePandoc(runtimeRoot, target, options = {}) {
     if (firstLine !== `pandoc ${selected.version}`) {
       throw new Error(`Pandoc version mismatch: got ${JSON.stringify(firstLine)}, want "pandoc ${selected.version}"`);
     }
-    await rm(runtimePath, { force: true });
-    await rename(temporaryRuntimePath, runtimePath);
+    await replaceExecutable(temporaryRuntimePath, runtimePath, platform);
     console.log(`Pandoc ${selected.version} staged: ${runtimePath}`);
     return { cachePath, runtimePath, selected };
   } finally {

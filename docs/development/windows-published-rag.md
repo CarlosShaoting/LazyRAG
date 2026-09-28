@@ -68,6 +68,16 @@ Actions 在 `stage-pandoc.mjs` 调用 Windows PowerShell 时，使用 `-Command 
 
 新增 Windows 原生回归：真实 ZIP 在上述特殊字符目录下解压；损坏 ZIP 必须抛错且不能覆盖已有可执行文件。官方 Windows Pandoc 包另行完成实际下载、SHA 校验、解压和 Markdown → DOCX 转换。此次无需重新上传 RAG、字体或案例来修复 Pandoc；发布 installer 仍应使用同次构建生成的 RAG ZIP 和清单。
 
+#### Actions 后续修复：Pandoc 可执行文件替换时被占用
+
+用户回传日志确认 RAG、Milvus 与精选素材均通过，失败发生在 `pandoc.exe.<pid>.tmp` 改名为 `pandoc.exe` 时，错误为 Windows `EBUSY`。前次重试仅覆盖解压目录删除，没有覆盖刚执行 `--version` 后的文件替换；本地一次成功未覆盖这种时序。
+
+现在直接用 rename 替换目标，删除原来的“先删旧 EXE”步骤；仅在 Windows 遇到 `EBUSY`、`EPERM`、`EACCES` 时最多重试 10 次，等待从 250 ms 递增到最多 1 秒，累计等待 8.5 秒。持续占用仍失败，其他错误立即失败，保留已有 EXE；不放宽下载 SHA 或版本检查。非 Windows 不采用该重试，正常替换同样使用 rename 保留失败时的旧文件。
+
+原生 Windows Node 20 测试 8 项通过：包含真实 PowerShell/.NET 文件句柄禁止删除的四种场景（候选文件/已安装文件，短暂占用/持续占用）。短暂锁实际触发 `EBUSY` 和 `EPERM` 后替换成功；持续锁超过上限后必须报错且旧文件字节不变。原有真实 ZIP、中文及特殊路径、损坏 ZIP 检查继续通过。用户无需因本次脚本修复重传字体、案例等资源；RAG 仍按各次 installer 的配套清单上传。
+
+本次修复后的本地 `resume-installer` 已重新通过 RAG、Milvus、精选资源及官方 Pandoc staging。用户随后要求先 push、由 Actions 打包，因此本轮未以新的完整 installer 作为验收结论；下方 351.16 MiB 产物属于前一轮验证。
+
 #### 本机 Windows 原生产物与验证结果
 
 在独立 Windows 工作目录执行完整 `installer` 构建，修复实际失败点后通过 `resume-installer` 完成封装；最终退出码 0。测试源码为 `d3ebb2a4` 基线加本节修复，所以本地产物后缀仍是基线 SHA。没有覆盖本机原有 LazyMind 安装或使用用户知识库。
