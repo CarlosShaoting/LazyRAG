@@ -584,22 +584,6 @@ jobs:
             desktop/dist/mac*/LazyMind.app/Contents/Resources/runtime/config/python-sharing.json
           if-no-files-found: ignore
 
-      - name: Upload Python size report
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: macos-python-size-report
-          path: desktop/build/darwin-arm64/python-size-report.*
-          if-no-files-found: warn
-          retention-days: 14
-
-      - name: Add Python size report to summary
-        if: always()
-        run: |
-          if [[ -f desktop/build/darwin-arm64/python-size-report.md ]]; then
-            cat desktop/build/darwin-arm64/python-size-report.md >> "${GITHUB_STEP_SUMMARY}"
-          fi
-
       - name: Upload final notarized installer
         if: steps.release.outputs.official_release == 'true' && steps.dmg_notarization.outputs.status == 'Accepted'
         id: upload_final

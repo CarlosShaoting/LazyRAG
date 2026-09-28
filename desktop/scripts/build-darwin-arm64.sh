@@ -303,7 +303,7 @@ make_python_venv_relocatable "${RUNTIME_ROOT}/deps/python/channel-gateway" "${PY
 make_python_venv_relocatable "${RUNTIME_ROOT}/deps/python/algorithm" "${PYTHON}"
 make_internal_symlinks_relative "${RUNTIME_ROOT}"
 echo "==> Auditing and pruning bundled Python runtime"
-python_prune_args=("${RUNTIME_ROOT}" --report "${BUILD_ROOT}/python-size-report.json" --verify-doubao)
+python_prune_args=("${RUNTIME_ROOT}" --verify-doubao)
 if [[ "${LAZYMIND_DESKTOP_PRUNE_PYTHON:-true}" == "true" ]]; then
   python_prune_args+=(--apply)
 fi
