@@ -8,9 +8,9 @@
 
 ### 修改范围与原因
 
-- Windows 构建继续使用 `windows-amd64-requirements.lock` 的 175 项固定版本。开启 `defer_python` 时，每次构建生成当次 RAG ZIP 和匹配 catalog，不再读取仓库的旧 Windows 固定 catalog，也不再下载 `e262…` 或 `67973…` 作为构建输入。旧 `windows-amd64.json` 保留作历史版本记录；实际发布依据为 Actions 产出的清单。
+- Windows 构建继续使用 `windows-amd64-requirements.lock` 的 175 项固定版本。每次构建固定生成当次 RAG ZIP 和匹配 catalog，不再读取仓库的旧 Windows 固定 catalog，也不再下载 `e262…` 或 `67973…` 作为构建输入。旧 `windows-amd64.json` 保留作历史版本记录；实际发布依据为 Actions 产出的清单。
 - `patch-windows-milvus.py` 仅供原生 Windows 构建调用，对 `milvus-lite==3.0` 的 `storage/manifest.py` 应用 `os.rename(tmp_path, target_path)` → `os.replace(tmp_path, target_path)`。检查原源码 SHA 和 wheel RECORD；未知版本、未知源码、RECORD 不匹配立即失败；同步更新 RECORD 的哈希与大小，重复执行可验证复用，写 RECORD 失败恢复源码。保留临时文件、刷盘和备份逻辑，不修改用户数据库，不全局替换 `os.rename`。
-- 补丁在裁剪和分包前执行，所以更新后的源码及 RECORD 会进入 ZIP SHA、revision 和 fingerprint。关闭后置的完整安装包同样应用补丁；旧 staging 的 resume 不能绕过补丁验证。
+- 补丁在裁剪和分包前执行，所以更新后的源码及 RECORD 会进入 ZIP SHA、revision 和 fingerprint。旧 staging 的 resume 不能绕过补丁验证；当前 Windows 不再提供关闭后置的构建选项。
 - Windows 后置组件使用 `slim-providers-v1`：gRPC 随 RAG 后置，移除桌面不使用的 OpenSearch。火山 SDK 已从依赖锁移除，本轮不重复计算其体积收益。
 - Windows 封装 installer 前，必须通过当次本地 ZIP 的 SHA/manifest、安全解压、补丁源码/RECORD、基础导入、RAG overlay 导入和 Milvus 写入/flush/重启/查询/删除。真实验证失败即停止，不将失败结果标绿。
 - Actions 的 `windows-python-components` 附件包含 ZIP、清单、SHA256SUMS、完整构建锁、补丁报告及 `verification.json`。构建摘要打印精确文件名、SHA、主备地址及手动上传说明。失败任务也可能上传诊断附件，不能将其当成验收通过产物。
@@ -19,7 +19,7 @@
 ### GitHub Actions 操作
 
 1. 选择 **Windows Desktop Installer**，分支 `cst/installer_opt`；构建引用留空，使用最新提交。
-2. 勾选 **Build a separate Windows RAG ZIP for manual upload**（`defer_python=true`）；保留 `prune_python=true`、`defer_history=true`，`share_python=false`。
+2. 无需勾选开关：仅保留可选 `git_ref`。Windows 固定开启案例后置、RAG 单独打包、Python 裁剪，关闭实验性依赖共享。
 3. 等待构建和验证成功；下载该次运行的 installer 和 **windows-python-components** 附件。
 4. 解开 Actions 附件外层 ZIP，找到里面的 **`lazymind-python-rag-windows-amd64-cp311-<revision>.zip`**。只上传这个原始内层 ZIP，不改名、不解压重压，也不上传名为 `windows-python-components.zip` 的外层附件。
 5. 上传到清单中的公开 HTTPS 地址：默认主源为 ModelScope 数据集 `CarlosShaoting/lazymind-cst` 的 `master` 根目录，回退源为 HF 数据集 `LazyAGI/LazyMind` 的 `main` 根目录。ModelScope 不可用时先上传 HF；主备应使用完全相同的文件。若设置仓库变量 `LAZYMIND_PYTHON_COMPONENT_BASE_URL`，以当次摘要/清单给出的主源为准。
@@ -43,6 +43,18 @@ UTF-8 修复后，Windows 又在 `academic_research_pipeline/1.1.0` 的发布清
 验证：新增真实 Git 检出回归（`core.autocrlf=true`），与中文 cp1252 staging 回归一起，在 Linux 和原生 Windows 均通过。另将全部 314 个精选源文件按 Windows 换行配置检出，用原生 Windows Go 的 `showcase.CompileCatalog` 和真实锁文件绑定编译 46 个案例，再用原生 Python（`-X utf8=0`）执行 staging。全部 46 个远端包及封面身份与现有 `desktop/featured-assets.json` 完全一致：素材原始 172,009,247 字节，内置封面 1,304,579 字节，远端 ZIP 合计 77,565,150 字节。
 
 无需重传精选案例 ZIP。请在修复分支新建一次 **Run workflow**，构建引用留空，采用最新提交；旧 Actions 的重新运行仍可能使用旧提交。本轮只验证素材编译/分离，没有本地打包完整 installer。
+
+### Windows 构建选项收敛与日志清理
+
+Actions 的手动入口及可复用入口移除 `defer_history`、`defer_python`、`share_python`、`prune_python` 四个输入。Windows 脚本在读取本地环境配置后固定为案例后置、RAG 分包、Python 裁剪开启，跨环境依赖共享关闭，防止旧配置启用实验模式。Python 解释器去重仍保留；关闭的是不同虚拟环境之间的依赖共享。
+
+删除 Windows 的完整内置 RAG 分支、依赖共享审计调用、Python/最终 runtime 体积对比、包占用排名、runner 磁盘占用输出和 `windows-python-size-report` 附件。精选素材 staging 只打印完成信息，不再打印前后占用。共用脚本保持显式审计入口，Mac ARM64 与 Intel 的现有构建配置和日志不变。
+
+保留最终 installer 的文件名、大小、SHA、签名及下载链接；保留 `windows-python-components` 的 ZIP/清单/功能验证报告、字体附件、Milvus 补丁报告和安装诊断。Python 裁剪后的豆包 HTTP mock、RAG SHA/manifest/导入、Milvus 持久化及 Windows 安装卸载门禁继续执行，失败仍阻止构建通过。未修改 Skill 内容、LazyLLM 源码或子模块 gitlink。
+
+验证结果：Desktop 构建与裁剪入口测试 47 项通过；原生 Windows 的 Python 裁剪与精选素材回归共 12 项通过（含 junction、cp1252 和 Git 换行场景）。PowerShell 语法解析及执行初始化函数验证通过，确认旧环境变量被稳定配置覆盖；workflow YAML/复用调用参数检查、裁剪 CLI 有/无报告两种模式、精选素材静默输出路径均通过。本次未生成 installer，完整安装结果以新一次 Actions 为准。
+
+验收时新建一次 Run workflow：确认页面只有可选构建引用，摘要没有占用对比表，功能门禁全部通过；按摘要上传当次 RAG 内层 ZIP。安装后检查案例 warmup、普通聊天、组件下载以及知识库入库和重启检索。此次配置清理不要求重传字体或精选素材。
 
 ### 本轮验证与边界
 

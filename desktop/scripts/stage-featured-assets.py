@@ -20,7 +20,7 @@ def encoded(value):
     return (json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + '\n').encode()
 
 
-def stage(runtime, published, output=None):
+def stage(runtime, published, output=None, quiet=False):
     from PIL import Image, ImageOps
     featured = runtime / 'featured-skills'
     assets = featured / 'assets'
@@ -104,7 +104,10 @@ def stage(runtime, published, output=None):
     report = {'beforeBytes': before, 'bundledThumbnailBytes': sum(x['sizeBytes'] for x in result['local'].values()),
               'remoteZipBytes': sum(x['sizeBytes'] for x in result['bundles'].values()),
               'bundles': len(result['bundles'])}
-    print(json.dumps(report, indent=2))
+    if quiet:
+        print(f'Featured assets staged: {len(result["bundles"])} bundles')
+    else:
+        print(json.dumps(report, indent=2))
 
 
 if __name__ == '__main__':
@@ -112,5 +115,6 @@ if __name__ == '__main__':
     parser.add_argument('runtime', type=Path)
     parser.add_argument('--published', type=Path, default=ROOT / 'desktop/featured-assets.json')
     parser.add_argument('--publish', type=Path, help='Generate reviewed ZIPs before staging (release author only)')
+    parser.add_argument('--quiet', action='store_true', help='Omit size audit output')
     args = parser.parse_args()
-    stage(args.runtime, args.published, args.publish)
+    stage(args.runtime, args.published, args.publish, quiet=args.quiet)

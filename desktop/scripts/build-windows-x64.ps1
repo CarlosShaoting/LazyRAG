@@ -89,6 +89,11 @@ function Initialize-Environment {
     $env:MIRROR_PROFILE = $profile
     $env:CGO_ENABLED = '0'
     $env:PYTHONDONTWRITEBYTECODE = '1'
+    # Stable Windows packaging policy; old local config must not enable experimental modes.
+    $env:LAZYMIND_DESKTOP_DEFER_HISTORY = 'true'
+    $env:LAZYMIND_DESKTOP_DEFER_PYTHON = 'true'
+    $env:LAZYMIND_DESKTOP_SHARE_PYTHON = 'false'
+    $env:LAZYMIND_DESKTOP_PRUNE_PYTHON = 'true'
     $env:UV_PYTHON_INSTALL_DIR = Join-Path $runtimeRoot 'runtimes\python'
     $env:LAZYMIND_DESKTOP_RUNTIME_STAGE = $runtimeRoot
     $env:LAZYMIND_DESKTOP_OUTPUT_DIR = $distRoot
@@ -372,12 +377,6 @@ function New-DeferredPythonRuntimeStage {
 }
 
 function Assert-WindowsPythonComponent {
-    if ($env:LAZYMIND_DESKTOP_DEFER_PYTHON -eq 'false') {
-        Invoke-Native (Join-Path $runtimeRoot 'deps\python\algorithm\Scripts\python.exe') @(
-            (Join-Path $repoRoot 'desktop\scripts\patch-windows-milvus.py'), $runtimeRoot, '--verify-only'
-        )
-        return
-    }
     $components = Join-Path $repoRoot 'desktop\dist\python-components\windows-amd64'
     if (-not (Test-Path -LiteralPath (Join-Path $runtimeRoot 'config\milvus-windows-patch.json'))) {
         throw 'Windows Milvus fix missing; run a clean Windows build before resuming.'
@@ -395,17 +394,13 @@ function Finalize-Desktop([ValidateSet('zip', 'installer')][string]$PackageKind 
     Prune-PythonTree (Join-Path $runtimeRoot 'runtimes\python')
     Prune-PythonTree (Join-Path $runtimeRoot 'deps\python')
 
-    $shareArgs = @('-B', (Join-Path $repoRoot 'desktop\scripts\share-python-dependencies.py'), $runtimeRoot)
-    if ($env:LAZYMIND_DESKTOP_SHARE_PYTHON -eq 'true') { $shareArgs += '--apply' }
-    Invoke-Native (Join-Path $runtimeRoot 'deps\python\algorithm\Scripts\python.exe') $shareArgs
-
     Write-Host '==> Staging runtime application files'
     Copy-RuntimeApp
     Assert-WindowsPythonComponent
     Invoke-Native 'node.exe' @((Join-Path $repoRoot 'desktop\scripts\stage-pdf-font.mjs'), $runtimeRoot)
     Write-Host '==> Materializing locked Skill previews and featured catalog'
     Materialize-OfflineSkills
-    Invoke-Native (Join-Path $runtimeRoot 'deps\python\algorithm\Scripts\python.exe') @((Join-Path $repoRoot 'desktop\scripts\stage-featured-assets.py'), $runtimeRoot)
+    Invoke-Native (Join-Path $runtimeRoot 'deps\python\algorithm\Scripts\python.exe') @((Join-Path $repoRoot 'desktop\scripts\stage-featured-assets.py'), $runtimeRoot, '--quiet')
     Write-Host '==> Preparing workflow example metadata (download during warmup by default)'
     Invoke-Native 'node.exe' @(
         (Join-Path $repoRoot 'desktop\scripts\stage-history-injection-package.mjs'),
@@ -444,7 +439,6 @@ function Finalize-Desktop([ValidateSet('zip', 'installer')][string]$PackageKind 
         throw "Desktop runtime contains non-portable reparse points; first path: $($reparse[0].FullName)"
     }
 
-    Invoke-Native 'node.exe' @((Join-Path $repoRoot 'desktop\scripts\report-runtime-size.mjs'), $runtimeRoot, (Join-Path $targetRoot 'final-runtime-size.json'))
     Write-Host '==> Packaging Electron Windows x64 application'
     New-Item -ItemType Directory -Force -Path $env:ELECTRON_CACHE | Out-Null
     New-Item -ItemType Directory -Force -Path $env:ELECTRON_BUILDER_CACHE | Out-Null
@@ -484,7 +478,6 @@ function Finalize-Desktop([ValidateSet('zip', 'installer')][string]$PackageKind 
             throw "Electron Builder did not produce $builderInstaller"
         }
         Move-Item -LiteralPath $builderInstaller -Destination $finalInstaller -Force
-        Invoke-Native 'node.exe' @((Join-Path $repoRoot 'desktop\scripts\report-runtime-size.mjs'), $runtimeRoot, (Join-Path $targetRoot 'final-runtime-size.json'), $finalInstaller)
         Write-Host "Windows installer: $finalInstaller"
         return
     }
@@ -499,7 +492,6 @@ function Finalize-Desktop([ValidateSet('zip', 'installer')][string]$PackageKind 
     }
     Move-Item -LiteralPath $builderZip -Destination $finalZip -Force
     Write-Host "Unpacked app: $(Join-Path $distRoot 'win-unpacked')"
-    Invoke-Native 'node.exe' @((Join-Path $repoRoot 'desktop\scripts\report-runtime-size.mjs'), $runtimeRoot, (Join-Path $targetRoot 'final-runtime-size.json'), $finalZip)
     Write-Host "Portable ZIP: $finalZip"
 }
 
@@ -554,43 +546,32 @@ function Build-Desktop([ValidateSet('zip', 'installer')][string]$PackageKind = '
     Invoke-Native 'uv.exe' @('venv', '--managed-python', '--no-python-downloads', '--relocatable', '--seed', '--link-mode', 'copy', '--python', $python, $algorithmVenv)
     $algorithmPython = Join-Path $algorithmVenv 'Scripts\python.exe'
     $lazyLLMVersion = if ($env:LAZYMIND_LAZYLLM_VERSION) { $env:LAZYMIND_LAZYLLM_VERSION } else { (Get-Content -LiteralPath (Join-Path $repoRoot 'LAZYLLM_VERSION') -Raw).Trim() }
-    if ($env:LAZYMIND_DESKTOP_DEFER_PYTHON -ne 'false') {
-        Write-Host '==> Installing the locked Windows algorithm dependencies for a separate RAG ZIP'
-        Invoke-NativeWithRetry 'Locked Windows algorithm dependencies' 'uv.exe' @(
-            'pip', 'install', '--python', $algorithmPython, '--link-mode', 'copy', '--strict',
-            '-r', (Join-Path $repoRoot 'desktop\python-components\windows-amd64-requirements.lock'),
-            '-r', (Join-Path $repoRoot 'algorithm\requirements.txt'),
-            '-r', (Join-Path $repoRoot 'algorithm\requirements-local.txt')
-        )
-        Invoke-Native $algorithmPython @('-c', "import importlib.metadata as m; assert m.version('lazyllm') == '$lazyLLMVersion'")
-    } else {
-        Invoke-NativeWithRetry 'LazyLLM package install' 'uv.exe' @('pip', 'install', '--python', $algorithmPython, '--link-mode', 'copy', '--strict', 'setuptools<81', "lazyllm==$lazyLLMVersion")
-        Invoke-Native $algorithmPython @('-c', "import importlib.metadata as m; assert m.version('lazyllm') == '$lazyLLMVersion'")
-        Invoke-NativeWithRetry 'LazyLLM RAG dependencies' (Join-Path $algorithmVenv 'Scripts\lazyllm.exe') @('install', 'rag')
-        Invoke-NativeWithRetry 'Algorithm Python dependencies' 'uv.exe' @('pip', 'install', '--python', $algorithmPython, '--link-mode', 'copy', '--strict', '-r', (Join-Path $repoRoot 'algorithm\requirements.txt'))
-        Invoke-NativeWithRetry 'Algorithm local Python dependencies' 'uv.exe' @('pip', 'install', '--python', $algorithmPython, '--link-mode', 'copy', '--strict', '-r', (Join-Path $repoRoot 'algorithm\requirements-local.txt'))
-    }
+    Write-Host '==> Installing the locked Windows algorithm dependencies for a separate RAG ZIP'
+    Invoke-NativeWithRetry 'Locked Windows algorithm dependencies' 'uv.exe' @(
+        'pip', 'install', '--python', $algorithmPython, '--link-mode', 'copy', '--strict',
+        '-r', (Join-Path $repoRoot 'desktop\python-components\windows-amd64-requirements.lock'),
+        '-r', (Join-Path $repoRoot 'algorithm\requirements.txt'),
+        '-r', (Join-Path $repoRoot 'algorithm\requirements-local.txt')
+    )
+    Invoke-Native $algorithmPython @('-c', "import importlib.metadata as m; assert m.version('lazyllm') == '$lazyLLMVersion'")
     Invoke-Native $algorithmPython @('-B', '-m', 'unittest', 'discover', '-s', (Join-Path $repoRoot 'tests'), '-p', 'test_desktop_windows_milvus.py', '-v')
     Write-Host '==> Applying the verified Windows Milvus manifest replacement fix'
     Invoke-Native $algorithmPython @((Join-Path $repoRoot 'desktop\scripts\patch-windows-milvus.py'), $runtimeRoot)
-    Write-Host '==> Auditing and pruning bundled Python runtime'
+    Write-Host '==> Pruning bundled Python runtime'
     $pythonPruneArgs = @(
         (Join-Path $repoRoot 'desktop\scripts\prune-python-runtime.py'),
         $runtimeRoot,
-        '--report', (Join-Path $targetRoot 'python-size-report.json'),
+        '--apply',
         '--verify-doubao'
     )
-    if ($env:LAZYMIND_DESKTOP_PRUNE_PYTHON -ne 'false') { $pythonPruneArgs += '--apply' }
     Invoke-Native $algorithmPython $pythonPruneArgs
-    if ($env:LAZYMIND_DESKTOP_DEFER_PYTHON -ne 'false') {
-        $components = Join-Path $repoRoot 'desktop\dist\python-components\windows-amd64'
-        Remove-GeneratedPath $components
-        Invoke-Native $algorithmPython @(
-            (Join-Path $repoRoot 'desktop\scripts\build-python-components.py'),
-            $runtimeRoot, '--output', $components, '--slim-providers'
-        )
-        Copy-Item -LiteralPath (Join-Path $runtimeRoot 'config\milvus-windows-patch.json') -Destination $components
-    }
+    $components = Join-Path $repoRoot 'desktop\dist\python-components\windows-amd64'
+    Remove-GeneratedPath $components
+    Invoke-Native $algorithmPython @(
+        (Join-Path $repoRoot 'desktop\scripts\build-python-components.py'),
+        $runtimeRoot, '--output', $components, '--slim-providers'
+    )
+    Copy-Item -LiteralPath (Join-Path $runtimeRoot 'config\milvus-windows-patch.json') -Destination $components
 
     Finalize-Desktop $PackageKind
 }

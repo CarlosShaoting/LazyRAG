@@ -146,7 +146,7 @@ def write_report(report, path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('runtime', type=Path)
-    parser.add_argument('--report', type=Path, required=True)
+    parser.add_argument('--report', type=Path, help='Optional JSON and Markdown size audit')
     parser.add_argument('--apply', action='store_true', help='Without this flag, only report candidate savings')
     parser.add_argument('--verify-doubao', action='store_true')
     args = parser.parse_args()
@@ -159,9 +159,13 @@ def main():
                             '--verify-source', str(repo / 'algorithm/lazyllm')], check=True, timeout=90)
             report['doubao_http_mock_smoke'] = 'passed'
     finally:
-        write_report(report, args.report)
-    print(f'Bundled Python: {report["python_bytes_before"] / 2**20:.2f} -> '
-          f'{report["python_bytes_after"] / 2**20:.2f} MiB (uncompressed)')
+        if args.report:
+            write_report(report, args.report)
+    if args.report:
+        print(f'Bundled Python: {report["python_bytes_before"] / 2**20:.2f} -> '
+              f'{report["python_bytes_after"] / 2**20:.2f} MiB (uncompressed)')
+    else:
+        print('Python pruning complete' if args.apply else 'Python pruning audit complete')
 
 
 if __name__ == '__main__':

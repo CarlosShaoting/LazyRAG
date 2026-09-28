@@ -19,10 +19,12 @@
 Windows 与 Mac ARM64 分别处理：**Windows 在 Actions 生成配套依赖 ZIP，由维护者手动上传；Mac ARM64 继续使用现有固定发布包。** 本次不改变 Mac 的脚本或资源。
 
 1. 在 `cst/installer_opt` 分支运行 **Windows Desktop Installer**，构建引用留空。
-2. 勾选 **Build a separate Windows RAG ZIP for manual upload**；保留 Python 裁剪，依赖共享默认不勾选。
+2. 页面只保留分支和可选构建引用，无需勾选：Windows 固定开启 Workflow 案例后置、RAG 单独打包与 Python 裁剪，关闭实验性跨环境依赖共享。本地 Windows 构建使用相同配置。
 3. 构建成功后下载 **windows-python-components** 附件，解开外层 ZIP；上传里面的 `lazymind-python-rag-windows-amd64-cp311-<revision>.zip`，不要上传外层附件或改名重压。
 4. 按当次摘要/清单上传：默认 ModelScope `CarlosShaoting/lazymind-cst` 的 `master` 根目录，HF 回退源 `LazyAGI/LazyMind` 的 `main` 根目录。ModelScope 不可用时可先上传 HF。核对公开下载的大小与 SHA；旧文件保留。
 5. 使用**同一次 Actions** 的 installer。它已携带配套清单，上传后不必改代码或重新构建；安装组件界面只展示来源，不提供修改链接。
+
+Actions 不再输出裁剪前后体积表、包占用排名、磁盘占用统计或 `windows-python-size-report` 附件；保留最终 installer 大小、SHA、下载地址，以及 RAG 上传信息和功能验证日志。
 
 Windows 构建会先应用有版本和源码校验的 Milvus 文件替换补丁，再分包。封装前必须通过本地 ZIP 验证及写入、flush、重启检索和删除测试。原 `e262…` 及此前本地 `67973…` 包没有本次修复，不能充当修复版。Mac 已发布包无需因此更新。
 
