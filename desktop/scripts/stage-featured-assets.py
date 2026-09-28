@@ -24,8 +24,8 @@ def stage(runtime, published, output=None):
     from PIL import Image, ImageOps
     featured = runtime / 'featured-skills'
     assets = featured / 'assets'
-    catalog = json.loads((featured / 'catalog.json').read_text())
-    expected = None if output else json.loads(published.read_text())
+    catalog = json.loads((featured / 'catalog.json').read_text(encoding='utf-8'))
+    expected = None if output else json.loads(published.read_text(encoding='utf-8'))
     if output:
         output.mkdir(parents=True, exist_ok=True)
     result = {'schemaVersion': 1, 'bundles': {}, 'local': {}}

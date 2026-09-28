@@ -28,6 +28,12 @@
 
 每次 Windows 构建默认生成组件，`LAZYMIND_DESKTOP_REBUILD_PYTHON_COMPONENTS` 不再控制 Windows。Mac 不因为 Windows 这次修改而重传资源。字体、精选素材、Workflow 和 Skill 沿用原有清单。
 
+### Actions 后续修复：精选案例清单 UTF-8
+
+用户回传的 Actions 日志确认 RAG 的 SHA/manifest、Windows Milvus 补丁及写入/flush/重启/查询/删除均已通过。随后 `stage-featured-assets.py` 在读取中文 `catalog.json` 时使用 runner 默认的 cp1252，报 `UnicodeDecodeError`。现将编译清单及已发布资源清单两处读取均显式指定 UTF-8；输出原本已使用 UTF-8 字节写入。
+
+本次不改变精选资源的下载方式：封面与清单内置，完整素材按已发布清单后台或按需下载，ModelScope 主源失败后回退 HF。无需重新上传精选 ZIP。新增完整 staging 回归覆盖 cp1252 默认编码下的中文标题、中文清单字段、封面转换与原下载身份保留；Linux 和原生 Windows（关闭 Python UTF-8 模式）验证通过。本次未打包 installer，推送后重新运行 Actions 即可。
+
 ### 本轮验证与边界
 
 - 在原生 Windows CPython 3.11.15 上，将现有 ZIP 解压到独立临时目录，应用同一补丁并验证 RECORD；RAG 导入，以及实际 Milvus 插入、检索、显式 flush、停止/重启、重启后检索、删除均通过。没有创建新 ZIP，也没有使用或修改用户知识库。
