@@ -197,7 +197,7 @@ test("macOS and Windows builds materialize locked catalogs before writing the ru
   assert.match(darwin, /make_python_venv_relocatable/);
   assert.match(darwin, /assert_no_absolute_symlinks "\$\{RUNTIME_ROOT\}"/);
   assert.match(darwin, /python install --no-bin 3\.11\.15/);
-  assert.match(darwin, /cpython-3\.11\.15-macos-aarch64-none\/bin\/python3\.11/);
+  assert.match(darwin, /cpython-3\.11\.15-macos-\$\{PYTHON_ARCH\}-none\/bin\/python3\.11/);
   assert.doesNotMatch(darwin, /python find --managed-python/);
   assert.match(windows, /Desktop runtime repo marker Makefile is missing/);
   assert.match(windows, /skills\\\.runtime/);
@@ -726,18 +726,18 @@ test("selected Desktop folders become dynamic allowed roots without confirmation
 
 test("Desktop waits for the previous runtime monitor to close before restarting", () => {
   const source = readFileSync(electronMainScript, "utf8");
-  const start = source.indexOf("async function restartRuntimeAfterFolderAccessChange()");
+  const start = source.indexOf("function restartRuntimeAfterFolderAccessChange()");
   const end = source.indexOf("function logStartupContext()", start);
   const restart = source.slice(start, end);
 
   assert.ok(start >= 0 && end > start, "could not locate restartRuntimeAfterFolderAccessChange");
   assert.match(restart, /monitor\.once\("close", onClose\)/);
   assert.match(restart, /runtimeOwnershipHandoffTimeoutMs/);
-  const downCall = 'await runSidecar("down", [], { env: sidecarShutdownEnv() })';
+  const downCall = 'runSidecar("down", [], { env: sidecarShutdownEnv() })';
   assert.ok(restart.includes(downCall));
   assert.ok(restart.indexOf('monitor.once("close", onClose)') < restart.indexOf(downCall));
   assert.ok(restart.indexOf(downCall) < restart.indexOf("detachRuntimeMonitor()"));
-  assert.ok(restart.indexOf("await monitorClosed") < restart.indexOf("startRuntime()"));
+  assert.match(restart, /await Promise\.all\(\[runSidecar[\s\S]*monitorClosed\]\)/);
   assert.ok(restart.indexOf("await waitForRuntimeReady()") < restart.indexOf("window.webContents.reload()"));
 });
 

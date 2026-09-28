@@ -1266,22 +1266,22 @@ function restartRuntimeAfterFolderAccessChange() {
     agentHostStableTimer = undefined;
     agentHostProcess?.kill();
     appendStartupLog("desktop", "runtime restart: stopping services and auxiliary processes");
-  const monitor = runtimeProcess;
-  let monitorClosed = Promise.resolve();
-  if (monitor) {
-    monitorClosed = new Promise((resolve, reject) => {
-      let timeout;
-      const onClose = () => {
-        clearTimeout(timeout);
-        resolve();
-      };
-      timeout = setTimeout(() => {
-        monitor.removeListener("close", onClose);
-        reject(new Error("Timed out waiting for the previous desktop runtime monitor to exit"));
-      }, runtimeOwnershipHandoffTimeoutMs);
-      monitor.once("close", onClose);
-    });
-  }
+    const monitor = runtimeProcess;
+    let monitorClosed = Promise.resolve();
+    if (monitor) {
+      monitorClosed = new Promise((resolve, reject) => {
+        let timeout;
+        const onClose = () => {
+          clearTimeout(timeout);
+          resolve();
+        };
+        timeout = setTimeout(() => {
+          monitor.removeListener("close", onClose);
+          reject(new Error("Timed out waiting for the previous desktop runtime monitor to exit"));
+        }, runtimeOwnershipHandoffTimeoutMs);
+        monitor.once("close", onClose);
+      });
+    }
 
     try {
       await Promise.all([runSidecar("down", [], { env: sidecarShutdownEnv() }), monitorClosed]);

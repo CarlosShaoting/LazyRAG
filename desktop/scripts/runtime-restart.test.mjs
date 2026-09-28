@@ -8,9 +8,11 @@ function fn(name, next) { return source.slice(source.indexOf(`function ${name}`)
 test('restart pauses auxiliary respawn, stops before starting, and coalesces clicks', async () => {
   let release;
   const events = [];
+  const monitor = new EventEmitter();
   const down = new Promise(r => { release = r; });
   const context = vm.createContext({ runtimeRestartPromise: undefined, runtimeStopping: false,
     agentHostRestartTimer: undefined, agentHostStableTimer: undefined,
+    runtimeProcess: monitor, runtimeOwnershipHandoffTimeoutMs: 1000, setTimeout, sidecarShutdownEnv: () => ({}), activeWindow: () => null,
     agentHostProcess: { kill() { events.push('agent-stop'); } }, clearTimeout,
     appendStartupLog() {}, serializeError: String,
     runSidecar: async () => { assert.equal(context.runtimeStopping, true); events.push('down'); await down; },
@@ -23,7 +25,11 @@ test('restart pauses auxiliary respawn, stops before starting, and coalesces cli
   const first = context.restartRuntimeAfterFolderAccessChange();
   assert.equal(first, context.restartRuntimeAfterFolderAccessChange());
   assert.deepEqual(events, ['agent-stop', 'down']);
-  release(); await first;
+  release();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(events, ['agent-stop', 'down']);
+  monitor.emit('close');
+  await first;
   assert.deepEqual(events, ['agent-stop', 'down', 'detach', 'start', 'ready', 'agent-start']);
   assert.equal(context.runtimeRestartPromise, undefined);
 });

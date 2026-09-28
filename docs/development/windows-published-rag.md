@@ -2,6 +2,43 @@
 
 日期：2026-09-23。用户要求：测试并复用现有云端 Windows ZIP，不再动态打包；安装界面仅告知下载来源，不提供修改链接功能。本轮不修改 Mac 的分包方式、Skill、LazyLLM 源码或子模块 gitlink。
 
+## 2026-09-28：本次 rebase 后的 Windows 打包与测试交接
+
+本节为当前状态；下文 2026-09-23 的构建记录及“本轮”范围属于历史记录。
+
+LazyMind 已 rebase 到 upstream/main `477204829`。LazyLLM PR #1340 已合入官方仓库，子模块使用官方 `ab67c1893872fdc2895fc412d226e61a0524c985`，不再依赖个人 `cst/install_opt` 分支。主仓库仍需提交这个 gitlink；仅将 `.gitmodules` 的 branch 改成 main 不会更新 CI 实际检出的版本。
+
+### 哪些需要重打、哪些可以复用
+
+| 内容 | Windows 本轮处理 |
+| --- | --- |
+| Windows x64 安装包 | 必须从当前分支干净重建，包含新版 Core、前端、Electron、运行时管理器及官方 LazyLLM 源码；不要使用旧 staging 的 resume 封装。只更新云端资源不会更新旧安装包的代码和清单。 |
+| Windows RAG ZIP | 当前仍固定 `e262c0d2f05fe09d`，锁文件和清单未迁移，可复用原发布包，无需为本次 rebase 重打。构建仍需通过基础环境与 overlay 的真实导入校验。 |
+| gRPC / OpenSearch / 火山 SDK 精简 | Windows catalog 尚无 `desktopProfile: slim-providers-v1`，不能认为已经获得 Mac ARM64 的完整精简效果。Windows 如需同等优化，必须另做原生依赖包升级，见下节。 |
+| 精选素材、PDF 字体及许可证 | 复用已发布的 HF `featured-assets/` 下 46 个 ZIP、字体和许可证；跨平台资源无需重复打包上传，仍按安装包清单验证大小及 SHA-256。 |
+| 内置 Skill | 安装包携带锁定目录，使用时下载；无需重新把 Skill ZIP 填回 installer。 |
+| 飞书 CLI、凭证辅助程序 | 继续随 Windows 安装包构建、分发，本 PR 不改为后置下载。 |
+
+当前 Windows RAG catalog 只有 ModelScope URL，**尚未配置 HF 镜像**。共用下载器支持回退不代表该 Windows ZIP 已在 HF 可用。如需测试 Windows RAG 的 HF 回退，先将同一 ZIP 上传 HF、校验 SHA 与大小，再补清单镜像地址并重建 installer；不要用 Mac ZIP 替代。
+
+### Windows 后续精简依赖包时必须一起更新
+
+1. 在原生 Windows x64 / CPython 3.11.15 环境处理依赖闭包，将 Milvus 所需的 gRPC 纳入 RAG 组件，移除 Desktop 不使用的 OpenSearch 与火山 SDK；验证未安装 RAG 时基础业务可启动。
+2. 重新生成 Windows 专用 RAG ZIP、manifest、revision/fingerprint，并同步 `desktop/python-components/windows-amd64.json` 和配套 `windows-amd64-requirements.lock`。只有分组与导入验证都通过后才启用 slim profile；不能只修改 profile 或复制 Mac 的清单。
+3. 使用带新 revision 的文件名发布到 HF（ModelScope 恢复后同步），更新清单的 URL、大小、SHA-256 和解压大小。保留旧文件供旧安装包使用。
+4. 再从更新后的主仓库提交重建 Windows installer。原生二进制不能跨 macOS/Windows 或不同架构混用。
+
+### 构建及验收
+
+- GitHub Actions 选择 **Windows Desktop Installer**，分支 `cst/installer_opt`，`git_ref` 留空或指定本次提交；`defer_history=true`、`defer_python=true`、`prune_python=true`、`share_python=false`。保持递归检出子模块，并核对 LazyLLM SHA 为上面的官方提交。
+- 检查构建摘要中的 Windows RAG 文件名、大小、SHA 与当前清单一致；`windows-python-components` 是固定组件的清单附件，不意味着需要上传一个新 ZIP。
+- 用新的测试用户目录安装，覆盖中文及带空格路径；先验证登录、普通聊天、豆包图片/视频、附件、飞书和 Skill 按需安装，再安装 RAG。
+- 验证 Chat 样例优先准备、首页 Chat/Work 素材展示、其余精选后台补齐，及字体下载后的中文 PDF 导出；覆盖已配置镜像资源的主源失败回退和离线缓存复用。
+- RAG 安装完成后显式重启，检查无重复运行时进程、辅助进程恢复、PDF/Office 入库、检索、落盘、退出再启动后的检索和删除。原发布包的 Milvus Windows 持久化问题仍按下文单独跟进，不视为本次已修复。
+- 记录新 Windows installer 的实际下载体积和 Python 展开体积；Mac 的 484 MB 不能作为 Windows 实测值。
+
+本次仅更新代码、开发文档及本机定向验证，未触发 Windows 安装包构建，也未宣称 Windows 真机验收通过。
+
 ## 修改原因和范围
 
 原 Windows CI 每次解析依赖、生成组件 revision，并把对应 ZIP 的 SHA 和地址写进 installer。用户云端只有旧组件时，新 installer 即使改 URL 也因 hash/manifest 不符被拒绝。因此调整构建流程，以已发布组件为固定依赖版本基线，不放宽安装时的校验。
