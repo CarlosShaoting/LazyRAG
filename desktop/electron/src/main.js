@@ -1715,6 +1715,7 @@ function loadingHTML() {
     .dot { width: 7px; height: 7px; border-radius: 50%; background: #cbd5e1; flex: 0 0 auto; }
     .step.running .dot { background: #2563eb; }
     .step.ready .dot { background: #16a34a; }
+    .step.stale .dot { background: #eab308; }
     .step.failed .dot { background: #dc2626; }
     .step-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .log {
@@ -1815,7 +1816,8 @@ function loadingHTML() {
     }
     function serviceClass(status) {
       if (status === "running" || status === "ready") return "ready";
-      if (status === "failed" || status === "stale") return "failed";
+      if (status === "stale") return "stale";
+      if (status === "failed") return "failed";
       if (status === "starting") return "running";
       return "";
     }
