@@ -95,10 +95,8 @@ The relay starts lazily when the user begins managed Provider OAuth, so a port c
 
 ## macOS signed DMG
 
-DMG artifacts use UDBZ (bzip2), the maximum-compression format supported by
-electron-builder 24. This trades longer packaging/extraction time for a smaller
-download; the installed app contents and size are unchanged. Internal ZIP builds
-remain unchanged.
+DMG artifacts use UDZO (zlib), electron-builder 24's default compressed DMG
+format. The installed app contents and internal ZIP builds are unchanged.
 
 The local distribution build requires a `Developer ID Application` identity in
 the login keychain:

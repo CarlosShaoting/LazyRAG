@@ -359,8 +359,7 @@ module.exports = {
   },
   dmg: {
     artifactName: "LazyMind-macos-${arch}.${ext}",
-    // electron-builder 24's maximum-compression DMG format.
-    format: "UDBZ",
+    format: "UDZO",
     sign: macSigningMode === "developer-id",
   },
   win: {
