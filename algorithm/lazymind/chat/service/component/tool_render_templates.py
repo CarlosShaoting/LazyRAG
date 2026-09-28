@@ -703,15 +703,21 @@ TOOL_RENDER_PROFILES: dict[str, dict[str, Any]] = (
                'been kept; please try again.',
          'zh': '产品流程暂时未能启动。你的需求已保留，请重试。',
      },
- },
- 'regex:get_(.+)_methods': {'call': {'en': 'Expanding the {match} Toolkit.',
-                                     'zh': '正在展开{match}工具箱。'},
-                            'success': {'en': 'The {match} Toolkit has been '
-                                              'expanded.',
-                                        'zh': '已经展开{match}工具箱。'},
-                            'failure': {'en': 'The {match} Toolkit could not be '
-                                              'expanded.',
-                                        'zh': '未能展开{match}工具箱。'}},
+},
+ 'regex:get_(.+)_methods': {  # noqa: E121
+     'call': {
+         'en': 'Expanding the {match} Toolkit.',
+         'zh': '正在展开{match}工具箱。',
+     },
+     'success': {
+         'en': 'The {match} Toolkit has been expanded.',
+         'zh': '已经展开{match}工具箱。',
+     },
+     'failure': {
+         'en': 'The {match} Toolkit could not be expanded.',
+         'zh': '未能展开{match}工具箱。',
+     },
+},
  'regex:trigger_(.+)_workflow': {'call': {'en': 'Checking whether the {match} '
                                                 'workflow fits this request.',
                                           'zh': '正在检查 {match} 工作流是否适合当前需求...'},

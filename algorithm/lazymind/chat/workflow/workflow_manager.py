@@ -82,6 +82,7 @@ def _is_plain_workflow_continue(value: Any) -> bool:
         'continue', 'confirm', 'approve', 'proceed', 'yes', 'ok',
     }
 
+
 def _ppt_step_user_input(value: Any, workflow_id: Any) -> str:
     """Treat approval-only continue text as control input for PPT sessions only."""
     text = str(value or '').strip()
@@ -1339,6 +1340,7 @@ def _workflow_trigger_tools(
             def run_trigger(
                 input_bindings: Optional[Dict[str, str]] = None,
                 request_context: Optional[str] = None,
+                _auto_binding_field: str = auto_binding_field,
             ) -> Dict[str, Any]:
                 # The Host-composed query is authoritative. A clearly marked
                 # original-request + clarification envelope remains supported
@@ -1355,15 +1357,15 @@ def _workflow_trigger_tools(
                 )
                 effective_bindings = dict(input_bindings or {})
                 if (
-                    auto_binding_field
-                    and auto_binding_field not in effective_bindings
+                    _auto_binding_field
+                    and _auto_binding_field not in effective_bindings
                     and effective_context
                 ):
                     # A single declared text startup field has no ambiguity: the
                     # authoritative request context is that field's exact value.
                     # Auto-binding lets small/local models call the trigger with
                     # no nested JSON arguments and avoids invented relay metadata.
-                    effective_bindings[auto_binding_field] = effective_context
+                    effective_bindings[_auto_binding_field] = effective_context
                 if session_holder is not None:
                     # Keep the immutable launch brief available to the first
                     # Ready steps in this same Chat turn. In particular, an Ask

@@ -426,18 +426,6 @@ function getEffectiveCompositeBehavior(tab: TabDef): TabDef['composite_behavior'
   };
 }
 
-/**
- * Lock slot editing only while the plugin session is actively running.
- * When idle (waiting / failed / completed), editable artifact formats stay editable
- * according to their workflow readOnly setting, so the user can revise and re-run
- * a later step from the updated content.
- */
-function isWorkflowSessionReadOnly(
-  session: WorkflowSession,
-  autoRunning = false,
-): boolean {
-  return autoRunning || session.status === 'active';
-}
 function revisionMatchesTabScope(
   session: WorkflowSession,
   tab: TabDef,
@@ -2854,7 +2842,7 @@ export function WorkflowPanel({
                   <TabSlotGrid
                     tab={executionPreviewTab(tab, session, preview)}
                     session={preview}
-                    readOnly={previewing || isWorkflowSessionReadOnly(session, autoRunning)}
+                    readOnly={previewing}
                     tasks={taskCenterTasks}
                     onRefresh={refresh}
                     onReference={onReference}

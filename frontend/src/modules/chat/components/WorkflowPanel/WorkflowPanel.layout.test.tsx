@@ -95,11 +95,11 @@ describe('shared workflow compact layout', () => {
     const send = vi.fn();
     render(<WorkflowPanel conversationId='layout-test' onSendMessage={send} />);
     await screen.findByRole('button', { name: '发布' });
-    const shortcuts = screen.getByRole('group', { name: '回退到步骤：' });
+    const shortcuts = screen.getByRole('group', { name: i18n.t('chat.workflowRollbackLabel') });
     expect(shortcuts).toBeVisible();
     expect(within(shortcuts).getByRole('button', { name: '写作准备' })).toBeVisible();
     fireEvent.click(within(shortcuts).getByRole('button', { name: '成稿' }));
-    await waitFor(() => expect(send).toHaveBeenCalledWith('请重新执行步骤 write_document'));
+    await waitFor(() => expect(send).toHaveBeenCalledWith(`${i18n.t('chat.workflowRollbackPrefix')}write_document`));
     expect(fixture.flush).toHaveBeenCalledOnce();
     expect(within(shortcuts).queryByRole('button', { name: 'stale_step' })).not.toBeInTheDocument();
   });
@@ -109,7 +109,7 @@ describe('shared workflow compact layout', () => {
     const send = vi.fn();
     render(<WorkflowPanel conversationId='layout-test' onSendMessage={send} />);
     await screen.findByRole('button', { name: '发布' });
-    fireEvent.click(within(screen.getByRole('group', { name: '回退到步骤：' })).getByRole('button', { name: '成稿' }));
+    fireEvent.click(within(screen.getByRole('group', { name: i18n.t('chat.workflowRollbackLabel') })).getByRole('button', { name: '成稿' }));
     await waitFor(() => expect(fixture.flush).toHaveBeenCalledOnce());
     expect(send).not.toHaveBeenCalled();
   });
@@ -255,7 +255,7 @@ describe('external workflow surface boundary', () => {
     expect(within(approval).getAllByRole('button').map(button => button.textContent)).toEqual([
       '继续执行', '此步骤不需审批', '以后此工作流无需审批',
     ]);
-    expect(screen.queryByRole('group', { name: '回退到步骤：' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: i18n.t('chat.workflowRollbackLabel') })).not.toBeInTheDocument();
     fireEvent.click(within(approval).getByRole('button', { name: '此步骤不需审批' }));
     await waitFor(() => expect(execute).toHaveBeenCalledWith({
       kind: 'confirm_and_continue', review, preferenceScope: 'step',
@@ -273,7 +273,7 @@ describe('external workflow surface boundary', () => {
     render(<WorkflowPanel conversationId='layout-test' embedded onRefresh={vi.fn(async () => {})}
       controlAdapter={{ control, execute }} />);
     await screen.findByRole('button', { name: '发布' });
-    const shortcuts = screen.getByRole('group', { name: '回退到步骤：' });
+    const shortcuts = screen.getByRole('group', { name: i18n.t('chat.workflowRollbackLabel') });
     expect(within(shortcuts).getByRole('button', { name: '成稿' })).toBeVisible();
     expect(screen.queryByRole('button', { name: '展开工作流面板' })).not.toBeInTheDocument();
     fireEvent.click(within(shortcuts).getByRole('button', { name: '成稿' }));
@@ -305,7 +305,7 @@ describe('external workflow surface boundary', () => {
     render(<WorkflowPanel conversationId='layout-test'
       controlAdapter={{ control, execute }} />);
     await screen.findByRole('button', { name: '发布' });
-    fireEvent.click(within(screen.getByRole('group', { name: '回退到步骤：' })).getByRole('button', { name: '成稿' }));
+    fireEvent.click(within(screen.getByRole('group', { name: i18n.t('chat.workflowRollbackLabel') })).getByRole('button', { name: '成稿' }));
     await waitFor(() => expect(fixture.flush).toHaveBeenCalledOnce());
     expect(execute).not.toHaveBeenCalled();
   });
