@@ -145,16 +145,23 @@ async function defaultExtractZip(archivePath, destination, platform = process.pl
     return;
   }
   if (platform === "win32") {
-    const command = "param($archive,$destination) Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force";
+    // powershell.exe -Command does not bind trailing CLI arguments to param().
+    // Pass paths as child-only environment data, keeping them out of PowerShell code.
+    // The destination is a fresh temp directory; .NET avoids wildcard handling in archive cmdlets.
+    const command = "$ErrorActionPreference = 'Stop'; Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory($env:LAZYMIND_PANDOC_ARCHIVE, $env:LAZYMIND_PANDOC_DESTINATION)";
     await execFile("powershell.exe", [
       "-NoLogo",
       "-NoProfile",
       "-NonInteractive",
       "-Command",
       command,
-      archivePath,
-      destination,
-    ]);
+    ], {
+      env: {
+        ...process.env,
+        LAZYMIND_PANDOC_ARCHIVE: archivePath,
+        LAZYMIND_PANDOC_DESTINATION: destination,
+      },
+    });
     return;
   }
   throw new Error(`Pandoc ZIP extraction is unsupported on ${platform}`);
@@ -221,7 +228,8 @@ export async function stagePandoc(runtimeRoot, target, options = {}) {
     console.log(`Pandoc ${selected.version} staged: ${runtimePath}`);
     return { cachePath, runtimePath, selected };
   } finally {
-    await rm(extractionRoot, { recursive: true, force: true });
+    // Windows scanners may briefly retain handles after extraction/execution.
+    await rm(extractionRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });
   }
 }
 

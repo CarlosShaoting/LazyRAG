@@ -193,11 +193,14 @@ function Invoke-NativeWithRetry(
     }
 }
 
-function Invoke-WindowsPackagingWithRetry([string]$PackageScript) {
+function Invoke-WindowsPackagingWithRetry([ValidateSet('zip', 'nsis')][string]$Target) {
     $maximumAttempts = 3
     for ($attempt = 1; $attempt -le $maximumAttempts; $attempt++) {
         try {
-            Invoke-Native 'pnpm.cmd' @('run', $PackageScript) $electronRoot
+            # pnpm run sets npm_execpath to pnpm.cjs, which electron-builder 24's
+            # native rebuilder tries to execute as a Windows binary. pnpm exec
+            # launches the same CLI without that lifecycle-script environment.
+            Invoke-Native 'pnpm.cmd' @('exec', 'electron-builder', '--config', 'electron-builder.config.cjs', '--win', $Target, '--x64', '--publish', 'never') $electronRoot
             return
         } catch {
             if ($attempt -eq $maximumAttempts) {
@@ -471,7 +474,7 @@ function Finalize-Desktop([ValidateSet('zip', 'installer')][string]$PackageKind 
         Set-Content -LiteralPath (Join-Path $installerResourcesRoot 'lazymind-installer-metadata.nsh') -Value $installerMetadata -NoNewline
         Build-GoBinary (Join-Path $repoRoot 'local\local-runtime-manager') (Join-Path $installerResourcesRoot 'lazymind-installer-maintenance.exe') @('.\cmd\installer-maintenance')
         $env:LAZYMIND_DESKTOP_RUNTIME_STAGE = New-DeferredPythonRuntimeStage
-        Invoke-WindowsPackagingWithRetry 'pack:win:x64:installer'
+        Invoke-WindowsPackagingWithRetry 'nsis'
         $builderInstaller = Join-Path $distRoot 'LazyMind-windows-x64-installer.exe'
         $finalInstaller = Join-Path $distRoot (New-WindowsInstallerFileName)
         if (-not (Test-Path -LiteralPath $builderInstaller -PathType Leaf)) {
@@ -481,7 +484,7 @@ function Finalize-Desktop([ValidateSet('zip', 'installer')][string]$PackageKind 
         Write-Host "Windows installer: $finalInstaller"
         return
     }
-    Invoke-WindowsPackagingWithRetry 'pack:win:x64'
+    Invoke-WindowsPackagingWithRetry 'zip'
     $builderZip = Join-Path $distRoot 'LazyMind-win-x64.zip'
     $finalZip = Join-Path $distRoot $finalZipName
     if (-not (Test-Path -LiteralPath (Join-Path $distRoot 'win-unpacked\LazyMind.exe') -PathType Leaf)) {

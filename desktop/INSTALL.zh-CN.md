@@ -28,6 +28,22 @@ Actions 不再输出裁剪前后体积表、包占用排名、磁盘占用统计
 
 Windows 构建会先应用有版本和源码校验的 Milvus 文件替换补丁，再分包。封装前必须通过本地 ZIP 验证及写入、flush、重启检索和删除测试。原 `e262…` 及此前本地 `67973…` 包没有本次修复，不能充当修复版。Mac 已发布包无需因此更新。
 
+### Windows 本地构建与复测
+
+在原生 Windows 的本地磁盘目录检出同一分支并初始化主仓记录的 LazyLLM 子模块，使用 PowerShell 7、Node.js 20、pnpm 10.0.0、Go 1.26.5 和 uv 0.11.31。不要复用 Linux 的 `node_modules`、Python venv 或通过 WSL UNC 路径执行 Windows 打包。
+
+```powershell
+corepack enable
+corepack prepare pnpm@10.0.0 --activate
+git submodule update --init algorithm/lazyllm
+pwsh -NoProfile -File desktop/scripts/build-windows-x64.ps1 doctor
+pwsh -NoProfile -File desktop/scripts/build-windows-x64.ps1 installer
+```
+
+产物位于 `desktop/dist/LazyMind-windows-x64-installer-*.exe`，配套 RAG 位于 `desktop/dist/python-components/windows-amd64/`。如果仅在末尾封装失败，确认依赖、分包和 staging 已完整完成后，可使用 `resume-installer`；它仍执行 RAG SHA、导入和 Milvus 持久化校验。依赖或应用代码变动时应重新执行完整 `installer` 构建。
+
+本轮修复了 Windows Pandoc 解压参数、临时目录清理重试，以及 electron-builder 将 `pnpm.cjs` 当作 EXE 的调用问题。复测应检查安装后首次 Python 解压、首页案例、普通聊天、中文文档导出，以及组件安装后知识库入库和重启检索。
+
 完整修改范围、验证结果和发布步骤见 [Windows 开发文档](../docs/development/windows-published-rag.md)。以下涉及 Windows 固定包的旧步骤属于历史记录，以本节为准。
 
 ## 后续交付平台与实施交接

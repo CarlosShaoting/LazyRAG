@@ -56,6 +56,33 @@ Actions 的手动入口及可复用入口移除 `defer_history`、`defer_python`
 
 验收时新建一次 Run workflow：确认页面只有可选构建引用，摘要没有占用对比表，功能门禁全部通过；按摘要上传当次 RAG 内层 ZIP。安装后检查案例 warmup、普通聊天、组件下载以及知识库入库和重启检索。此次配置清理不要求重传字体或精选素材。
 
+### Pandoc 与 Electron Windows 封装修复、原生完整构建
+
+Actions 在 `stage-pandoc.mjs` 调用 Windows PowerShell 时，使用 `-Command "param(...) ..."` 并在末尾追加路径；命令字符串不会按预期将这些参数绑定到 `$archive` 和 `$destination`，因此 `Expand-Archive` 得到空路径而失败。
+
+修复将 ZIP 与目标路径通过子进程专用环境变量传入，PowerShell 命令只含固定代码并设置 `$ErrorActionPreference = 'Stop'`。在新建临时目录内使用 .NET `ZipFile.ExtractToDirectory`，避免路径中的空格、中文、引号、`$`、`&` 和方括号被重新解析或当作通配符。下载源、Pandoc 3.11 固定 SHA、解压后版本检查及 Mac 解压逻辑不变。
+
+原生完整构建另复现 Pandoc 临时目录删除时的 `ENOTEMPTY`，现仅对该临时目录清理增加最多 5 次、间隔递增的重试；持续失败仍报错，不忽略清理错误。
+
+封装又复现 electron-builder 24.13.3 的原生依赖重建器将 `pnpm.cjs` 当成 EXE 执行，报 `%1 is not a valid Win32 application`。npm 安装的 pnpm 与 Corepack pnpm 均可复现。Windows 构建入口改为 `pnpm exec electron-builder --config electron-builder.config.cjs --win <nsis|zip> --x64 --publish never`，避免 `pnpm run` 注入的 `npm_execpath`；保留原生依赖重建、打包重试及原有打包参数。未修改 Mac 构建入口或跳过 `uiohook-napi`。
+
+新增 Windows 原生回归：真实 ZIP 在上述特殊字符目录下解压；损坏 ZIP 必须抛错且不能覆盖已有可执行文件。官方 Windows Pandoc 包另行完成实际下载、SHA 校验、解压和 Markdown → DOCX 转换。此次无需重新上传 RAG、字体或案例来修复 Pandoc；发布 installer 仍应使用同次构建生成的 RAG ZIP 和清单。
+
+#### 本机 Windows 原生产物与验证结果
+
+在独立 Windows 工作目录执行完整 `installer` 构建，修复实际失败点后通过 `resume-installer` 完成封装；最终退出码 0。测试源码为 `d3ebb2a4` 基线加本节修复，所以本地产物后缀仍是基线 SHA。没有覆盖本机原有 LazyMind 安装或使用用户知识库。
+
+- 工作目录：`C:\Users\cuishaoting\AppData\Local\LazyMindBuildChecks\installer-20260928`。
+- installer：`desktop/dist/LazyMind-windows-x64-installer-0.3.0-alpha.0-20260928-134551-d3ebb2a4.exe`，368,221,478 字节（351.16 MiB）。SHA-256：`4d6f4c06bdc8965f4528b7a28388620428da0db79eecd5e97a62a140acce3f7f`。
+- 配套 RAG：`desktop/dist/python-components/windows-amd64/lazymind-python-rag-windows-amd64-cp311-1ce4f110664273ea.zip`；实际 ZIP 的平台、基础导入、SHA、manifest、Milvus 补丁 RECORD、overlay 导入、插入/flush/重启/检索/删除全部通过，`verification.json` 为通过。
+- Node 20 原生 Desktop 测试：268 项通过、27 项平台条件跳过、0 失败；Pandoc 原生回归 4 项通过。后续打包入口修改后，相关 47 项构建/裁剪测试与 PowerShell 语法检查通过，实际原生依赖重建与 NSIS 封装成功。
+- 官方 Pandoc 包 SHA 与版本校验通过，实际 Markdown → DOCX 成功；打包后的 Electron 能加载 `uiohook-napi`，未启动输入监听。
+- 用独立 `LOCALAPPDATA=...\LMBuildSmoke20260928` 启动 `win-unpacked/LazyMind.exe`：首次 Python 解压完成、所有服务 ready、Core 健康接口与实际 Markdown → LaTeX 转换通过。
+- **退出边界**：正常关停曾报告两个子进程清理超时；现有 bounded cleanup 随后通过，最终全部服务 `stopped` 且网关端口关闭，smoke 退出码 0。不能表述为退出过程完全无警告。本次未修改运行时进程清理逻辑，也未执行会覆盖现有安装的 NSIS 安装、升级或卸载测试。
+- 原始构建、恢复、Node 20 测试和应用 smoke 日志，以及源码 SHA/产物校验记录，保存在工作目录的 `verification-logs/`。首次 uv 0.12 安装遇到临时 PE 资源写入失败，第三次重试成功；随后工具对齐为 Node 20.19.5、pnpm 10.0.0、PowerShell 7.5.4、Go 1.26.5、uv 0.11.31。未屏蔽依赖校验或绕过原生重建。
+
+Actions 新建构建将使用新提交编号，产物文件名、ZIP revision 和 SHA 应以该次输出为准。若使用上面的本地 installer，应上传它自己的配套 RAG ZIP；不要将本地与 Actions 的不同产物混配。字体、Workflow、精选素材无需因这些封装修复重复上传。
+
 ### 本轮验证与边界
 
 - 在原生 Windows CPython 3.11.15 上，将现有 ZIP 解压到独立临时目录，应用同一补丁并验证 RECORD；RAG 导入，以及实际 Milvus 插入、检索、显式 flush、停止/重启、重启后检索、删除均通过。没有创建新 ZIP，也没有使用或修改用户知识库。

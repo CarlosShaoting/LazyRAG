@@ -85,3 +85,46 @@ test("stages a cached, verified Pandoc executable into the runtime", async () =>
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("Windows extracts verified ZIPs using literal paths and propagates extraction errors", {
+  skip: process.platform !== "win32",
+}, async () => {
+  const { execFileSync } = await import("node:child_process");
+  const root = await mkdtemp(path.join(os.tmpdir(), "lazymind pandoc 中文 ' $ & [test]-"));
+  try {
+    const sourceDir = path.join(root, "source");
+    await mkdir(sourceDir);
+    const source = path.join(sourceDir, "pandoc.exe");
+    const archive = path.join(root, "fixture.zip");
+    await writeFile(source, "pandoc executable fixture");
+    execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+      "$ErrorActionPreference = 'Stop'; Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::CreateFromDirectory($env:TEST_PANDOC_SOURCE, $env:TEST_PANDOC_ZIP)",
+    ], { env: { ...process.env, TEST_PANDOC_SOURCE: sourceDir, TEST_PANDOC_ZIP: archive } });
+    const body = await readFile(archive);
+    const sha256 = createHash("sha256").update(body).digest("hex");
+    const configPath = path.join(root, "pandoc.json");
+    const target = {
+      fileName: "pandoc.zip", upstreamUrls: ["https://example.invalid/pandoc.zip"], sha256,
+      archivePath: "pandoc.exe", runtimePath: "bin/pandoc.exe",
+    };
+    const config = { schemaVersion: 1, name: "pandoc", version: "3.11", targets: { "windows-x64": target } };
+    await writeFile(configPath, JSON.stringify(config));
+    await writeFile(path.join(root, `${sha256}-pandoc.zip`), body);
+    const result = await stagePandoc(path.join(root, "runtime"), "windows-x64", {
+      cacheRoot: root, configPath, runVersion: async () => "pandoc 3.11\r\n",
+    });
+    assert.equal(await readFile(result.runtimePath, "utf8"), "pandoc executable fixture");
+
+    const invalid = Buffer.from("invalid zip");
+    target.sha256 = createHash("sha256").update(invalid).digest("hex");
+    await writeFile(configPath, JSON.stringify(config));
+    await writeFile(path.join(root, `${target.sha256}-pandoc.zip`), invalid);
+    await assert.rejects(stagePandoc(path.join(root, "runtime"), "windows-x64", {
+      cacheRoot: root, configPath,
+      runVersion: async () => { assert.fail("must not execute after extraction fails"); },
+    }), (error) => error.code === 1 && /powershell/i.test(error.message));
+    assert.equal(await readFile(result.runtimePath, "utf8"), "pandoc executable fixture");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
