@@ -14,21 +14,19 @@
 
 配套机制、下载地址与验证结果见 [Mac 固定组件记录](../docs/development/macos-published-rag.md)。**下文旧的 ARM64“同次构建生成/上传 RAG”步骤仅保留作历史记录，已由本节替代**。PDF 字体等其他资源沿用分支现有机制。
 
-## Windows RAG 固定云端版本（2026-09-23 更新）
+## Windows RAG 手动发布（2026-09-28 更新）
 
-Windows 开启 `defer_python` 后，固定复用已上传的 `lazymind-python-rag-windows-amd64-cp311-e262c0d2f05fe09d.zip`，**不再动态生成 RAG ZIP，也不需要每次构建重新上传**。构建机按 `desktop/python-components/windows-amd64-requirements.lock` 安装配套版本，再从固定 URL 获取并验证组件；依赖不兼容时构建失败，不偷偷切换成新包。
+Windows 与 Mac ARM64 分别处理：**Windows 在 Actions 生成配套依赖 ZIP，由维护者手动上传；Mac ARM64 继续使用现有固定发布包。** 本次不改变 Mac 的脚本或资源。
 
-GitHub Actions 的 `windows-python-components` 现在提供固定 `python-components.json`、`SHA256SUMS` 和来源说明，正常的干净构建不会生成新的内层 ZIP。已发布的旧 417 MiB 安装包仍使用旧清单，必须安装包含本次修改的新 installer 才会使用固定版本；修改网页链接不会更新已安装程序的清单。
+1. 在 `cst/installer_opt` 分支运行 **Windows Desktop Installer**，构建引用留空。
+2. 勾选 **Build a separate Windows RAG ZIP for manual upload**；保留 Python 裁剪，依赖共享默认不勾选。
+3. 构建成功后下载 **windows-python-components** 附件，解开外层 ZIP；上传里面的 `lazymind-python-rag-windows-amd64-cp311-<revision>.zip`，不要上传外层附件或改名重压。
+4. 按当次摘要/清单上传：默认 ModelScope `CarlosShaoting/lazymind-cst` 的 `master` 根目录，HF 回退源 `LazyAGI/LazyMind` 的 `main` 根目录。ModelScope 不可用时可先上传 HF。核对公开下载的大小与 SHA；旧文件保留。
+5. 使用**同一次 Actions** 的 installer。它已携带配套清单，上传后不必改代码或重新构建；安装组件界面只展示来源，不提供修改链接。
 
-安装组件时界面只显示下载来源，点击“下载并安装”即可；下载失败可以重试/取消，不能编辑地址，API 也不接受自定义 URL。Mac ARM64 同样使用固定来源，Intel 暂保留原分包机制。PDF 字体、FFmpeg、Workflow 案例上传机制不变。
+Windows 构建会先应用有版本和源码校验的 Milvus 文件替换补丁，再分包。封装前必须通过本地 ZIP 验证及写入、flush、重启检索和删除测试。原 `e262…` 及此前本地 `67973…` 包没有本次修复，不能充当修复版。Mac 已发布包无需因此更新。
 
-固定下载地址：
-
-```text
-https://modelscope.cn/datasets/CarlosShaoting/lazymind-cst/resolve/master/lazymind-python-rag-windows-amd64-cp311-e262c0d2f05fe09d.zip
-```
-
-大小 69,342,263 字节；SHA-256 `258944a85d5aa29c0eb662ab21888c5c2894fdfb2c503d51f2129efa4e083bed`。不要覆盖这个文件的内容或改名。普通业务更新复用；需要升级依赖时，由开发者明确更新锁文件与已发布组件清单并完成原生验证，不能绕过哈希。详细范围和测试见 [固定版本开发记录](../docs/development/windows-published-rag.md)。下文涉及“同次构建 RAG 上传”的流程不再适用于 Windows 和 Mac ARM64 固定版本。
+完整修改范围、验证结果和发布步骤见 [Windows 开发文档](../docs/development/windows-published-rag.md)。以下涉及 Windows 固定包的旧步骤属于历史记录，以本节为准。
 
 ## 后续交付平台与实施交接
 

@@ -1,10 +1,78 @@
-# Windows 固定复用已发布的 ModelScope RAG 组件
+# Windows RAG 手动发布与固定组件历史记录
 
-日期：2026-09-23。用户要求：测试并复用现有云端 Windows ZIP，不再动态打包；安装界面仅告知下载来源，不提供修改链接功能。本轮不修改 Mac 的分包方式、Skill、LazyLLM 源码或子模块 gitlink。
+最近更新：2026-09-28。**当前策略为 Windows 在 Actions 生成组件 ZIP、维护者手动上传；Mac ARM64 保持已发布固定版本。** 本节之后保留此前固定包与本地候选包的历史记录。Mac Intel 的独立接入范围仍见其交接文档，本次不改 Mac 脚本或清单。
 
-## 2026-09-28：本次 rebase 后的 Windows 打包与测试交接
+## 2026-09-28：Windows 手动发布及 Milvus 持久化修复（当前执行流程）
 
-本节为当前状态；下文 2026-09-23 的构建记录及“本轮”范围属于历史记录。
+用户要求只修改代码并 push，由用户在 Actions 打包、上传。本轮没有在本机生成新 ZIP/installer，也没有触发 Actions 或上传云资源。前一轮本地 `67973fda1e3a7518.zip` 尚未包含本次补丁，**不要将它当成修复版上传**。
+
+### 修改范围与原因
+
+- Windows 构建继续使用 `windows-amd64-requirements.lock` 的 175 项固定版本。开启 `defer_python` 时，每次构建生成当次 RAG ZIP 和匹配 catalog，不再读取仓库的旧 Windows 固定 catalog，也不再下载 `e262…` 或 `67973…` 作为构建输入。旧 `windows-amd64.json` 保留作历史版本记录；实际发布依据为 Actions 产出的清单。
+- `patch-windows-milvus.py` 仅供原生 Windows 构建调用，对 `milvus-lite==3.0` 的 `storage/manifest.py` 应用 `os.rename(tmp_path, target_path)` → `os.replace(tmp_path, target_path)`。检查原源码 SHA 和 wheel RECORD；未知版本、未知源码、RECORD 不匹配立即失败；同步更新 RECORD 的哈希与大小，重复执行可验证复用，写 RECORD 失败恢复源码。保留临时文件、刷盘和备份逻辑，不修改用户数据库，不全局替换 `os.rename`。
+- 补丁在裁剪和分包前执行，所以更新后的源码及 RECORD 会进入 ZIP SHA、revision 和 fingerprint。关闭后置的完整安装包同样应用补丁；旧 staging 的 resume 不能绕过补丁验证。
+- Windows 后置组件使用 `slim-providers-v1`：gRPC 随 RAG 后置，移除桌面不使用的 OpenSearch。火山 SDK 已从依赖锁移除，本轮不重复计算其体积收益。
+- Windows 封装 installer 前，必须通过当次本地 ZIP 的 SHA/manifest、安全解压、补丁源码/RECORD、基础导入、RAG overlay 导入和 Milvus 写入/flush/重启/查询/删除。真实验证失败即停止，不将失败结果标绿。
+- Actions 的 `windows-python-components` 附件包含 ZIP、清单、SHA256SUMS、完整构建锁、补丁报告及 `verification.json`。构建摘要打印精确文件名、SHA、主备地址及手动上传说明。失败任务也可能上传诊断附件，不能将其当成验收通过产物。
+- Mac ARM64 固定 catalog、依赖锁、分包调用和上传流程不变；共用验证脚本只有显式传 `--require-windows-milvus-patch` 才检查本补丁。未修改 Skill 或 LazyLLM 源码/子模块 gitlink。
+
+### GitHub Actions 操作
+
+1. 选择 **Windows Desktop Installer**，分支 `cst/installer_opt`；构建引用留空，使用最新提交。
+2. 勾选 **Build a separate Windows RAG ZIP for manual upload**（`defer_python=true`）；保留 `prune_python=true`、`defer_history=true`，`share_python=false`。
+3. 等待构建和验证成功；下载该次运行的 installer 和 **windows-python-components** 附件。
+4. 解开 Actions 附件外层 ZIP，找到里面的 **`lazymind-python-rag-windows-amd64-cp311-<revision>.zip`**。只上传这个原始内层 ZIP，不改名、不解压重压，也不上传名为 `windows-python-components.zip` 的外层附件。
+5. 上传到清单中的公开 HTTPS 地址：默认主源为 ModelScope 数据集 `CarlosShaoting/lazymind-cst` 的 `master` 根目录，回退源为 HF 数据集 `LazyAGI/LazyMind` 的 `main` 根目录。ModelScope 不可用时先上传 HF；主备应使用完全相同的文件。若设置仓库变量 `LAZYMIND_PYTHON_COMPONENT_BASE_URL`，以当次摘要/清单给出的主源为准。
+6. 核对云端下载文件大小和 SHA 与当次 `python-components.json` / `SHA256SUMS` 一致，再分发配套 installer。云端文件未上传时，安装后的 RAG 下载会失败；构建本身使用本地 ZIP 验证，不依赖提前上传。
+7. **不需要上传后再改代码或重打一遍 installer**：同次 installer 已内置该 ZIP 的准确 URL、revision、大小、SHA。若另跑一次 Actions，应重新核对并上传那次配套 ZIP，不能假定不同运行产物身份相同。历史 ZIP 保留，供旧 installer 使用。
+
+每次 Windows 构建默认生成组件，`LAZYMIND_DESKTOP_REBUILD_PYTHON_COMPONENTS` 不再控制 Windows。Mac 不因为 Windows 这次修改而重传资源。字体、精选素材、Workflow 和 Skill 沿用原有清单。
+
+### 本轮验证与边界
+
+- 在原生 Windows CPython 3.11.15 上，将现有 ZIP 解压到独立临时目录，应用同一补丁并验证 RECORD；RAG 导入，以及实际 Milvus 插入、检索、显式 flush、停止/重启、重启后检索、删除均通过。没有创建新 ZIP，也没有使用或修改用户知识库。
+- Windows 原生补丁单元测试 7 项通过；组件分组/固定清单 13 项、profile 3 项、Desktop 构建测试 44 项通过；PowerShell 语法与 workflow YAML 检查通过。
+- 此结果验证了补丁及持久化路径，不等于新 installer 安装、升级、UI 与全部业务验收。完整产物仍由本次 Actions 构建及门禁验证；用户安装后继续测试知识库 PDF/Office 入库、重启后检索，以及普通聊天、登录、附件和模型功能。
+
+## 2026-09-28：Windows slim 组件原生重打（修复前历史候选）
+
+本次从 `origin/cst/installer_opt` 的 `f8d5bd922` 强制同步后，按下方交接完成 Windows 原生依赖分包。LazyLLM 工作树检出主仓已记录的官方 `ab67c189`；没有更改或提交子模块 gitlink。下文“Windows 无 slim profile、仍复用 e262”的交接状态被本节替代。
+
+- 新文件：`lazymind-python-rag-windows-amd64-cp311-67973fda1e3a7518.zip`。
+- ZIP 大小：74,597,139 字节（71.14 MiB）；展开 284,028,099 字节（270.87 MiB）。
+- SHA-256：`50c92abc8219dacbae17f3ae49b7cb13b477cf20c15c2e9be1f5537b353c7f93`。
+- 平台：原生 Windows amd64 / CPython 3.11.15；不能用于 Mac 或 Linux。
+- profile：`slim-providers-v1`。RAG 中新增 `grpcio==1.84.0`，移除基础环境中的 `opensearch-py`、`opensearch-protobufs`；火山 SDK 已由此前提交从安装输入移除，本次不重复计算其收益。
+- 完整安装锁为 175 项，分包后 RAG 为 29 项。OpenSearch 留在完整构建锁中供现有 algorithm requirements 联合解析，随后由 desktop profile 移除；Cloud requirements 不变。
+- ZIP 比旧版约增大 5.01 MiB，因为把 gRPC 从主包移入后置组件。新 installer 体积尚未实测，不能把展开体积直接当成下载节省。
+
+### 本地交付与上传顺序
+
+本次完整输出位于 `desktop/dist/python-components/windows-amd64-20260928/`。其中原始 RAG ZIP 是需要上传的文件；`python-components.json`、`algorithm-requirements.lock`、`SHA256SUMS`、裁剪和验证报告用于留档，不要把整个目录重新压成一个 ZIP 上传。
+
+1. 将新 ZIP 原样上传到 Hugging Face 数据集 `LazyAGI/LazyMind` 的 `main` 分支根目录；ModelScope 可用时，将**同一文件**同步到 `CarlosShaoting/lazymind-cst` 的 `master` 分支根目录。文件名和内容均不能改。
+2. 清单使用 ModelScope 主源及 HF 回退源；上传至少一个配置来源并核对下载文件的大小/SHA 后，再进行普通 installer 构建。此次仅生成本地产物，未上传，也未确认新云端 URL 可下载。
+3. 原 `e262…zip` 保留，旧 installer 仍会请求它。Mac 两种架构沿用各自资源，本次不生成或替换 Mac 包；精选素材、字体、Workflow 和 Skill 无需因本次 RAG 更新重复上传。
+4. 提交配套的 Windows catalog/lock 后，GitHub Actions 选择同一分支，保持 `defer_python=true`、`prune_python=true`、`share_python=false`。`LAZYMIND_DESKTOP_REBUILD_PYTHON_COMPONENTS` 保持未设置或 `false`，正常构建仍固定下载新发布版本；不要复用旧 staging。
+
+主源：`https://modelscope.cn/datasets/CarlosShaoting/lazymind-cst/resolve/master/lazymind-python-rag-windows-amd64-cp311-67973fda1e3a7518.zip`。
+回退源：`https://huggingface.co/datasets/LazyAGI/LazyMind/resolve/main/lazymind-python-rag-windows-amd64-cp311-67973fda1e3a7518.zip`。
+
+### 验证边界
+
+原生独立构建环境已完成 175 项依赖安装与 `pip check`，豆包图片/视频 HTTP mock 检查通过（不调用付费 API）。实际检查结果：
+
+- 分包、固定发布清单和 profile 的 16 项 Python 单元测试通过。
+- 原生验证前 5 阶段通过：平台/ABI、未安装 RAG 的基础导入、ZIP SHA、解压/manifest、官方 LazyLLM 源码配合 RAG overlay 导入；ZIP 2,998 个条目的 CRC 和依赖边界另行检查通过。
+- 第 6 阶段 Milvus 在 flush 时复现已有 `WinError 183`（替换已存在的 `manifest.json` 失败）；报告保留 `passed=false`，未绕过或改写结果，未修改 Milvus wheel。重启持久化验收因此仍未通过。
+- 将同一环境恢复为完整 175 项依赖后，实际运行 `stage-published-python-components.py`，使用本次 ZIP 作为已校验缓存：版本集合/分组边界及基础/overlay 导入再次通过，输出清单与仓库新清单一致，未生成第二个 ZIP。这验证固定复用流程，不代表云端已上传或下载验证通过。
+- 输出包含 `verification.json`（完整验证，含失败）、`fixed-reuse-verification.json`（固定复用通过）、`BUILD-INFO.json`、`SHA256SUMS` 和原生日志。
+
+此次只重打依赖组件，没有生成新 EXE，没有完成应用 UI 或所有知识库业务验收。
+
+## 2026-09-28：本次 rebase 后的 Windows 打包与测试交接（交接时状态）
+
+本节保留依赖重打前的交接状态；当前产物、清单和验证结果以上方“当前执行流程”为准。下文 2026-09-23 的构建记录及“本轮”范围亦属于历史记录。
 
 LazyMind 已 rebase 到 upstream/main `477204829`。LazyLLM PR #1340 已合入官方仓库，子模块使用官方 `ab67c1893872fdc2895fc412d226e61a0524c985`，不再依赖个人 `cst/install_opt` 分支。主仓库仍需提交这个 gitlink；仅将 `.gitmodules` 的 branch 改成 main 不会更新 CI 实际检出的版本。
 

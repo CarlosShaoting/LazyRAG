@@ -221,6 +221,8 @@ def main():
     parser.add_argument('--runtime', type=Path, help='Staged slim runtime root (contains config/python-components.json)')
     parser.add_argument('--bundle-dir', type=Path, help='Use local bundle instead of downloading the catalog URL')
     parser.add_argument('--report', type=Path, help='JSON report; defaults to desktop/dist/component-check/<platform>/report.json')
+    parser.add_argument('--require-windows-milvus-patch', action='store_true',
+                        help='Reject Windows bundles without the reviewed manifest replacement fix')
     parser.add_argument('--worker', choices=['base', 'overlay', 'milvus', 'server'], help=argparse.SUPPRESS)
     parser.add_argument('--overlay', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--data', type=Path, help=argparse.SUPPRESS)
@@ -279,6 +281,8 @@ def main():
                           source=str(args.bundle_dir) if args.bundle_dir else entry['url'])
             return entry
         entry = check('runtime compatibility', preflight)
+        if args.require_windows_milvus_patch:
+            require(target_platform == 'windows', 'Windows patch verification requires native Windows')
         base_args = ['--runtime', str(args.runtime.resolve())]
         if 'grpcio' in entry['packages']:
             base_args.append('--without-grpc')
@@ -287,6 +291,12 @@ def main():
             root = Path(temporary)
             archive = check('bundle download/local file + SHA256', lambda: acquire_bundle(entry, root, args.bundle_dir))
             overlay = check('bundle extraction + manifest', lambda: extract_bundle(archive, root / 'payload', entry))
+            if args.require_windows_milvus_patch:
+                spec = importlib.util.spec_from_file_location(
+                    'windows_milvus_patch', Path(__file__).with_name('patch-windows-milvus.py'))
+                patch = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(patch)
+                check('Windows Milvus manifest fix + RECORD', lambda: patch.verify_site(overlay))
             check('RAG overlay imports', lambda: run_child(
                 'overlay', ['--overlay', str(overlay), '--runtime', str(args.runtime.resolve())], logs))
             check('Milvus insert + flush + restart + search + drop', lambda: run_child(
