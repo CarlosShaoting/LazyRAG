@@ -13,20 +13,30 @@
 - 补丁在裁剪和分包前执行，所以更新后的源码及 RECORD 会进入 ZIP SHA、revision 和 fingerprint。旧 staging 的 resume 不能绕过补丁验证；当前 Windows 不再提供关闭后置的构建选项。
 - Windows 后置组件使用 `slim-providers-v1`：gRPC 随 RAG 后置，移除桌面不使用的 OpenSearch。火山 SDK 已从依赖锁移除，本轮不重复计算其体积收益。
 - Windows 封装 installer 前，必须通过当次本地 ZIP 的 SHA/manifest、安全解压、补丁源码/RECORD、基础导入、RAG overlay 导入和 Milvus 写入/flush/重启/查询/删除。真实验证失败即停止，不将失败结果标绿。
-- Actions 的 `windows-python-components` 附件包含 ZIP、清单、SHA256SUMS、完整构建锁、补丁报告及 `verification.json`。构建摘要打印精确文件名、SHA、主备地址及手动上传说明。失败任务也可能上传诊断附件，不能将其当成验收通过产物。
+- Actions 直接提供原始 RAG ZIP 附件；`windows-python-components-reports` 单独包含清单、SHA256SUMS、完整构建锁、补丁报告及 `verification.json`。构建摘要打印精确文件名、SHA、主备地址及手动上传说明。失败任务也可能上传诊断附件，不能将其当成验收通过产物。
 - Mac ARM64 固定 catalog、依赖锁、分包调用和上传流程不变；共用验证脚本只有显式传 `--require-windows-milvus-patch` 才检查本补丁。未修改 Skill 或 LazyLLM 源码/子模块 gitlink。
 
 ### GitHub Actions 操作
 
 1. 选择 **Windows Desktop Installer**，分支 `cst/installer_opt`；构建引用留空，使用最新提交。
 2. 无需勾选开关：仅保留可选 `git_ref`。Windows 固定开启案例后置、RAG 单独打包、Python 裁剪，关闭实验性依赖共享。
-3. 等待构建和验证成功；下载该次运行的 installer 和 **windows-python-components** 附件。
-4. 解开 Actions 附件外层 ZIP，找到里面的 **`lazymind-python-rag-windows-amd64-cp311-<revision>.zip`**。只上传这个原始内层 ZIP，不改名、不解压重压，也不上传名为 `windows-python-components.zip` 的外层附件。
+3. 等待构建和验证成功；下载该次运行的 installer 和 **`lazymind-python-rag-windows-amd64-cp311-<revision>.zip`** 附件。
+4. 新运行下载到的 RAG ZIP 就是要上传的文件，不需要再解开外层 ZIP；不改名、不解压重压。`windows-python-components-reports` 无需上传。旧运行若仍显示 `windows-python-components`，则需解开外层附件，取出里面的原始 RAG ZIP。
 5. 上传到清单中的公开 HTTPS 地址：默认主源为 ModelScope 数据集 `CarlosShaoting/lazymind-cst` 的 `master` 根目录，回退源为 HF 数据集 `LazyAGI/LazyMind` 的 `main` 根目录。ModelScope 不可用时先上传 HF；主备应使用完全相同的文件。若设置仓库变量 `LAZYMIND_PYTHON_COMPONENT_BASE_URL`，以当次摘要/清单给出的主源为准。
 6. 核对云端下载文件大小和 SHA 与当次 `python-components.json` / `SHA256SUMS` 一致，再分发配套 installer。云端文件未上传时，安装后的 RAG 下载会失败；构建本身使用本地 ZIP 验证，不依赖提前上传。
 7. **不需要上传后再改代码或重打一遍 installer**：同次 installer 已内置该 ZIP 的准确 URL、revision、大小、SHA。若另跑一次 Actions，应重新核对并上传那次配套 ZIP，不能假定不同运行产物身份相同。历史 ZIP 保留，供旧 installer 使用。
 
 每次 Windows 构建默认生成组件，`LAZYMIND_DESKTOP_REBUILD_PYTHON_COMPONENTS` 不再控制 Windows。Mac 不因为 Windows 这次修改而重传资源。字体、精选素材、Workflow 和 Skill 沿用原有清单。
+
+### RAG ZIP 直接下载（2026-09-28）
+
+此前把整个组件目录作为一个 artifact 上传，GitHub 会另加一层 ZIP，容易误上传外层附件。现在沿用 installer EXE 的 `actions/upload-artifact@v7` 原始文件模式（`archive: false`），只上传配套 catalog 指定的单个 RAG ZIP，文件名直接显示在 Artifacts；摘要增加其下载链接。上传前再次核对该文件 SHA 与 installer catalog 一致；缺失或不一致立即失败。
+
+清单、依赖锁、SHA256SUMS、补丁与验证报告单独放入 `windows-python-components-reports`，失败运行仍保留已有报告。RAG 内容、生成方式、云地址及 installer 下载校验不变，不涉及 Mac、Skill 或 LazyLLM；旧 Actions 附件不会自动改变。
+
+验证：Desktop 构建与裁剪入口 47 项测试通过；workflow YAML 与原生 Windows PowerShell 语法检查通过，并使用本地已生成的真实 RAG ZIP 执行清单选取及 SHA 校验。此次只修改附件上传方式和文档，没有重新构建 installer；GitHub 下载展示需由新一次 Actions 验收。
+
+验收：新建一次 Actions 运行，确认直接下载的 RAG ZIP 文件名、SHA 与摘要一致，原样上传 ModelScope/HF 后使用同次 installer 安装 RAG，再检查入库和重启检索。字体与案例无需因此重传。
 
 ### Actions 后续修复：精选案例清单 UTF-8
 

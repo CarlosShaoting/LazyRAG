@@ -20,7 +20,7 @@ Windows 与 Mac ARM64 分别处理：**Windows 在 Actions 生成配套依赖 ZI
 
 1. 在 `cst/installer_opt` 分支运行 **Windows Desktop Installer**，构建引用留空。
 2. 页面只保留分支和可选构建引用，无需勾选：Windows 固定开启 Workflow 案例后置、RAG 单独打包与 Python 裁剪，关闭实验性跨环境依赖共享。本地 Windows 构建使用相同配置。
-3. 构建成功后下载 **windows-python-components** 附件，解开外层 ZIP；上传里面的 `lazymind-python-rag-windows-amd64-cp311-<revision>.zip`，不要上传外层附件或改名重压。
+3. 构建成功后直接下载名为 **`lazymind-python-rag-windows-amd64-cp311-<revision>.zip`** 的附件（摘要也有直达链接），原样上传，不解压、不改名、不重压。`windows-python-components-reports` 仅含清单和验证报告，无需上传。旧运行的 `windows-python-components` 仍需解开外层 ZIP，取出里面的原始 RAG ZIP。
 4. 按当次摘要/清单上传：默认 ModelScope `CarlosShaoting/lazymind-cst` 的 `master` 根目录，HF 回退源 `LazyAGI/LazyMind` 的 `main` 根目录。ModelScope 不可用时可先上传 HF。核对公开下载的大小与 SHA；旧文件保留。
 5. 使用**同一次 Actions** 的 installer。它已携带配套清单，上传后不必改代码或重新构建；安装组件界面只展示来源，不提供修改链接。
 
