@@ -28,6 +28,18 @@
 
 每次 Windows 构建默认生成组件，`LAZYMIND_DESKTOP_REBUILD_PYTHON_COMPONENTS` 不再控制 Windows。Mac 不因为 Windows 这次修改而重传资源。字体、精选素材、Workflow 和 Skill 沿用原有清单。
 
+### Windows 实机启动冲突及精简运行环境就绪判断（2026-09-28）
+
+用户安装后反复启动失败。实机日志显示 16:21 启动的后台服务仍存活，后续客户端因 owner token 不一致报 `RUNTIME_INSTANCE_CONFLICT`，等待 30 秒后失败。核实原启动进程已退出后，使用安装目录的 runtime manager、状态文件中的原 owner 执行正常 `down`，再启动客户端；未删除用户配置、数据库或缓存。16:30 的重启日志出现 `frontend window ready`，约 8 秒打开首页，Windows 窗口响应正常。
+
+同时确认桌面端 `desktopRuntimeReady` 仍要求完整 RAG 服务：真实状态已是 `ready` 且 `algorithm.RAGDisabled=true`，但 scan-control、file-watcher 及四个 LazyLLM RAG 服务未启动，因此桌面端一直判为未就绪。该判断还阻止 `startGuard()` 执行，且会让前端失败后的恢复流程继续等待。这解释了后台残留的一个明确缺陷；首次前端未显示的完整日志已被后续启动覆盖，不能断言其最初触发原因。
+
+修复：仅当 runtime 明确报告 `RAGDisabled=true`，就绪检查排除这六项后置服务；继续检查基础服务、进程归属、整体状态，以及配置为托管时的 Milvus。安装 RAG 后恢复完整服务检查；没有该配置的旧版本仍保持原有检查。未改运行环境所有权保护或主动接管其他实例。
+
+验证：构建、运行状态、重启及前端恢复相关 56 项测试通过；原生 Windows 运行状态 10 项测试通过。另将当前实机 runtime manager 返回的真实状态分别交给修改前后函数，复现“旧代码 false、新代码 true”。本次没有替换用户已安装的 app.asar；上述现场恢复使用原安装包，代码修复需重新打包安装后生效。无需为此更新依赖、字体或案例资源。
+
+下次安装验收：未安装 RAG 时首页可打开，完整 runtime 就绪后产生 `desktop-shutdown.log` 和 guard 启动记录；正常退出/重新打开无实例冲突；安装 RAG 后检查入库、重启检索及完整服务就绪。
+
 ### RAG ZIP 直接下载（2026-09-28）
 
 此前把整个组件目录作为一个 artifact 上传，GitHub 会另加一层 ZIP，容易误上传外层附件。现在沿用 installer EXE 的 `actions/upload-artifact@v7` 原始文件模式（`archive: false`），只上传配套 catalog 指定的单个 RAG ZIP，文件名直接显示在 Artifacts；摘要增加其下载链接。上传前再次核对该文件 SHA 与 installer catalog 一致；缺失或不一致立即失败。
