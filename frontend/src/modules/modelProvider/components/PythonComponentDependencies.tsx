@@ -1,3 +1,4 @@
+import { useRAGComponent } from "../contexts/RAGComponentContext";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Button, Modal, Space, Tag, message } from "antd";
 import { Link, useLocation } from "react-router-dom";
@@ -86,15 +87,11 @@ export default function PythonComponentDependencies() {
 }
 
 export function RAGComponentNotice() {
-  const [missing, setMissing] = useState(false);
-  useEffect(() => {
-    let active = true;
-    getPythonComponents().then(items => {
-      if (active) setMissing(items.some(item => item.id === "rag" && !item.active));
-    }).catch(() => {});
-    return () => { active = false; };
-  }, []);
-  if (!missing) return null;
+  const { availability, refresh } = useRAGComponent();
+  if (availability === "error") return <Alert type="warning" showIcon style={{ margin: 16 }}
+    message="无法确认本地知识库组件状态" description="请重试，确认组件已启用后再创建资料库。"
+    action={<Button onClick={refresh}>重试</Button>} />;
+  if (availability !== "missing") return null;
   return <Alert type="info" showIcon style={{ margin: 16 }} message="本地知识库组件尚未启用"
     description="安装并重启本地服务后，即可解析文档和检索知识库。已有知识库数据会保留。"
     action={<Link to="/settings?section=system_tools#python-rag-dependency">安装组件</Link>} />;

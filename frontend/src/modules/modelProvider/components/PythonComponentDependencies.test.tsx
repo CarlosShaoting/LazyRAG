@@ -1,3 +1,4 @@
+import { RAGComponentProvider } from "../contexts/RAGComponentContext";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -37,7 +38,7 @@ it("keeps installation available after a download fails", async () => {
   expect(mocks.restart).not.toHaveBeenCalled();
 });
 it("shows an install link for an unavailable knowledge component", async () => {
-  render(<MemoryRouter><RAGComponentNotice /></MemoryRouter>);
+  render(<MemoryRouter><RAGComponentProvider><RAGComponentNotice /></RAGComponentProvider></MemoryRouter>);
   expect(await screen.findByRole("link", { name: "安装组件" })).toHaveAttribute("href", "/settings?section=system_tools#python-rag-dependency");
 });
 
