@@ -158,7 +158,7 @@ func TestEnableBuiltinSkillDownloadFailureDoesNotCreateSkill(t *testing.T) {
 	var response struct {
 		Code int `json:"code"`
 	}
-	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil || response.Code != 2003116 {
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil || response.Code != 2003147 {
 		t.Fatalf("download error code=%d decode err=%v", response.Code, err)
 	}
 	if count := testutil.CountRows(t, db, "skills", "origin_builtin_skill_uid = ?", uid); count != 0 {
