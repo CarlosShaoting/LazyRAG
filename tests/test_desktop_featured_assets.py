@@ -6,6 +6,7 @@ import io
 import json
 from pathlib import Path
 import tempfile
+import subprocess
 import unittest
 from unittest.mock import patch
 
@@ -18,6 +19,29 @@ spec.loader.exec_module(featured)
 
 
 class FeaturedAssetsEncodingTests(unittest.TestCase):
+    def test_windows_git_checkout_preserves_published_asset_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(['git', 'init', '-q', str(root)], check=True)
+            (root / '.gitattributes').write_bytes((ROOT / '.gitattributes').read_bytes())
+            fixtures = {
+                'skills/featured/example/assets/demo.html': '<h1>精选案例</h1>\n<p>content</p>\n'.encode('utf-8'),
+                'skills/featured/example/assets/nested/demo.svg': b'<svg>\n</svg>\n',
+                'skills/featured/example/assets/cover.png': b'\x89PNG\r\n\x00binary\n',
+            }
+            for name, data in fixtures.items():
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data)
+            subprocess.run(['git', '-C', str(root), '-c', 'core.autocrlf=false', 'add', '.'], check=True)
+            for name in fixtures:
+                (root / name).unlink()
+            subprocess.run(['git', '-C', str(root), '-c', 'core.autocrlf=true',
+                            'checkout-index', '--all'], check=True)
+            for name, data in fixtures.items():
+                with self.subTest(asset=name):
+                    self.assertEqual((root / name).read_bytes(), data)
+
     def test_unicode_catalog_and_published_manifest_under_cp1252(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

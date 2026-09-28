@@ -34,6 +34,16 @@
 
 本次不改变精选资源的下载方式：封面与清单内置，完整素材按已发布清单后台或按需下载，ModelScope 主源失败后回退 HF。无需重新上传精选 ZIP。新增完整 staging 回归覆盖 cp1252 默认编码下的中文标题、中文清单字段、封面转换与原下载身份保留；Linux 和原生 Windows（关闭 Python UTF-8 模式）验证通过。本次未打包 installer，推送后重新运行 Actions 即可。
 
+### Actions 后续修复：精选素材跨平台检出字节一致
+
+UTF-8 修复后，Windows 又在 `academic_research_pipeline/1.1.0` 的发布清单比对处失败。仓库中的 HTML 原文件为 625,174 字节，SHA `58e05a4bbc2815c5012185e898dfd7e080ac9ceb543916e8c64c569c9d910b0c`，与已发布清单一致。使用 `core.autocrlf=true` 模拟 Windows Git 检出后，166 个 LF 变为 CRLF，文件增至 625,340 字节、SHA 变为 `1d9333abe13972197ff98239e3940a3c43f62bc5fee2efdee4474863d7e9faee`，触发清单拒绝。
+
+`.gitattributes` 现在对 `skills/featured/**/assets/**` 指定 `-text`，保留 Git 中的原始素材字节，避免自动换行转换影响内容哈希。没有修改素材、重新生成云端 ZIP 或放宽哈希校验，HF 下载/缓存流程不变。保持发布素材原始字节也适用于嵌套 SVG、HTML 和图片。
+
+验证：新增真实 Git 检出回归（`core.autocrlf=true`），与中文 cp1252 staging 回归一起，在 Linux 和原生 Windows 均通过。另将全部 314 个精选源文件按 Windows 换行配置检出，用原生 Windows Go 的 `showcase.CompileCatalog` 和真实锁文件绑定编译 46 个案例，再用原生 Python（`-X utf8=0`）执行 staging。全部 46 个远端包及封面身份与现有 `desktop/featured-assets.json` 完全一致：素材原始 172,009,247 字节，内置封面 1,304,579 字节，远端 ZIP 合计 77,565,150 字节。
+
+无需重传精选案例 ZIP。请在修复分支新建一次 **Run workflow**，构建引用留空，采用最新提交；旧 Actions 的重新运行仍可能使用旧提交。本轮只验证素材编译/分离，没有本地打包完整 installer。
+
 ### 本轮验证与边界
 
 - 在原生 Windows CPython 3.11.15 上，将现有 ZIP 解压到独立临时目录，应用同一补丁并验证 RECORD；RAG 导入，以及实际 Milvus 插入、检索、显式 flush、停止/重启、重启后检索、删除均通过。没有创建新 ZIP，也没有使用或修改用户知识库。
