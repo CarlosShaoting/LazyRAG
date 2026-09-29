@@ -7,6 +7,7 @@ public Workflow SDK into ChatAgent tools and applies LazyMind's handoff rule.
 from __future__ import annotations
 
 import json
+import uuid
 import logging
 import re
 from dataclasses import asdict, dataclass
@@ -159,7 +160,7 @@ def _handoff_tool(
     def advance_step_and_hand_off(step_id: str) -> str:
         """Execute one Ready Workflow step, then hand off for result approval."""
         selected_session_id = session() if callable(session) else session
-        selected_session_id = str(selected_session_id or '').strip()
+        selected_session_id = _relayed_session_id(str(selected_session_id or '').strip())
         if not selected_session_id:
             raise WorkflowClientError(
                 'WORKFLOW_SESSION_NOT_INITIALIZED',
@@ -343,6 +344,13 @@ def _with_terminal_agent_control(result: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _relayed_session_id(selected: str) -> str:
+    relay = _agentic_config().get('product_stage_relay') or {}
+    if isinstance(relay, dict) and relay.get('source_session_id') == selected:
+        return str(relay.get('session_id') or selected)
+    return selected
+
+
 def _safe_session_tools(
     toolkit: HostWorkflowToolkit,
     session: Union[str, Callable[[], str]],
@@ -374,7 +382,7 @@ def _safe_session_tools(
                 'Do not infer that an attachment is required; the trigger determines '
                 'whether any external input is actually required.',
             )
-        return selected
+        return _relayed_session_id(selected)
 
     @_register_host_file(capability)
     def get_workflow_state() -> Dict[str, Any]:
@@ -491,9 +499,66 @@ def _safe_session_tools(
             artifact_id, int(artifact.get('revision') or 0), value, content_type, caption,
         )
 
+    def get_product_stage_options() -> Dict[str, Any]:
+        """Read this product project's shared views, versions and stage choices.
+        Available while a stage runs; contains no internal Workspace or Manifest.
+        """
+        return _client().get_product_stage_relay(session_id())
+
+    def read_product_project_artifact(stage: str) -> Dict[str, Any]:
+        """Read the selected shared view from this same product project.
+        stage: direction, competitive, design, prd, prototype, review or handoff.
+        Use for earlier-stage content even after switching stages. This is read-only:
+        do not start a new task or relay a stage merely to view its document. Read
+        get_product_stage_options first to check availability and stale/draft status.
+        To revise, ask for an explicit stage switch and preserve the prior version.
+        """
+        return _client().get_product_project_artifact(session_id(), stage)
+
+    def relay_product_stage(action: str, selected_stage: str = '') -> Dict[str, Any]:
+        """Only after the CURRENT user explicitly asks to continue, switch stage or finish,
+        record that user choice and prepare the next stage in the SAME conversation
+        and shared product project; no new task/window or manual re-upload. Never use merely
+        because a stage is complete, export was requested, or a stage chain was planned.
+        Read get_product_stage_options first; continue must target a recommended stage.
+        After success execute the returned exact Ready router with the normal step tools.
+        """
+        cfg = _agentic_config()
+        query = str(cfg.get('workflow_current_query') or cfg.get('query') or '').strip()
+        if not query:
+            raise WorkflowClientError(
+                'PRODUCT_APPROVAL_NOT_FOUND', 'A current user message is required for stage handoff.',
+            )
+        source_id = session_id()
+        client = _client()
+        # The same turn and choice retain an idempotency key after a transport failure.
+        pending = cfg.setdefault('product_stage_relay_commands', {})
+        key = json.dumps([source_id, action, selected_stage, query], ensure_ascii=False)
+        command = pending.get(key)
+        if not command:
+            summary = client.get_product_stage_relay(source_id)
+            if not summary.get('can_relay'):
+                raise WorkflowClientError(
+                    'PRODUCT_STAGE_NOT_READY', str(summary.get('reason') or 'Current stage is not complete.'),
+                )
+            command = {
+                'id': str(uuid.uuid4()), 'state_version': int(summary.get('state_version') or 0),
+            }
+            pending[key] = command
+        result = client.relay_product_stage(
+            source_id, action=action, selected_stage=selected_stage,
+            expected_state_version=command['state_version'],
+            command_id=command['id'], request_context=query, user_message=query,
+        )
+        if result.get('session_id') and result['session_id'] != source_id:
+            cfg['product_stage_relay'] = result
+            cfg['workflow_session_id'] = result['session_id']
+        return result
+
     return [
         get_workflow_state, get_ready_steps, advance_step, list_workflow_inputs,
         list_artifacts, read_artifact, patch_artifact,
+        get_product_stage_options, read_product_project_artifact, relay_product_stage,
     ]
 
 
@@ -1108,6 +1173,15 @@ def build_workflow_discovery_context(
     return WorkflowDiscoveryContext(activations, prompt)
 
 
+def _trigger_input_types(workflow_id: str, package: Dict[str, Any]) -> Dict[str, str]:
+    inputs = workflow_package_input_types(package)
+    if workflow_id == 'product_solution_delivery':
+        # Internal project identity, approvals and pinned versions come from Host relay.
+        inputs = {key: value for key, value in inputs.items()
+                  if key not in {'workspace_seed', 'stage_approval'} and not key.startswith('upstream_')}
+    return inputs
+
+
 def _workflow_trigger_tools(
     activations: List[Dict[str, Any]], allowed_refs: set[str], current_query: str = '',
     conversation_id: str = '', session_holder: Optional[Dict[str, str]] = None,
@@ -1148,7 +1222,7 @@ def _workflow_trigger_tools(
         if allowed_refs:
             try:
                 package_hint = _client().get_workflow(workflow_id, revision_id).result
-                input_types_hint = workflow_package_input_types(package_hint)
+                input_types_hint = _trigger_input_types(workflow_id, package_hint)
             except Exception as exc:
                 LOG.debug('Could not preload Workflow %s input contract: %s', workflow_id, exc)
 
@@ -1204,7 +1278,13 @@ def _workflow_trigger_tools(
                     }
                 client = _client()
                 package = bound_package or client.get_workflow(bound_id, bound_revision).result
-                input_types = workflow_package_input_types(package)
+                input_types = _trigger_input_types(bound_id, package)
+                if bound_id == 'product_solution_delivery' and set(input_bindings or {}) - input_types.keys():
+                    raise WorkflowClientError(
+                        'PRODUCT_INPUT_HOST_OWNED',
+                        'Use only advertised inputs; existing documents belong in product_materials. '
+                        'Project identity, approvals and pinned versions are supplied by Host relay.',
+                    )
                 resolved_bindings: Dict[str, Any] = {}
                 for material_id, attachment_ref in (input_bindings or {}).items():
                     binding = str(attachment_ref or '').strip()

@@ -406,18 +406,16 @@ const ChatLayout: FC<IChatLayoutProps> = (props) => {
     sessionId ? Boolean(s._taskLoadErrors[sessionId]) : false,
   );
   const taskDisplayCount = useMemo(
-    () =>
-      taskCenterDisplayCount(
-        tasks,
-        workflowSession?.steps,
-        developerModeActive,
-        workflowMilestoneCount,
-      ),
+    () => {
+      const count = taskCenterDisplayCount(tasks, workflowSession?.steps, developerModeActive, workflowMilestoneCount);
+      return !developerModeActive && workflowSession?.workflow_id === 'product_solution_delivery' ? Math.min(count, 1) : count;
+    },
     [
       developerModeActive,
       tasks,
       workflowMilestoneCount,
       workflowSession?.steps,
+      workflowSession?.workflow_id,
     ],
   );
   const hasTaskPanelContent =

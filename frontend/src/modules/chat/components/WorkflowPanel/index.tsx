@@ -1,3 +1,5 @@
+import { productPresentation, productDownloadActions } from './productPresentation';
+import { ProductProject } from './ProductProject';
 import { WorkflowApprovalActions } from './WorkflowApprovalActions';
 import { CompactWorkflowEmptyStatesContext, type ExternalWorkflowPresentation } from './external/presentation';
 import { activeExecutionTasks } from './external/useExecutionActivity';
@@ -6,12 +8,14 @@ import { workflowEmptyStateKey } from './external/workflowEmptyState';
 import { useSlotCollapse } from './external/useSlotCollapse';
 import { buildDocumentFooterItems } from './documentFooter';
 import { getLocalizedErrorMessage } from "@/components/request";
-import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { message as antdMessage, Popconfirm, Tooltip, Dropdown } from 'antd';
 import {
   CopyOutlined,
+  BuildOutlined,
+  SafetyCertificateOutlined,
   DownOutlined,
   CloudUploadOutlined,
   DownloadOutlined,
@@ -1881,10 +1885,10 @@ export function WorkflowPanel({
     const lang = i18n.language || '';
     const cached = useWorkflowStore.getState().workflowUIByWorkflow[`${session.workflow_id}:${lang}`];
     if (cached) {
-      setUI(cached);
+      setUI(session.workflow_id === 'product_solution_delivery' ? productPresentation(cached) : cached);
     }
     // Always re-fetch once to avoid stale cached tab/slot layouts after workflow.yaml updates.
-    fetchWorkflowUI(session.workflow_id).then(setUI);
+    fetchWorkflowUI(session.workflow_id).then(value => setUI(session.workflow_id === 'product_solution_delivery' ? productPresentation(value) : value));
   }, [session?.workflow_id, fetchWorkflowUI, i18n.language]);
 
   useEffect(() => {
@@ -2026,10 +2030,12 @@ export function WorkflowPanel({
     session.status === 'completed' ||
     session.status === 'failed' ||
     session.status === 'stopped';
-  const documentFooter = useMemo(
-    () => buildDocumentFooterItems(footerActions),
-    [footerActions],
-  );
+  const documentFooter = buildDocumentFooterItems(session.workflow_id === 'product_solution_delivery'
+      ? productDownloadActions(footerActions, key => {
+        const slot = tabs.flatMap(tab => tab.slots).find(item => key.split(':').includes(item.id));
+        return slot?.label || (i18n.language.startsWith('en') ? 'Artifact' : '产物');
+      }, (action, callback) => { if (action.flushBeforeAction) void runFooterAction(callback, action.flushKey); else callback(); })
+      : footerActions);
   const displayStatus = autoRunning ? 'active' : session.status;
   const externalControl = controlAdapter?.control;
   const availableActions = new Set(externalControl?.available_actions ?? []);
@@ -2080,6 +2086,7 @@ export function WorkflowPanel({
   const effectivePast = new Set(session.projection?.past ?? []);
   const rollbackSteps = showStepRollback ? session.steps!.filter((step, index, all) => effectivePast.has(step.step_id)
     && step.validity !== 'stale'
+    && (session.workflow_id !== 'product_solution_delivery' || !['route_product_stage', 'build_design_outline', 'finalize_product_delivery'].includes(step.step_id))
     && all.findIndex((candidate) => candidate.step_id === step.step_id && candidate.validity !== 'stale') === index) : [];
   const stepLabel = (stepId: string) => tabs.find(tab => getTabStepId(tab) === stepId)?.label
     ?? tabs.find(tab => tab.status_step_ids?.includes(stepId))?.label ?? stepId;
@@ -2184,6 +2191,69 @@ export function WorkflowPanel({
       ? t('chat.workflowSaveAndContinue')
     : t('chat.workflowContinue');
 
+  const stepNavigation = (!collapsed && hasTabs && (
+        <div className='workflow-panel__tabs' role='tablist' aria-label={t('chat.workflowStages')} ref={setTabsScrollRef}
+          onKeyDown={(event) => {
+            const direction = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+            if (!direction && event.key !== 'Home' && event.key !== 'End') return;
+            event.preventDefault();
+            const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
+              : (visibleActiveTabIdx + direction + tabs.length) % tabs.length;
+            handleTabChange(nextIndex, tabs[nextIndex].id);
+            const target = event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')[nextIndex];
+            target?.focus();
+            target?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+          }}>
+          {tabs.map((tab, idx) => {
+            const statusStepIds = tab.status_step_ids ?? [tab.step_id ?? tab.id];
+            const step = session.steps
+              ?.filter((s) => statusStepIds.includes(s.step_id) && s.validity !== 'stale')
+              .sort((a, b) => (
+                Number(b.step_id === session.current_step_id)
+                - Number(a.step_id === session.current_step_id)
+                || b.attempt - a.attempt
+              ))[0];
+            const stepStatus = step?.status;
+            const runtimeMarkerVisible = idx === runtimeTabIdx && idx !== visibleActiveTabIdx;
+            return (
+              <React.Fragment key={tab.id}>
+                {idx > 0 && (
+                  <svg className='workflow-panel__tab-separator' viewBox='0 0 12 12' fill='none' aria-hidden='true'>
+                    <path d='M4.5 2.5L8 6L4.5 9.5' stroke='currentColor' strokeWidth='1.25' strokeLinecap='round' strokeLinejoin='round' />
+                  </svg>
+                )}
+                <button
+                  role='tab'
+                  id={`workflow-tab-${session.session_id}-${tab.id}`}
+                  tabIndex={idx === visibleActiveTabIdx ? 0 : -1}
+                  aria-selected={idx === visibleActiveTabIdx}
+                  aria-controls={`workflow-tab-panel-${tab.id}`}
+                  className={`workflow-panel__tab${idx === visibleActiveTabIdx ? ' workflow-panel__tab--active' : ''}${idx === runtimeTabIdx ? ' workflow-panel__tab--runtime-current' : ''}`}
+                  onClick={() => handleTabChange(idx, tab.id)}
+                  type='button'
+                >
+                  <span className='workflow-panel__tab-badge' aria-hidden='true'>{idx + 1}</span>
+                  <span className='workflow-panel__tab-label'>{tab.label}</span>
+                  {runtimeMarkerVisible && (
+                    <span className='workflow-panel__tab-runtime-marker'>
+                      <span className='workflow-panel__tab-runtime-dot' aria-hidden='true' />
+                      {t('chat.workflowCurrentStep')}
+                    </span>
+                  )}
+                  {shouldShowStandaloneStepStatus(stepStatus, runtimeMarkerVisible) && (
+                    <span
+                      className={`workflow-panel__step-status workflow-panel__step-status--${stepStatus}`}
+                      aria-label={`Step status: ${stepStatus}`}
+                      title={stepStatus}
+                    />
+                  )}
+                </button>
+              </React.Fragment>
+            );
+          })}
+        </div>
+      ));
+
   const panel = (
     <CompactWorkflowEmptyStatesContext.Provider value={externalPresentation?.compactEmptyStates === true}>
     <SlotEditingContext.Provider value={{
@@ -2194,7 +2264,7 @@ export function WorkflowPanel({
       registerFooterAction,
     }}>
     <div
-      className={`workflow-panel workflow-panel--${displayStatus}${collapsed ? ' workflow-panel--collapsed' : ''}${expanded && !embedded ? ' workflow-panel--expanded' : ''}${embedded ? ' workflow-panel--embedded' : ''}${externalPresentation ? ' workflow-panel--external-presentation' : ''}`}
+      className={`workflow-panel${session.workflow_id === 'product_solution_delivery' ? ' workflow-panel--product' : ''} workflow-panel--${displayStatus}${collapsed ? ' workflow-panel--collapsed' : ''}${expanded && !embedded ? ' workflow-panel--expanded' : ''}${embedded ? ' workflow-panel--embedded' : ''}${externalPresentation ? ' workflow-panel--external-presentation' : ''}`}
       data-session-id={session.session_id}
       aria-label={t('chat.workflowPanelTitle')}
     >
@@ -2202,6 +2272,7 @@ export function WorkflowPanel({
       {/* Header */}
       <div className='workflow-panel__header'>
         <div className='workflow-panel__header-left'>
+          {session.workflow_id === 'product_solution_delivery' && <BuildOutlined className='workflow-panel__product-icon' aria-hidden />}
           <span className='workflow-panel__title'>{ui.name || session.workflow_id}</span>
           <button
             type='button'
@@ -2214,6 +2285,10 @@ export function WorkflowPanel({
           </button>
         </div>
         <div className='workflow-panel__header-right'>
+      {session.workflow_id === 'product_solution_delivery' && <details className='workflow-panel__product-trust'>
+        <summary><SafetyCertificateOutlined />{i18n.language.startsWith('en') ? 'Full trust mode' : '完全信任模式'} <DownOutlined /></summary>
+        <p role='note'>{t('chat.workflowFullTrustNotice')}</p>
+      </details>}
           <div className='workflow-panel__intent-btn-wrap'>
             <Dropdown trigger={['click']} menu={{
               items: [
@@ -2337,76 +2412,15 @@ export function WorkflowPanel({
         </div>
       </div>
 
-      {/* Compact step navigation; long workflows scroll horizontally. */}
-      {!collapsed && hasTabs && (
-        <div className='workflow-panel__tabs' role='tablist' aria-label={t('chat.workflowStages')} ref={setTabsScrollRef}
-          onKeyDown={(event) => {
-            const direction = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
-            if (!direction && event.key !== 'Home' && event.key !== 'End') return;
-            event.preventDefault();
-            const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
-              : (visibleActiveTabIdx + direction + tabs.length) % tabs.length;
-            handleTabChange(nextIndex, tabs[nextIndex].id);
-            const target = event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')[nextIndex];
-            target?.focus();
-            target?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
-          }}>
-          {tabs.map((tab, idx) => {
-            const statusStepIds = tab.status_step_ids ?? [tab.step_id ?? tab.id];
-            const step = session.steps
-              ?.filter((s) => statusStepIds.includes(s.step_id) && s.validity !== 'stale')
-              .sort((a, b) => (
-                Number(b.step_id === session.current_step_id)
-                - Number(a.step_id === session.current_step_id)
-                || b.attempt - a.attempt
-              ))[0];
-            const stepStatus = step?.status;
-            const runtimeMarkerVisible = idx === runtimeTabIdx && idx !== visibleActiveTabIdx;
-            return (
-              <React.Fragment key={tab.id}>
-                {idx > 0 && (
-                  <svg className='workflow-panel__tab-separator' viewBox='0 0 12 12' fill='none' aria-hidden='true'>
-                    <path d='M4.5 2.5L8 6L4.5 9.5' stroke='currentColor' strokeWidth='1.25' strokeLinecap='round' strokeLinejoin='round' />
-                  </svg>
-                )}
-                <button
-                  role='tab'
-                  id={`workflow-tab-${session.session_id}-${tab.id}`}
-                  tabIndex={idx === visibleActiveTabIdx ? 0 : -1}
-                  aria-selected={idx === visibleActiveTabIdx}
-                  aria-controls={`workflow-tab-panel-${tab.id}`}
-                  className={`workflow-panel__tab${idx === visibleActiveTabIdx ? ' workflow-panel__tab--active' : ''}${idx === runtimeTabIdx ? ' workflow-panel__tab--runtime-current' : ''}`}
-                  onClick={() => handleTabChange(idx, tab.id)}
-                  type='button'
-                >
-                  <span className='workflow-panel__tab-badge' aria-hidden='true'>{idx + 1}</span>
-                  <span className='workflow-panel__tab-label'>{tab.label}</span>
-                  {runtimeMarkerVisible && (
-                    <span className='workflow-panel__tab-runtime-marker'>
-                      <span className='workflow-panel__tab-runtime-dot' aria-hidden='true' />
-                      {t('chat.workflowCurrentStep')}
-                    </span>
-                  )}
-                  {shouldShowStandaloneStepStatus(stepStatus, runtimeMarkerVisible) && (
-                    <span
-                      className={`workflow-panel__step-status workflow-panel__step-status--${stepStatus}`}
-                      aria-label={`Step status: ${stepStatus}`}
-                      title={stepStatus}
-                    />
-                  )}
-                </button>
-              </React.Fragment>
-            );
-          })}
-        </div>
-      )}
+      {session.workflow_id !== 'product_solution_delivery' && stepNavigation}
+
 
       </div>
 
-      <div className='workflow-panel__trust-notice' role='note'>
+      {session.workflow_id !== 'product_solution_delivery' && <div className='workflow-panel__trust-notice' role='note'>
         <InfoCircleOutlined aria-hidden='true' />
         <span>{t('chat.workflowFullTrustNotice')}</span>
-      </div>
+      </div>}
 
       {!collapsed && externalPresentation && runningTasks.length > 0 && <div className='workflow-external-activity'>
         <div className='workflow-external-activity__text' role='status'>
@@ -2422,9 +2436,15 @@ export function WorkflowPanel({
         })}
       </div>}
 
+
+
       {/* Body */}
       {!collapsed && (
-        <div className='workflow-panel__body' key={session.session_id}>
+        <div className={`workflow-panel__body${session.workflow_id === 'product_solution_delivery' ? ' workflow-panel__body--product' : ''}`} key={session.session_id}>
+      {!collapsed && session.workflow_id === 'product_solution_delivery' && <ProductProject
+        key={`product:${session.session_id}`} session={session} disabled={actionPending}
+        beforeAction={flushPendingEdits} onRefresh={refresh} onSendMessage={onSendMessage} />}
+          {session.workflow_id === 'product_solution_delivery' && stepNavigation}
           {hasTabs ? (
             tabs.map((tab, idx) => {
               const preview = externalPresentation && !anySlotEditing ? executionPreview(session, tab, activities) : session;
@@ -2452,6 +2472,8 @@ export function WorkflowPanel({
                 </WorkflowPanelTabActiveContext.Provider>
               </div>;
             })
+          ) : session.workflow_id === 'product_solution_delivery' ? (
+            <div className='workflow-panel__empty' role='status'>{t('chat.workflowWaitingForResults')}</div>
           ) : (
             <AutoSlotGrid
               session={session}

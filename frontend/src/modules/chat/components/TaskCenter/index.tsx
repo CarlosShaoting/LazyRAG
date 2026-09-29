@@ -1,3 +1,4 @@
+import { ProductTaskProgress } from "../WorkflowPanel/ProductTaskProgress";
 import { useWorkflowStore } from "@/modules/chat/store/workflowPanel";
 import { reconcileWorkflowTasks } from "@/modules/chat/utils/workflowTaskStatus";
 import { useMemo, useState, useRef, useCallback, useEffect, useId } from "react";
@@ -1022,7 +1023,9 @@ function OrdinaryTaskCenter({
   onRetry,
   onReloadArtifacts,
   runs,
+  productStatus,
 }: {
+  productStatus?: string;
   runs: OrdinaryRunView[];
   timeline: OrdinaryTaskTimeline;
   onClose?: () => void;
@@ -1069,7 +1072,7 @@ function OrdinaryTaskCenter({
         <div className="task-center-header">
           <span className="task-center-title">
             {t("taskCenter.panelTitle")}
-            <span className="ordinary-task-count">{timeline.totalCount}</span>
+            <span className="ordinary-task-count">{productStatus ? 1 : timeline.totalCount}</span>
           </span>
           {onClose && (
             <button
@@ -1107,7 +1110,7 @@ function OrdinaryTaskCenter({
               </button>
             </div>
           )}
-          <div className="ordinary-queue-summary">
+          {!productStatus && <div className="ordinary-queue-summary">
             <span
               className="ordinary-queue-summary-copy"
               role="status"
@@ -1154,7 +1157,10 @@ function OrdinaryTaskCenter({
               )}
             </span>
           </div>
-          <ol className="ordinary-task-list" aria-label={t("taskCenter.ordinaryTimelineLabel")}>
+          }
+          {productStatus ? <ProductTaskProgress timeline={timeline} status={productStatus}
+            title={item => publicTaskTitle(item, t)} label={item => stateLabel(item.state, t)}
+            details={item => <OrdinaryTaskDetails key={item.id} item={item} />} /> : <ol className="ordinary-task-list" aria-label={t("taskCenter.ordinaryTimelineLabel")}>
             {timeline.groups.map((group) => {
               const state = groupState(group);
               const firstItem = group.items[0];
@@ -1189,8 +1195,9 @@ function OrdinaryTaskCenter({
                 </li>
               );
             })}
-          </ol>
-          <TaskArtifactList artifacts={finalArtifacts} final onReload={onReloadArtifacts} />
+          </ol>}
+          {/* Product deliverables are shown in ProductProject; finalizer outputs are internal relay data. */}
+          {!productStatus && <TaskArtifactList artifacts={finalArtifacts} final onReload={onReloadArtifacts} />}
         </>
       )}
     </div>
@@ -1273,6 +1280,10 @@ const TaskCenter = (props: Props) => {
         key={sessionId}
         runs={[...(runs ?? []), ...(workflowSession?.ordinary_runs ?? [])]}
         timeline={ordinaryTimeline}
+        productStatus={workflowSession?.workflow_id === 'product_solution_delivery'
+          ? stateLabel(workflowSession.status === 'active' ? 'running' : workflowSession.status === 'completed'
+            ? 'complete' : workflowSession.status === 'failed' ? 'failed' : workflowSession.status === 'stopped' ? 'canceled' : 'waiting', t)
+          : undefined}
         onClose={onClose}
         showHeader={showHeader}
         loading={loading}
