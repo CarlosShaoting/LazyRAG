@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"lazymind/core/workflow/productstate"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -354,6 +356,16 @@ func (r *Repository) PatchArtifact(ctx context.Context, owner, artifactID string
 	if err != nil {
 		return Artifact{}, err
 	}
+	frozen, directory, err := productstate.SnapshotEdit(r.db.WithContext(ctx), current.SessionID, contentType, value)
+	if err != nil {
+		return Artifact{}, err
+	}
+	value = frozen
+	defer func() {
+		if err != nil && directory != "" {
+			_ = os.RemoveAll(directory)
+		}
+	}()
 	now := time.Now().UTC()
 	humanID, revisionID := uuid.NewString(), uuid.NewString()
 	var created orm.WorkflowSlotRevision

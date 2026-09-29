@@ -74,6 +74,7 @@ from lazymind.chat.service.utils import (
     reset_citation_state,
 )
 from lazymind.chat.workflow.artifacts import build_artifact_context_section
+from lazymind.chat.workflow.product_policy import policy_for, tool_failure
 from lazymind.config import config as _cfg
 from lazymind.model_config import inject_model_config
 
@@ -937,6 +938,9 @@ def _build_subagent_plan(
             str(_cfg['skill_fs_url'] or '').strip(),
             workflow_skills_dir(),
         ]))
+    # Public runner extension point, but product-only: None preserves the
+    # upstream round, retry, tool-discovery and tool-limit path exactly.
+    product_policy = policy_for(ctx.params)
     return AgentRunPlan(
         role=AgentRole.SUBAGENT,
         prompt=builder.build(),
@@ -957,7 +961,7 @@ def _build_subagent_plan(
             ),
             tool_state_scope=f'subagent:{ctx.task_id}',
             preload_all_tools=str(ctx.agent_type or '') == 'workflow_step',
-            enable_builtin_tools=False if (
+            enable_builtin_tools=False if product_policy else False if (
                 str(ctx.agent_type or '') == 'workflow_step'
                 and (lazyllm.globals.get('agentic_config') or {}).get('enable_tool_retrieval')
             ) else None,
@@ -970,10 +974,12 @@ def _build_subagent_plan(
             fs=FS if inherited_skills else None,
             skills_dir=skills_dir,
             extra_stop_condition=make_cancel_stop_condition(),
-            max_retries=max(1, int(_cfg['agentic_expanded_max_rounds']) - 1),
+            max_retries=(product_policy.rounds - 1 if product_policy else
+                         max(1, int(_cfg['agentic_expanded_max_rounds']) - 1)),
+            expanded_round_limit=product_policy.rounds if product_policy else None,
             llm_config=llm_config or {},
             tool_failure_limits=WORKFLOW_TOOL_FAILURE_LIMITS,
-            tool_call_limits=WORKFLOW_TOOL_CALL_LIMITS,
+            tool_call_limits={**WORKFLOW_TOOL_CALL_LIMITS, **(product_policy.calls if product_policy else {})},
         ),
     )
 
@@ -1363,6 +1369,15 @@ async def run_subagent_stream(
             tools_only=bool(ctx.params.get('tools_only')),
             include_artifact_writes=not _publisher_owns_outputs(ctx),
         )
+        if policy_for(ctx.params) and (
+            str(ctx.params.get('step_id', '')).startswith('route_')
+            or str(ctx.params.get('step_id', '')).endswith('_outline')
+            or ctx.params.get('step_id') == 'finalize_product_delivery'
+        ):
+            declared = set(_coerce_str_list(ctx.params.get('legacy_tools')))
+            allowed = declared | {'read_file', 'get_artifact'}
+            subagent_tools_all = [tool for tool in subagent_tools_all
+                                  if getattr(tool, '__name__', '') in allowed]
         host_filesystem_enabled = bool(_cfg['trusted_local_mode']) or bool(agentic_config.get('_core_workspace_context'))
         if host_filesystem_enabled and effective_agent_type != 'workflow_step':
             from lazyllm.tools.agent import FileSystemToolkit
@@ -1455,6 +1470,9 @@ async def run_subagent_stream(
         workflow_control: Dict[str, str] = {}
         declared_workflow_tools = set(_coerce_str_list(ctx.params.get('legacy_tools')))
         terminal_workflow_tools = set(_coerce_str_list(ctx.params.get('terminal_tools')))
+        # Do not change the generic subagent main path.  This policy is enabled
+        # only for the product Workflow's publisher-owned revision contract.
+        product_policy = policy_for(ctx.params)
         # Accumulate streaming text/think chunks; flush to DB when a tool step follows or at end.
         _pending_text: str = ''
         _pending_think: str = ''
@@ -1512,6 +1530,8 @@ async def run_subagent_stream(
                             terminal_error = _terminal_tool_failure(
                                 item, terminal_workflow_tools,
                             )
+                            if product_policy:
+                                terminal_error = tool_failure(item, product_policy.fail_fast) or terminal_error
                             if terminal_error:
                                 # Agent execution runs in a worker thread. Cancelling this
                                 # async iterator alone does not stop subsequent React rounds.

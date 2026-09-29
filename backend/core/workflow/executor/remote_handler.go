@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"lazymind/core/workflow/controlstore"
+	"lazymind/core/workflow/productstate"
 	"mime"
 	"net/http"
 	"os"
@@ -190,6 +191,19 @@ func (h RemoteHandler) readAttemptInput(
 		}
 		if revision.ID == "" {
 			return notFound("artifact revision was not found")
+		}
+		if materialID == "workspace_seed" && revision.SlotID == "workspace_state" {
+			var session orm.WorkflowSession
+			if err := h.DB.WithContext(ctx).First(&session, "id = ?", revision.SessionID).Error; err != nil {
+				return notFound("artifact session was not found")
+			}
+			if productstate.Supports(session.WorkflowID) {
+				raw, err := productstate.Bytes(h.DB.WithContext(ctx), revision)
+				if err != nil {
+					return notFound("product workspace snapshot is unavailable")
+				}
+				return map[string]any{"material_id": materialID, "resource_id": revision.ID, "revision": revision.Revision, "name": "workspace_seed.json", "mime_type": "application/json", "size": len(raw), "content_base64": base64.StdEncoding.EncodeToString(raw)}, nil
+			}
 		}
 		var artifact orm.WorkflowHumanArtifact
 		if revision.HumanArtifactID == nil || h.DB.WithContext(ctx).Where("id = ?", *revision.HumanArtifactID).First(&artifact).Error != nil {
