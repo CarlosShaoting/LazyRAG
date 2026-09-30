@@ -1933,7 +1933,6 @@ async def _evaluate_completion_async(
     cancel_check: Any = None,
 ) -> tuple[bool, str, str]:
     """Run the synchronous reviewer off-loop while the owner coroutine controls terminal state."""
-    timeout = float(_cfg['subagent_completion_evaluation_timeout'])
     if cancel_check is not None:
         cancel_check(None)
     evaluation = asyncio.create_task(asyncio.to_thread(
@@ -1944,20 +1943,11 @@ async def _evaluate_completion_async(
         artifacts,
         force_result,
     ))
-    deadline = asyncio.get_running_loop().time() + timeout
     try:
         while True:
-            remaining = deadline - asyncio.get_running_loop().time()
-            if remaining <= 0:
-                LOG.warning('[SubAgent] completion evaluation timed out after %ss', timeout)
-                return (
-                    False,
-                    'Could not verify task completion before the evaluation deadline.',
-                    'completion_evaluation_failed',
-                )
             done, _ = await asyncio.wait(
                 [evaluation],
-                timeout=min(_COMPLETION_EVALUATION_POLL_SECONDS, remaining),
+                timeout=_COMPLETION_EVALUATION_POLL_SECONDS,
             )
             if done:
                 result = evaluation.result()

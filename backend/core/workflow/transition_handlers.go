@@ -609,7 +609,7 @@ func applyWorkflowTransition(ctx context.Context, tx *gorm.DB, sessionID string,
 				targets[i].UserInput = sessionIntentText(session.IntentContext)
 			}
 		}
-		snapshot, snapshotErr := loadRuntimeSnapshot(ctx, tx, session.ID)
+		snapshot, snapshotErr := loadRuntimeSnapshot(ctx, tx, session.ID, graph)
 		if snapshotErr != nil {
 			return snapshotErr
 		}
@@ -675,7 +675,7 @@ func applyWorkflowTransition(ctx context.Context, tx *gorm.DB, sessionID string,
 				return invalidErr
 			}
 			var reloadErr error
-			snapshot, reloadErr = loadRuntimeSnapshot(ctx, tx, session.ID)
+			snapshot, reloadErr = loadRuntimeSnapshot(ctx, tx, session.ID, graph)
 			if reloadErr != nil {
 				return reloadErr
 			}

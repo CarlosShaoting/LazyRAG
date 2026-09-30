@@ -305,9 +305,21 @@ steps:
             missing after KB image retrieval, or when no applicable KB is available.
             Then register only the necessary results with
             [{"url":..., "caption":..., "source":"web"}, ...] for at most one selected material image per planned slide.
-            If image search is unavailable or returns no usable URL, do not
-            retry repeatedly and do not fail the step. Record the gap in
-            material_summary and continue without material_images.
+            If a selected image URL is expired, inaccessible (for example
+            HTTP 403/404), or returns a page instead of a valid image, discard
+            that candidate and call ppt_search_web_images again for the same
+            slide subject. Select a different image URL/source from the fresh
+            results, then download/register that replacement. Do not repeatedly
+            retry the broken URL, invent a URL, or restart this whole step.
+            One broken link does not mean image search failed: try the fresh
+            candidate before deciding to omit an optional image. Preserve all
+            facts and images already collected successfully. Count replacement
+            searches toward the retrieval budget below and reserve budget for
+            this recovery when selecting image candidates.
+            If image search itself is unavailable or the fresh search yields
+            no usable replacement, record the gap in material_summary and
+            continue without that optional image. An AI background is not a
+            substitute for a real photo/product/reference image the user required.
          c) AI-generated material images — ONLY when the user explicitly asks
             to generate/create material images for the deck (e.g. "生成素材图",
             "用 AI 画几张参考图", "AI generate reference images"). Then call:

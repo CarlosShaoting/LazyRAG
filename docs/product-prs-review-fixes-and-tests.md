@@ -162,6 +162,30 @@ Snapshot 输入使用通用读取与内容摘要；JSON 返回 JSON，文本返�
 
 同时将 PPT 测试的全局替身限定在 `mock.patch.dict` 的加载作用域，结束立即还原。新增 runner 回归覆盖完整 PPT scripts 目录及 workflow.yaml、任意重命名的 workflow ID、真实模块身份保持、未声明/未请求脚本不执行、运行资源路径；公共 loader 回归覆盖历史包的测试路径及空脚本。此修复对原来的固定 revision 生效，无需修改旧包或自动升级会话。恢复运行必须重启已经污染的 Chat 进程。
 
+### C07：底图提示词步骤绑定了两个单值 style_flow 来源（已修复）
+
+2026-09-30 17:00:33、17:00:42、17:00:52，session `ce2180c9d5824e03a83999fd31c1becf` 的 `plan_background_prompts` 连续三次在获取 Attempt Context 时失败，Core 返回 503，尚未执行模型或 PPT 工具。只读打开实际 Core SQLite，并直接调用 `DBContextLoader.LoadAttemptContext` 复现原始错误：`single-cardinality material "style_flow" has multiple distinct input bindings`。
+
+失败 Attempt 同时绑定启动时的 `input_resource`（binding `9ab2b806-73c3-42be-b4d5-e8f71eccfa73`）和 `analyze_requirements` 后生成的同名 artifact（revision `aec4a4cc-826b-4a08-86c5-8e8df74ebf65`）；`style_flow` 声明为 single，下游执行器正确拒绝两个不同来源。实际原始输入为“直接生成一套｜AI 根据需求确定一套整体风格并继续”，步骤产物为 `auto`，语义相同但来源和内容表示不同。现将固定 revision 的编译图传入 `loadRuntimeSnapshot`：已声明 `MaterialProducers.kind=step` 的材料只由步骤产物提供 witness，启动问答仍保留在会话里，但不再参与该产物的图求值和 Attempt 输入冻结。产物不存在或已失效时也不会用原始问答冒充产物；声明为外部来源的输入/列表保持原行为。普通任务展示、Ready 求值、路由冻结、步骤启动/回退后重算均复用这个快照规则。没有增加 PPT ID/字段名特判，没有改 Writer/图片业务，也没有放松执行器的单值冲突校验或改写旧 Attempt 绑定。
+
+同时修正 `RemoteExecutorClient.data` 的诊断信息丢失：Core 返回结构化 error 时，将 code/message 保留到 HTTPStatusError，继续保留原 HTTP 状态和 response；非 JSON 或非协议错误继续抛原 HTTP 错误，成功响应行为不变。未更改用户会话、历史失败记录或重试计数；新重试使用修正后的快照。
+
+### C08：任务产物列表泄漏声明为隐藏的流程标志（已修复）
+
+同一真实会话的第一步保存了 5 条 SubAgent artifacts：requirement_analysis、ppt_capability_requirements、style_flow、generate_background_images、skip_style_choices；后四者都是包内显式 `exposed: false` 的内部材料，但记录的 hidden 均为 false。基线 main 已用 capability/skip 标志驱动流程；本分支又增加风格模式、背景开关规范化结果和跳过风格标志。它们不是用户分析成果，不应出现在任务的产物列表中。
+
+`projectOrdinarySession` 现从当前会话固定 revision 的 workflow.yaml 读取显式隐藏声明，同时过滤 SubAgent 原始产物（包括还未关联 slot revision 的记录）及 Workflow slot 产物，最终交付列表也复用同一过滤结果。未声明 exposed 的历史产物继续可见；声明 true 的产物继续可见。内部数据仍保留给路由/下游，不修改历史记录的 hidden 字段，不按 PPT 名称或字段名列黑名单，不改变 Writer 编辑逻辑。已有固定 revision 会话刷新即可采用该展示规则。实际会话还存在人工编辑后的同一分析产物两版被重复展示：现按 slot/list_index 选择当前选中版（尚未选定时保留该条目的最新版本），并去除单值产物的旧 SubAgent 副本；各列表条目仍独立展示，历史修订继续保存在数据库。兼容旧数据中同 slot/index、同 revision 的独立记录：只有明确的新版本才替代旧版本，不按 ID 任意隐藏同版本记录。
+
+### C09：完成评审默认 20 秒超时导致任务失败（已移除限制）
+
+用户报告 `Could not verify task completion before the evaluation deadline`。该错误来自 SubAgent 收尾时的额外模型评审，默认 20 秒并非任务总耗时 5 分钟。Git blame 指向 upstream main 已有的 `d8eb8f1a9` / PR #750。按用户要求删除 `subagent_completion_evaluation_timeout` 配置注册及 `_evaluate_completion_async` 的 deadline/超时判失败分支；等待评审正常返回，不再因这一独立计时器把任务判失败。保留非阻塞线程调用、取消轮询、取消后的迟到结果丢弃、真实评审结论和必需产物检查。供应商请求自身错误仍按原逻辑处理。
+
+### C10：素材图片链接失效后应重新搜索替代图（已修改提示词）
+
+按用户要求修改 PPT collect_materials 提示词：候选图片链接过期、403/404、下载到非图片内容时，丢弃该候选，按同一页主题重新调用图片搜索，选不同 URL/来源并下载注册；不重复请求坏链接，不重启整个素材搜集步骤，保留已成功的摘要证据和图片。先尝试新候选再判断是否省略可选素材；替代搜索计入已有检索预算并预留恢复次数。搜索服务本身不可用或重新搜索仍无可用图时记录缺口，明确 AI 底图不能替代用户必需的真实参考图。
+
+此变更属于工作流包的新 revision；已固定旧 revision 的会话不会被偷偷升级，重启同步包后新建任务使用新提示词。
+
 ## 边界与兼容说明
 
 main 已有的 `workflow/ppt_incremental_pages.go` 仍按 PPT 身份处理旧页插入；这是基线已有逻辑，本次未新增或扩展。它需要单独设计旧会话迁移才能安全改成声明式能力，不能直接删除后破坏现有 PPT 页面保留行为。本次 A01 处理的是增量新加的 manager 输入改写，不代表整个主仓库已经不存在任何历史特例。
@@ -216,6 +240,41 @@ python -m pytest -q tests/algorithm/chat/test_workflow_full_trust.py tests/algor
 python -m pytest -q tests/algorithm/chat/test_subagent_runner.py tests/algorithm/chat/test_remote_executor.py
 python -m pytest -q workflows/ppt-workflow/scripts/tests
 ```
+
+### C07 输入来源交接补充验证
+
+新增真实 SQLite 快照回归覆盖：同名启动输入与步骤产物同时存在时仅绑定产物；产物缺失/失效时不能被启动输入替代；外部列表保留两个 witness；启动输入历史记录不被删除。字段和 workflow 使用通用名称，避免 PPT 特判。远程客户端与执行器 30 项 Python 测试通过，包含结构化错误消息、非 JSON/非协议错误及成功响应兼容。
+
+```bash
+cd backend/core
+go test ./workflow -run '^TestRuntimeSnapshotUsesDeclaredProducerForStartupNameCollision$' -count=1
+go test ./workflow/... ./product ./common ./doc ./skillv2/... -count=1
+# 仓库根目录
+python -m pytest -q tests/algorithm/chat/test_remote_executor_client_errors.py tests/algorithm/chat/test_remote_executor.py
+```
+
+### C08 内部产物可见性补充验证
+
+SQLite 回归同时覆盖有 SubAgent 适配记录和纯 Host 两条路径：显式隐藏材料不进入阶段/最终产物；没有 exposed 的产物及 exposed=true 产物保持可见；未产生 slot revision 的内部原始产物不泄漏；数据库内部材料仍然存在。新增测试 `TestOrdinaryWorkflowHidesInternalSlotsFromPinnedPackage` 通过，同时验证编辑后的单值产物只显示新版、列表的两个条目都保留。最初完整回归发现 `TestOrdinaryWorkflowFinalArtifactsSurviveStagePagination` 失败，原因是同 slot/index、同版本号的旧产物被误合并。推送前已补充兼容规则，保留没有明确版本替代关系的独立记录；原分页测试未改动，最终完整 Go 回归通过。2026-09-30 17:19 已完成 `make local-down` / `make local-up`，状态 ready、前端 HTTP 200。对真实会话只读投影验证：第一步仅显示一份当前分析结果，底图提示词只绑定一份规范化风格产物。临时真实数据库探针未提交进仓库。
+
+```bash
+cd backend/core
+go test ./workflow -run '^TestOrdinaryWorkflowHidesInternalSlotsFromPinnedPackage$' -count=1
+```
+
+### C09 完成评审补充验证
+
+`tests/algorithm/chat/test_subagent_runner.py` 与 `tests/algorithm/chat/test_remote_executor.py` 共 120 项通过。原“评审超时必须失败”测试替换为“超过旧配置截止时间仍等待真实成功结果”；已有主动取消、迟到结果隔离、事件循环不阻塞、产物完整性检查均通过。推送前另将远程错误透传测试合并执行，共 125 项通过。C08 分页回归已在最终 Go 测试中通过。随后已完成 local-down/local-up，状态 ready、前端 HTTP 200；C10 提示词 YAML 解析验证通过。
+
+### C07–C10 推送前最终验证与变更说明
+
+- 输入来源：按固定编译图的 producer 声明绑定步骤产物，消除启动问答与规范化结果重复绑定；保持原始输入历史和外部列表。
+- 产物展示：遵守固定包的显式 exposed=false，隐藏内部控制标志；展示当前修订并兼容同版本旧记录，保留列表条目和最终产物分页。
+- 错误诊断：保留 Core 的结构化错误 code/message 及 HTTP 状态。
+- 完成评审：移除 20 秒独立截止时间及其配置，保留评审结论、产物检查和主动取消。
+- 素材提示词：失效图片链接重新搜索不同候选后下载注册，保留成功素材；新提示词用于新 revision，旧会话不自动升级。
+
+最终 `go test ./workflow/... ./product ./common ./doc ./skillv2/... -count=1` 的 38 个有测试 package 通过（另有 5 个无测试 package），包括原最终产物分页回归及 Core 错误目录测试；Python SubAgent、远程执行器和错误透传共 125 项通过；PPT YAML 解析及 git diff --check 通过。最后一项分页兼容修改发生在上一次重启之后，需下次重启 Core 才加载该项修正。完整真实供应商生成/导出尚未重新端测。
 
 ### 可重复执行的命令
 

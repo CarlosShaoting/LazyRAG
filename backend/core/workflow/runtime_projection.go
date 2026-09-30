@@ -105,7 +105,7 @@ func decodeSessionRevisionGraph(session *orm.WorkflowSession, revision *orm.Work
 	return &graph, nil
 }
 
-func loadRuntimeSnapshot(ctx context.Context, db *gorm.DB, sessionID string) (graphengine.RuntimeSnapshot, error) {
+func loadRuntimeSnapshot(ctx context.Context, db *gorm.DB, sessionID string, graph *graphengine.CompiledStateGraph) (graphengine.RuntimeSnapshot, error) {
 	var attempts []orm.WorkflowSessionStep
 	if err := db.WithContext(ctx).Where("session_id = ?", sessionID).Order("created_at ASC").Find(&attempts).Error; err != nil {
 		return graphengine.RuntimeSnapshot{}, err
@@ -170,6 +170,12 @@ func loadRuntimeSnapshot(ctx context.Context, db *gorm.DB, sessionID string) (gr
 		snapshot.Materials = append(snapshot.Materials, graphengine.MaterialValue{MaterialID: row.SlotID, RevisionID: row.ID, Valid: valid})
 	}
 	for _, row := range inputBindings {
+		// Startup answers may share a name with a normalized step output.
+		// They remain session inputs, but cannot witness a material whose
+		// pinned contract declares a step producer, even before it has run.
+		if graph.MaterialProducers[row.MaterialID].Kind == "step" {
+			continue
+		}
 		snapshot.Materials = append(snapshot.Materials, graphengine.MaterialValue{
 			MaterialID: row.MaterialID, RevisionID: row.ID, Valid: true,
 		})
@@ -219,7 +225,7 @@ func projectSession(ctx context.Context, db *gorm.DB, session *orm.WorkflowSessi
 	if err != nil {
 		return projectionResponse{}, err
 	}
-	snapshot, err := loadRuntimeSnapshot(ctx, db, session.ID)
+	snapshot, err := loadRuntimeSnapshot(ctx, db, session.ID, graph)
 	if err != nil {
 		return projectionResponse{}, err
 	}
@@ -348,7 +354,7 @@ func freezeRouteDecision(ctx context.Context, db *gorm.DB, sessionID, from, task
 		if err != nil {
 			return err
 		}
-		snapshot, err := loadRuntimeSnapshot(ctx, tx, sessionID)
+		snapshot, err := loadRuntimeSnapshot(ctx, tx, sessionID, graph)
 		if err != nil {
 			return err
 		}
