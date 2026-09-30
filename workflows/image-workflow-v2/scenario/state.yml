@@ -55,12 +55,15 @@ steps:
     label: Prepare Ordinary Image
     prompt: |
       Call prepare_ordinary_request exactly once with no arguments. The package
-      tool reads the immutable launch request and atomically publishes a factual
+      tool reads the effective user request and publishes a factual
       material_summary after retrieving any requested web/knowledge-base references,
       plus an ordinary_prompt that preserves every requested
       subject, composition, style, ratio, and text constraint. Do not call
       save_artifacts or rewrite either output yourself. Stop immediately after
-      the tool succeeds.
+      the tool succeeds. KB and web retrieval are independent: a failed or empty
+      source is recorded in retrieval_results and the material summary, not a
+      failure of this step. Retain successful references from other sources.
+      Never claim a failed source supplied evidence.
     tools: [prepare_ordinary_request]
     terminal_tools: [prepare_ordinary_request]
     inputs:

@@ -113,9 +113,10 @@ def test_explicit_reference_opt_out_does_not_repeat_launch_search(monkeypatch):
     module = load('image-workflow-v2', 'tools')
     params = {'launch_user_input': '搜索真实照片做海报', 'current_user_input': '不用搜索参考，直接画'}
     monkeypatch.setattr(module, 'image_search_and_validate', lambda *a, **k: pytest.fail('Search was explicitly removed'))
-    refs, summary = module._ordinary_reference_materials(effective_image_request(params), params)
+    refs, summary, outcomes = module._ordinary_reference_materials(effective_image_request(params), params)
     assert refs == []
     assert 'explicitly removed' in summary
+    assert outcomes == []
 
 
 def test_product_execution_policy_is_disabled_for_writer():
@@ -191,16 +192,81 @@ def test_requested_search_references_are_retrieved_and_bound(monkeypatch):
     assert 'No external facts' not in saved[1][1]
 
 
-def test_reference_search_failure_does_not_publish_generation_prompt(monkeypatch):
+def test_empty_search_is_recorded_without_failing_preparation(monkeypatch):
     from lazymind.chat.engine.subagent import context, tools
     module = load('image-workflow-v2', 'tools')
     monkeypatch.setattr(context, 'require_context', lambda: SimpleNamespace(params={'user_input': '搜索真实参考素材'}))
     monkeypatch.setattr(module, 'image_search_and_validate', lambda *a, **kw: {'selected': []})
     saved = []
     monkeypatch.setattr(tools, '_save_artifact', lambda *a, **kw: saved.append(a))
-    with pytest.raises(ToolExecutionError, match='No validated'):
+    result = module.prepare_ordinary_request()
+    assert result['status'] == 'ok'
+    assert result['retrieval_results'][0]['status'] == 'empty'
+    assert 'No verified external reference' in result['ordinary_prompt']
+    assert [args[0] for args in saved] == ['material_summary', 'ordinary_prompt']
+
+
+@pytest.mark.parametrize('kb_result', [RuntimeError('KB unavailable'), {'items': []}, {'ok': False, 'error': 'KB unavailable'}])
+def test_kb_failure_does_not_discard_successful_web_references(monkeypatch, kb_result):
+    from lazymind.chat.engine.subagent import context, tools
+    from lazymind.chat.engine.tools.lazy_kb import KBToolkit
+    module = load('image-workflow-v2', 'tools')
+    monkeypatch.setattr(context, 'require_context', lambda: SimpleNamespace(params={
+        'user_input': '搜索网页和知识库中的海报参考', 'filters': {'kb_id': ['brand']},
+    }))
+    def search_kb(*args, **kwargs):
+        if isinstance(kb_result, Exception):
+            raise kb_result
+        return kb_result
+    monkeypatch.setattr(KBToolkit, 'kb_search', search_kb)
+    monkeypatch.setattr(module, 'image_search_and_validate', lambda *a, **kw: {
+        'selected': [{'status': 'ok', 'url': 'https://example.com/reference.png'}],
+    })
+    saved = []
+    monkeypatch.setattr(tools, '_save_artifact', lambda key, value, **kw: saved.append((key, value)) or {})
+    result = module.prepare_ordinary_request()
+    assert result['status'] == 'ok'
+    assert result['retrieval_results'][0]['status'] in {'empty', 'error'}
+    assert result['retrieval_results'][1] == {'source': 'web', 'status': 'ok'}
+    assert saved[0] == ('material_images', {'path': 'https://example.com/reference.png'})
+    assert 'https://example.com/reference.png' in result['ordinary_prompt']
+    assert 'No verified external reference' not in result['ordinary_prompt']
+
+
+@pytest.mark.parametrize('kb_available', [True, False])
+def test_web_failure_preserves_kb_evidence_or_reports_both_sources(monkeypatch, kb_available):
+    from lazymind.chat.engine.subagent import context, tools
+    from lazymind.chat.engine.tools.lazy_kb import KBToolkit
+    module = load('image-workflow-v2', 'tools')
+    monkeypatch.setattr(context, 'require_context', lambda: SimpleNamespace(params={'user_input': '搜索网页和知识库中的海报参考'}))
+    monkeypatch.setattr(KBToolkit, 'kb_search', lambda *a, **kw: {
+        'items': [{'text': '品牌标准色为蓝色'}] if kb_available else [],
+    })
+    def search_web(*args, **kwargs):
+        raise RuntimeError('Web search unavailable')
+    monkeypatch.setattr(module, 'image_search_and_validate', search_web)
+    saved = []
+    monkeypatch.setattr(tools, '_save_artifact', lambda key, value, **kw: saved.append((key, value)) or {})
+    result = module.prepare_ordinary_request()
+    assert result['status'] == 'ok'
+    assert result['retrieval_results'][1]['status'] == 'error'
+    assert 'Web search unavailable' in result['ordinary_prompt']
+    if kb_available:
+        assert '品牌标准色为蓝色' in result['ordinary_prompt']
+    else:
+        assert 'No verified external reference' in result['ordinary_prompt']
+    assert [key for key, _ in saved] == ['material_summary', 'ordinary_prompt']
+
+
+def test_artifact_publication_failure_is_not_treated_as_retrieval_warning(monkeypatch):
+    from lazymind.chat.engine.subagent import context, tools
+    module = load('image-workflow-v2', 'tools')
+    monkeypatch.setattr(context, 'require_context', lambda: SimpleNamespace(params={'user_input': '画一张山谷插画'}))
+    def fail_publication(*args, **kwargs):
+        raise RuntimeError('Artifact storage failed')
+    monkeypatch.setattr(tools, '_save_artifact', fail_publication)
+    with pytest.raises(RuntimeError, match='Artifact storage failed'):
         module.prepare_ordinary_request()
-    assert saved == []
 
 
 def test_knowledge_base_evidence_reaches_the_image_prompt(monkeypatch):
