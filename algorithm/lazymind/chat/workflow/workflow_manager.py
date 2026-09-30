@@ -1202,7 +1202,9 @@ def _workflow_trigger_tools(
                 package = bound_package or client.get_workflow(bound_id, bound_revision).result
                 input_types = _trigger_input_types(package)
                 if _trigger_input_contract(package) is not None and set(input_bindings or {}) - input_types.keys():
-                    raise WorkflowClientError("WORKFLOW_INPUT_NOT_EXPOSED", "Use only inputs advertised by this package.")
+                    raise WorkflowClientError(
+                        'WORKFLOW_INPUT_NOT_EXPOSED', 'Use only inputs advertised by this package.',
+                    )
                 resolved_bindings: Dict[str, Any] = {}
                 for material_id, attachment_ref in (input_bindings or {}).items():
                     binding = str(attachment_ref or '').strip()
@@ -1489,7 +1491,10 @@ def resolve_workflow_injection(
                 or result.get('workflow_id') != workflow_id
                 or (conversation_id and result.get('conversation_id') != conversation_id)
                 or (revision_id and result.get('workflow_revision_id') != revision_id)):
-            raise WorkflowClientError('WORKFLOW_SESSION_HANDOFF_INVALID', 'Successor must preserve the bound conversation and package revision.')
+            raise WorkflowClientError(
+                'WORKFLOW_SESSION_HANDOFF_INVALID',
+                'Successor must preserve the bound conversation and package revision.',
+            )
         # Authorize and refresh through the same SDK before changing the turn binding.
         state = _client().get_state(target)
         if state.get('session_id') != target:

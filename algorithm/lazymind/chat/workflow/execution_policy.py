@@ -4,11 +4,13 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any, AsyncIterator
 
+
 @dataclass(frozen=True)
 class ExecutionPolicy:
     rounds: int
     timeout: int
     calls: dict[str, int]
+
 
 def policy_for(params: dict[str, Any]) -> ExecutionPolicy | None:
     limits = (params.get('workflow_runtime') or {}).get('execution_limits') or {}
@@ -17,9 +19,14 @@ def policy_for(params: dict[str, Any]) -> ExecutionPolicy | None:
         return None
     rounds, timeout = int(value['rounds']), int(value['timeout'])
     calls = dict(value.get('tool_calls') or {})
-    if not 1 <= rounds <= 64 or not 1 <= timeout <= 3600 or any(not isinstance(v, int) or not 1 <= v <= 100 for v in calls.values()):
+    if (
+        not 1 <= rounds <= 64
+        or not 1 <= timeout <= 3600
+        or any(not isinstance(v, int) or not 1 <= v <= 100 for v in calls.values())
+    ):
         raise ValueError('Invalid package execution limits')
     return ExecutionPolicy(rounds, timeout, calls)
+
 
 async def bounded_frames(frames: AsyncIterator[str], params: dict[str, Any], stop) -> AsyncIterator[str]:
     policy = policy_for(params)

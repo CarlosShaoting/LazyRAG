@@ -186,6 +186,21 @@ Snapshot 输入使用通用读取与内容摘要；JSON 返回 JSON，文本返�
 
 此变更属于工作流包的新 revision；已固定旧 revision 的会话不会被偷偷升级，重启同步包后新建任务使用新提示词。
 
+### C11：相对 upstream main 的跨工作流兼容范围复核（仍需端测）
+
+fetch 后 upstream/main 仍为 `9cbc57c5d`，当前提交为 `eb1178be6`。本分支共 113 个差异文件，包含工作流资源、公共运行时、前端、测试和文档；不能视为仅增加独立工作流。Writer/Markdown 核心和 writer-workflow 路径无差异，但公共任务运行/产物展示变化仍会影响它们。
+
+- C08 对所有工作流的显式 exposed=false 生效。基线的 image-workflow `generated_base_image`、bid_tech_proposal_writer `outline`，以及 academic_research_pipeline 的 writing_context 等都会从普通任务产物列表隐藏。数据与下游读取不被删除，但旧用户若从任务列表查看/下载这些中间结果，入口会发生变化；尚未完成这些旧工作流的真实界面验收，不能据此声称原行为完全保留。
+- C07 对所有 producer=step 的材料排除同名外部输入。符合声明语义，但依赖以启动输入预填步骤产物的旧自定义包会改变就绪状态，需验证旧包与人工修订/重试场景。
+- 公共脚本加载器统一后不再执行未声明或测试命名的脚本。旧包无 manifest 时仍有兼容路径；如果旧自定义包把实际工具放进 test_*.py，或依赖未声明模块的顶层副作用，行为会改变。尚未发现仓库内真实包复现这种依赖，不将其描述成已确认故障。
+- C09 删除的是公共 SubAgent 评审 deadline，普通子任务也生效。慢评审不再被 20 秒判失败；若供应商调用长期不结束，则需等待其请求错误或用户取消。这是用户明确要求的全局行为变化。
+
+新增发布、执行预算和业务 UI 扩展由包声明启用，未声明时保留原分支；这降低影响范围，但不抵消以上全局改动。38 个 Go package 和 125 项近期 Python 测试通过，之前前端回归也通过；不等同于全部旧工作流端到端兼容。合主仓前仍需旧 Writer/投标/学术流程的编辑恢复、旧图片流程中间图下载、自定义工作流包加载/预填输入的验证。
+
+### C12：公共 Python 模块格式检查失败（已修复）
+
+修正 product_client、product_project、registry、execution_policy、workflow_manager 的 15 条 E302/E501/E128/Q000：补齐顶层定义空行、拆分长调用/条件/字典、对齐续行、统一单引号。没有更改运行逻辑；5 个文件与修改前的 AST 完全一致。
+
 ## 边界与兼容说明
 
 main 已有的 `workflow/ppt_incremental_pages.go` 仍按 PPT 身份处理旧页插入；这是基线已有逻辑，本次未新增或扩展。它需要单独设计旧会话迁移才能安全改成声明式能力，不能直接删除后破坏现有 PPT 页面保留行为。本次 A01 处理的是增量新加的 manager 输入改写，不代表整个主仓库已经不存在任何历史特例。
@@ -275,6 +290,14 @@ go test ./workflow -run '^TestOrdinaryWorkflowHidesInternalSlotsFromPinnedPackag
 - 素材提示词：失效图片链接重新搜索不同候选后下载注册，保留成功素材；新提示词用于新 revision，旧会话不自动升级。
 
 最终 `go test ./workflow/... ./product ./common ./doc ./skillv2/... -count=1` 的 38 个有测试 package 通过（另有 5 个无测试 package），包括原最终产物分页回归及 Core 错误目录测试；Python SubAgent、远程执行器和错误透传共 125 项通过；PPT YAML 解析及 git diff --check 通过。最后一项分页兼容修改发生在上一次重启之后，需下次重启 Core 才加载该项修正。完整真实供应商生成/导出尚未重新端测。
+
+### C12 Python lint 验证
+
+使用仓库 Python 3.11 环境及本机临时目录中的 lint 依赖，执行完整 `make lint-python`，algorithm/backend/evo 全范围退出码为 0；5 个修改文件的 AST 对比一致，`git diff --check` 通过。未禁用规则或增加忽略项。
+
+```bash
+PYTHONPATH=/tmp/lazymind-installer-review-pytest make lint-python PYTHON=local/build/deps/python/algorithm/bin/python
+```
 
 ### 可重复执行的命令
 

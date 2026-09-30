@@ -2,6 +2,7 @@ from typing import Any, Dict
 from urllib.parse import quote
 from lazymind.workflow_sdk import WorkflowClient
 
+
 class ProductClient:
     def __init__(self, client: WorkflowClient):
         self.client = client

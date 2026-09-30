@@ -17,7 +17,7 @@ def apply_host_extensions(contribution, context, config, providers=None):
         provider = providers.get(name)
         if provider is None:
             raise ValueError(f'Host extension is not installed: {name}')
-        tools, stop_tools = provider(context, config, getattr(contribution, "bind_successor", None))
+        tools, stop_tools = provider(context, config, getattr(contribution, 'bind_successor', None))
         contribution.tools.extend(tools)
         contribution.stop_tools.extend(stop_tools)
     return contribution
