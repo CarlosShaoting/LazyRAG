@@ -148,6 +148,20 @@ Snapshot 输入使用通用读取与内容摘要；JSON 返回 JSON，文本返�
 
 拆分工具时发现，如果 relay 一律作为 stop tool，聊天发出的“继续”会只准备下一阶段而不执行。已改为 A02 的显式绑定回调，普通工具可在同一轮读取新 session；只结束操作停止模型。测试同时拒绝错误来源和意外 revision 升级。
 
+### C05：风格预览使用固定版式，不能完整反映所选风格（新增发现，未修复）
+
+核查“先看三套方案”时确认：模型返回 A/B/C 三组风格配置；每组样张由 `runtime/scripts/run_stage.py::_render_sample_deck_svg` 拼成三页 SVG（标题、三个要点、角色/受众/场景/格式）。三套共用固定排版，文字字体写死为 Inter/Arial，底色写死为 `#111827`；design_style/color_tone 主要显示为名称，预览没有完整执行配置中的 typography 和 rendering recipe。因此用户看到的是配色与固定样张，不能据此验证实际浅色、极简等风格的最终呈现。
+
+该样张渲染器在对比基线 main 已存在；本分支的 preview_choice 流程将其作为用户选风格的正式入口。当前只核查并记录，没有运行真实模型/浏览器验证，也未修改实现。后续应让样张复用正式页面的风格渲染契约，并验证所选字体、明暗及版式确实反映到样张上；三套内容保持一致以便比较。
+
+### C06：SubAgent 执行包内测试，污染 Chat 进程（已修复）
+
+2026-09-30 16:45 的真实 Chat 日志中，文档动作先报 `AttributeError: module 'lazyllm' has no attribute 'globals'`，后续 `plan_background_prompts` 在模型配置注入时又报 `ImportError: cannot import name 'LOG' from 'lazyllm'`，外层显示“上游错误”。原因是 SubAgent 的 `load_workflow_tools` 遍历并执行包内所有 `scripts/**/*.py`，连 `scripts/tests/test_style_flow.py` 也被执行；该测试顶层向 `sys.modules` 写入缺少 globals/LOG 的替身，覆盖在线进程的真实模块。不是模型供应商返回的错误。公共 toolkit 本已有另一套带声明过滤的加载器，但 SubAgent 没有复用；此前只给加载测试传入 tools.py，遗漏了完整脚本包场景。
+
+修复将 runner 接入 `workflow_toolkit.load_workflow_package_tools`，继续先校验 revision、tree hash 和可信执行权限，再物化完整包；公共加载器支持真实 `package_root`，保留依赖 `__file__` 的相邻运行资源。按 `tool_scripts` 加载本轮请求的函数及其所属脚本；没有声明的历史包仍走兼容加载，但排除 tests/__tests__ 目录、test_*.py、*_test.py、conftest.py，兼容 Core 的空文件 null 编码。未声明的函数不会被额外暴露。没有添加任何 PPT ID 特判，也未改 Writer 的编辑或业务逻辑。
+
+同时将 PPT 测试的全局替身限定在 `mock.patch.dict` 的加载作用域，结束立即还原。新增 runner 回归覆盖完整 PPT scripts 目录及 workflow.yaml、任意重命名的 workflow ID、真实模块身份保持、未声明/未请求脚本不执行、运行资源路径；公共 loader 回归覆盖历史包的测试路径及空脚本。此修复对原来的固定 revision 生效，无需修改旧包或自动升级会话。恢复运行必须重启已经污染的 Chat 进程。
+
 ## 边界与兼容说明
 
 main 已有的 `workflow/ppt_incremental_pages.go` 仍按 PPT 身份处理旧页插入；这是基线已有逻辑，本次未新增或扩展。它需要单独设计旧会话迁移才能安全改成声明式能力，不能直接删除后破坏现有 PPT 页面保留行为。本次 A01 处理的是增量新加的 manager 输入改写，不代表整个主仓库已经不存在任何历史特例。
@@ -191,6 +205,17 @@ gh pr create --repo LazyAGI/LazyMind --base main --head '他的GitHub用户名:c
 新增回归不是仅检索源代码字符串：包含 ArtifactSink 真实写库后不提前选择、Attempt 成功/失败/取消/幂等、发布别名的图 witness、缺产物与 stale 输入拒绝、改名包仍启用声明、旧 head 存在新版本仍固定 revision、默认字数不由 Go 注入、manifest 与正文不一致时零发布、Host session 错误来源/版本拒绝、无声明时不挂载业务 UI。
 
 Python 使用仓库 Python 3.11 环境；测试依赖从本机临时目录补充，业务代码仍来自当前工作树。PPT 老测试清理时有 lazyllm stub 的退出日志，但测试主体 87 项及 10 个子测试通过、进程退出码为 0。Go 存在 macOS Keychain SDK 弃用警告。以上均未当作真实端测成功。
+
+### C06 运行故障补充验证
+
+加载器及完整 PPT 脚本包 26 项、可信执行/工作区授权 15 项、SubAgent/远程执行器 120 项、PPT 脚本 87 项通过，共 248 项，另有 10 个子测试通过；1 项真实 Core HTTP 联测按其环境开关跳过。首次运行新增测试时修正了测试仓库路径，并将依赖不同 conftest 的测试拆开运行；以下结果为修正后的执行结果。PPT 测试结束不再出现 lazyllm 替身的退出清理错误。2026-09-30 16:53 已执行 `make local-down` / `make local-up`，清理旧进程后服务恢复 ready，前端 HTTP 200；文档动作接口用无效 reference 探针验证已能完成模型配置注入并返回预期 422（`DOCUMENT_ACTION_REFERENCE_INVALID`），没有再次在注入阶段报 globals/LOG 缺失，也未触发模型调用。真实模型生成和完整 PPT 导出尚未因此重新验收。
+
+```bash
+python -m pytest -q tests/algorithm/chat/subagent/test_workflow_package_materialization.py tests/algorithm/test_workflow_toolkit.py
+python -m pytest -q tests/algorithm/chat/test_workflow_full_trust.py tests/algorithm/chat/test_workspace_authorization_contract.py
+python -m pytest -q tests/algorithm/chat/test_subagent_runner.py tests/algorithm/chat/test_remote_executor.py
+python -m pytest -q workflows/ppt-workflow/scripts/tests
+```
 
 ### 可重复执行的命令
 

@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 
-def _install_import_stubs() -> None:
+def _import_stubs() -> dict[str, types.ModuleType]:
     lazyllm = types.ModuleType('lazyllm')
     lazyllm.ThreadPoolExecutor = concurrent.futures.ThreadPoolExecutor
     lazyllm_tools = types.ModuleType('lazyllm.tools')
@@ -53,15 +53,15 @@ def _install_import_stubs() -> None:
         'lazymind.chat.service.utils.static_file_url': static_file,
         'lazymind.model_config': model_config,
     }
-    sys.modules.update(modules)
+    return modules
 
 
-_install_import_stubs()
 TOOLS_PATH = Path(__file__).resolve().parents[1] / 'tools.py'
 SPEC = importlib.util.spec_from_file_location('ppt_style_flow_tools_test', TOOLS_PATH)
 TOOLS = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
-SPEC.loader.exec_module(TOOLS)
+with mock.patch.dict(sys.modules, _import_stubs()):
+    SPEC.loader.exec_module(TOOLS)
 
 
 class StyleFlowCombinationTest(unittest.TestCase):

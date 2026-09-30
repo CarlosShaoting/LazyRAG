@@ -8,7 +8,6 @@ import re
 import sys
 import time
 import base64
-import types
 import tempfile
 from collections.abc import AsyncIterator
 from contextlib import aclosing
@@ -357,6 +356,7 @@ def load_workflow_tools(params: Dict[str, Any], names: List[str]) -> Dict[str, A
         import httpx
         from lazymind.config import config
         from lazymind.workflow_sdk import WorkflowClient
+        from lazymind.workflow_toolkit import load_workflow_package_tools
 
         package = WorkflowClient(
             str(config['core_api_url']).rstrip('/'),
@@ -375,32 +375,9 @@ def load_workflow_tools(params: Dict[str, Any], names: List[str]) -> Dict[str, A
             str(package.get('tree_hash') or expected_hash),
             files,
         )
-        remaining = set(names)
-        resolved: Dict[str, Any] = {}
-        for path in sorted(files):
-            if not path.startswith('scripts/') or not path.endswith('.py'):
-                continue
-            script_path = package_root / path
-            raw_source = script_path.read_bytes()
-            source = raw_source.decode('utf-8')
-            module = types.ModuleType(
-                f'_lazymind_workflow_{revision_id.replace("-", "_")}_{len(resolved)}'
-            )
-            module.__file__ = str(script_path)
-            exec(compile(source, module.__file__, 'exec'), module.__dict__)
-            for name in tuple(remaining):
-                candidate = module.__dict__.get(name)
-                if callable(candidate):
-                    # Published Workflow scripts can predate the tool runtime's
-                    # docstring requirement. Their callable name, signature and
-                    # annotations are already pinned by the immutable revision;
-                    # provide a stable description so legacy revisions remain
-                    # executable instead of failing before the first tool call.
-                    if not str(getattr(candidate, '__doc__', '') or '').strip():
-                        candidate.__doc__ = f'Execute the published Workflow tool {name}.'
-                    resolved[name] = candidate
-                    remaining.remove(name)
-        return resolved
+        return load_workflow_package_tools(
+            package, names, workflow_id, revision_id, package_root=package_root,
+        )
     except Exception as exc:
         raise RuntimeError(f'failed to load pinned Workflow script tools: {exc}') from exc
 
