@@ -1,4 +1,4 @@
-package store
+package product
 
 import (
 	"context"
@@ -20,7 +20,7 @@ import (
 	"lazymind/core/subagent"
 	"lazymind/core/workflow/artifactfile"
 	"lazymind/core/workflow/controlstore"
-	"lazymind/core/workflow/productstate"
+	"lazymind/core/workflow/publication"
 )
 
 type productStageDefinition struct{ ID, Label, Slot, HTMLSlot, MarkdownSlot string }
@@ -460,7 +460,7 @@ func (r *Repository) productRelayState(ctx context.Context, owner, sessionID str
 	if err := r.db.WithContext(ctx).First(&session, "id = ?", sessionID).Error; err != nil {
 		return session, nil, nil, err
 	}
-	if session.WorkflowID != "product_solution_delivery" && session.WorkflowID != "product-solution-delivery" {
+	if !supportsProject(session, r.db) {
 		return session, nil, nil, repositoryError("PRODUCT_RELAY_UNSUPPORTED")
 	}
 	artifacts, err := r.ListArtifacts(ctx, owner, sessionID)
@@ -670,9 +670,7 @@ func (r *Repository) RelayProductStage(ctx context.Context, owner, sessionID str
 	body, _ := json.Marshal(map[string]any{"session_id": sessionID, "request": req})
 	// Unlike delegated transitions, this command only writes through its supplied transaction.
 	// Retain SQLite serialization while making command persistence atomic with the new Session.
-	r.commandMu.Lock()
-	defer r.commandMu.Unlock()
-	command, _, err := r.commandTransactional(ctx, owner, sessionID, req.IdempotencyKey, "workflow.v1", body, func(tx *gorm.DB) (int, json.RawMessage, error) {
+	command, _, err := r.AtomicCommand(ctx, owner, sessionID, req.IdempotencyKey, "workflow.v1", body, func(tx *gorm.DB) (int, json.RawMessage, error) {
 		txRepo := New(tx)
 		session, workspace, artifacts, err := txRepo.productRelayState(ctx, owner, sessionID)
 		if err != nil {
@@ -728,7 +726,7 @@ func (r *Repository) RelayProductStage(ctx context.Context, owner, sessionID str
 		approvals = append(approvals, approval)
 		workspace["approvals"], workspace["approval_events"] = approvals, approvals
 		result := map[string]any{"source_session_id": sessionID, "approval_id": approval["approval_id"], "selected_stage": req.SelectedStage,
-			"conversation_id": session.ConversationID, "workflow_id": session.WorkflowID}
+			"conversation_id": session.ConversationID, "workflow_id": session.WorkflowID, "workflow_revision_id": session.WorkflowRevisionID}
 		if req.Action == "finish" {
 			run["run_status"] = "completed"
 			workspace["current_run"] = run
@@ -737,7 +735,7 @@ func (r *Repository) RelayProductStage(ctx context.Context, owner, sessionID str
 			}
 			result["session_id"], result["status"], result["state_version"] = sessionID, "completed", session.StateVersion+1
 		} else {
-			pkg, err := txRepo.GetWorkflowPackage(ctx, owner, session.WorkflowID, "")
+			pkg, err := txRepo.GetWorkflowPackage(ctx, owner, session.WorkflowID, session.WorkflowRevisionID)
 			if err != nil {
 				return 0, nil, err
 			}
@@ -788,29 +786,6 @@ func (r *Repository) RelayProductStage(ctx context.Context, owner, sessionID str
 					carried = append(carried, binding)
 				}
 			}
-			defaults := productStageDefaults(req.SelectedStage)
-			appliedDefaults := map[string]string{}
-			for material, value := range defaults {
-				if graph.MaterialProducers[material].Kind != "external" {
-					continue
-				}
-				present := false
-				for _, binding := range carried {
-					present = present || binding.MaterialID == material
-				}
-				if present {
-					continue
-				}
-				data := []byte(value)
-				resource, _, err := txRepo.ImportInputResource(ctx, owner, material+".txt", "text/plain", "sha256:"+requestHash(data), data)
-				if err != nil {
-					return 0, nil, err
-				}
-				carried = append(carried, InputBinding{MaterialID: material, ResourceType: "input_resource", ResourceID: resource.ID, ResourceRevision: resource.Revision, ContentHash: resource.ContentHash, CreatedByCommandID: "product-relay:" + req.IdempotencyKey})
-				appliedDefaults[material] = value
-			}
-			approval["input_defaults"] = appliedDefaults
-			approval["input_default_source"] = "user-stage-action:reuse-project-materials-and-default-structure"
 			if req.Action == "switch-stage" && req.SelectedStage == productString(run["selected_stage"]) {
 				working, err := txRepo.ListArtifacts(ctx, owner, sessionID)
 				if err != nil {
@@ -944,7 +919,11 @@ func (r *Repository) RelayProductStage(ctx context.Context, owner, sessionID str
 			if err != nil {
 				return 0, nil, err
 			}
-			result["session_id"], result["status"], result["state_version"], result["ready_steps"] = next.ID, "prepared", next.StateVersion, []string{"route_product_stage"}
+			persisted, err := txRepo.ListInputBindings(ctx, owner, next.ID)
+			if err != nil {
+				return 0, nil, err
+			}
+			result["session_id"], result["status"], result["state_version"], result["ready_steps"] = next.ID, "prepared", next.StateVersion, initialReady(pkg.CompiledGraph, persisted)
 		}
 		payload, _ := json.Marshal(result)
 		return http.StatusOK, payload, nil
@@ -968,11 +947,11 @@ func (r *Repository) saveProductWorkspace(tx *gorm.DB, session orm.WorkflowSessi
 	if err := tx.Create(&row).Error; err != nil {
 		return err
 	}
-	pub, err := productstate.Latest(tx, session.ID)
+	pub, err := publication.Latest(tx, session.ID)
 	if err == nil {
 		pub.Revisions["workspace_state"] = row.ID
 		pub.Hashes["workspace_state"] = requestHash(content)
-		if err := productstate.Record(tx, session, pub); err != nil {
+		if err := publication.Record(tx, session, pub); err != nil {
 			return err
 		}
 	} else if err != gorm.ErrRecordNotFound {

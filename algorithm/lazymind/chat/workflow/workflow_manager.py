@@ -7,7 +7,6 @@ public Workflow SDK into ChatAgent tools and applies LazyMind's handoff rule.
 from __future__ import annotations
 
 import json
-import uuid
 import logging
 import re
 from dataclasses import asdict, dataclass
@@ -44,6 +43,9 @@ class WorkflowAgentContribution:
     agentic_config_patch: Dict[str, Any]
     runtime_context: str
     runtime_policy: Optional[Dict[str, Any]] = None
+    # Trusted host extensions may explicitly adopt a server-created successor.
+    # This callback is never exposed as a model tool.
+    bind_successor: Optional[Callable[[Dict[str, Any]], None]] = None
 
 
 @dataclass(frozen=True)
@@ -87,18 +89,6 @@ def _result_text(value: Any) -> str:
     if hasattr(value, 'result'):
         value = value.result
     return json.dumps(value, ensure_ascii=False, default=str)
-
-
-def _ppt_step_user_input(value: Any, workflow_id: Any) -> str:
-    """Treat approval-only continue text as control input for PPT sessions only."""
-    text = str(value or '').strip()
-    selected_workflow = str(workflow_id or '').strip()
-    if selected_workflow not in {'ppt-workflow', 'builtin:ppt-workflow'}:
-        return text
-    normalized = re.sub(r'\s+', ' ', text).rstrip('。.!！').casefold()
-    if normalized in {'继续', '继续执行', 'continue', 'continue execution'}:
-        return ''
-    return text
 
 
 def _workflow_definition(workflow_id: str, revision_id: str = '') -> Dict[str, Any]:
@@ -160,7 +150,7 @@ def _handoff_tool(
     def advance_step_and_hand_off(step_id: str) -> str:
         """Execute one Ready Workflow step, then hand off for result approval."""
         selected_session_id = session() if callable(session) else session
-        selected_session_id = _relayed_session_id(str(selected_session_id or '').strip())
+        selected_session_id = str(selected_session_id or '').strip()
         if not selected_session_id:
             raise WorkflowClientError(
                 'WORKFLOW_SESSION_NOT_INITIALIZED',
@@ -200,9 +190,6 @@ def _handoff_tool(
                 )
                 if recovery_instruction:
                     focus_hints.append(recovery_instruction)
-                current_user_input = _ppt_step_user_input(
-                    current_user_input, cfg.get('workflow_id') or cfg.get('workflow_ref'),
-                )
                 response = client.advance(AdvanceRequest(
                     session_id=selected_session_id,
                     expected_state_version=int(frontier.get('state_version') or 0),
@@ -344,19 +331,11 @@ def _with_terminal_agent_control(result: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _relayed_session_id(selected: str) -> str:
-    relay = _agentic_config().get('product_stage_relay') or {}
-    if isinstance(relay, dict) and relay.get('source_session_id') == selected:
-        return str(relay.get('session_id') or selected)
-    return selected
-
-
 def _safe_session_tools(
     toolkit: HostWorkflowToolkit,
     session: Union[str, Callable[[], str]],
     initialize_session: Optional[Callable[[], Any]] = None,
     user_input: Optional[Union[str, Callable[[], str]]] = None,
-    product_tools: bool = False,
 ) -> List[Any]:
     """Model tools whose protocol and concurrency parameters are Host-injected."""
     capability = (
@@ -383,7 +362,7 @@ def _safe_session_tools(
                 'Do not infer that an attachment is required; the trigger determines '
                 'whether any external input is actually required.',
             )
-        return _relayed_session_id(selected)
+        return selected
 
     @_register_host_file(capability)
     def get_workflow_state() -> Dict[str, Any]:
@@ -441,9 +420,6 @@ def _safe_session_tools(
                 )
                 if recovery_instruction:
                     focus_hints.append(recovery_instruction)
-                current_user_input = _ppt_step_user_input(
-                    current_user_input, cfg.get('workflow_id') or cfg.get('workflow_ref'),
-                )
                 result = toolkit.advance_step(
                     selected_session_id, int(frontier.get('state_version') or 0),
                     [
@@ -500,69 +476,10 @@ def _safe_session_tools(
             artifact_id, int(artifact.get('revision') or 0), value, content_type, caption,
         )
 
-    def get_product_stage_options() -> Dict[str, Any]:
-        """Read this product project's shared views, versions and stage choices.
-        Available while a stage runs; contains no internal Workspace or Manifest.
-        """
-        return _client().get_product_stage_relay(session_id())
-
-    def read_product_project_artifact(stage: str) -> Dict[str, Any]:
-        """Read the selected shared view from this same product project.
-        stage: direction, competitive, design, prd, prototype, review or handoff.
-        Use for earlier-stage content even after switching stages. This is read-only:
-        do not start a new task or relay a stage merely to view its document. Read
-        get_product_stage_options first to check availability and stale/draft status.
-        To revise, ask for an explicit stage switch and preserve the prior version.
-        """
-        return _client().get_product_project_artifact(session_id(), stage)
-
-    def relay_product_stage(action: str, selected_stage: str = '') -> Dict[str, Any]:
-        """Only after the CURRENT user explicitly asks to continue, switch stage or finish,
-        record that user choice and prepare the next stage in the SAME conversation
-        and shared product project; no new task/window or manual re-upload. Never use merely
-        because a stage is complete, export was requested, or a stage chain was planned.
-        Read get_product_stage_options first; continue must target a recommended stage.
-        After success execute the returned exact Ready router with the normal step tools.
-        """
-        cfg = _agentic_config()
-        query = str(cfg.get('workflow_current_query') or cfg.get('query') or '').strip()
-        if not query:
-            raise WorkflowClientError(
-                'PRODUCT_APPROVAL_NOT_FOUND', 'A current user message is required for stage handoff.',
-            )
-        source_id = session_id()
-        client = _client()
-        # The same turn and choice retain an idempotency key after a transport failure.
-        pending = cfg.setdefault('product_stage_relay_commands', {})
-        key = json.dumps([source_id, action, selected_stage, query], ensure_ascii=False)
-        command = pending.get(key)
-        if not command:
-            summary = client.get_product_stage_relay(source_id)
-            if not summary.get('can_relay'):
-                raise WorkflowClientError(
-                    'PRODUCT_STAGE_NOT_READY', str(summary.get('reason') or 'Current stage is not complete.'),
-                )
-            command = {
-                'id': str(uuid.uuid4()), 'state_version': int(summary.get('state_version') or 0),
-            }
-            pending[key] = command
-        result = client.relay_product_stage(
-            source_id, action=action, selected_stage=selected_stage,
-            expected_state_version=command['state_version'],
-            command_id=command['id'], request_context=query, user_message=query,
-        )
-        if result.get('session_id') and result['session_id'] != source_id:
-            cfg['product_stage_relay'] = result
-            cfg['workflow_session_id'] = result['session_id']
-        return result
-
-    tools = [
+    return [
         get_workflow_state, get_ready_steps, advance_step, list_workflow_inputs,
         list_artifacts, read_artifact, patch_artifact,
     ]
-    if product_tools:
-        tools.extend([get_product_stage_options, read_product_project_artifact, relay_product_stage])
-    return tools
 
 
 def _state_refresh_notice() -> Dict[str, Any]:
@@ -1176,13 +1093,15 @@ def build_workflow_discovery_context(
     return WorkflowDiscoveryContext(activations, prompt)
 
 
-def _trigger_input_types(workflow_id: str, package: Dict[str, Any]) -> Dict[str, str]:
+def _trigger_input_contract(package: Dict[str, Any]):
+    runtime = package.get('runtime') or (package.get('compiled_graph') or {}).get('runtime') or {}
+    return runtime.get('trigger_inputs')
+
+
+def _trigger_input_types(package: Dict[str, Any]) -> Dict[str, str]:
     inputs = workflow_package_input_types(package)
-    if workflow_id == 'product_solution_delivery':
-        # Internal project identity, approvals and pinned versions come from Host relay.
-        inputs = {key: value for key, value in inputs.items()
-                  if key not in {'workspace_seed', 'stage_approval'} and not key.startswith('upstream_')}
-    return inputs
+    declared = _trigger_input_contract(package)
+    return inputs if declared is None else {key: value for key, value in inputs.items() if key in declared}
 
 
 def _workflow_trigger_tools(
@@ -1225,7 +1144,7 @@ def _workflow_trigger_tools(
         if allowed_refs:
             try:
                 package_hint = _client().get_workflow(workflow_id, revision_id).result
-                input_types_hint = _trigger_input_types(workflow_id, package_hint)
+                input_types_hint = _trigger_input_types(package_hint)
             except Exception as exc:
                 LOG.debug('Could not preload Workflow %s input contract: %s', workflow_id, exc)
 
@@ -1281,13 +1200,9 @@ def _workflow_trigger_tools(
                     }
                 client = _client()
                 package = bound_package or client.get_workflow(bound_id, bound_revision).result
-                input_types = _trigger_input_types(bound_id, package)
-                if bound_id == 'product_solution_delivery' and set(input_bindings or {}) - input_types.keys():
-                    raise WorkflowClientError(
-                        'PRODUCT_INPUT_HOST_OWNED',
-                        'Use only advertised inputs; existing documents belong in product_materials. '
-                        'Project identity, approvals and pinned versions are supplied by Host relay.',
-                    )
+                input_types = _trigger_input_types(package)
+                if _trigger_input_contract(package) is not None and set(input_bindings or {}) - input_types.keys():
+                    raise WorkflowClientError("WORKFLOW_INPUT_NOT_EXPOSED", "Use only inputs advertised by this package.")
                 resolved_bindings: Dict[str, Any] = {}
                 for material_id, attachment_ref in (input_bindings or {}).items():
                     binding = str(attachment_ref or '').strip()
@@ -1568,6 +1483,20 @@ def resolve_workflow_injection(
         ]
     session_holder: Dict[str, str] = {'session_id': session_id}
 
+    def bind_successor(result: Dict[str, Any]) -> None:
+        target = str(result.get('session_id') or '')
+        if (not target or result.get('source_session_id') != session_holder['session_id']
+                or result.get('workflow_id') != workflow_id
+                or (conversation_id and result.get('conversation_id') != conversation_id)
+                or (revision_id and result.get('workflow_revision_id') != revision_id)):
+            raise WorkflowClientError('WORKFLOW_SESSION_HANDOFF_INVALID', 'Successor must preserve the bound conversation and package revision.')
+        # Authorize and refresh through the same SDK before changing the turn binding.
+        state = _client().get_state(target)
+        if state.get('session_id') != target:
+            raise WorkflowClientError('WORKFLOW_SESSION_HANDOFF_INVALID', 'Successor session could not be verified.')
+        session_holder['session_id'] = target
+        _agentic_config()['workflow_session_id'] = target
+
     @fc_register(host_file='NONE')
     def selected_session_id() -> str:
         return session_holder.get('session_id', '')
@@ -1630,7 +1559,6 @@ def resolve_workflow_injection(
                 selected_session_id,
                 initialize_session=initialize_selected_session,
                 user_input=launch_user_input,
-                product_tools='product_solution_delivery' in allowed_ids,
             ),
             handoff,
         ]
@@ -1656,7 +1584,6 @@ def resolve_workflow_injection(
                     toolkit,
                     selected_session_id,
                     user_input=selected_request_context,
-                    product_tools=any(item.get('workflow_id') == 'product_solution_delivery' for item in activations),
                 ),
                 _handoff_tool(
                     selected_session_id,
@@ -1667,9 +1594,7 @@ def resolve_workflow_injection(
         else:
             tools = [authoring_group]
     if session_id:
-        tools = _safe_session_tools(toolkit, session_id, product_tools=workflow_id in {
-            'product_solution_delivery', 'builtin:product_solution_delivery',
-        })
+        tools = _safe_session_tools(toolkit, selected_session_id)
         patch.update({
             'workflow_id': workflow_id,
             'workflow_session_id': session_id,
@@ -1679,7 +1604,7 @@ def resolve_workflow_injection(
             'focused_tab': context.get('focused_tab') or '',
             'focused_sort_order': context.get('focused_sort_order'),
         })
-        tools.append(_handoff_tool(session_id))
+        tools.append(_handoff_tool(selected_session_id))
         session_projection = (
             projection.get('projection')
             if isinstance(projection.get('projection'), dict) else {}
@@ -1768,7 +1693,7 @@ def resolve_workflow_injection(
             # user-requested continuous run can keep advancing.  Only the
             # explicit hand-off variant transfers ownership and ends the turn.
             tools, ['advance_step_and_hand_off'],
-            patch, runtime_context, runtime_policy,
+            patch, runtime_context, runtime_policy, bind_successor,
         )
 
     del disabled_builtin_workflows

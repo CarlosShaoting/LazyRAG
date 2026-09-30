@@ -1,4 +1,4 @@
-package productstate
+package publication
 
 import (
 	"encoding/json"
@@ -8,8 +8,8 @@ import (
 	"lazymind/core/workflow/artifactfile"
 )
 
-// SnapshotEdit isolates product file edits from mutable editor uploads. Other
-// workflows keep their existing storage and copy-on-write behavior.
+// SnapshotEdit isolates edits of transactionally published files from mutable editor uploads. Unconfigured
+// packages retain their existing storage and copy-on-write behavior.
 func SnapshotEdit(db *gorm.DB, sessionID, contentType string, value json.RawMessage) (json.RawMessage, string, error) {
 	var session orm.WorkflowSession
 	if err := db.Where("id = ?", sessionID).First(&session).Error; err != nil {

@@ -1,18 +1,7 @@
-import type { WorkflowUI } from '@/modules/chat/store/workflowPanel';
 import type { SlotFooterAction } from './slotEditingContext';
 
-// Presentation only: the reports and their validation still exist in the session.
-export function productPresentation(ui: WorkflowUI): WorkflowUI {
-  return { ...ui, tabs: ui.tabs?.map(tab => {
-    const slots = tab.slots.filter(slot => !slot.id.endsWith('_outline_report'));
-    return slots.length === tab.slots.length ? tab : {
-      ...tab, slots, layout: 'list' as const, composite_layout: undefined,
-    };
-  }).filter(tab => tab.slots.length > 0) };
-}
-
 // Keep every format and owner callback, including its save/disabled behavior.
-export function productDownloadActions(
+export function groupDownloadActions(
   actions: Map<string, SlotFooterAction>,
   title: (key: string) => string,
   execute: (action: SlotFooterAction, callback: () => void) => void,
@@ -23,7 +12,7 @@ export function productDownloadActions(
   const result = new Map(actions);
   downloads.forEach(([key]) => result.delete(key));
   const [, first] = downloads.find(([, action]) => !action.disabled) ?? downloads[0];
-  result.set('product:download', {
+  result.set('workflow:download', {
     ...first, flushBeforeAction: false, selectedMenuKey: undefined,
     disabled: downloads.every(([, action]) => action.disabled),
     onClick: () => execute(first, first.onClick),

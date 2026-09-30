@@ -49,7 +49,7 @@ def _tool_names(contribution):
 
 
 @pytest.mark.parametrize('workflow_id', ['writer-workflow', 'image-workflow', 'ppt-workflow', 'product_solution_delivery'])
-def test_product_navigation_tools_are_only_exposed_in_product_sessions(workflow_id):
+def test_manager_never_injects_domain_navigation_tools(workflow_id):
     with patch('lazymind.chat.workflow.workflow_manager._client') as client_factory:
         client_factory.return_value.get_state.return_value = {
             'session_id': 'session-1', 'status': 'active', 'state_version': 3,
@@ -57,7 +57,7 @@ def test_product_navigation_tools_are_only_exposed_in_product_sessions(workflow_
         contribution = resolve_workflow_injection({'session_id': 'session-1', 'workflow_id': workflow_id})
     product_tools = {'get_product_stage_options', 'read_product_project_artifact', 'relay_product_stage'}
     names = _tool_names(contribution)
-    assert names & product_tools == (product_tools if workflow_id == 'product_solution_delivery' else set())
+    assert names & product_tools == set()
 
 
 def test_mentioned_workflow_is_injected_as_authoritative_selection():
@@ -688,7 +688,7 @@ def test_active_workflow_forwards_current_edit_request_and_focus_to_step():
     assert 'sort order 2' in command.runtime_instruction
 
 
-def test_only_ppt_workflow_treats_continue_message_as_approval_control():
+def test_manager_preserves_continue_for_all_workflows():
     toolkit = MagicMock()
     toolkit.get_ready_steps.return_value = {
         'session_id': 'session-1', 'state_version': 7,
@@ -718,7 +718,7 @@ def test_only_ppt_workflow_treats_continue_message_as_approval_control():
         lazyllm.globals['agentic_config'].update(writer.agentic_config_patch)
         _tool(writer, 'advance_step')(['analyze_requirements'])
 
-    assert toolkit.advance_step.call_args_list[0].args[2][0].user_input == ''
+    assert toolkit.advance_step.call_args_list[0].args[2][0].user_input == '继续'
     assert toolkit.advance_step.call_args_list[1].args[2][0].user_input == '继续'
 
 

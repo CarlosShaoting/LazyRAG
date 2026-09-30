@@ -1891,7 +1891,7 @@ def _publish_writer_result(stage: str, result: dict[str, Any]) -> dict[str, Any]
     """Persist typed Writer paths directly; model text is never interpreted as a filename."""
     context = require_context()
     params = getattr(context, 'params', None) or {}
-    if params.get('workflow_id') != 'product_solution_delivery' or not _publication_enabled():
+    if not _publication_enabled():
         return result
     step = params.get('step_id')
     if step == f'build_{stage}_outline':

@@ -20,7 +20,7 @@ import (
 	"lazymind/core/common/orm"
 	"lazymind/core/workflow/artifactfile"
 	"lazymind/core/workflow/artifactgraph"
-	"lazymind/core/workflow/productstate"
+	"lazymind/core/workflow/publication"
 )
 
 // DBArtifactSink is the shared executor output writer. Host implementations
@@ -139,11 +139,11 @@ func (sink DBArtifactSink) Save(ctx context.Context, attempt AttemptContext, art
 	controlled := controlstore.Controlled(sessionInfo)
 	var storedValue json.RawMessage
 	var cleanupDirectory string
-	atomicProduct, err := productstate.PublicationEnabled(sink.DB.WithContext(ctx), sessionInfo)
+	transactionalOutputs, err := publication.PublicationEnabled(sink.DB.WithContext(ctx), sessionInfo)
 	if err != nil {
 		return err
 	}
-	if controlled || atomicProduct {
+	if controlled || transactionalOutputs {
 		artifact, err = NormalizeArtifact(attempt, artifact)
 		if err != nil {
 			return err
@@ -230,7 +230,7 @@ func (sink DBArtifactSink) Save(ctx context.Context, attempt AttemptContext, art
 		if err != nil {
 			return err
 		}
-		if !atomicProduct {
+		if !transactionalOutputs {
 			selected := tx.Model(&orm.WorkflowSlotRevision{}).Where(
 				"session_id = ? AND slot_id = ? AND selected = ?", attempt.SessionID, artifact.Slot, true,
 			)
@@ -265,14 +265,14 @@ func (sink DBArtifactSink) Save(ctx context.Context, attempt AttemptContext, art
 			return err
 		}
 		row := orm.WorkflowSlotRevision{ID: uuid.NewString(), SessionID: attempt.SessionID, SlotID: artifact.Slot,
-			Revision: revision, ListIndex: listIndex, Selected: !atomicProduct, ArtifactSeq: &seq, HumanArtifactID: &valueID,
+			Revision: revision, ListIndex: listIndex, Selected: !transactionalOutputs, ArtifactSeq: &seq, HumanArtifactID: &valueID,
 			ChangeSource: "host", Slot: artifact.Slot, StepID: attempt.StepID, Attempt: attempt.AttemptNo,
 			Validity: "effective", ProducerAttemptID: attempt.AttemptID, CreatedAt: now}
 		if err := tx.Create(&row).Error; err != nil {
 			return err
 		}
 		// The model's selected=true default overrides a zero bool on Create.
-		if atomicProduct {
+		if transactionalOutputs {
 			if err := tx.Model(&orm.WorkflowSlotRevision{}).Where("id = ?", row.ID).
 				Update("selected", false).Error; err != nil {
 				return err

@@ -10,7 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"lazymind/core/workflow/controlstore"
-	"lazymind/core/workflow/productstate"
+	"lazymind/core/workflow/publication"
 	"mime"
 	"net/http"
 	"os"
@@ -192,19 +192,21 @@ func (h RemoteHandler) readAttemptInput(
 		if revision.ID == "" {
 			return notFound("artifact revision was not found")
 		}
-		if materialID == "workspace_seed" && revision.SlotID == "workspace_state" {
-			var session orm.WorkflowSession
-			if err := h.DB.WithContext(ctx).First(&session, "id = ?", revision.SessionID).Error; err != nil {
-				return notFound("artifact session was not found")
+		if revision.HumanArtifactID == nil {
+			if expected, _ := binding["content_hash"].(string); expected != "" && expected != fmt.Sprintf("sha256:%x", sha256.Sum256(revision.ContentSnapshot)) {
+				return nil, &attemptInputReadError{Status: http.StatusConflict, Code: "ATTEMPT_INPUT_CHANGED", Message: "artifact input changed after the Attempt was bound"}
 			}
-			if productstate.Supports(session.WorkflowID) {
-				raw, err := productstate.Bytes(h.DB.WithContext(ctx), revision)
-				if err != nil {
-					return notFound("product workspace snapshot is unavailable")
-				}
-				return map[string]any{"material_id": materialID, "resource_id": revision.ID, "revision": revision.Revision, "name": "workspace_seed.json", "mime_type": "application/json", "size": len(raw), "content_base64": base64.StdEncoding.EncodeToString(raw)}, nil
+			raw, err := publication.Bytes(h.DB.WithContext(ctx), revision)
+			if err != nil {
+				return notFound("artifact snapshot is unavailable")
 			}
+			extension, mime := ".json", "application/json"
+			if !json.Valid(raw) {
+				extension, mime = ".txt", "text/plain"
+			}
+			return map[string]any{"material_id": materialID, "resource_id": revision.ID, "revision": revision.Revision, "name": materialID + extension, "mime_type": mime, "size": len(raw), "content_base64": base64.StdEncoding.EncodeToString(raw)}, nil
 		}
+
 		var artifact orm.WorkflowHumanArtifact
 		if revision.HumanArtifactID == nil || h.DB.WithContext(ctx).Where("id = ?", *revision.HumanArtifactID).First(&artifact).Error != nil {
 			return notFound("artifact value was not found")

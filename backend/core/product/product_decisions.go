@@ -1,4 +1,4 @@
-package store
+package product
 
 import (
 	"context"
@@ -149,9 +149,7 @@ func (r *Repository) DecideProductDecision(ctx context.Context, owner, sessionID
 		return nil, repositoryError("INVALID_PRODUCT_DECISION")
 	}
 	body, _ := json.Marshal(map[string]any{"session_id": sessionID, "decision_id": decisionID, "request": req})
-	r.commandMu.Lock()
-	defer r.commandMu.Unlock()
-	command, _, err := r.commandTransactional(ctx, owner, sessionID, req.IdempotencyKey, "workflow.v1", body, func(tx *gorm.DB) (int, json.RawMessage, error) {
+	command, _, err := r.AtomicCommand(ctx, owner, sessionID, req.IdempotencyKey, "workflow.v1", body, func(tx *gorm.DB) (int, json.RawMessage, error) {
 		txRepo := New(tx)
 		session, workspace, artifacts, err := txRepo.productRelayState(ctx, owner, sessionID)
 		if err != nil {

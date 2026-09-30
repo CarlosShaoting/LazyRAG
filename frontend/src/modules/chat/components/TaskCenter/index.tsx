@@ -1,4 +1,4 @@
-import { ProductTaskProgress } from "../WorkflowPanel/ProductTaskProgress";
+import { WorkflowTaskProgress } from "../WorkflowPanel/WorkflowTaskProgress";
 import { useWorkflowStore } from "@/modules/chat/store/workflowPanel";
 import { reconcileWorkflowTasks } from "@/modules/chat/utils/workflowTaskStatus";
 import { useMemo, useState, useRef, useCallback, useEffect, useId } from "react";
@@ -1025,10 +1025,14 @@ function OrdinaryTaskCenter({
   onRetry,
   onReloadArtifacts,
   runs,
-  productStatus,
+  groupedStatus,
+  hiddenSteps,
+  hideGroupedArtifacts,
 }: {
   hideFinalArtifacts?: boolean;
-  productStatus?: string;
+  groupedStatus?: string;
+  hiddenSteps?: string[];
+  hideGroupedArtifacts?: boolean;
   runs: OrdinaryRunView[];
   timeline: OrdinaryTaskTimeline;
   onClose?: () => void;
@@ -1075,7 +1079,7 @@ function OrdinaryTaskCenter({
         <div className="task-center-header">
           <span className="task-center-title">
             {t("taskCenter.panelTitle")}
-            <span className="ordinary-task-count">{productStatus ? 1 : timeline.totalCount}</span>
+            <span className="ordinary-task-count">{groupedStatus ? 1 : timeline.totalCount}</span>
           </span>
           {onClose && (
             <button
@@ -1113,7 +1117,7 @@ function OrdinaryTaskCenter({
               </button>
             </div>
           )}
-          {!productStatus && <div className="ordinary-queue-summary">
+          {!groupedStatus && <div className="ordinary-queue-summary">
             <span
               className="ordinary-queue-summary-copy"
               role="status"
@@ -1161,7 +1165,7 @@ function OrdinaryTaskCenter({
             </span>
           </div>
           }
-          {productStatus ? <ProductTaskProgress timeline={timeline} status={productStatus}
+          {groupedStatus ? <WorkflowTaskProgress hiddenSteps={hiddenSteps} timeline={timeline} status={groupedStatus}
             title={item => publicTaskTitle(item, t)} label={item => stateLabel(item.state, t)}
             details={item => <OrdinaryTaskDetails key={item.id} item={item} />} /> : <ol className="ordinary-task-list" aria-label={t("taskCenter.ordinaryTimelineLabel")}>
             {timeline.groups.map((group) => {
@@ -1199,8 +1203,8 @@ function OrdinaryTaskCenter({
               );
             })}
           </ol>}
-          {/* Product deliverables are shown in ProductProject. */}
-          {!hideFinalArtifacts && !productStatus && <TaskArtifactList artifacts={finalArtifacts} final onReload={onReloadArtifacts} />}
+          {/* A declared extension may own final deliverable presentation. */}
+          {!hideFinalArtifacts && !hideGroupedArtifacts && <TaskArtifactList artifacts={finalArtifacts} final onReload={onReloadArtifacts} />}
         </>
       )}
     </div>
@@ -1226,6 +1230,8 @@ const TaskCenter = (props: Props) => {
     sessionId ? s.tasksByConversation[sessionId] ?? EMPTY_TASKS : EMPTY_TASKS,
   );
   const workflowSession = useWorkflowStore((s) => sessionId ? s.sessionByConversation[sessionId] : undefined);
+  const { i18n } = useTranslation();
+  const taskPresentation = useWorkflowStore(s => workflowSession ? s.workflowUIByWorkflow[`${workflowSession.workflow_id}:${i18n.language || ""}`]?.task_presentation : undefined);
   const tasks = useMemo(() => reconcileWorkflowTasks(storedTasks, workflowSession?.steps), [storedTasks, workflowSession?.steps]);
   const loading = useTaskCenterStore((s) =>
     sessionId ? Boolean(s._loadingTasks[sessionId]) : false,
@@ -1284,7 +1290,9 @@ const TaskCenter = (props: Props) => {
         key={sessionId}
         runs={[...(runs ?? []), ...(workflowSession?.ordinary_runs ?? [])]}
         timeline={ordinaryTimeline}
-        productStatus={workflowSession?.workflow_id === 'product_solution_delivery'
+        hiddenSteps={taskPresentation?.hidden_steps}
+        hideGroupedArtifacts={taskPresentation?.hide_final_artifacts}
+        groupedStatus={taskPresentation?.grouped && workflowSession
           ? stateLabel(workflowSession.status === 'active' ? 'running' : workflowSession.status === 'completed'
             ? 'complete' : workflowSession.status === 'failed' ? 'failed' : workflowSession.status === 'stopped' ? 'canceled' : 'waiting', t)
           : undefined}

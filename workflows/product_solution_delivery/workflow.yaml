@@ -15,6 +15,54 @@ when_to_use: >
   不用于单独市场规模、路线图排序、技术架构、发布运维、数据分析方案或营销文案。
 
 runtime:
+  transactional_outputs: true
+  host_extensions: [product-project-v1]
+  trigger_inputs: [product_goal, product_materials, requested_stage, execution_depth, word_target, reference_sample, reference_sample_choice]
+  published_input_aliases: {workspace_seed: workspace_state}
+  publication:
+    step: finalize_product_delivery
+    required_slots: [workspace_state, stage_manifest, delivery_summary]
+  execution_limits:
+    write_direction_document:
+      rounds: 7
+      timeout: 720
+      tool_calls: {"load_product_skill_contract": 2, "load_product_stage_inputs": 2, "get_artifact": 3, "save_artifacts": 2, "validate_product_stage_assessment": 2, "product_writer_revise_and_publish": 1, "product_writer_revise_markdown": 1, "product_writer_generate_document_from_inputs": 1}
+    analyze_competitive_position:
+      rounds: 7
+      timeout: 600
+      tool_calls: {"load_product_skill_contract": 2, "load_product_stage_inputs": 2, "get_artifact": 3, "save_artifacts": 2, "validate_product_stage_assessment": 2, "write_product_artifact_bundle": 1}
+    collect_design_light_evidence:
+      rounds: 20
+      timeout: 480
+      tool_calls: {"load_product_skill_contract": 2, "load_product_stage_inputs": 2, "get_artifact": 3, "save_artifacts": 2, "validate_product_stage_assessment": 2, "publish_design_heavy_evidence": 1, "publish_design_heavy_unavailable": 1}
+    collect_design_heavy_evidence:
+      rounds: 24
+      timeout: 600
+      tool_calls: {"load_product_skill_contract": 2, "load_product_stage_inputs": 2, "get_artifact": 3, "save_artifacts": 2, "validate_product_stage_assessment": 2, "publish_design_heavy_evidence": 1, "publish_design_heavy_unavailable": 1}
+    write_design_document:
+      rounds: 7
+      timeout: 720
+      tool_calls: {"load_product_skill_contract": 2, "load_product_stage_inputs": 2, "get_artifact": 3, "save_artifacts": 2, "validate_product_stage_assessment": 2, "product_writer_revise_and_publish": 1, "product_writer_revise_markdown": 1, "product_writer_generate_document_from_inputs": 1}
+    write_prd_document:
+      rounds: 7
+      timeout: 720
+      tool_calls: {"load_product_skill_contract": 2, "load_product_stage_inputs": 2, "get_artifact": 3, "save_artifacts": 2, "validate_product_stage_assessment": 2, "product_writer_revise_and_publish": 1, "product_writer_revise_markdown": 1, "product_writer_generate_document_from_inputs": 1}
+    build_interactive_prototype:
+      rounds: 7
+      timeout: 600
+      tool_calls: {"load_product_skill_contract": 2, "load_product_stage_inputs": 2, "get_artifact": 3, "save_artifacts": 2, "validate_product_stage_assessment": 2, "write_product_artifact_bundle": 1}
+    write_review_document:
+      rounds: 7
+      timeout: 720
+      tool_calls: {"load_product_skill_contract": 2, "load_product_stage_inputs": 2, "get_artifact": 3, "save_artifacts": 2, "validate_product_stage_assessment": 2, "product_writer_revise_and_publish": 1, "product_writer_revise_markdown": 1, "product_writer_generate_document_from_inputs": 1}
+    write_handoff_document:
+      rounds: 7
+      timeout: 720
+      tool_calls: {"load_product_skill_contract": 2, "load_product_stage_inputs": 2, "get_artifact": 3, "save_artifacts": 2, "validate_product_stage_assessment": 2, "product_writer_revise_and_publish": 1, "product_writer_revise_markdown": 1, "product_writer_generate_document_from_inputs": 1}
+    finalize_product_delivery:
+      rounds: 3
+      timeout: 120
+      tool_calls: {"load_product_skill_contract": 2, "load_product_stage_inputs": 2, "get_artifact": 3, "save_artifacts": 2, "validate_product_stage_assessment": 2, "publish_product_handoff_state": 1}
   exclusive_tool_capabilities: [writer.create, writer.revise]
   collects_knowledge: true
   # The parent Router's terminal publisher writes these slots as one validated unit. Business
@@ -240,7 +288,7 @@ slots:
   - {id: prd_task, label: PRD Writer 任务, type: file, cardinality: single, exposed: false}
   - {id: prd_context, label: PRD 写作上下文, type: file, cardinality: single, exposed: false}
   - {id: prd_outline, label: PRD 大纲, type: file, cardinality: single, exposed: true}
-  - {id: prd_outline_report, label: PRD 大纲检查, type: text, cardinality: single, exposed: true}
+  - {id: prd_outline_report, label: PRD 大纲检查, type: text, cardinality: single, exposed: false}
   - {id: prd_context_approved, label: 批准后 PRD 上下文, type: file, cardinality: single, exposed: false}
   - {id: prd_section_plan, label: PRD 章节规划, type: file, cardinality: single, exposed: false}
   - {id: prd_chapters, label: PRD 分章稿, type: file, cardinality: list, ordered: true, allow_manual_add: false, exposed: true}
@@ -254,7 +302,7 @@ slots:
   - {id: review_task, label: 评审 Writer 任务, type: file, cardinality: single, exposed: false}
   - {id: review_context, label: 评审写作上下文, type: file, cardinality: single, exposed: false}
   - {id: review_outline, label: 评审大纲, type: file, cardinality: single, exposed: true}
-  - {id: review_outline_report, label: 评审大纲检查, type: text, cardinality: single, exposed: true}
+  - {id: review_outline_report, label: 评审大纲检查, type: text, cardinality: single, exposed: false}
   - {id: review_context_approved, label: 批准后评审上下文, type: file, cardinality: single, exposed: false}
   - {id: review_section_plan, label: 评审章节规划, type: file, cardinality: single, exposed: false}
   - {id: review_chapters, label: 评审分章稿, type: file, cardinality: list, ordered: true, allow_manual_add: false, exposed: true}
@@ -265,7 +313,7 @@ slots:
   - {id: handoff_task, label: 交付 Writer 任务, type: file, cardinality: single, exposed: false}
   - {id: handoff_context, label: 交付写作上下文, type: file, cardinality: single, exposed: false}
   - {id: handoff_outline, label: 研发交付大纲, type: file, cardinality: single, exposed: true}
-  - {id: handoff_outline_report, label: 研发交付大纲检查, type: text, cardinality: single, exposed: true}
+  - {id: handoff_outline_report, label: 研发交付大纲检查, type: text, cardinality: single, exposed: false}
   - {id: handoff_context_approved, label: 批准后交付上下文, type: file, cardinality: single, exposed: false}
   - {id: handoff_section_plan, label: 研发交付章节规划, type: file, cardinality: single, exposed: false}
   - {id: handoff_chapters, label: 研发交付分章稿, type: file, cardinality: list, ordered: true, allow_manual_add: false, exposed: true}
@@ -278,6 +326,12 @@ slots:
   - {id: workspace_state, label: Product Workspace 内部状态, type: json, cardinality: single, exposed: false}
 
 ui:
+  extensions: [product-project-v1]
+  group_downloads: true
+  task_presentation:
+    grouped: true
+    hide_final_artifacts: true
+    hidden_steps: [route_product_stage, build_design_outline, finalize_product_delivery]
   # Hidden internal steps still execute; product business tabs display published outcomes.
   tab_visibility_ready_material: routing_record
   slots:
@@ -343,26 +397,23 @@ ui:
       step_id: build_prd_outline
       label: PRD 大纲
       hide_when_material: hide_prd
-      layout: composite
-      slots: [{id: prd_outline}, {id: prd_outline_report}]
-      composite_layout: {direction: row, children: [{slot: prd_outline, weight: 2}, {slot: prd_outline_report, weight: 1}]}
+      layout: list
+      slots: [{id: prd_outline}]
     - {id: prd_document, step_id: write_prd_document, label: PRD, hide_when_material: hide_prd, layout: list, slots: [{id: prd_document_html}, {id: prd_document}, {id: prd_chapters}]}
     - {id: prototype, step_id: build_interactive_prototype, label: 交互原型, hide_when_material: hide_prototype, layout: list, slots: [{id: prototype}, {id: prototype_markdown}]}
     - id: review_outline
       step_id: build_review_outline
       label: 评审大纲
       hide_when_material: hide_review
-      layout: composite
-      slots: [{id: review_outline}, {id: review_outline_report}]
-      composite_layout: {direction: row, children: [{slot: review_outline, weight: 2}, {slot: review_outline_report, weight: 1}]}
+      layout: list
+      slots: [{id: review_outline}]
     - {id: review_document, step_id: write_review_document, label: 方案评审, hide_when_material: hide_review, layout: list, slots: [{id: review_document_html}, {id: review_document}, {id: review_chapters}]}
     - id: handoff_outline
       step_id: build_handoff_outline
       label: 交付大纲
       hide_when_material: hide_handoff
-      layout: composite
-      slots: [{id: handoff_outline}, {id: handoff_outline_report}]
-      composite_layout: {direction: row, children: [{slot: handoff_outline, weight: 2}, {slot: handoff_outline_report, weight: 1}]}
+      layout: list
+      slots: [{id: handoff_outline}]
     - {id: handoff_document, step_id: write_handoff_document, label: 研发交付, hide_when_material: hide_handoff, layout: list, slots: [{id: handoff_document_html}, {id: handoff_document}, {id: handoff_chapters}]}
 
 i18n:

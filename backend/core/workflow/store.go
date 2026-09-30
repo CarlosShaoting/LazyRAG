@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"lazymind/core/workflow/productstate"
+	"lazymind/core/workflow/publication"
 	"os"
 	"sort"
 	"strings"
@@ -1300,11 +1300,11 @@ func UpdateSelectedHumanArtifactValue(
 		if expectedDraftVersion == nil {
 			return ErrDraftVersionRequired
 		}
-		productPublication, err := productstate.PublicationEnabled(tx, *session)
+		transactionalOutputs, err := publication.PublicationEnabled(tx, *session)
 		if err != nil {
 			return err
 		}
-		requiresCopyOnWrite := selected.ChangeSource != "human" || productPublication
+		requiresCopyOnWrite := selected.ChangeSource != "human" || transactionalOutputs
 		if controlstore.Controlled(*session) {
 			sealed, err := controlstore.IsSealedRevision(tx, sessionID, selected.ID)
 			if err != nil {
@@ -1635,7 +1635,7 @@ func SaveHumanArtifactValue(ctx context.Context, db *gorm.DB,
 	sessionID, slotID, artifactKey, stepID string, attempt int, cardinality string, listIndex *int,
 	contentType string, value json.RawMessage, caption *string, baseRevision *int, baseDraft *int64, draft bool,
 ) (*orm.WorkflowSlotRevision, int64, bool, error) {
-	frozen, directory, err := productstate.SnapshotEdit(db.WithContext(ctx), sessionID, contentType, value)
+	frozen, directory, err := publication.SnapshotEdit(db.WithContext(ctx), sessionID, contentType, value)
 	if err != nil {
 		return nil, 0, false, err
 	}

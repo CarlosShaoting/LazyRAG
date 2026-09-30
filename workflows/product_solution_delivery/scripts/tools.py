@@ -2081,6 +2081,67 @@ def _product_entry_step(stage: str, inputs: dict[str, Any], reuse_structure: boo
             "handoff": "build_handoff_outline"}[stage]
 
 
+def _scalar(value: Any) -> str:
+    for _ in range(3):
+        if isinstance(value, dict):
+            value = value.get('data', value.get('text', value))
+        elif isinstance(value, str) and value.strip().startswith('"'):
+            try:
+                value = json.loads(value)
+            except ValueError:
+                break
+        else:
+            break
+    if isinstance(value, (dict, list)):
+        raise ValueError('PRODUCT_INPUT_INVALID: scalar input must be text')
+    return str(value or '').strip()
+
+
+def _normalize_bound_product_inputs(params: dict[str, Any]) -> list[str]:
+    """Normalize known scalar aliases in the execution projection, never mutate input resources."""
+    inputs = dict(params.get('remote_inputs') or {})
+    aliases = {
+        'execution_depth': {
+            '': 'auto', 'auto': 'auto', 'standard': 'auto', 'default': 'auto',
+            '自动判断': 'auto', '由当前阶段判断': 'auto',
+            'light': 'light', '轻量': 'light', '轻量模式': 'light', '精简': 'light', '复用现有': 'light',
+            'minimum-fill': 'minimum-fill', '最小补齐': 'minimum-fill', '最小补齐模式': 'minimum-fill',
+            '补齐': 'minimum-fill', 'full': 'full', '完整': 'full', '完整模式': 'full', '完整执行': 'full',
+        },
+        'reference_sample_choice': {
+            '': '', 'default': '', 'none': 'none-confirmed', 'none-confirmed': 'none-confirmed',
+            '默认结构': 'none-confirmed', '使用默认结构': 'none-confirmed', '无样例': 'none-confirmed',
+            '不使用参考样例': 'none-confirmed', '不提供参考样例': 'none-confirmed', '不使用样例': 'none-confirmed',
+            'provided': 'provided', '已提供': 'provided', '有样例': 'provided',
+            'not-required': 'not-required', '不需要': 'not-required', '不适用': 'not-required',
+        },
+    }
+    changed = []
+    for field, values in aliases.items():
+        if field not in inputs:
+            continue
+        raw = _scalar(inputs[field]).lower()
+        if raw not in values:
+            raise ValueError(f'PRODUCT_INPUT_INVALID: {field} has an unsupported value')
+        normalized = values[raw]
+        if field == 'reference_sample_choice' and normalized == '':
+            normalized = 'provided' if inputs.get('reference_sample') else 'none-confirmed'
+        if normalized != inputs[field]:
+            inputs[field] = normalized
+            changed.append(field)
+    if 'word_target' in inputs:
+        raw = _scalar(inputs['word_target']).replace(',', '')
+        if raw.lower() in ('default', 'stage-specific', 'not-applicable', '不适用'):
+            inputs['word_target'] = ''
+            changed.append('word_target')
+        elif (inputs.get('requested_stage') in TEXT_STAGES and raw
+              and (not re.search(r'\d+', raw) or int(re.search(r'\d+', raw)[0]) < 300)):
+            raise ValueError('PRODUCT_INPUT_INVALID: word_target must be at least 300')
+    params['remote_inputs'] = inputs
+    return changed
+
+
+
 def publish_product_route(
     value: dict[str, Any],
     product_goal: str = "",
@@ -2099,7 +2160,9 @@ def publish_product_route(
     # Host bindings override model placeholders; absent scalars use project defaults.
     # Explicit stage intent is independently recovered from the original request.
     try:
-        remote_inputs = (getattr(require_context(), "params", {}) or {}).get("remote_inputs") or {}
+        params = dict(getattr(require_context(), "params", {}) or {})
+        _normalize_bound_product_inputs(params)
+        remote_inputs = params.get("remote_inputs") or {}
     except RuntimeError:
         remote_inputs = {}
     if isinstance(remote_inputs, dict) and "product_goal" in remote_inputs:
@@ -4208,10 +4271,36 @@ def build_product_handoff_state(assessment: dict[str, Any] | None = None) -> dic
     }
 
 
+def _validate_product_publication(handoff: dict[str, Any]) -> None:
+    """Validate domain consistency before emitting any of the finalizer's outputs."""
+    remote = (require_context().params or {}).get("remote_inputs") or {}
+    manifest, workspace = handoff["stage_manifest"], handoff["workspace_state"]
+    stage = manifest.get("stage")
+    if (stage not in STAGE_ARTIFACTS or not workspace.get("workspace_id")
+            or manifest.get("workspace_id") != workspace["workspace_id"]
+            or workspace.get("current_run", {}).get("selected_stage") != stage):
+        raise ValueError("PRODUCT_PUBLICATION_INVALID: inconsistent stage or workspace")
+    if not _mapping(remote.get(stage + "_assessment")):
+        raise ValueError("PRODUCT_PUBLICATION_INCOMPLETE: missing bound stage assessment")
+    expected = {"body": (STAGE_ARTIFACTS[stage][0], manifest.get("host_artifact") or {})}
+    expected.update({kind: (slot, (manifest.get("representations") or {}).get(kind) or {})
+                     for kind, slot in STAGE_REPRESENTATIONS[stage].items()})
+    for slot, recorded in expected.values():
+        actual = _bound_artifact_descriptor(remote.get(slot))
+        if not actual.get("present"):
+            raise ValueError(f"PRODUCT_PUBLICATION_INCOMPLETE: {slot}")
+        if (recorded.get("slot") != slot or not actual.get("content_sha256")
+                or recorded.get("content_sha256") != actual["content_sha256"]):
+            raise ValueError(f"PRODUCT_PUBLICATION_CONTENT_MISMATCH: {slot}")
+    if not handoff.get("delivery_summary"):
+        raise ValueError("PRODUCT_PUBLICATION_INCOMPLETE: delivery_summary")
+
+
 def publish_product_handoff_state() -> str:
     """Build and publish the deterministic one-stage handoff as one terminal operation."""
 
     handoff = build_product_handoff_state()
+    _validate_product_publication(handoff)
     _publish_values([
         (key, handoff[key], kind) for key, kind in (
             ("stage_manifest", "json"), ("workspace_state", "json"), ("delivery_summary", "text"),

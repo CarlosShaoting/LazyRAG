@@ -1,5 +1,7 @@
 # cst/product_prs 修复 Review 与测试交接
 
+> 历史审查记录：反映当时提交的问题和测试。后续修复、当前状态及统一测试步骤见 [问题、修复记录与测试总表](product-prs-review-fixes-and-tests.md)。
+
 ## Review 范围与结论
 
 基于 `LazyAGI/LazyMind upstream/main@9cbc57c5deb3b5fdded71c6b051041c1bff3aa30` 建立 `cst/product_prs`，导入 `CarlosShaoting/LazyRAG workflow_dev@5b586402a21a638b29f37bec21ed5b0f0491466d` 的增量并修复。保留 main 当前的 LazyLLM 子模块指针 `ab67c1893872fdc2895fc412d226e61a0524c985`。这份记录审查实际行为、重复功能和共享层影响，不按严重程度分级，不以 CI 状态代替验收。

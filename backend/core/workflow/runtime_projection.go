@@ -17,6 +17,7 @@ import (
 	"lazymind/core/workflow/controlstore"
 	"lazymind/core/workflow/executor"
 	"lazymind/core/workflow/graphengine"
+	"lazymind/core/workflow/publication"
 )
 
 const workflowDefinitionChangedCode = "WORKFLOW_DEFINITION_CHANGED"
@@ -179,6 +180,9 @@ func loadRuntimeSnapshot(ctx context.Context, db *gorm.DB, sessionID string) (gr
 		_ = json.Unmarshal(row.PrunedJSON, &pruned)
 		_ = json.Unmarshal(row.BypassedJSON, &bypassed)
 		snapshot.Routes = append(snapshot.Routes, graphengine.RouteFact{From: row.FromStepID, Activated: active, Pruned: pruned, Bypassed: bypassed, Validity: row.Validity})
+	}
+	if err := publication.ProjectInputs(db.WithContext(ctx), controlledSession, &snapshot); err != nil {
+		return graphengine.RuntimeSnapshot{}, err
 	}
 	return snapshot, nil
 }

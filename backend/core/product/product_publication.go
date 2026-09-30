@@ -1,18 +1,18 @@
-package store
+package product
 
 import (
 	"context"
 	"errors"
 	"gorm.io/gorm"
 	"lazymind/core/common/orm"
-	"lazymind/core/workflow/productstate"
+	"lazymind/core/workflow/publication"
 )
 
 // publishedProductArtifacts resolves the last complete delivery, including after
 // working revisions invalidate the old graph selection. Exact IDs, not selected
 // flags, define a publication. Authorization is still checked for every read.
 func (r *Repository) publishedProductArtifacts(ctx context.Context, owner string, session orm.WorkflowSession) ([]Artifact, error) {
-	pub, err := productstate.Latest(r.db.WithContext(ctx), session.ID)
+	pub, err := publication.Latest(r.db.WithContext(ctx), session.ID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -33,7 +33,7 @@ func (r *Repository) publishedProductArtifacts(ctx context.Context, owner string
 			if err := r.db.WithContext(ctx).First(&row, "id = ?", id).Error; err != nil {
 				return nil, err
 			}
-			raw, err := productstate.Bytes(r.db.WithContext(ctx), row)
+			raw, err := publication.Bytes(r.db.WithContext(ctx), row)
 			if err != nil {
 				return nil, err
 			}

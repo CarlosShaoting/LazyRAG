@@ -407,7 +407,7 @@ func (s *Service) Terminal(ctx context.Context, attemptID, token, status, code s
 		if updated.RowsAffected != 1 {
 			return ErrAlreadyTerminal
 		}
-		if err := finishProductAttemptOutputs(ctx, tx, current, status); err != nil {
+		if err := finishTransactionalOutputs(ctx, tx, current, status); err != nil {
 			return err
 		}
 		outboxStatus := "completed"

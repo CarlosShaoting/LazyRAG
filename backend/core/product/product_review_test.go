@@ -1,7 +1,9 @@
-package store
+package product
 
 import (
 	"encoding/json"
+	"github.com/glebarez/sqlite"
+	"gorm.io/gorm"
 	"lazymind/core/common/orm"
 	"testing"
 	"time"
@@ -49,12 +51,15 @@ func TestProductNavigationNeverApprovesDecisions(t *testing.T) {
 func seedReviewProduct(t *testing.T) *Repository {
 	t.Helper()
 	repo := testRepo(t)
-	if err := repo.db.AutoMigrate(&orm.WorkflowSlotRevision{}, &orm.WorkflowHumanArtifact{}, &orm.SubAgentArtifact{}); err != nil {
+	if err := repo.db.AutoMigrate(&orm.WorkflowRevision{}, &orm.WorkflowSlotRevision{}, &orm.WorkflowHumanArtifact{}, &orm.SubAgentArtifact{}); err != nil {
 		t.Fatal(err)
 	}
 	createTestConversation(t, repo, "conversation", "owner")
 	now := time.Now().UTC()
-	session := orm.WorkflowSession{ID: "session", WorkflowID: "product_solution_delivery", ConversationID: "conversation", Status: "completed", StateVersion: 1, CreateUserID: "owner", CreatedAt: now, UpdatedAt: now}
+	if err := repo.db.Create(&orm.WorkflowRevision{ID: "revision", CompiledGraph: json.RawMessage(`{"runtime":{"host_extensions":["product-project-v1"]}}`)}).Error; err != nil {
+		t.Fatal(err)
+	}
+	session := orm.WorkflowSession{ID: "session", WorkflowID: "renamed-project", WorkflowRevisionID: "revision", ConversationID: "conversation", Status: "completed", StateVersion: 1, CreateUserID: "owner", CreatedAt: now, UpdatedAt: now}
 	if err := repo.db.Create(&session).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -141,5 +146,87 @@ func TestProductLegacyAutoApprovalIsReopened(t *testing.T) {
 	productReopenAutomaticDecisions(workspace)
 	if productPendingHardStops(workspace) != 1 || decision["accepted_by"] != nil {
 		t.Fatalf("still trusted auto acceptance: %#v", decision)
+	}
+}
+
+func testRepo(t *testing.T) *Repository {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := New(db)
+	if err := repo.AutoMigrate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&orm.WorkflowAttemptInputBinding{}, &orm.WorkflowRouteDecision{}); err != nil {
+		t.Fatal(err)
+	}
+	return repo
+}
+func createTestConversation(t *testing.T, repo *Repository, id, owner string) {
+	t.Helper()
+	if err := repo.db.AutoMigrate(&orm.Conversation{}, &orm.WorkflowSession{}, &orm.TaskCenterTask{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.db.Create(&orm.Conversation{ID: id, BaseModel: orm.BaseModel{CreateUserID: owner, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}}).Error; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStageReadyComesFromActualGraphAndBoundInputs(t *testing.T) {
+	raw := json.RawMessage(`{"nodes":{"renamed_entry":{"id":"renamed_entry","input_expression":{"material":"brief"}}},"control_edges":[{"from":"__start__","to":"renamed_entry"},{"from":"renamed_entry","to":"__end__"}],"material_producers":{"brief":{"kind":"external"}}}`)
+	if ready := initialReady(raw, nil); len(ready) != 0 {
+		t.Fatalf("missing input was ready: %v", ready)
+	}
+	if ready := initialReady(raw, []InputBinding{{ID: "bound", MaterialID: "brief"}}); len(ready) != 1 || ready[0] != "renamed_entry" {
+		t.Fatalf("wrong frontier: %v", ready)
+	}
+}
+
+func TestRelayKeepsPinnedPackageWhenNewHeadExists(t *testing.T) {
+	repo := seedReviewProduct(t)
+	graph := json.RawMessage(`{"runtime":{"host_extensions":["product-project-v1"]},"nodes":{"renamed_entry":{"id":"renamed_entry"}},"control_edges":[{"from":"__start__","to":"renamed_entry"},{"from":"renamed_entry","to":"__end__"}],"material_producers":{"workspace_seed":{"kind":"external"},"stage_approval":{"kind":"external"},"requested_stage":{"kind":"external"},"upstream_design":{"kind":"external"}}}`)
+	if err := repo.db.AutoMigrate(&orm.WorkflowResource{}, &orm.WorkflowRevisionEntry{}, &orm.WorkflowBlob{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.db.Create(&orm.WorkflowResource{ID: "resource", WorkflowID: "renamed-project", WorkflowRef: "builtin:renamed-project", HeadRevisionID: "new-head", Status: "active", OwnerUserID: "owner"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.db.Model(&orm.WorkflowRevision{}).Where("id = ?", "revision").Updates(map[string]any{"plugin_resource_id": "resource", "compiled_graph": graph}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.db.Create(&orm.WorkflowRevision{ID: "new-head", WorkflowResourceID: "resource", RevisionNo: 2, CompiledGraph: json.RawMessage(`{"nodes":{}}`)}).Error; err != nil {
+		t.Fatal(err)
+	}
+	raw, err := repo.RelayProductStage(t.Context(), "owner", "session", ProductRelayRequest{Action: "switch-stage", SelectedStage: "design", ExpectedStateVersion: 1, IdempotencyKey: "switch-pinned"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		SessionID string   `json:"session_id"`
+		Ready     []string `json:"ready_steps"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		t.Fatal(err)
+	}
+	var next orm.WorkflowSession
+	if err := repo.db.First(&next, "id = ?", result.SessionID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if next.WorkflowRevisionID != "revision" {
+		t.Fatalf("upgraded implicitly to %s", next.WorkflowRevisionID)
+	}
+	if len(result.Ready) != 1 || result.Ready[0] != "renamed_entry" {
+		t.Fatalf("wrong Ready: %s", raw)
+	}
+	bindings, err := repo.ListInputBindings(t.Context(), "owner", next.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, binding := range bindings {
+		if binding.MaterialID == "word_target" {
+			t.Fatal("host injected business default")
+		}
 	}
 }

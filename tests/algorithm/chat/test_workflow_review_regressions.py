@@ -119,15 +119,10 @@ def test_explicit_reference_opt_out_does_not_repeat_launch_search(monkeypatch):
     assert outcomes == []
 
 
-def test_product_execution_policy_is_disabled_for_writer():
-    from lazymind.chat.workflow.product_policy import normalize_bound_inputs, policy_for, execution_workspace
-    params = {'workflow_id': 'writer-workflow', 'step_id': 'write_prd_document',
-              'workflow_runtime': {'publisher_owned_slots': ['workspace_state', 'stage_manifest']},
-              'remote_inputs': {'word_target': 'unchanged'}}
-    assert policy_for(params) is None
-    assert normalize_bound_inputs(params) == []
-    assert params['remote_inputs'] == {'word_target': 'unchanged'}
-    assert execution_workspace({'workspace_path': '/original/writer', 'params': params}, {}) == '/original/writer'
+def test_execution_limits_remain_opt_in_for_every_workflow():
+    from lazymind.chat.workflow.execution_policy import policy_for
+    for workflow_id in ['writer-workflow', 'product_solution_delivery', 'renamed-workflow']:
+        assert policy_for({'workflow_id': workflow_id, 'step_id': 'write_prd_document'}) is None
 
 
 def test_explicit_update_is_distinct_and_changes_generation_ratio(monkeypatch):

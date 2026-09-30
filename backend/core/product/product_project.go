@@ -1,4 +1,4 @@
-package store
+package product
 
 import (
 	"context"
@@ -340,13 +340,4 @@ func (r *Repository) restoreProductStagePreferences(ctx context.Context, owner, 
 		result = append(result, InputBinding{MaterialID: material, ResourceType: "input_resource", ResourceID: resource.ID, ResourceRevision: resource.Revision, ContentHash: resource.ContentHash})
 	}
 	return result
-}
-
-func productStageDefaults(stage string) map[string]string {
-	words := map[string]string{"direction": "1800", "design": "5000", "prd": "6000", "review": "3000", "handoff": "5000"}
-	target, sample := words[stage], "none-confirmed"
-	if target == "" {
-		target, sample = "not-applicable", "not-required"
-	}
-	return map[string]string{"execution_depth": "auto", "word_target": target, "reference_sample_choice": sample}
 }

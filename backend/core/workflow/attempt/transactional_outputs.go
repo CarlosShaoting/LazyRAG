@@ -6,32 +6,36 @@ import (
 	"gorm.io/gorm"
 	"lazymind/core/common/orm"
 	"lazymind/core/workflow/artifactgraph"
-	"lazymind/core/workflow/productstate"
+	"lazymind/core/workflow/publication"
 	"time"
 )
 
-func finishProductAttemptOutputs(ctx context.Context, tx *gorm.DB, current orm.WorkflowSessionStep, status string) error {
+func finishTransactionalOutputs(ctx context.Context, tx *gorm.DB, current orm.WorkflowSessionStep, status string) error {
 	// Some legacy host-only stores have no Session schema.
 	if !tx.Migrator().HasTable(&orm.WorkflowSession{}) {
 		return nil
 	}
 	var session orm.WorkflowSession
 	err := tx.Where("id = ?", current.SessionID).First(&session).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) || (err == nil && !productstate.Supports(session.WorkflowID)) {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	enabled, err := productstate.PublicationEnabled(tx, session)
+	enabled, err := publication.PublicationEnabled(tx, session)
 	if err != nil || !enabled {
 		return err
 	}
 	if _, err := artifactgraph.LockSession(tx, current.SessionID); err != nil {
 		return err
 	}
-	if status == "succeeded" && current.StepID == "finalize_product_delivery" {
-		if err := productstate.Publish(tx, session, current); err != nil {
+	policy, err := publication.Policy(tx, session)
+	if err != nil {
+		return err
+	}
+	if status == "succeeded" && policy.Publication != nil && current.StepID == policy.Publication.Step {
+		if err := publication.Publish(tx, session, current, *policy.Publication); err != nil {
 			return err
 		}
 	}

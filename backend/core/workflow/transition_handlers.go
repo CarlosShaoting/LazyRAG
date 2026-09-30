@@ -22,7 +22,6 @@ import (
 	"lazymind/core/workflow/controlstore"
 	"lazymind/core/workflow/executor"
 	"lazymind/core/workflow/graphengine"
-	"lazymind/core/workflow/productstate"
 	workflowstore "lazymind/core/workflow/store"
 )
 
@@ -809,30 +808,9 @@ func applyWorkflowTransition(ctx context.Context, tx *gorm.DB, sessionID string,
 					return err
 				}
 			}
-			inheritedWorkspace := ""
-			productPublication, err := productstate.PublicationEnabled(tx, session)
-			if err != nil {
-				return err
-			}
-			if productPublication && target.TargetStepID == "finalize_product_delivery" {
-				pub, err := productstate.Latest(tx, session.ID)
-				if err == nil {
-					inheritedWorkspace = pub.Revisions["workspace_state"]
-				} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-					return err
-				}
-			}
 			for _, witness := range evaluations[target.TargetStepID].Witnesses {
-				if inheritedWorkspace != "" && witness.MaterialID == "workspace_seed" {
-					continue
-				}
 				binding := attemptInputBindingFromWitness(tx, session.ID, attempt.ID, witness, now)
 				if err := tx.Create(&binding).Error; err != nil {
-					return err
-				}
-			}
-			if inheritedWorkspace != "" {
-				if err := tx.Create(&orm.WorkflowAttemptInputBinding{ID: newAttemptInputBindingID(), SessionID: session.ID, AttemptID: attempt.ID, MaterialID: "workspace_seed", MaterialRevisionID: inheritedWorkspace, SourceType: "artifact", SourceID: inheritedWorkspace, CreatedAt: now}).Error; err != nil {
 					return err
 				}
 			}
@@ -988,10 +966,15 @@ func attemptInputBindingFromWitness(tx *gorm.DB, sessionID, attemptID string,
 	}
 	var revision orm.WorkflowSlotRevision
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Select("id", "human_artifact_id").
+		Select("id", "human_artifact_id", "content_snapshot").
 		Where("id = ? AND session_id = ?", witness.RevisionID, sessionID).
-		First(&revision).Error; err != nil || revision.HumanArtifactID == nil ||
-		*revision.HumanArtifactID == "" {
+		First(&revision).Error; err != nil {
+		return value
+	}
+	if revision.HumanArtifactID == nil || *revision.HumanArtifactID == "" {
+		if len(revision.ContentSnapshot) > 0 {
+			value.ContentHash = fmt.Sprintf("sha256:%x", sha256.Sum256(revision.ContentSnapshot))
+		}
 		return value
 	}
 	var artifact orm.WorkflowHumanArtifact

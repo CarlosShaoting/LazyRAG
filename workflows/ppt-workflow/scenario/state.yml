@@ -68,6 +68,8 @@ steps:
 
       User request:
       {{user_input}}
+      A bare continue/继续 is approval to proceed. Use launch_user_input from the
+      execution context and bound prior artifacts to retain the existing requirements.
 
       {{runtime_instruction}}
 
@@ -229,6 +231,8 @@ steps:
 
       Original user request:
       {{user_input}}
+      A bare continue/继续 is approval to proceed. Use launch_user_input from the
+      execution context and bound prior artifacts to retain the existing requirements.
 
       {{runtime_instruction}}
 
@@ -402,6 +406,8 @@ steps:
 
       Original user request:
       {{user_input}}
+      A bare continue/继续 is approval to proceed. Use launch_user_input from the
+      execution context and bound prior artifacts to retain the existing requirements.
 
       {{runtime_instruction}}
 
@@ -461,6 +467,8 @@ steps:
 
       Original user request:
       {{user_input}}
+      A bare continue/继续 is approval to proceed. Use launch_user_input from the
+      execution context and bound prior artifacts to retain the existing requirements.
 
       Style flow:
       {{style_flow}}
@@ -585,6 +593,8 @@ steps:
 
       Original user request:
       {{user_input}}
+      A bare continue/继续 is approval to proceed. Use launch_user_input from the
+      execution context and bound prior artifacts to retain the existing requirements.
 
       {{runtime_instruction}}
 
@@ -652,6 +662,8 @@ steps:
 
       Original/current user request:
       {{user_input}}
+      A bare continue/继续 is approval to proceed. Use launch_user_input from the
+      execution context and bound prior artifacts to retain the existing requirements.
 
       {{runtime_instruction}}
 
@@ -775,6 +787,8 @@ steps:
 
       Original/current user request:
       {{user_input}}
+      A bare continue/继续 is approval to proceed. Use launch_user_input from the
+      execution context and bound prior artifacts to retain the existing requirements.
 
       {{runtime_instruction}}
 
@@ -843,6 +857,8 @@ steps:
 
       Original user request:
       {{user_input}}
+      A bare continue/继续 is approval to proceed. Use launch_user_input from the
+      execution context and bound prior artifacts to retain the existing requirements.
 
       {{runtime_instruction}}
 

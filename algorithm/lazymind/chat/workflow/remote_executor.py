@@ -23,7 +23,7 @@ import httpx
 
 from lazymind.config import config
 from lazymind.chat.workflow.client import RemoteExecutorClient
-from lazymind.chat.workflow.product_policy import bounded_frames, execution_workspace, normalize_bound_inputs, policy_for
+from lazymind.chat.workflow.execution_policy import bounded_frames, policy_for
 from lazymind.chat.engine.agent_runtime.env_runtime import inject_runtime_env
 from lazymind.chat.engine.tools.workspace_context import workflow_execution_scope
 
@@ -90,7 +90,7 @@ class RemoteWorkflowExecutor:
             task_id = str(metadata.get('task_id') or attempt_id)
             spec = await self.runtime.execution_spec(client, task_id, lease)
             task = dict(spec.get('task') or {})
-            workspace = execution_workspace(spec, metadata)
+            workspace = str(spec['workspace_path'])
             pathlib.Path(workspace).mkdir(parents=True, exist_ok=True)
             inputs = await self._resolve_inputs(client, attempt_id, lease, context, workspace)
         except Exception as exc:
@@ -167,15 +167,6 @@ class RemoteWorkflowExecutor:
                     'input_slots': task.get('input_slots') or [],
                     'output_slots': task.get('output_slots') or [],
                 })
-                # Product-only input normalization; empty result keeps the
-                # upstream remote execution path unchanged for every other
-                # Workflow.
-                normalized_fields = normalize_bound_inputs(params)
-                if normalized_fields:
-                    await self.runtime.task_event(client, task_id, lease, {
-                        'type': 'progress', 'current_phase': '产品输入规范化完成',
-                        'normalized_fields': normalized_fields,
-                    })
                 checkpoint = context.get('post_step_checkpoint')
                 if checkpoint:
                     # Core pins this completed execution only when retrying its
@@ -292,11 +283,11 @@ class RemoteWorkflowExecutor:
                         }
             except Exception as exc:
                 failure = str(exc)
-                if params.get('workflow_id') == 'product_solution_delivery' and isinstance(exc, httpx.HTTPStatusError):
+                if isinstance(exc, httpx.HTTPStatusError):
                     try:
                         error = exc.response.json().get('error') or {}
                         if isinstance(error, dict) and error.get('message'):
-                            failure = f"{error.get('code', 'PRODUCT_RUNTIME_FAILED')}: {error['message']}"
+                            failure = f"{error.get('code', 'WORKFLOW_RUNTIME_FAILED')}: {error['message']}"
                     except (ValueError, AttributeError):
                         pass
                 terminal_event = {
