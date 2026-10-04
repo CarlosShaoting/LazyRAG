@@ -283,7 +283,7 @@ def test_v2_loads_without_another_workflow_source_tree(monkeypatch, tmp_path):
     import yaml
     files = {name: base64.b64encode((ROOT / 'workflows/image-workflow-v2' / name).read_bytes()).decode() for name in ['workflow.yaml', 'scripts/tools.py', 'scripts/baoyu.py']}
     monkeypatch.chdir(tmp_path)
-    functions = [function for script in yaml.safe_load((ROOT / 'workflows/image-workflow-v2/workflow.yaml').read_text())['tool_scripts'] for function in script['functions']]
+    functions = [function for script in yaml.safe_load((ROOT / 'workflows/image-workflow-v2/workflow.yaml').read_text(encoding='utf-8'))['tool_scripts'] for function in script['functions']]
     loaded = load_workflow_package_tools({'files': files}, functions, 'image-workflow-v2', 'immutable-test')
     assert set(loaded) == set(functions)
     # Execute the shared helper too: loading alone would not catch a lazy V1 import.
