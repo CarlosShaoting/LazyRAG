@@ -201,6 +201,14 @@ fetch 后 upstream/main 仍为 `9cbc57c5d`，当前提交为 `eb1178be6`。本�
 
 修正 product_client、product_project、registry、execution_policy、workflow_manager 的 15 条 E302/E501/E128/Q000：补齐顶层定义空行、拆分长调用/条件/字典、对齐续行、统一单引号。没有更改运行逻辑；5 个文件与修改前的 AST 完全一致。
 
+### C13：Algorithm CI 的 PPT 回归测试停留在旧风格协议（已修复）
+
+2026-10-04 通过浏览器查看 [CI job 109836899207](https://github.com/LazyAGI/LazyMind/actions/runs/36699741037/job/109836899207)：4 failed、4031 passed。四项失败均来自 `tests/algorithm/chat/workflows` 中的旧测试与当前包内风格协议不一致；本次只修改测试及本文档，没有修改运行时代码，也没有跳过测试或放宽 CI 门槛。
+
+- 路由测试补齐 `choose_style`，并检查预览路线要求 preview_choice，直接底图/大纲路线要求 auto。
+- 两项大纲重试测试的 stage 替身接受显式 `sample` 参数，生成包含 design_style、color_tone、primary_color、palette 的有效风格合同。保留失败重试、发布失败后复用内容检查点、跨工作流隔离与原图片保留断言；额外确认人工修改的有效风格不会被重新生成覆盖。
+- 旧 standard deck 测试移除新版本才有的 `params.style_flow`，真实模拟旧数据。显式传入 standard 的新 deck 仍表示 preview_choice；缺少 style_flow、样例和选择记录的旧 deck 按现有迁移规则恢复为 auto，不重建目录或图片。
+
 ## 边界与兼容说明
 
 main 已有的 `workflow/ppt_incremental_pages.go` 仍按 PPT 身份处理旧页插入；这是基线已有逻辑，本次未新增或扩展。它需要单独设计旧会话迁移才能安全改成声明式能力，不能直接删除后破坏现有 PPT 页面保留行为。本次 A01 处理的是增量新加的 manager 输入改写，不代表整个主仓库已经不存在任何历史特例。
@@ -297,6 +305,22 @@ go test ./workflow -run '^TestOrdinaryWorkflowHidesInternalSlotsFromPinnedPackag
 
 ```bash
 PYTHONPATH=/tmp/lazymind-installer-review-pytest make lint-python PYTHON=local/build/deps/python/algorithm/bin/python
+```
+
+### C13 PPT CI 验证
+
+- Algorithm 全量：4035 passed、17 skipped、21 subtests passed（47.74 秒）；原 CI 的 4 项失败全部通过。
+- CI 中原先失败的文件及 speaker notes：19 passed。
+- `workflows/ppt-workflow/scripts/tests` 和 `workflows/ppt-workflow/runtime/scripts/tests`：125 passed，12 subtests passed。
+- `make lint-python`：通过；`git diff --check`：通过。
+- 本机首次全量测试缺少 Pandoc，4 项文档转换失败；CI 配置已有 Pandoc 安装步骤。通过官方发行包补齐与 CI 一致的 Pandoc 3.11 后重新全量执行，不调整生产依赖和 CI 配置。
+
+复现命令（仓库根目录，Python 已安装测试依赖；Pandoc 位于 PATH 或通过 LAZYMIND_PANDOC_PATH 指定）：
+
+```bash
+LAZYLLM_INIT_DOC=1 PYTHONPATH=algorithm:algorithm/lazyllm local/build/deps/python/algorithm/bin/python -m pytest tests/algorithm/ -q
+PYTHONPATH=algorithm:algorithm/lazyllm local/build/deps/python/algorithm/bin/python -m pytest -q workflows/ppt-workflow/scripts/tests workflows/ppt-workflow/runtime/scripts/tests
+make lint-python PYTHON=local/build/deps/python/algorithm/bin/python
 ```
 
 ### 可重复执行的命令
