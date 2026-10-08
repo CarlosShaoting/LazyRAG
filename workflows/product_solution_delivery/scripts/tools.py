@@ -1748,7 +1748,7 @@ def _normalize_execution_depth(raw: Any) -> str:
         "light": "light", "轻量": "light", "轻量模式": "light", "精简": "light",
         "复用现有": "light", "minimum-fill": "minimum-fill", "最小补齐": "minimum-fill",
         "最小补齐模式": "minimum-fill", "补齐": "minimum-fill", "full": "full",
-        "完整": "full", "完整模式": "full", "完整执行": "full",
+        "完整": "full", "完整模式": "full", "完整执行": "full", "全流程": "full",
     }
     normalized = aliases.get(value)
     if not normalized:
@@ -1761,6 +1761,7 @@ def _normalize_reference_sample(raw: Any, *, text_stage: bool) -> str:
     aliases = {
         "provided": "provided", "已提供": "provided", "有样例": "provided",
         "none-confirmed": "none-confirmed", "none": "none-confirmed", "无样例": "none-confirmed",
+        "无": "none-confirmed",
         "default": "none-confirmed",
         "默认结构": "none-confirmed", "使用默认结构": "none-confirmed",
         "不使用参考样例": "none-confirmed", "不提供参考样例": "none-confirmed",
@@ -2100,32 +2101,20 @@ def _scalar(value: Any) -> str:
 def _normalize_bound_product_inputs(params: dict[str, Any]) -> list[str]:
     """Normalize known scalar aliases in the execution projection, never mutate input resources."""
     inputs = dict(params.get('remote_inputs') or {})
-    aliases = {
-        'execution_depth': {
-            '': 'auto', 'auto': 'auto', 'standard': 'auto', 'default': 'auto',
-            '自动判断': 'auto', '由当前阶段判断': 'auto',
-            'light': 'light', '轻量': 'light', '轻量模式': 'light', '精简': 'light', '复用现有': 'light',
-            'minimum-fill': 'minimum-fill', '最小补齐': 'minimum-fill', '最小补齐模式': 'minimum-fill',
-            '补齐': 'minimum-fill', 'full': 'full', '完整': 'full', '完整模式': 'full', '完整执行': 'full',
-        },
-        'reference_sample_choice': {
-            '': '', 'default': '', 'none': 'none-confirmed', 'none-confirmed': 'none-confirmed',
-            '默认结构': 'none-confirmed', '使用默认结构': 'none-confirmed', '无样例': 'none-confirmed',
-            '不使用参考样例': 'none-confirmed', '不提供参考样例': 'none-confirmed', '不使用样例': 'none-confirmed',
-            'provided': 'provided', '已提供': 'provided', '有样例': 'provided',
-            'not-required': 'not-required', '不需要': 'not-required', '不适用': 'not-required',
-        },
-    }
     changed = []
-    for field, values in aliases.items():
+    for field in ('execution_depth', 'reference_sample_choice'):
         if field not in inputs:
             continue
         raw = _scalar(inputs[field]).lower()
-        if raw not in values:
-            raise ValueError(f'PRODUCT_INPUT_INVALID: {field} has an unsupported value')
-        normalized = values[raw]
-        if field == 'reference_sample_choice' and normalized == '':
-            normalized = 'provided' if inputs.get('reference_sample') else 'none-confirmed'
+        try:
+            if field == 'execution_depth':
+                normalized = _normalize_execution_depth(raw or 'auto')
+            elif raw in ('', 'default'):
+                normalized = 'provided' if inputs.get('reference_sample') else 'none-confirmed'
+            else:
+                normalized = _normalize_reference_sample(raw, text_stage=False)
+        except ValueError as exc:
+            raise ValueError(f'PRODUCT_INPUT_INVALID: {field} has an unsupported value') from exc
         if normalized != inputs[field]:
             inputs[field] = normalized
             changed.append(field)

@@ -779,6 +779,87 @@ def test_preflight_accepts_user_facing_option_labels(tmp_path):
     assert result['execution_plan']['reference_sample_status'] == 'none-confirmed'
 
 
+def test_preflight_accepts_full_process_without_reference_sample(tmp_path):
+    tools = _load_contract_tools(tmp_path)
+
+    result = tools.normalize_product_parameters(
+        '企业会议知识助手', '全流程', '全流程', '300', '无',
+    )
+
+    assert result['execution_plan']['stage_chain'] == list(tools.STAGE_ORDER)
+    assert result['execution_plan']['execution_depth'] == 'full'
+    assert result['execution_plan']['word_target'] == 300
+    assert result['execution_plan']['reference_sample_status'] == 'none-confirmed'
+
+
+@pytest.mark.parametrize('wrapped', [False, True])
+def test_router_publishes_chinese_bindings_without_model_override(tmp_path, monkeypatch, wrapped):
+    tools = _load_contract_tools(tmp_path)
+    remote = {
+        'product_goal': '解决会议信息分散、纪要难沉淀的问题，主要给企业员工和部门主管使用',
+        'execution_depth': '全流程', 'requested_stage': 'full',
+        'word_target': '300', 'reference_sample_choice': '无',
+    }
+    if wrapped:
+        for field in ('execution_depth', 'reference_sample_choice'):
+            remote[field] = {'data': json.dumps(remote[field], ensure_ascii=False)}
+    original = json.loads(json.dumps(remote))
+    tools.require_context().params = {'remote_inputs': remote}
+    published = {}
+
+    def save_values(artifacts, _publisher):
+        published.update({key: content for key, content, _kind in artifacts})
+        return list(published)
+
+    monkeypatch.setattr(tools, '_publish_values', save_values)
+    result = tools.publish_product_route(
+        {'selected_stage': 'direction', 'route_source': 'explicit', 'confidence': 'explicit',
+         'route_reason': '用户要求全流程', 'stage_chain': list(tools.STAGE_ORDER),
+         'stage_chain_authorized': True},
+        product_goal='模型占位目标', execution_depth='light', word_target='800',
+        reference_sample_choice='provided', requested_stage='prd',
+    )
+
+    assert result['status'] == 'published'
+    assert result['control']['next_step'] == 'build_direction_outline'
+    plan = published['execution_plan']
+    assert plan['planned_stage_chain'] == list(tools.STAGE_ORDER)
+    assert plan['product_goal'] == original['product_goal']
+    assert plan['execution_depth'] == 'full'
+    assert plan['word_target'] == 300
+    assert plan['reference_sample_status'] == 'none-confirmed'
+    assert json.loads(Path(published['resource_profiles']).read_text()) == []
+    assert remote == original
+
+
+@pytest.mark.parametrize('choice', ['', 'default'])
+@pytest.mark.parametrize('sample', ['', '已上传的参考样例'])
+def test_bound_product_defaults_still_infer_reference_presence(tmp_path, choice, sample):
+    tools = _load_contract_tools(tmp_path)
+    remote = {'execution_depth': '', 'reference_sample_choice': choice, 'reference_sample': sample}
+    params = {'remote_inputs': remote}
+
+    tools._normalize_bound_product_inputs(params)
+
+    assert params['remote_inputs']['execution_depth'] == 'auto'
+    assert params['remote_inputs']['reference_sample_choice'] == ('provided' if sample else 'none-confirmed')
+    assert remote['execution_depth'] == ''
+    assert remote['reference_sample_choice'] == choice
+
+
+@pytest.mark.parametrize('field', ['execution_depth', 'reference_sample_choice'])
+def test_router_rejects_unknown_bound_preferences_before_publication(tmp_path, monkeypatch, field):
+    tools = _load_contract_tools(tmp_path)
+    tools.require_context().params = {'remote_inputs': {'product_goal': '企业会议知识助手', field: '未知选项'}}
+    published = []
+    monkeypatch.setattr(tools, '_publish_values', lambda *args: published.append(args))
+
+    with pytest.raises(ValueError, match=f'PRODUCT_INPUT_INVALID: {field}'):
+        tools.publish_product_route({})
+
+    assert published == []
+
+
 def test_preflight_rejects_missing_conditional_text_answers(tmp_path):
     tools = _load_contract_tools(tmp_path)
 

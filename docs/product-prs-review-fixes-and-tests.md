@@ -244,6 +244,14 @@ fetch 后 upstream/main 仍为 `9cbc57c5d`，当前提交为 `eb1178be6`。本�
 
 使用限制：新代码需要新的工作流 revision；已有会话固定旧包，不热替换。此修改不承诺 SiliconFlow 的超时/协议错误消失。成功页仍按原页序发布，前页未完成时通过进度说明后页已生成，未改变产物排序语义。
 
+### C18：产品工作流中文参数导致父 Router 发布失败（已修复）
+
+会话 `0d69ccff-299b-4683-8674-49a5e6ad8aa0` 的绑定参数包含 `execution_depth="全流程"` 和 `reference_sample_choice="无"`。父 Router 发布前的别名表不接受它们，触发 `PRODUCT_INPUT_INVALID`；由于用户绑定值优先于模型参数，模型改传空值也无法恢复。
+
+补齐“全流程”→`full`、“无”→`none-confirmed`，绑定输入校验复用产品工作流已有的标准化函数，移除重复别名表，避免预检和发布入口再次出现规则漂移。保留空值/default 的原有默认规则、未知值拒绝规则、用户输入优先级及原始资源不可变性。变更只在产品工作流内，不增加上层 manager 特例，不增加模型调用。
+
+本次提交不包含 HTTP 504 分类、错误展示或供应商超时处理；未重启服务。已有会话绑定不可变工作流包，不能将源代码修复视为已运行会话自动恢复；真实供应商全流程仍需在加载新工作流 revision 后复测。
+
 ## 边界与兼容说明
 
 main 已有的 `workflow/ppt_incremental_pages.go` 仍按 PPT 身份处理旧页插入；这是基线已有逻辑，本次未新增或扩展。它需要单独设计旧会话迁移才能安全改成声明式能力，不能直接删除后破坏现有 PPT 页面保留行为。本次 A01 处理的是增量新加的 manager 输入改写，不代表整个主仓库已经不存在任何历史特例。
@@ -385,6 +393,18 @@ PYTHONPATH=algorithm:algorithm/lazyllm local/build/deps/python/algorithm/bin/pyt
 - 新增测试覆盖并发命令状态隔离且 stdout 不被替换、异常后状态恢复；同 Attempt 的整套/低层重入被阻止而新 Attempt 允许重试；等待模型期间发出实时 progress；传入旧 concurrency=8 时仍逐页生成完整两页、保留完整大纲。
 - 原跨调用恢复测试增加全部成功后再次执行，确认保留检查点且不再次调用页面模型。
 - 真实供应商串行生成尚未验证；未将 mock 测试记作端测成功。
+
+### C18 产品工作流中文参数验证
+
+- 产品工作流与交付契约测试：54 passed。新增发布入口回归，覆盖真实中文绑定、资源包装/JSON 字符串、300 字目标和完整阶段计划，以及模型占位值不能覆盖用户输入。
+- 覆盖预检入口接受相同中文选项、空值/default 继续推断样例是否存在、原始绑定不被改写、未知选项在发布任何产物前失败。
+- `make lint-python PYTHON=local/build/deps/python/algorithm/bin/python` 通过；`git diff --check` 通过。发布出口使用测试替身，未执行真实模型端测。
+
+复测命令：
+
+```bash
+PYTHONPATH=algorithm:algorithm/lazyllm local/build/deps/python/algorithm/bin/python -m pytest tests/algorithm/chat/workflows/test_product_solution_delivery.py tests/algorithm/chat/test_product_workflow_delivery_contract.py -q
+```
 
 ### 可重复执行的命令
 
