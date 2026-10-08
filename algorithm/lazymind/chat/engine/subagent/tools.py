@@ -539,9 +539,9 @@ def resolve_artifact_files(arguments: dict) -> object:
             source = value.get(field) if field else value
             path = files.media(source) if kind == 'image' else files.local(source)
             if os.path.isabs(path):
-                # The saver copies by basename. Include escaped destination symlinks
-                # as writes rather than assuming the task directory makes them safe.
-                files.local(os.path.join(workspace, os.path.basename(path)), 'write')
+                # Copies use fresh private subdirectories; declare their parent
+                # without selecting or overwriting any existing basename target.
+                files.local(workspace, 'write')
             normalized.append({**value, field: path} if field and kind != 'file_list' else path)
         item['value'] = normalized if kind == 'file_list' else normalized[0]
     return files.finish(resolved)
@@ -654,8 +654,8 @@ def _resolve_list_index_from_sort_order(
     """Translate sort_order → list_index for a list-slot artifact.
 
     Returns (list_index, None) on success, or (None, error_message) when sort_order
-    is out of range. Returns (None, None) on technical errors or non-list slots
-    (caller should silently append in those cases).
+    is out of range. Returns (None, None) for confirmed empty/non-list slots.
+    Lookup failures raise before publication rather than turning an overwrite into an append.
     """
     try:
         import lazyllm
@@ -671,10 +671,11 @@ def _resolve_list_index_from_sort_order(
             order = slot_orders[slot]
         else:
             order_response = _workflow_client().get_slot_order(session_id, slot).result
-            raw_order = (
-                order_response.get('order_list')
-                if isinstance(order_response, dict) else None
-            )
+            if not isinstance(order_response, dict) or 'order_list' not in order_response:
+                raise ValueError('Missing order_list in Workflow response')
+            raw_order = order_response['order_list']
+            if raw_order is not None and not isinstance(raw_order, list):
+                raise ValueError('Invalid order_list in Workflow response')
             order = [int(value) for value in (raw_order or [])]
             if slot_orders is not None:
                 slot_orders[slot] = order
@@ -695,10 +696,11 @@ def _resolve_list_index_from_sort_order(
                 f'If you intended to overwrite, use a sort_order between 1 and {n}.'
             )
         return order[sort_order - 1], None
-    except Exception:
-        if slot_orders is not None:
-            slot_orders[slot] = []
-        return None, None
+    except Exception as exc:
+        raise ToolExecutionError(
+            f'Cannot resolve sort_order for {slot!r}: Workflow list order is unavailable. '
+            'Retry after the lookup succeeds; no append fallback was used.',
+        ) from exc
 
 
 def get_artifact(key: str, sort_order: Optional[int] = None, task_ref: Optional[str] = None,

@@ -86,13 +86,10 @@ def test_batch_reuses_order_snapshot_but_refreshes_on_next_call(batch_context, m
     assert events[-1]['value']['list_index'] == 11
 
 
-@pytest.mark.parametrize('failed', [False, True])
-def test_empty_or_failed_order_lookup_is_reused(batch_context, monkeypatch, failed):
+def test_confirmed_empty_order_lookup_is_reused(batch_context, monkeypatch):
     _, events = batch_context
     client = MagicMock()
     client.get_slot_order.return_value.result = {'order_list': []}
-    if failed:
-        client.get_slot_order.side_effect = RuntimeError('unavailable')
     monkeypatch.setattr(tools, '_workflow_client', lambda: client)
     tools.save_artifacts([
         {'key': 'images', 'value': 'first', 'sort_order': 1},
@@ -108,3 +105,83 @@ def test_invalid_batch_size_is_rejected_before_file_resolution(batch_context, co
     with pytest.raises(ToolExecutionError):
         tools.resolve_artifact_files({'artifacts': [{'key': 'report', 'value': 'text'}] * count})
     assert events == []
+
+
+@pytest.mark.parametrize('kind', ['file', 'image', 'file_list'])
+def test_same_basename_inputs_keep_independent_content(batch_context, tmp_path, kind):
+    from pathlib import Path
+
+    ctx, events = batch_context
+    sources = []
+    for directory, content in [('a', 'FIRST'), ('b', 'SECOND')]:
+        source = tmp_path / directory / 'report.png'
+        source.parent.mkdir()
+        source.write_text(content)
+        sources.append(str(source))
+    existing = tmp_path / 'report.png'
+    existing.write_text('PREVIOUS')
+    artifacts = ([{'key': 'images', 'value': sources, 'content_type': kind}]
+                 if kind == 'file_list' else [
+                     {'key': 'images', 'value': source, 'content_type': kind} for source in sources])
+    tools.save_artifacts(artifacts)
+    paths = (events[0]['value']['paths'] if kind == 'file_list'
+             else [event['value']['path'] for event in events])
+    assert len(set(paths)) == 2
+    assert [Path(path).read_text() for path in paths] == ['FIRST', 'SECOND']
+    assert all(Path(path).name == 'report.png' for path in paths)
+    assert existing.read_text() == 'PREVIOUS'
+    # A later save from the same source must not mutate the previous snapshot.
+    Path(sources[0]).write_text('REVISED')
+    tools.save_artifacts([{'key': 'images', 'value': sources[0], 'content_type': 'file'}])
+    assert [Path(path).read_text() for path in paths] == ['FIRST', 'SECOND']
+    assert Path(events[-1]['value']['path']).read_text() == 'REVISED'
+
+
+def test_failed_batch_preserves_previous_files_and_can_retry(batch_context, tmp_path):
+    from pathlib import Path
+
+    _, events = batch_context
+    source = tmp_path / 'incoming' / 'report.txt'
+    source.parent.mkdir()
+    source.write_text('PUBLISHED')
+    item = {'key': 'report', 'value': str(source), 'content_type': 'file'}
+    tools.save_artifacts([item])
+    saved = Path(events[-1]['value']['path'])
+    source.write_text('NEW')
+    events.clear()
+    with pytest.raises(ToolExecutionError):
+        tools.save_artifacts([item, {'key': 'undeclared', 'value': 'invalid'}])
+    assert events == []
+    assert saved.read_text() == 'PUBLISHED'
+    tools.save_artifacts([item])
+    assert saved.read_text() == 'PUBLISHED'
+    assert Path(events[-1]['value']['path']).read_text() == 'NEW'
+
+
+@pytest.mark.parametrize('failure', [RuntimeError('unavailable'), {}, {'order_list': '7,3'}])
+def test_failed_order_lookup_aborts_batch_and_retry_refreshes(batch_context, monkeypatch, failure):
+    ctx, events = batch_context
+    client = MagicMock()
+    if isinstance(failure, Exception):
+        client.get_slot_order.side_effect = failure
+    else:
+        client.get_slot_order.return_value.result = failure
+    monkeypatch.setattr(tools, '_workflow_client', lambda: client)
+    items = [
+        {'key': 'report', 'value': 'ready'},
+        {'key': 'images', 'value': 'replace first', 'sort_order': 1},
+        {'key': 'images', 'value': 'replace second', 'sort_order': 2},
+    ]
+    with pytest.raises(ToolExecutionError, match='list order is unavailable'):
+        tools.save_artifacts(items)
+    assert events == []
+    assert ctx.local_artifacts() == []
+    assert ctx.read_draft('report') is None
+    assert ctx._artifact_counts == {}
+    client.get_slot_order.assert_called_once()
+    client.get_slot_order.side_effect = None
+    client.get_slot_order.return_value.result = {'order_list': [7, 3]}
+    tools.save_artifacts(items)
+    assert client.get_slot_order.call_count == 2
+    assert [event['value'].get('list_index') for event in events] == [None, 7, 3]
+    assert [event['seq'] for event in events] == [1, 5, 6]
