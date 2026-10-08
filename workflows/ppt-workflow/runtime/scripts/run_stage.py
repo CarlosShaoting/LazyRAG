@@ -29,8 +29,7 @@ Each subcommand:
 from __future__ import annotations
 
 import argparse
-import contextlib
-import io
+from contextvars import ContextVar
 import json
 import os
 import re
@@ -75,13 +74,24 @@ def _configure_stdio_encoding() -> None:
 _configure_stdio_encoding()
 
 
+_COMMAND_RESULT = ContextVar('ppt_command_result', default=None)
+
+
+def _report_status(payload: dict) -> None:
+    sink = _COMMAND_RESULT.get()
+    if sink is None:
+        print(json.dumps(payload, ensure_ascii=False))
+    else:
+        sink.append(payload)
+
+
 def _ok(**kw) -> int:
-    print(json.dumps({"status": "ok", **kw}, ensure_ascii=False))
+    _report_status({"status": "ok", **kw})
     return 0
 
 
 def _fail(msg: str, **kw) -> int:
-    print(json.dumps({"status": "failed", "error": msg, **kw}, ensure_ascii=False))
+    _report_status({"status": "failed", "error": msg, **kw})
     return 1
 
 
@@ -2208,13 +2218,13 @@ def cmd_export(deck: Path, output_format: str | None = None) -> int:
             info = json.loads(last[-1])
             # Graceful skip: headless browser unavailable → not a failure
             if info.get("status") == "skipped":
-                print(json.dumps({
+                _report_status({
                     "status": "skipped",
                     "stage": "export",
                     "format": fmt,
                     "reason": info.get("reason"),
                     "detail": info.get("detail"),
-                }, ensure_ascii=False))
+                })
                 return 0
             converted = info.get("converted")
             pages = info.get("pages")
@@ -2383,18 +2393,18 @@ _STDOUT_LOCK = threading.Lock()
 
 
 def _capture_cmd(func, *args, **kwargs) -> tuple[int, dict]:
-    """Run a cmd_* function that prints a single JSON status line to stdout,
-    capture that line, and return (exit_code, parsed_dict)."""
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        code = func(*args, **kwargs)
-    raw = buf.getvalue().strip()
-    last = raw.splitlines()[-1] if raw else ""
+    """Capture structured status locally; never redirect process-wide stdout.
+
+    Page workers and unrelated model logging may run concurrently. A private
+    result sink also keeps nested commands isolated from their caller.
+    """
+    results = []
+    token = _COMMAND_RESULT.set(results)
     try:
-        payload = json.loads(last) if last else {}
-    except json.JSONDecodeError:
-        payload = {"status": "failed", "raw": last[:300]}
-    return code, payload
+        code = func(*args, **kwargs)
+        return code, results[-1] if results else {}
+    finally:
+        _COMMAND_RESULT.reset(token)
 
 
 def _progress(msg: str) -> None:
@@ -2456,6 +2466,7 @@ def cmd_batch_page_html(deck: Path, concurrency: int,
         ))
     if not tasks:
         return _fail("no pages in outline matching range")
+    concurrency = 1  # Legacy CLI values must not re-enable parallel page generation.
     results = _run_concurrent(tasks, concurrency)
     ok = sum(1 for r in results if r["exit_code"] == 0)
     failed = [

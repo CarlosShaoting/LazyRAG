@@ -44,7 +44,7 @@ import tempfile
 import time
 import uuid
 from collections import Counter
-from concurrent.futures import as_completed
+from concurrent.futures import FIRST_COMPLETED, wait
 from datetime import datetime, timedelta, timezone
 from html import escape as _html_escape
 from html.parser import HTMLParser
@@ -3570,14 +3570,45 @@ def _outline_page_numbers(
     return out
 
 
+def _ppt_progress(message: str, progress: int = 10) -> None:
+    """Use the host's existing live progress channel without controller special cases."""
+    _LOG.info('[PPT] %s', message)
+    try:
+        ctx = require_context()
+    except ToolExecutionError:
+        return
+    ctx.emit({'type': 'progress', 'task_id': ctx.task_id,
+              'progress': progress, 'current_phase': message})
+
+
+def _page_attempt_guard(deck: Path, failure: dict | None = None) -> None:
+    """A failed page batch cannot be restarted by the agent in the same Attempt."""
+    try:
+        ctx = require_context()
+    except ToolExecutionError:
+        return
+    failures = getattr(ctx, '_ppt_page_failures', None)
+    if not isinstance(failures, dict):
+        failures = {}
+        ctx._ppt_page_failures = failures
+    key = str(deck.resolve())
+    if failure is not None:
+        failures[key] = failure
+    elif key in failures:
+        _tool_error('ppt_generate_pages',
+                    'Page generation already failed in this task. Stop and report the failure; '
+                    'a user-requested new workflow Attempt is required to retry.',
+                    detail=json.dumps(failures[key], ensure_ascii=False))
+
+
 def _batch_page_html_publish_progressive(
     deck: Path,
     *,
-    concurrency: int = 2,
+    concurrency: int = 1,
     start_page: int = 0,
     end_page: int = 0,
 ) -> dict:
-    """Generate pages concurrently; publish to UI in page order as soon as ready.
+    """Generate pages serially; publish to UI in page order as soon as ready.
 
     Prefer each page's slide_outline artifact (including human UI edits) as the
     HTML-generator brief. Fall back to the deterministic outline.json path when
@@ -3589,7 +3620,8 @@ def _batch_page_html_publish_progressive(
         return {'status': 'failed', 'error': 'no pages in outline matching range', 'stage': 'page-html'}
 
     briefs = _load_slide_outline_briefs(page_nos)
-    workers = max(1, min(int(concurrency or 2), 8))
+    # Keep accepting legacy concurrency arguments, but never overlap page calls.
+    workers = 1
     results: dict[int, dict[str, Any]] = {}
     published: list[dict[str, Any]] = []
     retry_history: list[dict[str, Any]] = []
@@ -3634,10 +3666,12 @@ def _batch_page_html_publish_progressive(
                 llm_call=_agent_llm_call,
             )
         if result[0] == 0 and result[1].get('status') == 'ok' and output.is_file():
-            checkpoint.write_text(json.dumps({
+            temporary = checkpoint.with_name(checkpoint.name + '.' + uuid.uuid4().hex + '.tmp')
+            temporary.write_text(json.dumps({
                 'input_hash': input_hash,
                 'output_hash': hashlib.sha256(output.read_bytes()).hexdigest(),
             }), encoding='utf-8')
+            temporary.replace(checkpoint)
         return result
 
     def _flush_ready() -> None:
@@ -3673,32 +3707,48 @@ def _batch_page_html_publish_progressive(
                 results[pno]['publish_error'] = str(exc)
                 return
 
+    def _record_result(fut, pno: int) -> None:
+        try:
+            code, payload = fut.result()
+        except Exception as exc:
+            code, payload = 1, {
+                'status': 'failed',
+                'error': str(exc),
+                'failure_kind': (
+                    'timeout' if _is_model_timeout_exception(exc) else 'error'
+                ),
+            }
+        if not isinstance(payload, dict):
+            payload = {'status': 'failed', 'error': 'empty page payload'}
+        ok = code == 0 and payload.get('status', 'ok' if code == 0 else 'failed') == 'ok'
+        results[pno] = {
+            'page': pno,
+            'ok': ok,
+            'payload': payload,
+            'brief_source': 'slide_outline' if pno in briefs else 'outline.json',
+        }
+        ready_ok[pno] = ok
+        message = (f'第 {pno} 页生成完成' if ok else
+                   f'第 {pno} 页生成失败：{payload.get("error") or "unknown error"}')
+        _ppt_progress(message, 10 + 70 * len(results) // len(page_nos))
+        _flush_ready()
+
     def _generate_pending() -> None:
-        with ThreadPoolExecutor(max_workers=workers) as ex:
-            future_map = {ex.submit(_run_one, pno): pno for pno in page_nos}
-            for fut in as_completed(future_map):
-                pno = future_map[fut]
-                try:
-                    code, payload = fut.result()
-                except Exception as exc:
-                    code, payload = 1, {
-                        'status': 'failed',
-                        'error': str(exc),
-                        'failure_kind': (
-                            'timeout' if _is_model_timeout_exception(exc) else 'error'
-                        ),
-                    }
-                if not isinstance(payload, dict):
-                    payload = {'status': 'failed', 'error': 'empty page payload'}
-                ok = code == 0 and payload.get('status', 'ok' if code == 0 else 'failed') == 'ok'
-                results[pno] = {
-                    'page': pno,
-                    'ok': ok,
-                    'payload': payload,
-                    'brief_source': 'slide_outline' if pno in briefs else 'outline.json',
-                }
-                ready_ok[pno] = ok
-                _flush_ready()
+        # One worker lets us report live waiting status without overlapping pages.
+        with ThreadPoolExecutor(max_workers=1) as ex:
+            for pno in page_nos:
+                _ppt_progress(f'正在生成第 {pno} 页，共 {len(page_nos)} 页',
+                              10 + 70 * len(results) // len(page_nos))
+                future = ex.submit(_run_one, pno)
+                started_at = time.monotonic()
+                while True:
+                    completed, _ = wait({future}, timeout=15, return_when=FIRST_COMPLETED)
+                    if completed:
+                        _record_result(future, pno)
+                        break
+                    elapsed = int(time.monotonic() - started_at)
+                    _ppt_progress(f'等待页面 [{pno}] 的模型响应，已等待 {elapsed} 秒',
+                                  10 + 70 * len(results) // len(page_nos))
 
         # A page generation request can fail transiently (most commonly an
         # upstream 502/503/504) while its neighbours succeed.  Retry only the
@@ -3721,6 +3771,7 @@ def _batch_page_html_publish_progressive(
                 break
             time.sleep(min(2 ** (retry_no - 1), 4))
             for pno in pending:
+                _ppt_progress(f'第 {pno} 页正在重试（{retry_no}/{retry_limit}）', 80)
                 previous = results.get(pno, {})
                 previous_payload = previous.get('payload') or {}
                 try:
@@ -3775,9 +3826,13 @@ def _batch_page_html_publish_progressive(
             failed.append({'page': pno, 'error': result['publish_error']})
     published_pages = {item['page'] for item in published}
     unpublished_pages = [pno for pno in page_nos if pno not in published_pages]
-    if not failed and not unpublished_pages:
-        for pno in page_nos:
-            (deck / f'.page_retry_{pno:03d}.json').unlink(missing_ok=True)
+    # Keep successful checkpoints after publication as well: repeated calls
+    # and later attempts must not regenerate unchanged pages.
+    if failed or unpublished_pages:
+        _page_attempt_guard(deck, {'failed_detail': failed, 'unpublished_pages': unpublished_pages})
+        _ppt_progress(f'页面生成未完成，失败 {len(failed)} 页；等待用户重试', 90)
+    else:
+        _ppt_progress(f'已发布 {len(published)} 页', 90)
     return {
         'status': 'ok' if not failed and not unpublished_pages else ('partial' if published else 'failed'),
         'stage': 'page-html',
@@ -5572,7 +5627,8 @@ def ppt_init_deck(
     """Create a NEW deck workspace with task_pack.json + info_pack.json.
 
     Prefer ppt_build_outline for a full outline run (it calls this then
-    preflight/style/outline/publish). Use this alone only when debugging.
+    preflight/style/outline/publish). Use this alone to initialize metadata for
+    background-prompt planning without an additional model or style call.
 
     Only for building a deck from scratch. Never call this to edit an existing
     deck: it starts an empty deck, so every page the user already accepted has to
@@ -6419,7 +6475,7 @@ def ppt_build_outline(
 
 def ppt_generate_pages(
     deck_dir: Optional[str] = None,
-    concurrency: Union[int, str, None] = 3,
+    concurrency: Union[int, str, None] = 1,
 ) -> dict:
     """Generate all slide HTML pages from published slide_outline in one call.
 
@@ -6438,7 +6494,7 @@ def ppt_generate_pages(
 
     Args:
         deck_dir (str): Absolute deck directory. Omit to use ppt_find_deck().
-        concurrency (int): Parallel page-html workers (default 3, clamped 1-8).
+        concurrency (int): Legacy argument; page generation always runs one page at a time.
 
     Returns:
         deck_dir, stages summary, page-html ok/failed counts, publish counts.
@@ -6458,7 +6514,9 @@ def ppt_generate_pages(
         return _tool_error('ppt_generate_pages', str(exc))
     deck_dir_s = str(deck.resolve())
 
-    conc = _coerce_int(concurrency, 3, lo=1, hi=8)
+    _page_attempt_guard(deck)
+    _ppt_progress('准备页面生成所需的大纲和素材')
+    conc = 1
     try:
         pending_insertion = _pending_page_insertion(deck)
     except (FileNotFoundError, ValueError, KeyError, json.JSONDecodeError) as exc:
@@ -6590,7 +6648,7 @@ def ppt_generate_pages(
     if status != 'ok' or html_payload.get('failed') or missing_pages or not expected_pages:
         return _tool_error(
             'ppt_generate_pages',
-            'generation incomplete; retry the current deck to resume failed pages or publication',
+            'generation incomplete; stop and report the failure; wait for a user-requested retry',
             detail=json.dumps({
                 'status': status,
                 'failed_detail': html_payload.get('failed_detail'),
@@ -6646,8 +6704,8 @@ def ppt_run_stage(
             batch-page-html|refine-page|batch-refine-page.
             Export is UI-only — do not pass stage=export.
         page (int): Required for page-html / refine-page (1-based).
-        concurrency (int): For batch stages, clamped to 1-8. Defaults to 2 for
-            batch-page-html and 4 for batch-refine-page.
+        concurrency (int): Page HTML always runs serially; batch-refine-page
+            defaults to 4 workers, clamped to 1-8.
         start_page (int): Optional batch-page-html start.
         end_page (int): Optional batch-page-html end.
         insert_before (int): For one incremental page-html insertion, the same
@@ -6678,9 +6736,10 @@ def ppt_run_stage(
     except FileNotFoundError as exc:
         return _tool_error('ppt_run_stage', str(exc))
 
+    if stage_name in ('page-html', 'batch-page-html'):
+        _page_attempt_guard(deck)
     page_no = _coerce_int(page, 0, lo=0)
-    default_concurrency = 2 if stage_name == 'batch-page-html' else 4
-    conc = _coerce_int(concurrency, default_concurrency, lo=1, hi=8)
+    conc = 1 if stage_name == 'batch-page-html' else _coerce_int(concurrency, 4, lo=1, hi=8)
     sp = _coerce_int(start_page, 0, lo=0)
     ep = _coerce_int(end_page, 0, lo=0)
     insertion = _coerce_int(insert_before, 0, lo=0)

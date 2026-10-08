@@ -223,6 +223,27 @@ fetch 后 upstream/main 仍为 `9cbc57c5d`，当前提交为 `eb1178be6`。本�
 
 新增回归覆盖同名文件/图片/file_list、后续保存不改写旧副本、失败批次保留旧文件且可重试，以及顺序查询失败后的整批拒绝与恢复。详细记录随 #793 的 `docs/pr-793-artifact-batch-fixes.md` 提交。
 
+### C15：底图提示词步骤的设计要求过重（已简化）
+
+`plan_background_prompts` 原先强制每页 5–12 个元素、精确留白比例、逐字重复风格锚点、视觉母题演变及分别描述材质/光照/配色。auto 路线还要求先生成完整 style_spec。两页简单主题也因此被扩展为多轮设计权衡。
+
+现改为每页一段简短英文提示词，通常 2–4 句；仅保留 16:9、已有风格与配色一致、正文留白、背景无文字/标识/图表等要求。未知布局默认左侧留白、右侧装饰，直接发布，不反复探索布局或自审。验收条件同步简化。auto 在此阶段通过已有 ppt_init_deck 初始化元数据，不额外调用风格模型；preview_choice 仍复用用户选定 A/B/C 的现有风格。保留指定页替换、整页插入及后续发布/图片生成接口；正式页面风格仍由后续大纲/页面阶段处理。
+
+这是工作流包的新 revision。已运行的会话固定旧 revision，不自动替换；服务同步后新建 PPT 任务使用简化提示词。此前 SiliconFlow 流式响应缺少 finish_reason 的直接错误仍属于供应商响应完整性问题，此修改减少额外任务负担，不声称修复供应商协议错误。
+
+### C16：页面生成长时间无反馈、重复生成与串行调试（已修复，需真实供应商复测）
+
+2026-10-08 的两页任务在供应商协议错误、传输超时后仍长时间显示“开始执行”。工具返回失败后，外层 Agent 再次调用 `ppt_generate_pages`；第 2 页 HTML 已落盘但没有 `.page_retry_002.json`，因此后续调用没有复用。重试、检查点与缺乏内部进度反馈的机制在 upstream/main 已存在，不归为本 PR 新增。检查发现并行页面使用 `redirect_stdout` 捕获 JSON 返回值，会修改进程共享的 stdout：不同页面及日志可以互相串台。此并发缺陷已通过回归测试覆盖；不能仅凭现有日志断言它是历史运行检查点缺失的唯一原因。
+
+本次修改：
+- runtime `_capture_cmd` 改为 ContextVar 隔离的结构化状态接收器；命令行直接执行仍输出 JSON。并行、嵌套、异常退出不修改全局 stdout。
+- 成功页面的输入/输出哈希检查点使用临时文件替换写入，全部发布成功后仍保留。再次调用可复用未修改页面；内容变化仍使缓存失效。历史裸 HTML 缺少来源检查点时不冒充可验证缓存。
+- 页面批次失败后，当前 SubAgent Attempt 记录失败。Agent 再次调用整套或低层页面生成入口会被阻止，不再发送供应商请求；提示词要求报告失败并停止。用户开启新 Attempt 后可以重试。工具内部原有有界重试仍保留，超时仍不自动重试。
+- 通过已有 `ctx.emit(progress)` 实时报告开始、每页成功/失败、重试和发布结果；等待当前页时每 15 秒报告页码与等待时间。这是状态更新间隔，不是新的任务截止时间；未修改公共 manager/runner、完成评审或 Writer。
+- 按用户澄清，`ppt_generate_pages`/底层 batch-page-html 工具改成逐页串行生成，旧参数即使传 concurrency=3/8 也只同时生成一页；单独运行 runtime CLI 同样串行。保留全部请求页数，两页任务仍生成两页，不截断为第 1 页。提示词和验收同步要求完整页数。
+
+使用限制：新代码需要新的工作流 revision；已有会话固定旧包，不热替换。此修改不承诺 SiliconFlow 的超时/协议错误消失。成功页仍按原页序发布，前页未完成时通过进度说明后页已生成，未改变产物排序语义。
+
 ## 边界与兼容说明
 
 main 已有的 `workflow/ppt_incremental_pages.go` 仍按 PPT 身份处理旧页插入；这是基线已有逻辑，本次未新增或扩展。它需要单独设计旧会话迁移才能安全改成声明式能力，不能直接删除后破坏现有 PPT 页面保留行为。本次 A01 处理的是增量新加的 manager 输入改写，不代表整个主仓库已经不存在任何历史特例。
@@ -349,6 +370,21 @@ make lint-python PYTHON=local/build/deps/python/algorithm/bin/python
 ```bash
 python -m pytest -q tests/algorithm/chat/subagent tests/algorithm/chat/test_subagent_runner.py tests/algorithm/chat/test_workflow_review_regressions.py tests/algorithm/chat/workflows/test_product_solution_delivery.py
 ```
+
+### C15 底图提示词简化验证
+
+136 passed、12 subtests passed：PPT 持久化回归、工作流包脚本测试和 runtime 脚本测试。新增行为测试直接执行 auto 初始化 → 发布两段提示词 → 同 deck 重试 → 消费原始提示词生成两张图片，确认不调用 style/outline 阶段、不要求 style_spec.json 或 outline.json。既有风格选择、指定页替换与插页测试继续通过。供应商调用使用测试替身，真实模型输出长度仍需端测观察。
+
+```bash
+PYTHONPATH=algorithm:algorithm/lazyllm local/build/deps/python/algorithm/bin/python -m pytest -q tests/algorithm/chat/workflows/test_ppt_persistent_storage.py workflows/ppt-workflow/scripts/tests workflows/ppt-workflow/runtime/scripts/tests
+```
+
+### C16 页面生成恢复与串行调试验证
+
+- PPT 工具、runtime 与持久化相关测试：140 passed，12 subtests passed。`make lint-python` 和 `git diff --check` 通过。
+- 新增测试覆盖并发命令状态隔离且 stdout 不被替换、异常后状态恢复；同 Attempt 的整套/低层重入被阻止而新 Attempt 允许重试；等待模型期间发出实时 progress；传入旧 concurrency=8 时仍逐页生成完整两页、保留完整大纲。
+- 原跨调用恢复测试增加全部成功后再次执行，确认保留检查点且不再次调用页面模型。
+- 真实供应商串行生成尚未验证；未将 mock 测试记作端测成功。
 
 ### 可重复执行的命令
 

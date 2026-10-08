@@ -298,3 +298,48 @@ def test_workflow_deck_binding_survives_reworded_retry_and_other_workflows(monke
     ]
     assert (deck / 'images' / 'background.png').read_bytes() == b'keep'
     assert len(list((tmp_path / 'ppt_decks').iterdir())) == 2
+
+
+def test_auto_background_prompts_publish_and_generate_without_style_model(monkeypatch, tmp_path):
+    from PIL import Image
+
+    tools = _load_ppt_tools()
+    monkeypatch.setattr(tools, '_conversation_root', lambda: tmp_path)
+    monkeypatch.setattr(tools, '_workflow_session_id', lambda: 'background-only')
+    monkeypatch.setattr(tools, '_attach_material_images_to_deck', lambda _: {'attached': 0})
+    monkeypatch.setattr(tools, '_ui_slot_order_list', lambda _: [])
+    monkeypatch.setattr(tools, '_save_artifact', lambda **_: {'stored': True})
+
+    def unexpected_stage(*args, **kwargs):
+        raise AssertionError('Background planning must not run a style/outline model')
+
+    monkeypatch.setattr(tools, 'ppt_run_stage', unexpected_stage)
+    initialized = tools.ppt_init_deck(
+        'Two slides about weekend rest', page_count=2, style_flow='auto',
+        style_hint='light and fresh', generate_background_images=True,
+    )
+    deck = Path(initialized['deck_dir'])
+    prompts = [
+        {'page_no': 1, 'prompt': '16:9 soft cream morning balcony. Calm left side, no text.'},
+        {'page_no': 2, 'prompt': '16:9 soft cream park scene. Calm left side, no text.'},
+    ]
+    published = tools.ppt_publish_background_prompts(str(deck), prompts)
+    assert published['count'] == 2
+    retried = tools.ppt_init_deck('Continue the existing request', page_count=2, style_flow='auto')
+    assert retried['reused'] is True
+    assert retried['deck_dir'] == str(deck)
+    assert json.loads((deck / 'background_prompts.json').read_text(encoding='utf-8'))['pages'] == prompts
+    source = tmp_path / 'generated.png'
+    Image.new('RGB', (128, 72), '#eef4e8').save(source)
+    generated_prompts = []
+
+    def generate(**kwargs):
+        generated_prompts.append(kwargs['prompt'])
+        return {'local_path': str(source)}
+
+    monkeypatch.setattr(tools, 'image_generator', generate)
+    result = tools.ppt_generate_background_images(str(deck), prompts_json=prompts)
+    assert result['count'] == 2
+    assert generated_prompts == [item['prompt'] for item in prompts]
+    assert not (deck / 'style_spec.json').exists()
+    assert not (deck / 'outline.json').exists()

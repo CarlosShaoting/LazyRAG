@@ -1368,13 +1368,15 @@ class PartialEditTests(unittest.TestCase):
                 first = TOOLS._batch_page_html_publish_progressive(deck, concurrency=1)
                 self.assertEqual(first['failed'], 1)
                 result = TOOLS._batch_page_html_publish_progressive(deck, concurrency=1)
+                again = TOOLS._batch_page_html_publish_progressive(deck, concurrency=1)
+                self.assertEqual(again['status'], 'ok')
 
             self.assertEqual(result['status'], 'ok')
             self.assertEqual(result['published_count'], 2)
-            self.assertEqual(published, [1, 2])
+            self.assertEqual(published, [1, 2, 1, 2])
             self.assertEqual(attempts, {1: 2, 2: 1})
             self.assertEqual(result['retry_count'], 0)
-            self.assertFalse(list(deck.glob('.page_retry_*.json')))
+            self.assertEqual(len(list(deck.glob('.page_retry_*.json'))), 2)
 
     def test_batch_page_html_does_not_retry_timed_out_page(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1909,3 +1911,131 @@ class MultiTargetLegacyAndRasterEditTests(unittest.TestCase):
         self.assertIn('id="bg"', edited)
         self.assertIn('北京故宫', removed)
         self.assertTrue(any('cleared raster-backed proxy' in item for item in applied))
+
+
+class PageGenerationRecoveryTests(unittest.TestCase):
+    def test_parallel_status_capture_is_isolated_and_keeps_stdout(self):
+        import sys
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+
+        _mc, runtime = TOOLS._load_sn_ppt_modules()
+        barrier = threading.Barrier(2)
+        original_stdout = sys.stdout
+
+        def command(page):
+            barrier.wait(timeout=5)
+            self.assertIs(sys.stdout, original_stdout)
+            return runtime._ok(page_no=page)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(runtime._capture_cmd, command, 1)
+            second = pool.submit(runtime._capture_cmd, command, 2)
+            self.assertEqual(first.result(timeout=5), (0, {'status': 'ok', 'page_no': 1}))
+            self.assertEqual(second.result(timeout=5), (0, {'status': 'ok', 'page_no': 2}))
+        self.assertIs(sys.stdout, original_stdout)
+        # Failed/nested commands must not leave a capture sink installed.
+        with self.assertRaises(ValueError):
+            runtime._capture_cmd(lambda: (_ for _ in ()).throw(ValueError('broken')))
+        self.assertIsNone(runtime._COMMAND_RESULT.get())
+
+    def test_failed_attempt_blocks_agent_replay_but_new_attempt_can_retry(self):
+        from types import SimpleNamespace
+
+        with tempfile.TemporaryDirectory() as tmp:
+            deck, _ = make_deck(Path(tmp))
+            ctx = SimpleNamespace(task_id='attempt-one', emit=mock.Mock())
+            runtime = mock.Mock()
+            runtime._capture_cmd.side_effect = TOOLS._PPTModelTimeoutError('timed out')
+            with (
+                mock.patch.object(TOOLS, 'require_context', return_value=ctx),
+                mock.patch.object(TOOLS, '_load_sn_ppt_modules', return_value=(mock.Mock(), runtime)),
+                mock.patch.object(TOOLS, '_load_slide_outline_briefs', return_value={}),
+                mock.patch.object(TOOLS, '_ui_slot_order_list', return_value=[]),
+                mock.patch.object(TOOLS, '_resolve_deck_dir', return_value=deck),
+            ):
+                result = TOOLS._batch_page_html_publish_progressive(deck, concurrency=1)
+                self.assertEqual(result['status'], 'failed')
+                with self.assertRaisesRegex(ToolExecutionError, 'already failed'):
+                    TOOLS.ppt_generate_pages(str(deck))
+                with self.assertRaisesRegex(ToolExecutionError, 'already failed'):
+                    TOOLS.ppt_run_stage(str(deck), stage='page-html', page=1)
+                runtime._capture_cmd.assert_called_once()
+                phases = [c.args[0]['current_phase'] for c in ctx.emit.call_args_list]
+                self.assertTrue(any('第 1 页生成失败' in phase for phase in phases))
+            with mock.patch.object(TOOLS, 'require_context', return_value=SimpleNamespace(task_id='attempt-two')):
+                TOOLS._page_attempt_guard(deck)  # retry is allowed in a new Attempt
+
+    def test_waiting_progress_is_emitted_before_page_call_returns(self):
+        import threading
+        from concurrent.futures import wait as real_wait
+        from types import SimpleNamespace
+
+        with tempfile.TemporaryDirectory() as tmp:
+            deck, _ = make_deck(Path(tmp))
+            release = threading.Event()
+            ctx = SimpleNamespace(task_id='progress-attempt', emit=mock.Mock())
+            runtime = mock.Mock()
+
+            def capture(*args, **kwargs):
+                self.assertTrue(release.wait(timeout=5))
+                return 0, {'status': 'ok'}
+
+            def wait_once(futures, **kwargs):
+                if not release.is_set():
+                    release.set()
+                    return set(), futures
+                return real_wait(futures, **kwargs)
+
+            runtime._capture_cmd.side_effect = capture
+            with (
+                mock.patch.object(TOOLS, 'require_context', return_value=ctx),
+                mock.patch.object(TOOLS, '_load_sn_ppt_modules', return_value=(mock.Mock(), runtime)),
+                mock.patch.object(TOOLS, '_load_slide_outline_briefs', return_value={}),
+                mock.patch.object(TOOLS, '_ui_slot_order_list', return_value=[]),
+                mock.patch.object(TOOLS, '_publish_one_page', return_value={'ok': True}),
+                mock.patch.object(TOOLS, 'wait', side_effect=wait_once),
+            ):
+                result = TOOLS._batch_page_html_publish_progressive(deck, concurrency=1)
+            self.assertEqual(result['status'], 'ok')
+            phases = [c.args[0]['current_phase'] for c in ctx.emit.call_args_list]
+            self.assertTrue(any('等待页面 [1]' in phase for phase in phases))
+            self.assertTrue(any('已发布 1 页' in phase for phase in phases))
+
+    def test_legacy_parallel_argument_still_generates_all_pages_serially(self):
+        import threading
+
+        with tempfile.TemporaryDirectory() as tmp:
+            deck, _ = make_deck(Path(tmp))
+            outline = json.dumps({'pages': [{'page_no': 1}, {'page_no': 2}]})
+            (deck / 'outline.json').write_text(outline, encoding='utf-8')
+            second_started = threading.Event()
+            first_finished = threading.Event()
+            generated = []
+            runtime = mock.Mock()
+
+            def capture(command, current_deck, page, **kwargs):
+                if page == 1:
+                    self.assertFalse(second_started.wait(timeout=0.05))
+                    first_finished.set()
+                else:
+                    second_started.set()
+                    self.assertTrue(first_finished.is_set())
+                generated.append(page)
+                (current_deck / 'pages' / f'page_{page:03d}.html').write_text(PAGE_HTML, encoding='utf-8')
+                return 0, {'status': 'ok', 'page_no': page}
+
+            runtime._capture_cmd.side_effect = capture
+            with (
+                mock.patch.object(TOOLS, '_load_sn_ppt_modules', return_value=(mock.Mock(), runtime)),
+                mock.patch.object(TOOLS, '_load_slide_outline_briefs', return_value={}),
+                mock.patch.object(TOOLS, '_ui_slot_order_list', return_value=[]),
+                mock.patch.object(TOOLS, '_publish_one_page', return_value={'ok': True}),
+            ):
+                result = TOOLS._batch_page_html_publish_progressive(deck, concurrency=8)
+            self.assertEqual(result['status'], 'ok')
+            self.assertEqual(result['concurrency'], 1)
+            self.assertEqual(result['submitted'], 2)
+            self.assertEqual(generated, [1, 2])
+            self.assertEqual((deck / 'outline.json').read_text(encoding='utf-8'), outline)
+            self.assertEqual(len(list((deck / 'pages').glob('*.html'))), 2)

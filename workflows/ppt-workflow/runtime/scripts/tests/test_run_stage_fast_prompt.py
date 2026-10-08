@@ -121,7 +121,7 @@ class StyleRenderingRecipeTest(unittest.TestCase):
             {'material': 'skip_background_images'},
         )
         self.assertIn('重新生成底图 1、2', state['steps']['generate_backgrounds']['prompt'])
-        self.assertIn('shared visual world', state['steps']['plan_background_prompts']['prompt'])
+        self.assertIn('visually consistent', state['steps']['plan_background_prompts']['prompt'])
         slots = {slot['id']: slot for slot in workflow['slots']}
         self.assertEqual(slots['background_prompts']['cardinality'], 'list')
         self.assertIn('background_prompts', workflow['runtime']['publisher_owned_slots'])
