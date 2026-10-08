@@ -1104,6 +1104,26 @@ def _trigger_input_types(package: Dict[str, Any]) -> Dict[str, str]:
     return inputs if declared is None else {key: value for key, value in inputs.items() if key in declared}
 
 
+def _normalize_trigger_input_bindings(value: Optional[Union[Dict[str, str], str]]) -> Dict[str, str]:
+    """Decode a model's JSON-encoded bindings without relaxing the string-map contract."""
+    if value is None:
+        return {}
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError as exc:
+            raise WorkflowClientError(
+                'WORKFLOW_INPUT_INVALID', 'input_bindings must be an object or a JSON-encoded object.',
+            ) from exc
+    if not isinstance(value, dict) or any(
+        not isinstance(key, str) or not isinstance(item, str) for key, item in value.items()
+    ):
+        raise WorkflowClientError(
+            'WORKFLOW_INPUT_INVALID', 'input_bindings must map material IDs to string values.',
+        )
+    return value
+
+
 def _workflow_trigger_tools(
     activations: List[Dict[str, Any]], allowed_refs: set[str], current_query: str = '',
     conversation_id: str = '', session_holder: Optional[Dict[str, str]] = None,
@@ -1154,9 +1174,10 @@ def _workflow_trigger_tools(
             supports_scalar_bindings: bool,
         ) -> Any:
             def run_trigger(
-                input_bindings: Optional[Dict[str, str]] = None,
+                input_bindings: Optional[Union[Dict[str, str], str]] = None,
                 request_context: Optional[str] = None,
             ) -> Dict[str, Any]:
+                input_bindings = _normalize_trigger_input_bindings(input_bindings)
                 # The Host-composed query is authoritative. A clearly marked
                 # original-request + clarification envelope remains supported
                 # for callers that already merged those two sections. An
@@ -1324,7 +1345,7 @@ def _workflow_trigger_tools(
             if attachments_available:
                 @fc_register(host_file='NONE')
                 def bound_trigger(
-                    input_bindings: Optional[Dict[str, str]] = None,
+                    input_bindings: Optional[Union[Dict[str, str], str]] = None,
                     request_context: Optional[str] = None,
                 ) -> Dict[str, Any]:
                     """Initialize with optional attachments and a merged clarified request."""
@@ -1332,7 +1353,7 @@ def _workflow_trigger_tools(
             elif supports_scalar_bindings:
                 @fc_register(host_file='NONE')
                 def bound_trigger(
-                    input_bindings: Optional[Dict[str, str]] = None,
+                    input_bindings: Optional[Union[Dict[str, str], str]] = None,
                     request_context: Optional[str] = None,
                 ) -> Dict[str, Any]:
                     """Initialize with scalar bindings and a merged clarified request."""
@@ -1367,7 +1388,8 @@ def _workflow_trigger_tools(
                 f'{material_id} ({material_type})'
                 for material_id, material_type in sorted(input_types_hint.items())
             )
-            + '. Use these exact IDs as input_bindings keys.'
+            + '. Pass input_bindings as an object mapping these exact IDs to string values, '
+            'for example {"material_id": "value"}.'
             if input_types_hint else ''
         )
         attachment_guidance = (

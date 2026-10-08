@@ -252,6 +252,14 @@ fetch 后 upstream/main 仍为 `9cbc57c5d`，当前提交为 `eb1178be6`。本�
 
 本次提交不包含 HTTP 504 分类、错误展示或供应商超时处理；未重启服务。已有会话绑定不可变工作流包，不能将源代码修复视为已运行会话自动恢复；真实供应商全流程仍需在加载新工作流 revision 后复测。
 
+### C19：模型把工作流输入对象编码为字符串，初始化连续失败（已修复代码）
+
+会话 `4425573e-e797-4fba-b7b9-0768572a7ae3` 在 16:57:42、16:57:44、16:57:49 调用触发工具时，把 `input_bindings` 传成包含 JSON 的字符串，而非对象，工具类型校验返回 `Input should be a valid dictionary`，未进入工作流初始化逻辑。16:57:46 的调用省略绑定，因此必填产品目标没有进入准备请求，返回 `waiting_for_input`。该会话没有创建 Session；终态记录为 `cancelled/user_cancelled`，不能归因为首个 subagent 失败。
+
+通用工作流触发入口兼容字典及一次 JSON 编码的字典，解析后仍严格要求“字符串 material ID → 字符串值”。坏 JSON、数组、JSON null、嵌套对象、非字符串值均拒绝；包未暴露的字段仍按原规则拒绝。兼容覆盖文本绑定和附件绑定，附件仍走原解析与导入流程；工具说明明确推荐传对象。没有按产品工作流名称增加分支，没有额外模型调用，也没有从自由文本猜测绑定值或放宽必填校验。
+
+2026-10-08 17:01 按用户要求执行 `make local-down` 后，以 `LAZYMIND_DYNAMIC_PROMPT_MODULES=false make local-up` 重启。运行时 ready，前端与 Core 健康检查均为 HTTP 200，Chat PID 为 31407，确认意图识别仍禁用。真实模型端测尚未执行。
+
 ## 边界与兼容说明
 
 main 已有的 `workflow/ppt_incremental_pages.go` 仍按 PPT 身份处理旧页插入；这是基线已有逻辑，本次未新增或扩展。它需要单独设计旧会话迁移才能安全改成声明式能力，不能直接删除后破坏现有 PPT 页面保留行为。本次 A01 处理的是增量新加的 manager 输入改写，不代表整个主仓库已经不存在任何历史特例。
@@ -405,6 +413,13 @@ PYTHONPATH=algorithm:algorithm/lazyllm local/build/deps/python/algorithm/bin/pyt
 ```bash
 PYTHONPATH=algorithm:algorithm/lazyllm local/build/deps/python/algorithm/bin/python -m pytest tests/algorithm/chat/workflows/test_product_solution_delivery.py tests/algorithm/chat/test_product_workflow_delivery_contract.py -q
 ```
+
+### C19 工作流触发参数验证
+
+- `test_workflow_selection.py`、`test_product_solution_delivery.py`、`test_product_workflow_delivery_contract.py`：103 passed。
+- 回归经过真实 `ModuleTool` 参数校验，再调用触发函数，覆盖原生对象/JSON 字符串两种形式的文本和附件绑定；覆盖无效 JSON、错误类型、未暴露字段在导入或准备会话前被拒绝。
+- `make lint-python PYTHON=local/build/deps/python/algorithm/bin/python` 和 `git diff --check` 通过。
+- 手动复测：加载修改后的 Chat，使用本次完整企业会议知识助手需求发起新会话；确认初始化工具接收到合法绑定后创建 Session，进入首个 Router，且不再因字符串包装反复报字典类型错误。缺少真正的必填输入时仍应返回等待补充。
 
 ### 可重复执行的命令
 

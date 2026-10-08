@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import lazyllm
 import pytest
+from lazyllm.tools.agent.toolsManager import ModuleTool
 
 from lazymind.chat.workflow.workflow_manager import (
     enforce_startup_clarification_policy,
@@ -93,7 +94,8 @@ def test_mentioned_workflow_is_injected_as_authoritative_selection():
     assert 'bind_workflow_input' not in _tool_names(contribution)
 
 
-def test_dynamic_trigger_loads_pinned_remote_package_without_listing():
+@pytest.mark.parametrize('json_encoded', [False, True])
+def test_dynamic_trigger_loads_pinned_remote_package_without_listing(json_encoded):
     lazyllm.globals['agentic_config']['files'] = ['/safe/report.pdf']
     toolkit = MagicMock()
     toolkit.prepare_workflow.return_value = {
@@ -133,9 +135,11 @@ def test_dynamic_trigger_loads_pinned_remote_package_without_listing():
             }],
         )
 
-        result = _tool(contribution, 'trigger_image_workflow')(
-            {'source': 'report.pdf'},
-        )
+        trigger = _tool(contribution, 'trigger_image_workflow')
+        bindings = {'source': 'report.pdf'}
+        tool = ModuleTool(apply_func=trigger, schema_func=trigger)
+        arguments = tool._validate_input({'input_bindings': json.dumps(bindings) if json_encoded else bindings})
+        result = trigger(**arguments)
 
     client_factory.return_value.list_workflows.assert_not_called()
     client_factory.return_value.get_workflow.assert_called_once_with(
@@ -156,7 +160,8 @@ def test_dynamic_trigger_loads_pinned_remote_package_without_listing():
     toolkit.advance_step.assert_not_called()
 
 
-def test_dynamic_trigger_imports_scalar_binding_without_conversation_attachments():
+@pytest.mark.parametrize('json_encoded', [False, True])
+def test_dynamic_trigger_imports_scalar_binding_without_conversation_attachments(json_encoded):
     toolkit = MagicMock()
     toolkit.prepare_workflow.return_value = {
         'session_id': 'session-1', 'state_version': 1, 'ready_steps': ['draft'],
@@ -190,9 +195,11 @@ def test_dynamic_trigger_imports_scalar_binding_without_conversation_attachments
             }],
         )
 
-        result = _tool(contribution, 'trigger_report_workflow')({
-            'target_length': '3000',
-        })
+        trigger = _tool(contribution, 'trigger_report_workflow')
+        bindings = {'target_length': '3000'}
+        tool = ModuleTool(apply_func=trigger, schema_func=trigger)
+        arguments = tool._validate_input({'input_bindings': json.dumps(bindings) if json_encoded else bindings})
+        result = trigger(**arguments)
 
     import_text.assert_called_once_with('target_length', '3000')
     assert result['session_id'] == 'session-1'
@@ -204,6 +211,44 @@ def test_dynamic_trigger_imports_scalar_binding_without_conversation_attachments
             },
         }, request_context='write about 3000 words', workflow_mode='dynamic',
     )
+
+
+@pytest.mark.parametrize('bindings', [
+    '{bad json', '[]', 'null', '"text"', '{"target_length":300}',
+    '{"target_length":{"data":"300"}}', '{"unexposed":"300"}',
+])
+def test_trigger_rejects_invalid_json_bindings_before_import_or_preparation(bindings):
+    with patch('lazymind.chat.workflow.workflow_manager._client') as client_factory, patch(
+        'lazymind.chat.workflow.workflow_manager.HostWorkflowToolkit',
+    ) as toolkit, patch('lazymind.chat.workflow.workflow_manager._import_text_binding') as import_text:
+        client_factory.return_value.get_workflow.return_value.result = {
+            'workflow_id': 'report', 'revision_id': 'revision-1',
+            'runtime': {'trigger_inputs': ['target_length']},
+            'compiled_graph': {
+                'material_types': {'target_length': 'text'},
+                'material_producers': {'target_length': {'kind': 'external'}},
+            },
+        }
+        contribution = resolve_workflow_injection(
+            None, current_query='write about 300 words',
+            workflow_catalog=[{
+                'workflow_ref': 'builtin:report', 'workflow_id': 'report', 'revision_id': 'revision-1',
+            }],
+            allowed_workflow_refs=['builtin:report'],
+            workflow_activations=[{
+                'workflow_ref': 'builtin:report', 'workflow_id': 'report',
+                'revision_id': 'revision-1', 'tool_name': 'trigger_report_workflow',
+            }],
+        )
+        trigger = _tool(contribution, 'trigger_report_workflow')
+        tool = ModuleTool(apply_func=trigger, schema_func=trigger)
+        arguments = tool._validate_input({'input_bindings': bindings})
+
+        with pytest.raises(WorkflowClientError):
+            trigger(**arguments)
+
+    import_text.assert_not_called()
+    toolkit.return_value.prepare_workflow.assert_not_called()
 
 
 def test_selected_workflow_declares_missing_only_startup_clarification():
