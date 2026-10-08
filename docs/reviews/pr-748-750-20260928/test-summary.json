@@ -1,0 +1,97 @@
+{
+  "pr748_targeted": {
+    "pass": {
+      "top_level": 34,
+      "subtests": 20,
+      "packages": [
+        "lazymind/core/chat"
+      ]
+    },
+    "fail": {
+      "top_level": 0,
+      "subtests": 0,
+      "packages": []
+    },
+    "skip": {
+      "top_level": 0,
+      "subtests": 0,
+      "packages": []
+    },
+    "skipped_tests": [],
+    "final_event": {
+      "Time": "2026-09-28T15:20:34.755171+08:00",
+      "Action": "pass",
+      "Package": "lazymind/core/chat",
+      "Elapsed": 3.742
+    }
+  },
+  "combined_go": {
+    "pass": {
+      "top_level": 1372,
+      "subtests": 678,
+      "packages": [
+        "lazymind/core/artifact",
+        "lazymind/core/subagent",
+        "lazymind/core/workflow/attempt",
+        "lazymind/core/workflow/artifactfile",
+        "lazymind/core/workflow/controlpolicy",
+        "lazymind/core/workflow/compat",
+        "lazymind/core/workflow/domain",
+        "lazymind/core/workflow/executor",
+        "lazymind/core/workflow/facade",
+        "lazymind/core/workflow",
+        "lazymind/core/workflow/graphengine",
+        "lazymind/core/workflow/hosted",
+        "lazymind/core/workflow/store",
+        "lazymind/core/workflow/stream",
+        "lazymind/core/chat"
+      ]
+    },
+    "fail": {
+      "top_level": 0,
+      "subtests": 0,
+      "packages": []
+    },
+    "skip": {
+      "top_level": 11,
+      "subtests": 8,
+      "packages": [
+        "lazymind/core/workflow/artifactgraph",
+        "lazymind/core/workflow/controlstore",
+        "lazymind/core/workflow/document",
+        "lazymind/core/workflow/execution"
+      ]
+    },
+    "skipped_tests": [
+      "TestPostgresCallerTransactionSerializesLogicalArtifact/new",
+      "TestPostgresCallerTransactionSerializesLogicalArtifact/existing",
+      "TestPostgresCallerTransactionSerializesLogicalArtifact/idempotent_existing",
+      "TestPostgresCallerTransactionSerializesLogicalArtifact/rolled_back_creation",
+      "TestRollbackWaitsForPostgreSQLSessionLock",
+      "TestDocumentPublicationPrepareWaitsForPostgreSQLSessionLock",
+      "TestDocumentPublicationClaimAndFinalizeRecheckUnderPostgreSQLLock/claim",
+      "TestDocumentPublicationClaimAndFinalizeRecheckUnderPostgreSQLLock/finalize",
+      "TestDBArtifactSinkSerializesWithConcurrentConsumerBinding",
+      "TestFreezeRouteDecisionSerializesWithArtifactInvalidation",
+      "TestFacadeArtifactMutationSerializesWithConcurrentConsumerBinding/patch",
+      "TestFacadeArtifactMutationSerializesWithConcurrentConsumerBinding/delete",
+      "TestResultReadBaselineUsesOnePostgresSnapshot",
+      "TestOpeningRealModelDescription",
+      "TestOrganizerProductPath",
+      "TestRedisCancelWatcherReleasesConnections",
+      "TestWorkspaceBackendIntegration",
+      "TestWorkspaceBackendExecutionWorker",
+      "TestWorkspacePythonCoreHTTP"
+    ],
+    "final_event": {
+      "Time": "2026-09-28T15:22:54.248368+08:00",
+      "Action": "pass",
+      "Package": "lazymind/core/chat",
+      "Elapsed": 26.06
+    }
+  },
+  "baseline_chat_failures": [
+    "TestProjectTypesHaveIndependentLifecycle: project_type_isolation_test.go:26: Invalid request",
+    "TestSameNameProjectsUseDirectoryIdentity: project_type_isolation_test.go:151: Invalid request"
+  ]
+}

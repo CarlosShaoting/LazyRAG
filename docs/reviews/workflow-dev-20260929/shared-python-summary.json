@@ -1,0 +1,37 @@
+[
+  {
+    "path": "tests/algorithm/chat/test_remote_executor.py",
+    "exit": 0,
+    "summary": [
+      "25 passed, 1 warning in 0.56s"
+    ]
+  },
+  {
+    "path": "tests/algorithm/chat/test_subagent_runner.py",
+    "exit": 0,
+    "summary": [
+      "42 passed, 3 warnings in 1.36s"
+    ]
+  },
+  {
+    "path": "tests/algorithm/test_workflow_sdk.py",
+    "exit": 0,
+    "summary": [
+      "89 passed, 1 warning in 0.61s"
+    ]
+  },
+  {
+    "path": "tests/algorithm/test_workflow_toolkit.py",
+    "exit": 0,
+    "summary": [
+      "16 passed in 0.23s"
+    ]
+  },
+  {
+    "path": "tests/algorithm/chat/test_workflow_full_trust.py",
+    "exit": 0,
+    "summary": [
+      "13 passed, 1 warning in 0.63s"
+    ]
+  }
+]

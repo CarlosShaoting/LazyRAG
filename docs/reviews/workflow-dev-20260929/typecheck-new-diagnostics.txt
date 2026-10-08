@@ -1,0 +1,1 @@
+src/modules/chat/components/WorkflowPanel/ProductProject.tsx(LINE,COL): error TS7006: Parameter 'event' implicitly has an 'any' type.

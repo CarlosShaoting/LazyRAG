@@ -1,0 +1,114 @@
+[
+  {
+    "path": "tests/algorithm/chat/workflows/test_product_solution_delivery.py",
+    "exit": 0,
+    "summary": [
+      "39 passed, 2 warnings in 0.28s"
+    ]
+  },
+  {
+    "path": "tests/algorithm/chat/test_product_workflow_delivery_contract.py",
+    "exit": 1,
+    "summary": [
+      "4 failed, 1 passed in 0.61s"
+    ]
+  },
+  {
+    "path": "tests/algorithm/chat/test_image_workflow_v2_tools.py",
+    "exit": 0,
+    "summary": [
+      "17 passed in 0.22s"
+    ]
+  },
+  {
+    "path": "tests/algorithm/chat/test_image_workflow_v2_baoyu.py",
+    "exit": 0,
+    "summary": [
+      "14 passed in 0.13s"
+    ]
+  },
+  {
+    "path": "tests/algorithm/chat/workflows/test_image_workflow_v2_contract.py",
+    "exit": 0,
+    "summary": [
+      "7 passed in 0.28s"
+    ]
+  },
+  {
+    "path": "tests/algorithm/chat/workflows/test_image_workflow_meme_modes.py",
+    "exit": 0,
+    "summary": [
+      "7 passed in 0.12s"
+    ]
+  },
+  {
+    "path": "tests/algorithm/chat/workflows/test_image_workflow_search_validation.py",
+    "exit": 0,
+    "summary": [
+      "11 passed, 18 subtests passed in 0.19s"
+    ]
+  },
+  {
+    "path": "tests/algorithm/chat/test_image_workflow_prompt_contract.py",
+    "exit": 0,
+    "summary": [
+      "1 passed in 0.03s"
+    ]
+  },
+  {
+    "path": "tests/algorithm/chat/test_workflow_selection.py",
+    "exit": 0,
+    "summary": [
+      "36 passed, 1 warning in 0.88s"
+    ]
+  },
+  {
+    "path": "workflows/ppt-workflow/scripts/tests",
+    "exit": 0,
+    "summary": [
+      "87 passed, 10 subtests passed in 0.73s"
+    ]
+  },
+  {
+    "path": "workflows/ppt-workflow/runtime/scripts/tests",
+    "exit": 0,
+    "summary": [
+      "38 passed, 2 subtests passed in 0.29s"
+    ]
+  },
+  {
+    "path": "tests/algorithm/chat/test_remote_executor.py",
+    "exit": 0,
+    "summary": [
+      "25 passed, 1 warning in 0.53s"
+    ]
+  },
+  {
+    "path": "tests/algorithm/chat/test_subagent_runner.py",
+    "exit": 0,
+    "summary": [
+      "42 passed, 3 warnings in 1.41s"
+    ]
+  },
+  {
+    "path": "tests/algorithm/test_workflow_sdk.py",
+    "exit": 0,
+    "summary": [
+      "89 passed, 1 warning in 0.57s"
+    ]
+  },
+  {
+    "path": "tests/algorithm/test_workflow_toolkit.py",
+    "exit": 0,
+    "summary": [
+      "16 passed in 0.23s"
+    ]
+  },
+  {
+    "path": "tests/algorithm/chat/test_workflow_full_trust.py",
+    "exit": 0,
+    "summary": [
+      "13 passed, 1 warning in 0.60s"
+    ]
+  }
+]

@@ -244,6 +244,12 @@ fetch 后 upstream/main 仍为 `9cbc57c5d`，当前提交为 `eb1178be6`。本�
 
 使用限制：新代码需要新的工作流 revision；已有会话固定旧包，不热替换。此修改不承诺 SiliconFlow 的超时/协议错误消失。成功页仍按原页序发布，前页未完成时通过进度说明后页已生成，未改变产物排序语义。
 
+### C17：SiliconFlow HTTP 504 被展示为资源不足（已修复）
+
+诊断 `33193fb856e04a75b324eb42b95a5b0b` 对应供应商 HTTP 504，但 SiliconFlowChat 的 HTTP 映射覆盖了公共层，把它分到 provider_overloaded。移除该覆盖，继承公共 request_timeout 分类；503 仍是 provider_overloaded，429 仍是 rate_limited。修改位于 LazyLLM 子模块，修复提交 `ce5ae3ff` 已推送至 `CarlosShaoting/LazyLLM` 的 `codex/siliconflow-http-timeout` 分支；主项目同步更新子模块引用；已在临时空仓库从 `.gitmodules` 配置的 `LazyAGI/LazyLLM` 地址按完整 SHA 拉取成功，无需修改子模块 URL。
+
+中英文聊天错误展示同步更新：request_timeout 明确显示“模型服务响应超时，请稍后重试”；provider_overloaded 改为“模型服务繁忙或暂时无法响应，请稍后重试”，不再把原因断言为资源不足。旧记录缺少 HTTP 状态，保留原错误码/诊断 ID，仅使用更谨慎的文案，不伪造历史分类。未改变模型调用、重试或工作流执行策略。首次修改时按要求未重启；后续已按用户指令重启本地服务，映射随新进程加载。
+
 ### C18：产品工作流中文参数导致父 Router 发布失败（已修复）
 
 会话 `0d69ccff-299b-4683-8674-49a5e6ad8aa0` 的绑定参数包含 `execution_depth="全流程"` 和 `reference_sample_choice="无"`。父 Router 发布前的别名表不接受它们，触发 `PRODUCT_INPUT_INVALID`；由于用户绑定值优先于模型参数，模型改传空值也无法恢复。
@@ -259,6 +265,12 @@ fetch 后 upstream/main 仍为 `9cbc57c5d`，当前提交为 `eb1178be6`。本�
 通用工作流触发入口兼容字典及一次 JSON 编码的字典，解析后仍严格要求“字符串 material ID → 字符串值”。坏 JSON、数组、JSON null、嵌套对象、非字符串值均拒绝；包未暴露的字段仍按原规则拒绝。兼容覆盖文本绑定和附件绑定，附件仍走原解析与导入流程；工具说明明确推荐传对象。没有按产品工作流名称增加分支，没有额外模型调用，也没有从自由文本猜测绑定值或放宽必填校验。
 
 2026-10-08 17:01 按用户要求执行 `make local-down` 后，以 `LAZYMIND_DYNAMIC_PROMPT_MODULES=false make local-up` 重启。运行时 ready，前端与 Core 健康检查均为 HTTP 200，Chat PID 为 31407，确认意图识别仍禁用。真实模型端测尚未执行。
+
+### C20：录屏生成 Skill 与历史 review 资料统一提交
+
+按“所有改动都提交”的要求，将工作区既有录屏改动一并纳入：每次视觉请求只分析一张截图，最多三张并发，字节完全一致的帧复用分析结果但保留全部时间戳；最终依据按时间排序的描述和实际操作记录，以纯文本请求生成 Skill。每次模型调用使用独立实例、空历史和清空附件，避免上一张图片混入；汇总优先使用已配置文本模型，无文本模型时使用视觉模型处理纯文本。帧解析、汇总、格式校验分别返回错误信息，日志不包含画面、操作内容或模型输出。
+
+同步提交此前未跟踪的 PR 748/750 与 workflow_dev review 文档、复现脚本和结果摘要。这些是历史检查资料，不代表本次重新执行全部历史端测。运行环境的 `node_modules` 绝对路径软链接及 LazyLLM 构建生成的嵌套 `pyproject.toml` 副本保留本地，不作为源码提交。
 
 ## 边界与兼容说明
 
@@ -402,6 +414,12 @@ PYTHONPATH=algorithm:algorithm/lazyllm local/build/deps/python/algorithm/bin/pyt
 - 原跨调用恢复测试增加全部成功后再次执行，确认保留检查点且不再次调用页面模型。
 - 真实供应商串行生成尚未验证；未将 mock 测试记作端测成功。
 
+### C17 模型超时展示验证
+
+- LazyLLM `test_online_chat_model_runtime.py`：73 passed；新增 SiliconFlow 504→request_timeout、503→provider_overloaded、429→rate_limited 的 HTTP 响应解析覆盖。
+- 前端 `chat-run-status.test.ts` 和 `RunStatusCard/index.test.tsx`：42 passed。
+- `git diff --check` 通过；后续已按用户要求重启本地服务，旧历史错误码不回写。
+
 ### C18 产品工作流中文参数验证
 
 - 产品工作流与交付契约测试：54 passed。新增发布入口回归，覆盖真实中文绑定、资源包装/JSON 字符串、300 字目标和完整阶段计划，以及模型占位值不能覆盖用户输入。
@@ -420,6 +438,12 @@ PYTHONPATH=algorithm:algorithm/lazyllm local/build/deps/python/algorithm/bin/pyt
 - 回归经过真实 `ModuleTool` 参数校验，再调用触发函数，覆盖原生对象/JSON 字符串两种形式的文本和附件绑定；覆盖无效 JSON、错误类型、未暴露字段在导入或准备会话前被拒绝。
 - `make lint-python PYTHON=local/build/deps/python/algorithm/bin/python` 和 `git diff --check` 通过。
 - 手动复测：加载修改后的 Chat，使用本次完整企业会议知识助手需求发起新会话；确认初始化工具接收到合法绑定后创建 Session，进入首个 Router，且不再因字符串包装反复报字典类型错误。缺少真正的必填输入时仍应返回等待补充。
+
+### C20 录屏与统一提交验证
+
+- `tests/algorithm/review/test_recording_skill.py`：12 passed；覆盖逐帧调用、并发上限、乱序完成后的时序保留、重复帧复用、文本/视觉模型汇总、临时文件清理，以及阶段错误不泄露录屏内容。
+- 本次重新执行 LazyLLM 模型运行时测试：73 passed；前端聊天错误文案与状态卡测试：42 passed。
+- `make lint-python PYTHON=local/build/deps/python/algorithm/bin/python` 通过。没有执行真实供应商录屏端测。
 
 ### 可重复执行的命令
 
