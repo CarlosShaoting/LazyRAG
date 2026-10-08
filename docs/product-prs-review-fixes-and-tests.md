@@ -209,6 +209,20 @@ fetch 后 upstream/main 仍为 `9cbc57c5d`，当前提交为 `eb1178be6`。本�
 - 两项大纲重试测试的 stage 替身接受显式 `sample` 参数，生成包含 design_style、color_tone、primary_color、palette 的有效风格合同。保留失败重试、发布失败后复用内容检查点、跨工作流隔离与原图片保留断言；额外确认人工修改的有效风格不会被重新生成覆盖。
 - 旧 standard deck 测试移除新版本才有的 `params.style_flow`，真实模拟旧数据。显式传入 standard 的新 deck 仍表示 preview_choice；缺少 style_flow、样例和选择记录的旧 deck 按现有迁移规则恢复为 auto，不重建目录或图片。
 
+### C14：PR #793 批量产物保存与本分支的兼容 review（2026-10-08，已在 #793 修复，尚未合入本分支）
+
+对比 [PR #793](https://github.com/LazyAGI/LazyMind/pull/793) 的 `56f7260a6` 与本分支 `57f1b0f94`，共同基线为 `9cbc57c5d`。#793 仅改 runner 提示词、subagent/tools.py 和新增批量保存测试，共 3 个文件。与本分支、最新 upstream/main `ecb769c7d` 分别进行 merge-tree 检查，均无文本冲突；另在隔离 worktree 中将 #793 与本分支实际试合并并执行测试。
+
+兼容结论：没有恢复已回退的 Writer/Markdown 编辑器改动，没有重新加入按工作流名称分支的上层控制逻辑。`_save_artifact` 及其 `internal_publish`、`publisher_list_index` 接口保留，publisher-owned 校验仍在；Core 的 transactional_outputs、冻结/发布逻辑和内部产物隐藏逻辑未被修改。批量预校验与 Core 发布事务属于不同层，不是重复实现，前者不能替代后者。没有发现直接覆盖之前修复的冲突，但下列批量保存问题需要处理。
+
+**不同来源的同名文件在发布前被覆盖。** `tools.py:578–590` 先准备整批文件，再逐项发布；底层 `copy_artifact_input` 仍按 basename 复制到同一 workspace。复现：把 `a/report.txt=FIRST` 和 `b/report.txt=SECOND` 放入一个 save_artifacts 调用，发布时读取对应文件内容。当前分支得到 FIRST、SECOND；试合并后得到 SECOND、SECOND。图片同样使用该复制函数。原来可变路径已有覆盖/消费时序风险，这次预复制整批使该场景在第一次发布前就确定丢失前一份内容，后续 Core 冻结快照也无法恢复。修复方向：为每个不同来源生成不会碰撞的目标路径，并同步文件授权解析的目标声明；或在有副作用前拒绝同一批中目标路径碰撞。补充同名文件/图片及失败批次不改写已有文件的回归测试。
+
+**列表顺序查询失败被缓存为空列表，使整批覆盖变为追加。** `tools.py:698–701` 把异常缓存成 `[]`，后续同 key 条目不再查询，发布时均缺少 list_index，返回值却为 ok。复现：现有 order_list=[7,3]，同批覆盖第 1、2 项，首次查询短暂失败、第二次查询可成功。当前分支发出的 list_index 为 [None,3]，合并后为 [None,None] 且仅查询一次。首次失败静默追加是基线已有问题；#793 将其扩散到同批全部后续覆盖项。修复方向：区分“已确认空列表”和“查询失败”，仅缓存成功结果；明确请求覆盖而无法确定索引时，在预校验阶段报错，不静默追加。新增测试目前将失败缓存行为视为成功，需要一起修正。
+
+后续修复：已在 #793 的 cst/opt_save 分支修正两个问题，修复提交为 `27f22d8cf`。文件复制使用任务目录内新建的独立子目录，保留原文件名并独占创建；文件授权解析同步声明目标父目录。受限源文件读取和 POSIX 固定父目录句柄校验保留。查询异常/响应格式错误会使整批预校验报错，不发产物事件、不消耗序号；重试重新查询，确认空列表的原行为保留。相关修复没有混入 cst/product_prs 的业务提交；只在隔离 worktree 合并验证两者兼容。
+
+新增回归覆盖同名文件/图片/file_list、后续保存不改写旧副本、失败批次保留旧文件且可重试，以及顺序查询失败后的整批拒绝与恢复。详细记录随 #793 的 `docs/pr-793-artifact-batch-fixes.md` 提交。
+
 ## 边界与兼容说明
 
 main 已有的 `workflow/ppt_incremental_pages.go` 仍按 PPT 身份处理旧页插入；这是基线已有逻辑，本次未新增或扩展。它需要单独设计旧会话迁移才能安全改成声明式能力，不能直接删除后破坏现有 PPT 页面保留行为。本次 A01 处理的是增量新加的 manager 输入改写，不代表整个主仓库已经不存在任何历史特例。
@@ -321,6 +335,19 @@ PYTHONPATH=/tmp/lazymind-installer-review-pytest make lint-python PYTHON=local/b
 LAZYLLM_INIT_DOC=1 PYTHONPATH=algorithm:algorithm/lazyllm local/build/deps/python/algorithm/bin/python -m pytest tests/algorithm/ -q
 PYTHONPATH=algorithm:algorithm/lazyllm local/build/deps/python/algorithm/bin/python -m pytest -q workflows/ppt-workflow/scripts/tests workflows/ppt-workflow/runtime/scripts/tests
 make lint-python PYTHON=local/build/deps/python/algorithm/bin/python
+```
+
+### C14 PR #793 合并验证
+
+修复后的串行全量验证：#793 分支 3954 passed、17 skipped、21 subtests passed；与本分支合并后 4054 passed、17 skipped、21 subtests passed。Python lint 和 git diff --check 均通过。验证过程先补齐隔离 worktree 的 LazyLLM 子模块，并将并行全量运行改为串行，避免聊天流/并发测试之间的干扰。下述 218 项及两个对照探针为修复前 review 记录。
+
+- 与本分支、最新 upstream/main 分别试算合并：均无文本冲突。
+- 隔离 worktree 实际合并 #793 + 本分支后：218 passed（subagent 全目录、runner、workflow review regressions、product solution delivery）。
+- 两个额外对照探针确认同名文件覆盖和查询异常缓存问题；现有 218 项测试通过不能覆盖上述风险。
+- 没有执行浏览器完整端测或真实 Core/供应商链路。本次探针在 artifact emit 边界读取文件，验证的是发布前内容已被覆盖，不依赖消费者速度。
+
+```bash
+python -m pytest -q tests/algorithm/chat/subagent tests/algorithm/chat/test_subagent_runner.py tests/algorithm/chat/test_workflow_review_regressions.py tests/algorithm/chat/workflows/test_product_solution_delivery.py
 ```
 
 ### 可重复执行的命令
