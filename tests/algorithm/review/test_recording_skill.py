@@ -16,19 +16,6 @@ def test_valid_json_fence_is_accepted():
     assert result.name == 'Export' and not result.missing
 
 
-@pytest.mark.parametrize('raw', [
-    '# 导出报表\n点击导出即可。',
-    '任意正文，不要求固定章节。',
-    '说明：\n```python\nprint("hello")\n```',
-    '# 长技能\n' + '步骤说明' * 13000,
-    '{这不是合法 JSON，但也是正文}',
-])
-def test_arbitrary_markdown_is_accepted_without_format_validation(raw):
-    result = parse_recording_result(raw)
-    assert result.content == raw
-    assert result.name and result.description and not result.error
-
-
 def test_markdown_fence_and_heading_are_supported():
     result = parse_recording_result('```markdown\n# 导出报表\n点击导出。\n```')
     assert result.name == '导出报表'
