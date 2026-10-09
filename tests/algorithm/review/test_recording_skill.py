@@ -36,9 +36,11 @@ def test_markdown_fence_and_heading_are_supported():
 
 
 @pytest.mark.parametrize('raw', ['', '   ', '```md\n\n```'])
-def test_empty_skill_content_is_not_saved(raw):
+def test_empty_skill_content_becomes_pending_draft(raw):
     result = parse_recording_result(raw)
-    assert result.error and not result.content
+    assert not result.error and not result.missing
+    assert result.name and result.description
+    assert '未识别到明确操作' in result.content
 
 
 def test_source_validation_rejects_urls_and_malformed_images():
@@ -207,18 +209,20 @@ def test_recording_truncates_long_frame_description_before_synthesis(monkeypatch
     assert '画' * 1501 not in prompt
 
 
-def test_recording_still_rejects_empty_frame_description(monkeypatch):
+def test_recording_empty_frame_and_summary_still_produce_draft(monkeypatch):
     import lazyllm
     from unittest.mock import Mock
     from lazymind import vision_model
     from lazymind.review.api.recording_skill_routes import recording_skill
 
     monkeypatch.setattr(vision_model, 'select_vision_model_role', lambda: 'llm')
-    model = Mock(return_value='   ')
+    model = Mock(side_effect=['   ', ''])
     monkeypatch.setattr(lazyllm, 'AutoModel', Mock(return_value=model))
     result = recording_skill(recording_payload())
-    assert result.error and not result.content
-    assert model.call_count == 1
+    assert not result.error and not result.missing
+    assert '未识别到明确操作' in result.content
+    assert '未识别到明确操作' in model.call_args.args[0]
+    assert model.call_count == 2
 
 
 def test_recording_logs_reasoning_metadata_without_raw_content(monkeypatch, caplog):

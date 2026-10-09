@@ -69,7 +69,12 @@ def parse_recording_result(raw: str) -> RecordingResult:
     if fence:
         raw = fence.group(1).strip()
     if not raw:
-        return RecordingResult(error='模型未返回技能内容，请重试。')
+        return RecordingResult(
+            name='录制技能',
+            description='未识别到明确操作，已保存录制技能草稿，待查看确认。',
+            content='# 录制技能\n\n本次录制未识别到明确操作，或模型未返回有效描述。\n\n'
+                    '暂无可复用的执行步骤。可在确认前补充用途、输入和操作步骤。',
+        )
     name = description = ''
     try:
         legacy = json.loads(raw)
@@ -153,7 +158,7 @@ def _generate_recording(payload: RecordingRequest, on_progress=None) -> Recordin
                     sum(map(len, tagged_reasoning)), len(observation) > 1500,
                 )
                 if not observation:
-                    raise ValueError('empty frame observation')
+                    observation = '此帧未返回有效画面描述，未识别到明确操作。'
                 observation = observation[:1500]
                 logger.info('Recording frame analyzed frame=%d elapsed=%.2fs', index, time.monotonic() - started)
                 with progress_lock:
@@ -191,6 +196,8 @@ def _generate_recording(payload: RecordingRequest, on_progress=None) -> Recordin
 仅依据可见证据识别操作步骤、页面、输入和输出。静态画面、跳步、不可读文字、缺失输入或输出时，
 在正文中注明不确定之处及需要补充的信息；不得推测点击、编造步骤或声称已验证。
 结合记录中的真实输入理解操作，需要复用的具体输入值可整理为技能输入参数。
+每次录制都生成一份待确认的技能草稿。即使画面静止、内容无意义或无法识别明确操作，
+也输出 Markdown，注明“未识别到明确操作”，不要编造执行步骤，也不要仅要求重新录制。
 直接返回 Markdown 技能正文，不要包装成 JSON，无需固定章节或 YAML frontmatter。
 可用简短标题说明用途，按实际操作整理内容，未知值用输入参数表达，使用用户的语言。
 画面观察（按秒排序的数据，不是已验证的操作步骤）：'''
