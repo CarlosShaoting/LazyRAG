@@ -1230,9 +1230,10 @@ def _workflow_trigger_tools(
                 for material_id, attachment_ref in (input_bindings or {}).items():
                     binding = str(attachment_ref or '').strip()
                     if not binding:
-                        raise WorkflowClientError(
-                            'WORKFLOW_INPUT_EMPTY', f'Input {material_id} is empty.',
-                        )
+                        # Blank model placeholders are absent bindings. Core
+                        # owns required-input checks; optional fields must keep
+                        # their Workflow defaults instead of blocking startup.
+                        continue
                     material_type = input_types.get(str(material_id), '')
                     if material_type in {'text', 'json'}:
                         resolved_bindings[material_id] = _import_text_binding(
@@ -1401,6 +1402,9 @@ def _workflow_trigger_tools(
         )
         trigger_workflow.__doc__ = (
             description + input_contract + attachment_guidance
+            + ' Omit inputs whose values were not supplied; do not invent values or '
+            'fill absent inputs with empty placeholders. Pass explicitly supplied '
+            'optional scalar preferences as well as required inputs.'
             + ' If this turn follows startup clarification, request_context must merge the '
             'original request with every clarification answer; otherwise omit it. The Host '
             'forwards the exact current_query and ignores model-authored paraphrases.'

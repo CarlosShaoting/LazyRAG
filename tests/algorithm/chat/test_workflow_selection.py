@@ -251,6 +251,69 @@ def test_trigger_rejects_invalid_json_bindings_before_import_or_preparation(bind
     toolkit.return_value.prepare_workflow.assert_not_called()
 
 
+@pytest.mark.parametrize('json_encoded', [False, True])
+@pytest.mark.parametrize('has_required_input', [False, True])
+def test_trigger_omits_blank_bindings_and_preserves_runtime_missing_inputs(json_encoded, has_required_input):
+    toolkit = MagicMock()
+    toolkit.prepare_workflow.return_value = (
+        {'session_id': 'session-1', 'ready_steps': ['draft']}
+        if has_required_input else {'status': 'needs_input', 'missing_inputs': ['topic']}
+    )
+    bindings = {'topic': '社区自习室' if has_required_input else ' ',
+                'target_length': '', 'source': '  ', 'reference': '\n', 'preferences': '\t'}
+    with patch('lazymind.chat.workflow.workflow_manager._client') as client_factory, patch(
+        'lazymind.chat.workflow.workflow_manager.HostWorkflowToolkit', return_value=toolkit,
+    ), patch('lazymind.chat.workflow.workflow_manager._import_text_binding', return_value={
+        'resource_id': 'topic-resource', 'revision': 1, 'content_hash': 'sha256:topic',
+    }) as import_text, patch(
+        'lazymind.chat.workflow.workflow_manager._resolve_workflow_attachment',
+    ) as resolve_attachment:
+        client = client_factory.return_value
+        client.get_workflow.return_value.result = {
+            'workflow_id': 'report', 'revision_id': 'revision-1',
+            'runtime': {'trigger_inputs': list(bindings)},
+            'compiled_graph': {
+                'material_types': {'topic': 'text', 'target_length': 'text', 'source': 'file',
+                                   'reference': 'image', 'preferences': 'json'},
+                'material_producers': {key: {'kind': 'external'} for key in bindings},
+            },
+        }
+        client.get_state.return_value = {
+            'session_id': 'session-1', 'projection': {'ready': ['draft']},
+        }
+        contribution = resolve_workflow_injection(
+            None, current_query='设计社区自习室预约产品，只做产品方向，使用默认结构',
+            workflow_catalog=[{
+                'workflow_ref': 'builtin:report', 'workflow_id': 'report', 'revision_id': 'revision-1',
+            }],
+            allowed_workflow_refs=['builtin:report'],
+            workflow_activations=[{
+                'workflow_ref': 'builtin:report', 'workflow_id': 'report',
+                'revision_id': 'revision-1', 'tool_name': 'trigger_report_workflow',
+            }],
+        )
+        trigger = _tool(contribution, 'trigger_report_workflow')
+        tool = ModuleTool(apply_func=trigger, schema_func=trigger)
+        arguments = tool._validate_input({'input_bindings': json.dumps(bindings) if json_encoded else bindings})
+
+        result = trigger(**arguments)
+
+    expected = {'topic': import_text.return_value} if has_required_input else {}
+    assert toolkit.prepare_workflow.call_args.kwargs['input_bindings'] == expected
+    resolve_attachment.assert_not_called()
+    if has_required_input:
+        import_text.assert_called_once_with('topic', '社区自习室')
+        assert result['session_id'] == 'session-1'
+        assert result['outcome'] == 'ready'
+    else:
+        import_text.assert_not_called()
+        client.get_state.assert_not_called()
+        assert result['outcome'] == 'waiting_for_input'
+        assert result['missing_inputs'] == ['topic']
+        assert 'session_id' not in result
+    toolkit.advance_step.assert_not_called()
+
+
 def test_selected_workflow_declares_missing_only_startup_clarification():
     runtime = {
         'clarification_fields': [

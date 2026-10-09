@@ -3224,6 +3224,7 @@ const enUS = {
     workflowViewWorkflow: "View workflow",
     workflowMoreActions: "Workflow actions",
     workflowStages: "Workflow stages",
+    workflowOutputs: "Outputs",
     workflowSessionControls: "Workflow session controls",
     workflowIntentBtn: "User Intent",
     workflowIntentGlobalTitle: "Global Intent",

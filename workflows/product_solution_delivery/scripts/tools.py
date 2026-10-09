@@ -3213,6 +3213,9 @@ def load_product_skill_contract(
         "question and do not enter awaiting-reference-sample. Record none-confirmed instead.\n"
         "- A Router only selects scope and prepares bound context. It never performs external "
         "retrieval; evidence work belongs to the selected business-stage evidence step.\n"
+        "- When the step exposes publish_product_stage_assessment, call it after the document "
+        "outputs are saved. It validates and saves the assessment together, then ends the step; "
+        "do not separately validate or save the assessment.\n"
         "- Host execution limits for rounds, deadlines, repeated calls and per-tool counts are "
         "hard ceilings and cannot be relaxed by contract prose.\n"
         "--- END LAZYMIND HOST ADAPTER OVERRIDES ---"
@@ -3592,6 +3595,62 @@ def validate_product_stage_assessment(
     if errors:
         raise _assessment_error(errors)
     return result
+
+
+def publish_product_stage_assessment(
+    stage: Literal["direction", "competitive", "design", "prd", "prototype", "review", "handoff"],
+    status: Literal["draft", "reviewable"] = "draft",
+    execution_depth: Literal["light", "minimum-fill", "full"] | None = None,
+    decisions: list[ProductAssessmentDecision] | None = None,
+    dependencies: list[ProductAssessmentDependency] | None = None,
+    open_questions: list[Union[str, ProductAssessmentQuestion]] | None = None,
+    quality_notes: list[str] | None = None,
+    checks: dict[str, Union[ProductAssessmentCheck, str]] | None = None,
+    implementation_readiness: str = "not-assessed",
+) -> dict[str, Any]:
+    """Validate and save the selected stage's assessment after its document outputs exist.
+
+    Supply evidence-backed checks, proposed decisions and unresolved questions directly.
+    Missing checks remain unperformed; omit status to retain a draft. This tool saves the
+    normalized assessment itself. After success stop; do not validate or save it again.
+
+    checks maps names to {status: passed|failed|not-checked, evidence: source/location}.
+    Plain text check notes are retained as not-checked and keep the assessment draft.
+    Omit implementation_readiness outside handoff (defaults to not-assessed); it describes
+    readiness for implementation, not whether a direction document has been written.
+    Handoff accepts only not-assessed, blocked, ready-with-open-items, or ready.
+    """
+    report = _plain_assessment_value({
+        "stage": stage, "status": status, "execution_depth": execution_depth,
+        "decisions": decisions or [], "dependencies": dependencies or [],
+        "open_questions": open_questions or [], "quality_notes": quality_notes or [],
+        "checks": checks or {}, "implementation_readiness": implementation_readiness,
+    })
+    # Preserve prose from providers that ignore the nested schema without treating
+    # it as a completed check. This is a local, conservative conversion, not an
+    # additional model evaluation or an assertion that the document is approved.
+    for name, check in report["checks"].items():
+        if isinstance(check, str):
+            report["checks"][name] = {"status": "not-checked", "evidence": check}
+            report["status"] = "draft"
+            report["quality_notes"].append(
+                f"Check {name} contained only a note; its result remains not-checked."
+            )
+    if stage != "handoff" and implementation_readiness not in {"not-assessed", "blocked"}:
+        report["quality_notes"].append(
+            "Ignored implementation-readiness claim outside handoff: " + str(implementation_readiness)
+        )
+        report["implementation_readiness"] = "not-assessed"
+        report["status"] = "draft"
+    assessment = validate_product_stage_assessment(report)
+    saved = _publish_values(
+        [(stage + "_assessment", assessment, "json")], "publish_product_stage_assessment",
+    )
+    return {
+        "status": "published", "stage": stage, "assessment_status": assessment["status"],
+        "saved_slots": saved,
+        "message": "Stage assessment validated and saved; stop this step now.",
+    }
 
 
 def load_product_stage_inputs(stage_id: str) -> dict[str, Any]:

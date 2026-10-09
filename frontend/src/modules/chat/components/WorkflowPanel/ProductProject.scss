@@ -57,8 +57,17 @@
   p { position: absolute; z-index: 20; top: 24px; right: 0; width: min(340px, 72vw); margin: 0; padding: 14px; border: 1px solid var(--border-color, #e3e8f0); border-radius: 8px; background: var(--bg-primary, white); box-shadow: 0 6px 24px #17203312; line-height: 1.7; }
 }
 // Keep the handoff card and artifact accessible together at smaller panel heights.
-.workflow-panel .workflow-panel__body.workflow-panel__body--product {
-  display: block; overflow-y: auto;
+.workflow-panel .workflow-panel__body:has(> .product-project) {
+  display: block;
+  overflow-y: scroll;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: #a8b2c3 #f3f5f8;
+  &::-webkit-scrollbar { width: 8px; }
+  &::-webkit-scrollbar-track { background: #f3f5f8; }
+  &::-webkit-scrollbar-thumb { background: #a8b2c3; border-radius: 4px; }
+  &::-webkit-scrollbar-thumb:hover { background: #7e8ca3; }
   > [role='tabpanel']:not([hidden]) { display: flex; flex-direction: column; height: 70vh; min-height: 420px; max-height: 900px; overflow: hidden; }
 }
 

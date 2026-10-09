@@ -883,6 +883,182 @@ def test_preflight_does_not_reject_large_requested_documents(tmp_path):
     assert result['execution_plan']['word_target'] == 50000
 
 
+@pytest.mark.parametrize('stage', ['direction', 'competitive', 'design', 'prd', 'prototype', 'review', 'handoff'])
+def test_assessment_publisher_saves_normalized_typed_output_and_keeps_unknowns(tmp_path, monkeypatch, stage):
+    tools = _load_contract_tools(tmp_path)
+    tools.require_context().params = {'remote_inputs': {'execution_plan': {'selected_stage': stage}}}
+    saved = []
+    monkeypatch.setattr(tools, '_save_artifact', lambda **kwargs: saved.append(kwargs))
+
+    result = tools.publish_product_stage_assessment(
+        stage=stage, execution_depth='light',
+        checks={'scope': {'status': 'passed', 'evidence': '用户明确不涉及付费'},
+                'unperformed': {'status': 'passed'}},
+        decisions=[{'summary': '预约以 30 分钟为单位', 'status': 'proposed'}],
+        open_questions=['管理员的取消权限待确认'],
+    )
+
+    assert result['status'] == 'published'
+    assert result['saved_slots'] == [stage + '_assessment']
+    assert len(saved) == 1
+    artifact = saved[0]
+    assert artifact['key'] == stage + '_assessment'
+    assert artifact['content_type'] == 'json'
+    assert artifact['internal_publish'] is True
+    assert artifact['value']['status'] == 'draft'
+    assert artifact['value']['implementation_readiness'] == 'not-assessed'
+    assert artifact['value']['checks']['scope']['evidence'] == '用户明确不涉及付费'
+    assert artifact['value']['checks']['unperformed']['status'] == 'not-checked'
+    assert artifact['value']['open_questions'] == ['管理员的取消权限待确认']
+    assert artifact['value']['decisions'][0]['status'] == 'proposed'
+
+
+@pytest.mark.parametrize('arguments', [
+    {'stage': 'prd'},
+    {'stage': 'direction', 'checks': {'scope': {'status': 'unknown-state'}}},
+])
+def test_assessment_publisher_rejects_invalid_reports_before_saving(tmp_path, monkeypatch, arguments):
+    tools = _load_contract_tools(tmp_path)
+    tools.require_context().params = {'remote_inputs': {'execution_plan': {'selected_stage': 'direction'}}}
+    saved = []
+    monkeypatch.setattr(tools, '_save_artifact', lambda **kwargs: saved.append(kwargs))
+
+    with pytest.raises(ValueError):
+        tools.publish_product_stage_assessment(**arguments)
+
+    assert saved == []
+
+
+@pytest.mark.parametrize('stage', ['direction', 'competitive', 'design', 'prd', 'prototype', 'review'])
+@pytest.mark.parametrize('readiness', ['ready-with-open-items', '方向定义已满足就绪条件，可进入设计阶段'])
+def test_assessment_replays_prose_report_without_model_repair(tmp_path, monkeypatch, stage, readiness):
+    tools = _load_contract_tools(tmp_path)
+    tools.require_context().params = {'remote_inputs': {'execution_plan': {'selected_stage': stage}}}
+    saved = []
+    monkeypatch.setattr(tools, '_save_artifact', lambda **kwargs: saved.append(kwargs))
+    checks = {'target_users_defined': '管理员与学生在用户与问题章节中定义。'}
+    notes = ['座位规模未知']
+
+    result = tools.publish_product_stage_assessment(
+        stage=stage, status='reviewable', execution_depth='light', checks=checks,
+        implementation_readiness=readiness, quality_notes=notes,
+    )
+
+    assert result['status'] == 'published'
+    assert len(saved) == 1
+    report = saved[0]['value']
+    assert report['status'] == 'draft'
+    assert report['implementation_readiness'] == 'not-assessed'
+    assert report['checks']['target_users_defined'] == {
+        'status': 'not-checked', 'evidence': checks['target_users_defined'],
+    }
+    assert any(readiness in note for note in report['quality_notes'])
+    assert notes == ['座位规模未知']
+    assert isinstance(checks['target_users_defined'], str)
+
+
+def test_assessment_publisher_accepts_schema_parsed_nested_fields(tmp_path, monkeypatch):
+    tools = _load_contract_tools(tmp_path)
+    tools.require_context().params = {'remote_inputs': {'execution_plan': {'selected_stage': 'direction'}}}
+    saved = []
+    monkeypatch.setattr(tools, '_save_artifact', lambda **kwargs: saved.append(kwargs))
+
+    tools.publish_product_stage_assessment(
+        stage='direction', status='reviewable',
+        checks={'scope': tools.ProductAssessmentCheck(status='passed', evidence='原始需求：不涉及付费')},
+        decisions=[tools.ProductAssessmentDecision(value='预约以 30 分钟为单位')],
+        open_questions=[tools.ProductAssessmentQuestion(question='座位规模未知')],
+    )
+
+    assert saved[0]['value']['status'] == 'reviewable'
+    assert saved[0]['value']['checks']['scope']['status'] == 'passed'
+    assert saved[0]['value']['decisions'][0]['status'] == 'proposed'
+    assert saved[0]['value']['open_questions'][0]['question'] == '座位规模未知'
+
+
+def test_handoff_publisher_still_rejects_unstructured_readiness(tmp_path, monkeypatch):
+    tools = _load_contract_tools(tmp_path)
+    tools.require_context().params = {'remote_inputs': {'execution_plan': {'selected_stage': 'handoff'}}}
+    saved = []
+    monkeypatch.setattr(tools, '_save_artifact', lambda **kwargs: saved.append(kwargs))
+
+    with pytest.raises(ValueError, match='implementation_readiness'):
+        tools.publish_product_stage_assessment(stage='handoff', implementation_readiness='看起来可以开发了')
+    assert saved == []
+
+
+def test_direction_document_and_assessment_replay_with_simulated_writer(tmp_path, monkeypatch):
+    """Run publication with seven local chapters and the failed chat's argument shapes; no LLM."""
+    import socket
+
+    def no_network(*args, **kwargs):
+        raise AssertionError('Offline workflow replay must not call a provider')
+
+    monkeypatch.setattr(socket.socket, 'connect', no_network)
+    tools = _load_contract_tools(tmp_path)
+    bridge = _load_writer_bridge()
+    root = Path(__file__).resolve().parents[4] / 'workflows/product_solution_delivery'
+    workflow = yaml.safe_load((root / 'workflow.yaml').read_text())
+    state = yaml.safe_load((root / 'scenario/state.yml').read_text())
+    step = state['steps']['write_direction_document']
+    slots = [output['material'] for output in step['outputs']]
+    context = tools.require_context()
+    context.output_slots = slots
+    context.params = {
+        'step_id': 'write_direction_document',
+        'workflow_runtime': workflow['runtime'],
+        'remote_inputs': {'execution_plan': {'selected_stage': 'direction'}},
+    }
+    monkeypatch.setattr(bridge, 'require_context', lambda: context)
+    saved = {}
+
+    def save(key, value, content_type, **kwargs):
+        saved[key] = (value, content_type)
+
+    monkeypatch.setattr(bridge, '_save_artifact', save)
+    monkeypatch.setattr(tools, '_save_artifact', save)
+
+    def file(name, text):
+        path = tmp_path / name
+        path.write_text(text)
+        return str(path)
+
+    inputs = {f'direction_{suffix}': file(suffix + '.json', '{}')
+              for suffix in ('task', 'context_approved')}
+    inputs['direction_outline'] = file('outline.md', '# 产品方向\n## 用户与问题')
+    context.params['remote_inputs'].update(inputs)
+    plan = file('plan.json', '{}')
+    chapters = [file(f'chapter-{i}.md', f'## 模拟章节 {i}\n座位规模未知。') for i in range(7)]
+    document = file('document.md', '# 松果-731\n\n' + '\n\n'.join(Path(p).read_text() for p in chapters))
+    final_context = file('context-final.json', '{}')
+    monkeypatch.setattr(bridge, '_stage_contract', lambda *args: {})
+    monkeypatch.setattr(bridge, '_required_bound_file', lambda slot: inputs[slot])
+    monkeypatch.setattr(bridge, 'product_writer_plan_sections', lambda *args: {'section_instructions': plan})
+    monkeypatch.setattr(bridge, 'product_writer_write_sections', lambda *args: chapters)
+    monkeypatch.setattr(bridge, 'product_writer_assemble_draft', lambda *args: document)
+    monkeypatch.setattr(bridge, 'product_writer_update_context', lambda *args: final_context)
+
+    result = bridge.product_writer_generate_document_from_inputs('direction')
+    assert result['chapter_publish']['published_count'] == 7
+    # Reproduce the observed missing-output condition before the final publisher runs.
+    assert 'direction_document' in saved and 'direction_document_html' in saved
+    assert 'direction_assessment' not in saved
+    tools.publish_product_stage_assessment(
+        stage='direction', status='reviewable', execution_depth='light',
+        checks={'target_users_defined': '用户为学生和管理员'},
+        implementation_readiness='方向定义已满足就绪条件，可进入设计阶段',
+    )
+
+    material_types = {m['id']: m['type'] for m in workflow['slots']}
+    for output in step['outputs']:
+        slot = output['material']
+        if output.get('required', True):
+            assert slot in saved, slot
+            assert saved[slot][1] == material_types[slot]
+    assert saved['direction_assessment'][0]['status'] == 'draft'
+    assert Path(saved['direction_document'][0]).read_text() == Path(document).read_text()
+
+
 def test_publication_validation_checks_bound_bodies_before_any_output(tmp_path):
     tools = _load_contract_tools(tmp_path)
     remote = {'direction_document': '# Direction', 'direction_document_html': '<h1>Direction</h1>',

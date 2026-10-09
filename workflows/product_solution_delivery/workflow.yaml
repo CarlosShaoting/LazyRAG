@@ -26,11 +26,11 @@ runtime:
     write_direction_document:
       rounds: 7
       timeout: 720
-      tool_calls: {"load_product_skill_contract": 2, "load_product_stage_inputs": 2, "get_artifact": 3, "save_artifacts": 2, "validate_product_stage_assessment": 2, "product_writer_revise_and_publish": 1, "product_writer_revise_markdown": 1, "product_writer_generate_document_from_inputs": 1}
+      tool_calls: {"load_product_skill_contract": 2, "load_product_stage_inputs": 2, "get_artifact": 3, "save_artifacts": 2, "publish_product_stage_assessment": 2, "product_writer_revise_and_publish": 1, "product_writer_revise_markdown": 1, "product_writer_generate_document_from_inputs": 1}
     analyze_competitive_position:
       rounds: 7
       timeout: 600
-      tool_calls: {"load_product_skill_contract": 2, "load_product_stage_inputs": 2, "get_artifact": 3, "save_artifacts": 2, "validate_product_stage_assessment": 2, "write_product_artifact_bundle": 1}
+      tool_calls: {"load_product_skill_contract": 2, "load_product_stage_inputs": 2, "get_artifact": 3, "save_artifacts": 2, "publish_product_stage_assessment": 2, "write_product_artifact_bundle": 1}
     collect_design_light_evidence:
       rounds: 20
       timeout: 480
@@ -42,23 +42,23 @@ runtime:
     write_design_document:
       rounds: 7
       timeout: 720
-      tool_calls: {"load_product_skill_contract": 2, "load_product_stage_inputs": 2, "get_artifact": 3, "save_artifacts": 2, "validate_product_stage_assessment": 2, "product_writer_revise_and_publish": 1, "product_writer_revise_markdown": 1, "product_writer_generate_document_from_inputs": 1}
+      tool_calls: {"load_product_skill_contract": 2, "load_product_stage_inputs": 2, "get_artifact": 3, "save_artifacts": 2, "publish_product_stage_assessment": 2, "product_writer_revise_and_publish": 1, "product_writer_revise_markdown": 1, "product_writer_generate_document_from_inputs": 1}
     write_prd_document:
       rounds: 7
       timeout: 720
-      tool_calls: {"load_product_skill_contract": 2, "load_product_stage_inputs": 2, "get_artifact": 3, "save_artifacts": 2, "validate_product_stage_assessment": 2, "product_writer_revise_and_publish": 1, "product_writer_revise_markdown": 1, "product_writer_generate_document_from_inputs": 1}
+      tool_calls: {"load_product_skill_contract": 2, "load_product_stage_inputs": 2, "get_artifact": 3, "save_artifacts": 2, "publish_product_stage_assessment": 2, "product_writer_revise_and_publish": 1, "product_writer_revise_markdown": 1, "product_writer_generate_document_from_inputs": 1}
     build_interactive_prototype:
       rounds: 7
       timeout: 600
-      tool_calls: {"load_product_skill_contract": 2, "load_product_stage_inputs": 2, "get_artifact": 3, "save_artifacts": 2, "validate_product_stage_assessment": 2, "write_product_artifact_bundle": 1}
+      tool_calls: {"load_product_skill_contract": 2, "load_product_stage_inputs": 2, "get_artifact": 3, "save_artifacts": 2, "publish_product_stage_assessment": 2, "write_product_artifact_bundle": 1}
     write_review_document:
       rounds: 7
       timeout: 720
-      tool_calls: {"load_product_skill_contract": 2, "load_product_stage_inputs": 2, "get_artifact": 3, "save_artifacts": 2, "validate_product_stage_assessment": 2, "product_writer_revise_and_publish": 1, "product_writer_revise_markdown": 1, "product_writer_generate_document_from_inputs": 1}
+      tool_calls: {"load_product_skill_contract": 2, "load_product_stage_inputs": 2, "get_artifact": 3, "save_artifacts": 2, "publish_product_stage_assessment": 2, "product_writer_revise_and_publish": 1, "product_writer_revise_markdown": 1, "product_writer_generate_document_from_inputs": 1}
     write_handoff_document:
       rounds: 7
       timeout: 720
-      tool_calls: {"load_product_skill_contract": 2, "load_product_stage_inputs": 2, "get_artifact": 3, "save_artifacts": 2, "validate_product_stage_assessment": 2, "product_writer_revise_and_publish": 1, "product_writer_revise_markdown": 1, "product_writer_generate_document_from_inputs": 1}
+      tool_calls: {"load_product_skill_contract": 2, "load_product_stage_inputs": 2, "get_artifact": 3, "save_artifacts": 2, "publish_product_stage_assessment": 2, "product_writer_revise_and_publish": 1, "product_writer_revise_markdown": 1, "product_writer_generate_document_from_inputs": 1}
     finalize_product_delivery:
       rounds: 3
       timeout: 120
@@ -68,6 +68,13 @@ runtime:
   # The parent Router's terminal publisher writes these slots as one validated unit. Business
   # stages keep their existing canonical publication paths and add one synchronized view slot.
   publisher_owned_slots:
+    - direction_assessment
+    - competitive_assessment
+    - design_assessment
+    - prd_assessment
+    - prototype_assessment
+    - review_assessment
+    - handoff_assessment
     - reuse_product_structure
     - routing_record
     - execution_plan
@@ -157,6 +164,7 @@ tool_scripts:
       - build_product_handoff_state
       - publish_product_handoff_state
       - validate_product_stage_assessment
+      - publish_product_stage_assessment
       - validate_design_escalation
       - normalize_product_parameters
       - write_product_artifact_file

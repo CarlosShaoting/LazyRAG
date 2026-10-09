@@ -2231,7 +2231,9 @@ export function WorkflowPanel({
 
       {/* Compact step navigation; long workflows scroll horizontally. */}
       {!collapsed && hasTabs && (
-        <div className='workflow-panel__tabs' role='tablist' aria-label={t('chat.workflowStages')} ref={setTabsScrollRef}
+        <div className='workflow-panel__tabs' role='tablist'
+          aria-label={t(ui.task_presentation?.grouped ? 'chat.workflowOutputs' : 'chat.workflowStages')}
+          ref={setTabsScrollRef}
           onKeyDown={(event) => {
             const direction = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
             if (!direction && event.key !== 'Home' && event.key !== 'End') return;
@@ -2243,6 +2245,9 @@ export function WorkflowPanel({
             target?.focus();
             target?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
           }}>
+          {ui.task_presentation?.grouped && (
+            <span className='workflow-panel__tabs-label'>{t('chat.workflowOutputs')}</span>
+          )}
           {tabs.map((tab, idx) => {
             const statusStepIds = tab.status_step_ids ?? [tab.step_id ?? tab.id];
             const step = session.steps
@@ -2270,7 +2275,9 @@ export function WorkflowPanel({
                   onClick={() => handleTabChange(idx, tab.id)}
                   type='button'
                 >
-                  <span className='workflow-panel__tab-badge' aria-hidden='true'>{idx + 1}</span>
+                  {!ui.task_presentation?.grouped && (
+                    <span className='workflow-panel__tab-badge' aria-hidden='true'>{idx + 1}</span>
+                  )}
                   <span className='workflow-panel__tab-label'>{tab.label}</span>
                   {stepStatus && stepStatus !== 'succeeded' && (
                     <span

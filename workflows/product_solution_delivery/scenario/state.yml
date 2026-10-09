@@ -171,20 +171,22 @@ steps:
       Non-blocking chapter warnings do not justify regeneration. Read only the returned exact
       file path when needed to ground the assessment. For design preserve the selected scope,
       evidence branch and risk gates; for handoff apply the stricter readiness checks.
-      Completion requires this exact order: generate/revise, validate the assessment, save the assessment.
-      Only the normalized S_assessment is passed to save_artifacts; a file alone is not completion.
-      Use validate_product_stage_assessment(value={"stage": S, "status": "draft", ...}) with the
-      stage inside value, never as a sibling argument. Follow its stage-aware schema and report
-      child-decided facts; omit optional empty collections and never invent alternate nesting.
-      Repair all reported invalid paths together and retry once only. Never finish with an unsaved
-      assessment. Checks need actual evidence; unperformed checks are not-checked. Missing or
-      conflicting required inputs keep draft status. Decisions remain proposed; the Host records
-      system provenance at relay, never a fabricated user acceptance_ref. Only handoff may claim
-      implementation readiness after its required checks and dependencies pass.
+      After generating/revising the document, call publish_product_stage_assessment(stage=S,
+      status="draft" or "reviewable", execution_depth=resolved depth, checks=evidence-backed checks,
+      decisions=proposed decisions, open_questions=remaining gaps, quality_notes=notes) once.
+      Each checks entry is {"status":"passed|failed|not-checked", "evidence":"source/location"},
+      not a prose string. Omit implementation_readiness outside handoff; a completed direction
+      document does not mean implementation is ready. Keep unresolved facts as open_questions.
+      Pass fields directly, not inside a value object. This tool validates and saves S_assessment
+      together; do not call save_artifacts or a separate validator for the assessment.
+      Omit optional empty collections. Unperformed checks are not-checked; missing or conflicting
+      required inputs keep draft status. Never invent user approval or evidence. Only handoff
+      may claim implementation readiness after its required checks and dependencies pass.
+      If publication fails, repair all reported fields together and retry once. After success stop.
       Never pass artifact/workspace/Writer paths as reference_paths; omit reference_paths on the
-      first load. Keep assessments and traces internal. After saving, return one natural status
-      sentence (at most 80 Chinese characters); no JSON, paths, chapter lists, diagnostics or recap.
-    tools: &writer_document_tools [read_file, load_product_skill_contract, validate_product_stage_assessment, product_writer_generate_document_from_inputs, product_writer_revise_and_publish]
+      first load. Keep assessments and traces internal; no JSON, paths, chapter lists or recap.
+    tools: &writer_document_tools [read_file, load_product_skill_contract, publish_product_stage_assessment, product_writer_generate_document_from_inputs, product_writer_revise_and_publish]
+    terminal_tools: &assessment_publishers [publish_product_stage_assessment]
     inputs:
       - {material: resource_profiles, required: false}
       - {material: research_evidence, required: false}
@@ -248,10 +250,15 @@ steps:
       markdown_filename="competitive-analysis.md", validate_as="competitive") once with both
       complete bodies. Save its returned html_path verbatim as competitive_analysis and its returned
       markdown_path verbatim as competitive_analysis_markdown, both with content_type="file"; never
-      save or repeat source bodies as file values. Stop for approval.
-      Follow the shared contract completion rules: validate and save competitive_assessment
-      before completing, with the stage inside value. Keep the assessment and runtime trace internal.
-    tools: &html_stage_tools [load_product_skill_contract, validate_product_stage_assessment, load_product_stage_inputs, write_product_artifact_bundle]
+      save or repeat source bodies as file values. Publish the assessment before stopping for approval.
+      After saving both documents, call publish_product_stage_assessment(stage="competitive",
+      status="draft" or "reviewable", checks=evidence-backed checks, decisions=proposed decisions,
+      open_questions=remaining gaps). Pass fields directly, not inside value. It validates and saves
+      competitive_assessment together. Stop after success; keep assessment and runtime trace internal.
+      Each checks entry is {"status":"passed|failed|not-checked", "evidence":"source/location"}.
+      Omit implementation_readiness; this stage does not assess readiness for implementation.
+    tools: &html_stage_tools [load_product_skill_contract, publish_product_stage_assessment, load_product_stage_inputs, write_product_artifact_bundle]
+    terminal_tools: *assessment_publishers
     inputs:
       - {material: execution_plan, required: true}
       - {material: research_evidence, required: true}
@@ -458,6 +465,7 @@ steps:
     rerun_when: 用户要求修改、补充或局部重写产品方案文档。
     prompt: *writer_document_prompt
     tools: *writer_document_tools
+    terminal_tools: *assessment_publishers
     inputs:
       - {material: resource_profiles, required: false}
       - {material: research_evidence, required: false}
@@ -510,6 +518,7 @@ steps:
     rerun_when: 用户要求修改、补充或局部重写 PRD。
     prompt: *writer_document_prompt
     tools: *writer_document_tools
+    terminal_tools: *assessment_publishers
     inputs:
       - {material: resource_profiles, required: false}
       - {material: research_evidence, required: false}
@@ -572,11 +581,16 @@ steps:
       markdown_filename="prototype.md", validate_as="prototype") once with both complete bodies.
       Save html_path verbatim as prototype and markdown_path verbatim as prototype_markdown, both
       with content_type="file"; never save or repeat source bodies as file values. Preserve uncertain
-      behavior as a visible limitation and stop for approval.
+      behavior as a visible limitation. Publish the assessment before stopping for approval.
       Do not claim production readiness or browser visual QA that did not occur.
-      Follow the shared contract completion rules: validate and save prototype_assessment
-      before completing, with the stage inside value. Keep the assessment and runtime trace internal.
+      After saving both documents, call publish_product_stage_assessment(stage="prototype",
+      status="draft" or "reviewable", checks=evidence-backed checks, decisions=proposed decisions,
+      open_questions=remaining gaps). Pass fields directly, not inside value. It validates and saves
+      prototype_assessment together. Stop after success; keep assessment and runtime trace internal.
+      Each checks entry is {"status":"passed|failed|not-checked", "evidence":"source/location"}.
+      Omit implementation_readiness; this stage does not assess readiness for implementation.
     tools: *html_stage_tools
+    terminal_tools: *assessment_publishers
     inputs:
       - {material: execution_plan, required: true}
       - {material: material_digest, required: true}
@@ -620,6 +634,7 @@ steps:
     rerun_when: 用户要求修改、补充或局部重写评审报告。
     prompt: *writer_document_prompt
     tools: *writer_document_tools
+    terminal_tools: *assessment_publishers
     inputs:
       - {material: resource_profiles, required: false}
       - {material: research_evidence, required: false}
@@ -670,6 +685,7 @@ steps:
     rerun_when: 用户要求修改、补充或局部重写研发交付文档。
     prompt: *writer_document_prompt
     tools: *writer_document_tools
+    terminal_tools: *assessment_publishers
     inputs:
       - {material: resource_profiles, required: false}
       - {material: research_evidence, required: false}

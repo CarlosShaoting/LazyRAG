@@ -3164,6 +3164,7 @@ const zhCN = {
     workflowViewWorkflow: "查看工作流",
     workflowMoreActions: "工作流操作",
     workflowStages: "工作流阶段",
+    workflowOutputs: "产物",
     workflowSessionControls: "工作流会话操作",
     workflowBtnDisabledHint: "步骤执行中，请稍候",
     workflowSavingBeforeAction: "正在保存编辑…",
