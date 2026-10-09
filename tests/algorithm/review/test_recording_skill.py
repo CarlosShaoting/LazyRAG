@@ -4,18 +4,10 @@ from pydantic import ValidationError
 from lazymind.review.api.recording_skill_routes import RecordingFrame, RecordingRequest, parse_recording_result
 
 
-def test_missing_evidence_discards_partial_generated_content():
-    result = parse_recording_result(json.dumps({
-        'name': 'Guess', 'description': 'Unverified', 'content': 'Invented steps',
-        'missing': ['What was the output?'],
-    }))
-    assert result.missing == ['What was the output?']
-    assert not result.name and not result.content
-
-
-def test_incomplete_result_requests_details():
-    result = parse_recording_result('{"name":"Incomplete"}')
-    assert result.missing and not result.content
+def test_incomplete_json_is_preserved_as_draft_content():
+    raw = '{"name":"Incomplete"}'
+    result = parse_recording_result(raw)
+    assert result.content == raw and result.name and not result.error
 
 
 def test_valid_json_fence_is_accepted():
@@ -24,9 +16,29 @@ def test_valid_json_fence_is_accepted():
     assert result.name == 'Export' and not result.missing
 
 
-def test_invalid_model_output_is_not_treated_as_a_skill():
-    with pytest.raises((ValueError, ValidationError)):
-        parse_recording_result('Sorry, I could not see any steps.')
+@pytest.mark.parametrize('raw', [
+    '# 导出报表\n点击导出即可。',
+    '任意正文，不要求固定章节。',
+    '说明：\n```python\nprint("hello")\n```',
+    '# 长技能\n' + '步骤说明' * 13000,
+    '{这不是合法 JSON，但也是正文}',
+])
+def test_arbitrary_markdown_is_accepted_without_format_validation(raw):
+    result = parse_recording_result(raw)
+    assert result.content == raw
+    assert result.name and result.description and not result.error
+
+
+def test_markdown_fence_and_heading_are_supported():
+    result = parse_recording_result('```markdown\n# 导出报表\n点击导出。\n```')
+    assert result.name == '导出报表'
+    assert result.content == '# 导出报表\n点击导出。'
+
+
+@pytest.mark.parametrize('raw', ['', '   ', '```md\n\n```'])
+def test_empty_skill_content_is_not_saved(raw):
+    result = parse_recording_result(raw)
+    assert result.error and not result.content
 
 
 def test_source_validation_rejects_urls_and_malformed_images():
@@ -152,7 +164,7 @@ def test_recording_single_image_calls_then_text_only_synthesis(monkeypatch, has_
     assert offsets == sorted(offsets)
 
 
-@pytest.mark.parametrize('stage', ['frames', 'synthesis', 'result_validation'])
+@pytest.mark.parametrize('stage', ['frames', 'synthesis'])
 def test_recording_failures_are_staged_without_exposing_input(monkeypatch, caplog, stage):
     import lazyllm
     from lazymind import vision_model
@@ -164,7 +176,6 @@ def test_recording_failures_are_staged_without_exposing_input(monkeypatch, caplo
     responses = {
         'frames': [RuntimeError(secret)],
         'synthesis': ['Visible page', RuntimeError(secret)],
-        'result_validation': ['Visible page', secret],
     }
     model = Mock(side_effect=responses[stage])
     monkeypatch.setattr(lazyllm, 'AutoModel', Mock(return_value=model))
@@ -173,3 +184,85 @@ def test_recording_failures_are_staged_without_exposing_input(monkeypatch, caplo
     assert f'stage={stage}' in caplog.text
     assert secret not in caplog.text and secret not in result.error
     assert model.call_count == (1 if stage == 'frames' else 2)
+
+
+@pytest.mark.parametrize('length', [1500, 1501, 3000])
+def test_recording_truncates_long_frame_description_before_synthesis(monkeypatch, length):
+    import lazyllm
+    from unittest.mock import Mock
+    from lazymind import vision_model
+    from lazymind.review.api.recording_skill_routes import recording_skill
+
+    monkeypatch.setattr(vision_model, 'select_vision_model_role', lambda: 'llm')
+    description = '画' * length
+    model = Mock(side_effect=[
+        description,
+        json.dumps({'name': 'Export', 'description': 'Export report', 'content': '1. Export'}),
+    ])
+    monkeypatch.setattr(lazyllm, 'AutoModel', Mock(return_value=model))
+    result = recording_skill(recording_payload())
+    assert result.name == 'Export' and not result.error
+    prompt = model.call_args.args[0]
+    assert '画' * 1500 in prompt
+    assert '画' * 1501 not in prompt
+
+
+def test_recording_still_rejects_empty_frame_description(monkeypatch):
+    import lazyllm
+    from unittest.mock import Mock
+    from lazymind import vision_model
+    from lazymind.review.api.recording_skill_routes import recording_skill
+
+    monkeypatch.setattr(vision_model, 'select_vision_model_role', lambda: 'llm')
+    model = Mock(return_value='   ')
+    monkeypatch.setattr(lazyllm, 'AutoModel', Mock(return_value=model))
+    result = recording_skill(recording_payload())
+    assert result.error and not result.content
+    assert model.call_count == 1
+
+
+def test_recording_logs_reasoning_metadata_without_raw_content(monkeypatch, caplog):
+    import logging
+    import lazyllm
+    from unittest.mock import Mock
+    from lazymind import vision_model
+    from lazymind.review.api.recording_skill_routes import recording_skill
+
+    monkeypatch.setattr(vision_model, 'select_vision_model_role', lambda: 'llm')
+    private = 'private-reasoning-text'
+    model = Mock(side_effect=[
+        f'<think>{private}</think>Visible page',
+        json.dumps({'name': 'Export', 'description': 'Export report', 'content': '1. Export'}),
+    ])
+    monkeypatch.setattr(lazyllm, 'AutoModel', Mock(return_value=model))
+    with caplog.at_level(logging.INFO):
+        result = recording_skill(recording_payload())
+    assert not result.error
+    assert 'Recording frame output frame=0 output_type=str' in caplog.text
+    assert 'think_tags=True' in caplog.text
+    assert f'tagged_reasoning_chars={len(private)}' in caplog.text
+    assert private not in caplog.text
+
+
+def test_recording_stream_reports_progress_and_final_result(monkeypatch):
+    import lazyllm
+    from unittest.mock import Mock
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from lazymind import vision_model
+    from lazymind.review.api.recording_skill_routes import router
+
+    monkeypatch.setattr(vision_model, 'select_vision_model_role', lambda: 'llm')
+    model = Mock(side_effect=[
+        'Visible page',
+        '# Export\n1. Export',
+    ])
+    monkeypatch.setattr(lazyllm, 'AutoModel', Mock(return_value=model))
+    app = FastAPI()
+    app.include_router(router)
+    response = TestClient(app).post('/api/chat/recording_skill_stream', json=recording_payload().model_dump())
+    events = [json.loads(line) for line in response.text.splitlines()]
+    assert response.status_code == 200
+    assert events[:2] == [{'progress': 0}, {'progress': 90}]
+    assert events[-1]['result']['name'] == 'Export'
+    assert model.call_count == 2  # Duplicate frames share one description and one progress update.
