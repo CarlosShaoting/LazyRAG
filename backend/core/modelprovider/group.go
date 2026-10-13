@@ -737,10 +737,12 @@ const sensenovaNewPlatformBaseURL = "https://token.sensenova.cn/v1/"
 // sensenovaNewPlatformModelNames lists the model names (from default_models seeding) that are
 // specific to the new SenseNova platform URL. Model metadata comes from the catalog / DB.
 var sensenovaNewPlatformModelNames = map[string]bool{
+	"deepseek-flash":           true,
+	"kimi-k3":                  true,
 	"deepseek-v4-flash":        true,
 	"glm-5.2":                  true,
-	"sensenova-6.7-flash-lite": true,
-	"sensenova-u1-fast":        true,
+	"sensenova-6.8-flash-lite": true,
+	"sensenova-u1.5-fast":      true,
 	"sensenova-u1.5-lite":      true,
 }
 

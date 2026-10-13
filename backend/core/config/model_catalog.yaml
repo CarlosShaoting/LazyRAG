@@ -1050,15 +1050,21 @@ model_providers:
           type: llm
         - name: glm-5.2
           type: llm
+        - name: deepseek-flash
+          type: llm
+          vision: true
+        - name: kimi-k3
+          type: llm
+          vision: true
         # Token Plan is free during public beta: https://platform.sensenova.cn/
-        # Image input: https://github.com/OpenSenseNova/SenseNova6.7/blob/main/API_CN.md (2026-09-18).
-        - name: sensenova-6.7-flash-lite
+        # Current Token Plan models: https://platform.sensenova.cn/docs (2026-10-13).
+        - name: sensenova-6.8-flash-lite
           type: llm
           vision: true
           free_auto_select_priority: 1
           free_auto_select_base_urls: ["https://token.sensenova.cn/v1/"]
-        - name: sensenova-u1-fast
-          type: text2image
+        - name: sensenova-u1.5-fast
+          type: image_editing
           free_auto_select_priority: 1
           free_auto_select_base_urls: ["https://token.sensenova.cn/v1/"]
         - name: sensenova-u1.5-lite
