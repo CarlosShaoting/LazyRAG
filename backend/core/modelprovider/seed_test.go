@@ -548,3 +548,40 @@ func TestReconcileCatalogPreservesCustomModelsAndEndpoints(t *testing.T) {
 		t.Fatalf("defaults = %v", ids)
 	}
 }
+
+func TestUpgradeLegacyTokenPlanURLPreservesCustomURLs(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&orm.UserModelProvider{}, &orm.UserModelProviderGroup{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&orm.UserModelProvider{ID: "nova", DefaultModelProviderID: "catalog-nova"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	urls := []string{"https://token.sensenova.cn/v1/chat/completions/", "https://token.sensenova.cn/v1/chat/completions", "https://proxy.example/v2/", "https://api.sensenova.cn/compatible-mode/v1/"}
+	for _, u := range urls {
+		if err := db.Create(&orm.UserModelProviderGroup{ID: u, UserModelProviderID: "nova", BaseURL: u}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	for range 2 {
+		if err := upgradeLegacyTokenPlanURL(db, "catalog-nova"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i, u := range urls {
+		var row orm.UserModelProviderGroup
+		if err := db.Where("id = ?", u).Take(&row).Error; err != nil {
+			t.Fatal(err)
+		}
+		want := u
+		if i < 2 {
+			want = sensenovaNewPlatformBaseURL
+		}
+		if row.BaseURL != want {
+			t.Fatalf("URL = %q, want %q", row.BaseURL, want)
+		}
+	}
+}

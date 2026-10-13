@@ -1221,7 +1221,9 @@ export default function ModelProviderPage({
     providerConfigForm.setFieldsValue({
       name: groupDraft.name,
       apiKey: "",
-      baseUrl: currentBaseUrl,
+      baseUrl: isSensenovaProvider(providerDraft) && isSensenovaNewBaseUrl(currentBaseUrl)
+        ? SENSENOVA_NEW_BASE_URL
+        : currentBaseUrl,
     });
 
     providerFormDraft.captureSavedValues();
