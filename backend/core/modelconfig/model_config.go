@@ -810,10 +810,16 @@ func BuildLLMConfig(rows []SelectedRuntimeModel) map[string]any {
 	out := map[string]any{}
 	for _, row := range rows {
 		role := strings.ToLower(strings.TrimSpace(row.ModelType))
+		baseURL := modelprovider.LazyLLMBaseURL(row.ProviderName, row.BaseURL)
+		if modelprovider.LazyLLMSource(row.ProviderName) == "sensenova" &&
+			(role == "text2image" || role == "image_editing" || role == "image_generator" || role == "image_editor") {
+			// SenseNova image models use Token Plan, independently of the shared chat endpoint.
+			baseURL = "https://token.sensenova.cn/v1/"
+		}
 		cfg := map[string]any{
 			"source":   modelprovider.LazyLLMSource(row.ProviderName),
 			"model":    row.ModelName,
-			"base_url": modelprovider.LazyLLMBaseURL(row.ProviderName, row.BaseURL),
+			"base_url": baseURL,
 			"api_key":  row.APIKey,
 		}
 		cfg["vision"] = row.Vision || strings.EqualFold(strings.TrimSpace(row.TechnicalModelType), "vlm")
