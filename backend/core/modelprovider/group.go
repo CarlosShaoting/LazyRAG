@@ -702,7 +702,7 @@ func DeleteGroup(w http.ResponseWriter, r *http.Request) {
 }
 
 func normalizeBaseURLForCompare(s string) string {
-	s = strings.TrimSpace(s)
+	s = canonicalSenseNovaTokenPlanURL(strings.TrimSpace(s))
 	for strings.HasSuffix(s, "/") {
 		s = strings.TrimSuffix(s, "/")
 	}
@@ -732,7 +732,7 @@ func isAPIKeyRequiredForBaseURL(ctx context.Context, db *gorm.DB, defaultProvide
 }
 
 // sensenovaNewPlatformBaseURL is the alternative SenseNova base URL.
-const sensenovaNewPlatformBaseURL = "https://token.sensenova.cn/v1/chat/completions/"
+const sensenovaNewPlatformBaseURL = "https://token.sensenova.cn/v1/"
 
 // sensenovaNewPlatformModelNames lists the model names (from default_models seeding) that are
 // specific to the new SenseNova platform URL. Model metadata comes from the catalog / DB.

@@ -11,6 +11,9 @@ import (
 func LazyLLMBaseURL(providerName, baseURL string) string {
 	baseURL = strings.TrimSpace(baseURL)
 	providerName = normalizeProviderName(providerName)
+	if providerName == "sensenova" {
+		return canonicalSenseNovaTokenPlanURL(baseURL)
+	}
 	if providerName == "openrouter" {
 		return canonicalOpenRouterBaseURL(baseURL)
 	}
@@ -83,4 +86,13 @@ func canonicalOpenRouterBaseURL(baseURL string) string {
 	parsed.ForceQuery = false
 	parsed.Fragment = ""
 	return parsed.String()
+}
+
+// canonicalSenseNovaTokenPlanURL accepts the legacy chat endpoint saved by older clients.
+func canonicalSenseNovaTokenPlanURL(baseURL string) string {
+	normalized := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if normalized == "https://token.sensenova.cn/v1" || normalized == "https://token.sensenova.cn/v1/chat/completions" {
+		return sensenovaNewPlatformBaseURL
+	}
+	return baseURL
 }

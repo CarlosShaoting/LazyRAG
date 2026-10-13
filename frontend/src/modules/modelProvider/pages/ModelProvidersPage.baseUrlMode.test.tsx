@@ -121,7 +121,7 @@ describe("provider Base URL modes", () => {
     const dialog = await openConfig(provider);
     expect(dialog.getByText(classicLabel)).toBeInTheDocument();
     selectMode("modelProvider.sensenovaTokenPlanMode");
-    expect(dialog.getByRole("textbox", { name: "Base URL" })).toHaveValue("https://token.sensenova.cn/v1/chat/completions/");
+    expect(dialog.getByRole("textbox", { name: "Base URL" })).toHaveValue("https://token.sensenova.cn/v1/");
     selectMode(customLabel);
     expect(dialog.getByRole("textbox", { name: "Base URL" })).toHaveValue("");
     selectMode(classicLabel);

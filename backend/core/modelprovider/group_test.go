@@ -15,6 +15,7 @@ func TestNormalizeBaseURLForCompare_TrimsTrailingSlashes(t *testing.T) {
 	}{
 		{"https://api.example.com/", "https://api.example.com"},
 		{"https://api.example.com//", "https://api.example.com"},
+		{"https://token.sensenova.cn/v1/chat/completions/", "https://token.sensenova.cn/v1"},
 		{"https://api.example.com", "https://api.example.com"},
 		{"https://api.example.com/v1/", "https://api.example.com/v1"},
 		{"  https://example.com/  ", "https://example.com"},

@@ -242,7 +242,7 @@ const builtInProviders: ProviderOption[] = [
 
 // SenseNova base URL values and new-platform defaults.
 const SENSENOVA_CLASSIC_BASE_URL = "https://api.sensenova.cn/compatible-mode/v1/";
-const SENSENOVA_NEW_BASE_URL = "https://token.sensenova.cn/v1/chat/completions/";
+const SENSENOVA_NEW_BASE_URL = "https://token.sensenova.cn/v1/";
 
 const SENSENOVA_DEFAULT_VERIFY_MODEL = "sensenova-6.7-flash-lite";
 
@@ -619,7 +619,10 @@ function renderDescriptionWithLinks(description: string) {
 }
 
 function normalizeBaseUrlForCompare(value?: string) {
-  return normalizeFormText(value).replace(/\/+$/, "");
+  const normalized = normalizeFormText(value).replace(/\/+$/, "");
+  return normalized === "https://token.sensenova.cn/v1/chat/completions"
+    ? "https://token.sensenova.cn/v1"
+    : normalized;
 }
 
 function isDefaultProviderBaseUrl(provider: Pick<ProviderOption, "baseUrl">, baseUrl?: string) {

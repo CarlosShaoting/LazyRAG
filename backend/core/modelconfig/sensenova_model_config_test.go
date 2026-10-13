@@ -12,9 +12,7 @@ func TestBuildLLMConfigSenseNovaImageUsesTokenPlan(t *testing.T) {
 			}})
 			got := config[role].(map[string]any)
 			want := "https://token.sensenova.cn/v1/"
-			if role == "llm" || role == "vlm" {
-				want = chatURL
-			}
+
 			if got["base_url"] != want {
 				t.Fatalf("base_url = %v, want %s", got["base_url"], want)
 			}
