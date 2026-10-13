@@ -11,9 +11,6 @@ import (
 func LazyLLMBaseURL(providerName, baseURL string) string {
 	baseURL = strings.TrimSpace(baseURL)
 	providerName = normalizeProviderName(providerName)
-	if providerName == "sensenova" {
-		return canonicalSenseNovaTokenPlanURL(baseURL)
-	}
 	if providerName == "openrouter" {
 		return canonicalOpenRouterBaseURL(baseURL)
 	}
