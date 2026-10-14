@@ -42,18 +42,3 @@ func TestElectronExecutablePathUsesLauncherDirectory(t *testing.T) {
 		t.Fatalf("path=%q want %q", got, want)
 	}
 }
-
-func TestLauncherLogPathUsesAbsoluteOverride(t *testing.T) {
-	want := filepath.Join(t.TempDir(), "desktop-launcher.log")
-	t.Setenv(launcherLogVariable, want)
-	if got := launcherLogPath("default.log"); got != want {
-		t.Fatalf("path=%q want %q", got, want)
-	}
-}
-
-func TestLauncherLogPathRejectsRelativeOverride(t *testing.T) {
-	t.Setenv(launcherLogVariable, "relative.log")
-	if got := launcherLogPath("default.log"); got != "default.log" {
-		t.Fatalf("path=%q want default.log", got)
-	}
-}

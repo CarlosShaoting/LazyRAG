@@ -1,26 +1,16 @@
 package main
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 )
 
 const (
-	runAsNodeVariable   = "ELECTRON_RUN_AS_NODE"
-	launcherLogVariable = "LAZYMIND_DESKTOP_LAUNCHER_LOG"
+	runAsNodeVariable = "ELECTRON_RUN_AS_NODE"
 )
 
 func electronExecutablePath(launcherPath string, executableName string) string {
 	return filepath.Join(filepath.Dir(launcherPath), executableName)
-}
-
-func launcherLogPath(defaultPath string) string {
-	override := strings.TrimSpace(os.Getenv(launcherLogVariable))
-	if override == "" || !filepath.IsAbs(override) {
-		return defaultPath
-	}
-	return filepath.Clean(override)
 }
 
 func sanitizedEnvironment(environment []string) ([]string, bool) {
