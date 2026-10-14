@@ -26,6 +26,9 @@ def _import_stubs() -> dict[str, types.ModuleType]:
     subagent_tools._resolve_artifact_text = lambda value: str(value or '')
     subagent_tools._save_artifact = lambda **kwargs: {'ok': True, **kwargs}
     subagent_tools._workflow_client = lambda: None
+    subagent_tools.find_user_attachment = lambda filename: {
+        'status': 'ok', 'filename': filename, 'path': filename,
+    }
     multimodal = types.ModuleType('lazymind.chat.engine.tools.multimodal')
     multimodal.image_generator = lambda *args, **kwargs: None
     static_file = types.ModuleType('lazymind.chat.service.utils.static_file_url')
@@ -35,6 +38,9 @@ def _import_stubs() -> dict[str, types.ModuleType]:
     static_file.local_path_from_static_file_url = lambda value: value
     model_config = types.ModuleType('lazymind.model_config')
     model_config.is_model_role_available = lambda _role: True
+    requests = types.ModuleType('requests')
+    requests.RequestException = RuntimeError
+    requests.exceptions = types.SimpleNamespace(Timeout=TimeoutError)
 
     modules = {
         'lazyllm': lazyllm,
@@ -52,6 +58,7 @@ def _import_stubs() -> dict[str, types.ModuleType]:
         'lazymind.chat.service.utils': types.ModuleType('lazymind.chat.service.utils'),
         'lazymind.chat.service.utils.static_file_url': static_file,
         'lazymind.model_config': model_config,
+        'requests': requests,
     }
     return modules
 
@@ -71,6 +78,66 @@ class StyleFlowCombinationTest(unittest.TestCase):
         ('preview_choice', False, 'standard'),
         ('preview_choice', True, 'standard'),
     )
+
+    def test_template_analysis_profiles_and_caches_ooxml(self) -> None:
+        import zipfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            deck = root / 'deck'
+            deck.mkdir()
+            (deck / 'style_spec.json').write_text(json.dumps({
+                'primary_color': {'hex': '#000000'},
+                'palette': {'primary': '#000000', 'accent': '#FFFFFF'},
+                'typography': {'heading_font': 'Arial', 'body_font': 'Arial'},
+            }), encoding='utf-8')
+            source = root / 'brand-template.pptx'
+            with zipfile.ZipFile(source, 'w') as archive:
+                archive.writestr('[Content_Types].xml', '<Types/>')
+                archive.writestr('ppt/presentation.xml', '''
+                    <p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+                      <p:sldSz cx="12192000" cy="6858000"/>
+                    </p:presentation>
+                ''')
+                archive.writestr('ppt/slides/slide1.xml', '''
+                    <p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+                      xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+                      <a:latin typeface="Aptos"/>
+                    </p:sld>
+                ''')
+                archive.writestr('ppt/slideMasters/slideMaster1.xml', '<p:sldMaster xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"/>')
+                archive.writestr('ppt/slideLayouts/slideLayout1.xml', '''
+                    <p:sldLayout xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" type="title">
+                      <p:cSld name="Title"><p:spTree><p:sp><p:nvSpPr><p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr></p:sp></p:spTree></p:cSld>
+                    </p:sldLayout>
+                ''')
+                archive.writestr('ppt/theme/theme1.xml', '''
+                    <a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:themeElements>
+                      <a:clrScheme name="Brand"><a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1><a:accent1><a:srgbClr val="123456"/></a:accent1></a:clrScheme>
+                      <a:fontScheme name="Brand"><a:majorFont><a:latin typeface="Brand Display"/><a:ea typeface="Noto Sans CJK SC"/></a:majorFont><a:minorFont><a:latin typeface="Aptos"/><a:ea typeface="Microsoft YaHei"/></a:minorFont></a:fontScheme>
+                    </a:themeElements></a:theme>
+                ''')
+
+            saved = []
+            with mock.patch.object(TOOLS, '_resolve_deck_dir', return_value=deck), mock.patch.object(
+                TOOLS, '_save_artifact', side_effect=lambda *args, **kwargs: saved.append((args, kwargs)),
+            ):
+                first = TOOLS.ppt_analyze_template(str(source), deck_dir=str(deck))
+                second = TOOLS.ppt_analyze_template(str(source), deck_dir=str(deck))
+
+            self.assertFalse(first['cached'])
+            self.assertTrue(second['cached'])
+            self.assertEqual(first['profile']['slide_count'], 1)
+            self.assertEqual(first['profile']['layout_count'], 1)
+            self.assertEqual(first['profile']['theme_fonts']['major_latin'], 'Brand Display')
+            self.assertEqual(first['profile']['theme_colors']['accent1'], '123456')
+            self.assertEqual(first['profile']['theme_colors']['dk1'], '000000')
+            self.assertGreaterEqual(first['profile']['explicit_fonts']['Aptos'], 1)
+            self.assertTrue((deck / 'template' / 'source-template.pptx').is_file())
+            style = json.loads((deck / 'style_spec.json').read_text(encoding='utf-8'))
+            self.assertEqual(style['palette']['primary'], '#123456')
+            self.assertIn('Brand Display', style['typography']['heading_font'])
+            self.assertEqual(len(saved), 2)
 
     def test_each_of_four_combinations_initializes_ten_times(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

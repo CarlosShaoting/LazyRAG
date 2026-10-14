@@ -43,6 +43,7 @@ import sys
 import tempfile
 import time
 import uuid
+import zipfile
 from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, wait
 from datetime import datetime, timedelta, timezone
@@ -51,6 +52,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, List, NoReturn, Optional, Union
 from urllib.parse import quote, urlparse
+from xml.etree import ElementTree as ET
 
 import requests
 from lazyllm import ThreadPoolExecutor
@@ -61,6 +63,7 @@ from lazymind.chat.engine.subagent.tools import (
     _resolve_artifact_text,
     _save_artifact,
     _workflow_client,
+    find_user_attachment,
 )
 from lazymind.chat.engine.tools.multimodal import image_generator
 from lazymind.chat.service.utils.static_file_url import (
@@ -520,6 +523,315 @@ def _extract_slide_copy(html: str) -> dict[str, Any]:
         'data_points': data_points,
         'phrases': phrases,
     }
+
+
+_PML_NS = 'http://schemas.openxmlformats.org/presentationml/2006/main'
+_DRAWING_NS = 'http://schemas.openxmlformats.org/drawingml/2006/main'
+_REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+_PPTX_NAME_RE = re.compile(r'([^\s"\']+\.pptx)\b', re.IGNORECASE)
+
+
+def _pptx_xml(archive: zipfile.ZipFile, name: str) -> ET.Element:
+    try:
+        return ET.fromstring(archive.read(name))
+    except KeyError as exc:
+        raise ValueError(f'PPTX package is missing required part: {name}') from exc
+    except ET.ParseError as exc:
+        raise ValueError(f'PPTX XML is invalid in {name}: {exc}') from exc
+
+
+def _pptx_color_value(node: ET.Element) -> Optional[str]:
+    for child in list(node):
+        # sysClr uses semantic values such as ``windowText``; only its lastClr
+        # fallback is a usable CSS RGB value. Prefer the first actual hex value.
+        for attribute in ('val', 'lastClr'):
+            value = str(child.attrib.get(attribute) or '').strip().upper()
+            if re.fullmatch(r'[0-9A-F]{6}', value):
+                return value
+    return None
+
+
+def _resolve_template_file(template_file: str) -> tuple[Path, str]:
+    raw = _coerce_str(template_file).strip()
+    if not raw:
+        raise ValueError('template_file is required')
+    direct = Path(raw).expanduser()
+    if direct.is_file():
+        return direct.resolve(), direct.name
+    match = _PPTX_NAME_RE.search(raw)
+    filename = Path(match.group(1)).name if match else Path(urlparse(raw).path).name
+    if not filename.lower().endswith('.pptx'):
+        raise ValueError('template_file must identify one .pptx attachment')
+    found = find_user_attachment(filename)
+    path_value = _coerce_str(found.get('path'))
+    if path_value and not path_value.lower().startswith(('http://', 'https://')):
+        path = Path(path_value).expanduser()
+        if path.is_file():
+            return path.resolve(), filename
+    url = _coerce_str(found.get('url') or path_value)
+    if not url.lower().startswith(('http://', 'https://')):
+        raise ValueError(f'PPTX template {filename!r} is no longer available')
+    response = requests.get(url, timeout=60)
+    response.raise_for_status()
+    if len(response.content) > 100 * 1024 * 1024:
+        raise ValueError('PPTX template exceeds the 100 MiB upload limit')
+    temp_dir = Path(tempfile.mkdtemp(prefix='lazymind-ppt-template-'))
+    downloaded = temp_dir / filename
+    downloaded.write_bytes(response.content)
+    return downloaded, filename
+
+
+def _template_css_fonts(families: list[str], fallback: str) -> str:
+    """Preserve both Latin brand faces and East Asian theme fallbacks."""
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for family in families:
+        value = str(family or '').strip().replace('"', '')
+        if not value or value.casefold() in seen:
+            continue
+        seen.add(value.casefold())
+        normalized.append(f'"{value}"')
+    return ', '.join([*normalized, fallback]) if normalized else fallback
+
+
+def _apply_template_profile_to_style(deck: Path, profile: dict[str, Any]) -> bool:
+    """Apply the analyzed theme to the existing HTML deck style contract."""
+    style_path = deck / 'style_spec.json'
+    if not style_path.is_file():
+        return False
+    try:
+        style = json.loads(style_path.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(style, dict):
+        return False
+    colors = profile.get('theme_colors') if isinstance(profile.get('theme_colors'), dict) else {}
+    fonts = profile.get('theme_fonts') if isinstance(profile.get('theme_fonts'), dict) else {}
+    primary = str(colors.get('accent1') or '').strip()
+    accent = str(colors.get('accent2') or colors.get('accent3') or '').strip()
+    neutral = str(colors.get('lt1') or colors.get('dk1') or '').strip()
+    palette = style.setdefault('palette', {})
+    if isinstance(palette, dict):
+        if primary:
+            palette['primary'] = f'#{primary}'
+        if accent:
+            palette['accent'] = f'#{accent}'
+        if neutral:
+            palette['neutral'] = f'#{neutral}'
+    primary_color = style.setdefault('primary_color', {})
+    if primary and isinstance(primary_color, dict):
+        primary_color['hex'] = f'#{primary}'
+        primary_color['name_zh'] = '模板主色'
+        primary_color['name_en'] = 'Template Primary'
+    heading_fonts = [
+        str(fonts.get('major_latin') or ''),
+        str(fonts.get('major_east_asian') or ''),
+    ]
+    body_fonts = [
+        str(fonts.get('minor_latin') or ''),
+        str(fonts.get('minor_east_asian') or ''),
+    ]
+    typography = style.setdefault('typography', {})
+    if isinstance(typography, dict):
+        if any(font.strip() for font in heading_fonts):
+            typography['heading_font'] = _template_css_fonts(
+                heading_fonts, 'Microsoft YaHei, Arial, sans-serif',
+            )
+        if any(font.strip() for font in body_fonts):
+            typography['body_font'] = _template_css_fonts(
+                body_fonts, 'Microsoft YaHei, Arial, sans-serif',
+            )
+    style['template_profile_sha256'] = profile.get('sha256')
+    style['template_source_filename'] = profile.get('source_filename')
+    style['template_slide_size'] = profile.get('slide_size')
+    style['template_layouts'] = [
+        {
+            'name': layout.get('name'),
+            'type': layout.get('type'),
+            'placeholder_types': [
+                placeholder.get('type')
+                for placeholder in (layout.get('placeholders') or [])
+                if isinstance(placeholder, dict) and placeholder.get('type')
+            ],
+        }
+        for layout in (profile.get('layouts') or [])[:20]
+        if isinstance(layout, dict)
+    ]
+    style_path.write_text(json.dumps(style, ensure_ascii=False, indent=2), encoding='utf-8')
+    return True
+
+
+def ppt_analyze_template(
+    template_file: str,
+    deck_dir: Optional[str] = None,
+    force: bool = False,
+) -> dict[str, Any]:
+    """Analyze one PPTX template without starting a separate Workflow step.
+
+    The result is a compact, deterministic OOXML profile covering slide size,
+    theme fonts/colors, masters, layouts, and placeholders. The source template
+    and profile are cached under the current deck so retries are idempotent.
+
+    Args:
+        template_file: Exact .pptx conversation attachment name or local path.
+        deck_dir: Existing PPT workflow deck. Omit to resolve the current deck.
+        force: Rebuild the profile even when the same SHA-256 is already cached.
+    """
+    try:
+        source, filename = _resolve_template_file(template_file)
+    except (ValueError, OSError, requests.RequestException, ToolExecutionError) as exc:
+        return _tool_error('ppt_analyze_template', str(exc))
+
+    resolved_deck = _coerce_str(deck_dir)
+    if not resolved_deck:
+        found = ppt_find_deck()
+        if _tool_failed(found) or _tool_payload(found).get('found') is False:
+            return _tool_error(
+                'ppt_analyze_template',
+                f'no current deck is available for template analysis: {_tool_fail_reason(found)}',
+            )
+        resolved_deck = _coerce_str(_tool_payload(found).get('deck_dir'))
+    try:
+        deck = _resolve_deck_dir(resolved_deck)
+    except (FileNotFoundError, ValueError) as exc:
+        return _tool_error('ppt_analyze_template', str(exc))
+
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    template_dir = deck / 'template'
+    template_dir.mkdir(parents=True, exist_ok=True)
+    cached_profile_path = template_dir / 'template_profile.json'
+    cached_source_path = template_dir / 'source-template.pptx'
+    if not force and cached_profile_path.is_file():
+        try:
+            cached = json.loads(cached_profile_path.read_text(encoding='utf-8'))
+            if cached.get('sha256') == digest and cached_source_path.is_file():
+                cached['style_contract_applied'] = _apply_template_profile_to_style(deck, cached)
+                _save_artifact(
+                    'template_profile', cached, content_type='json',
+                    source_tool='ppt_analyze_template',
+                )
+                return _tool_success('ppt_analyze_template', {
+                    'deck_dir': str(deck), 'cached': True, 'profile': cached,
+                    'template_path': str(cached_source_path),
+                })
+        except (OSError, json.JSONDecodeError, AttributeError):
+            pass
+
+    try:
+        with zipfile.ZipFile(source) as archive:
+            names = set(archive.namelist())
+            if '[Content_Types].xml' not in names or 'ppt/presentation.xml' not in names:
+                raise ValueError('file is not a valid PowerPoint OOXML package')
+            presentation = _pptx_xml(archive, 'ppt/presentation.xml')
+            size = presentation.find(f'{{{_PML_NS}}}sldSz')
+            cx = int(size.attrib.get('cx', '0')) if size is not None else 0
+            cy = int(size.attrib.get('cy', '0')) if size is not None else 0
+            slide_names = sorted(
+                name for name in names
+                if re.fullmatch(r'ppt/slides/slide\d+\.xml', name)
+            )
+            master_names = sorted(
+                name for name in names
+                if re.fullmatch(r'ppt/slideMasters/slideMaster\d+\.xml', name)
+            )
+            layout_names = sorted(
+                name for name in names
+                if re.fullmatch(r'ppt/slideLayouts/slideLayout\d+\.xml', name)
+            )
+
+            theme_fonts: dict[str, str] = {}
+            theme_colors: dict[str, str] = {}
+            theme_names = sorted(name for name in names if name.startswith('ppt/theme/theme') and name.endswith('.xml'))
+            if theme_names:
+                theme = _pptx_xml(archive, theme_names[0])
+                for role, xpath in (
+                    ('major_latin', f'.//{{{_DRAWING_NS}}}majorFont/{{{_DRAWING_NS}}}latin'),
+                    ('major_east_asian', f'.//{{{_DRAWING_NS}}}majorFont/{{{_DRAWING_NS}}}ea'),
+                    ('minor_latin', f'.//{{{_DRAWING_NS}}}minorFont/{{{_DRAWING_NS}}}latin'),
+                    ('minor_east_asian', f'.//{{{_DRAWING_NS}}}minorFont/{{{_DRAWING_NS}}}ea'),
+                ):
+                    node = theme.find(xpath)
+                    if node is not None and node.attrib.get('typeface'):
+                        theme_fonts[role] = node.attrib['typeface']
+                scheme = theme.find(f'.//{{{_DRAWING_NS}}}clrScheme')
+                if scheme is not None:
+                    for color_node in list(scheme):
+                        value = _pptx_color_value(color_node)
+                        if value:
+                            theme_colors[color_node.tag.rsplit('}', 1)[-1]] = value
+
+            explicit_fonts: Counter[str] = Counter()
+            for name in names:
+                if not name.startswith('ppt/') or not name.endswith('.xml'):
+                    continue
+                try:
+                    root = ET.fromstring(archive.read(name))
+                except ET.ParseError:
+                    continue
+                for node in root.iter():
+                    if node.tag.rsplit('}', 1)[-1] in {'latin', 'ea', 'cs'}:
+                        typeface = node.attrib.get('typeface')
+                        if typeface and not typeface.startswith('+'):
+                            explicit_fonts[typeface] += 1
+
+            layouts: list[dict[str, Any]] = []
+            for name in layout_names:
+                root = _pptx_xml(archive, name)
+                common = root.find(f'{{{_PML_NS}}}cSld')
+                placeholders = []
+                for placeholder in root.findall(f'.//{{{_PML_NS}}}ph'):
+                    placeholders.append({
+                        key: value for key, value in {
+                            'type': placeholder.attrib.get('type', 'body'),
+                            'idx': placeholder.attrib.get('idx'),
+                            'orient': placeholder.attrib.get('orient'),
+                        }.items() if value is not None
+                    })
+                layouts.append({
+                    'part': name,
+                    'name': (common.attrib.get('name') if common is not None else '') or Path(name).stem,
+                    'type': root.attrib.get('type', ''),
+                    'placeholders': placeholders,
+                })
+
+            profile = {
+                'schema_version': 1,
+                'source_filename': filename,
+                'sha256': digest,
+                'size_bytes': source.stat().st_size,
+                'slide_count': len(slide_names),
+                'slide_size': {
+                    'cx_emu': cx, 'cy_emu': cy,
+                    'width_inches': round(cx / 914400, 3) if cx else None,
+                    'height_inches': round(cy / 914400, 3) if cy else None,
+                    'aspect_ratio': round(cx / cy, 4) if cx and cy else None,
+                },
+                'master_count': len(master_names),
+                'layout_count': len(layout_names),
+                'theme_fonts': theme_fonts,
+                'explicit_fonts': dict(explicit_fonts.most_common()),
+                'theme_colors': theme_colors,
+                'layouts': layouts,
+                'has_notes_master': 'ppt/notesMasters/notesMaster1.xml' in names,
+                'warnings': ([] if theme_names else ['No theme XML was found.']),
+            }
+    except (zipfile.BadZipFile, ValueError, OSError) as exc:
+        return _tool_error('ppt_analyze_template', f'cannot analyze {filename!r}: {exc}')
+
+    profile['style_contract_applied'] = _apply_template_profile_to_style(deck, profile)
+    shutil.copy2(source, cached_source_path)
+    cached_profile_path.write_text(
+        json.dumps(profile, ensure_ascii=False, indent=2), encoding='utf-8',
+    )
+    _save_artifact(
+        'template_profile', profile, content_type='json',
+        source_tool='ppt_analyze_template',
+    )
+    return _tool_success('ppt_analyze_template', {
+        'deck_dir': str(deck), 'cached': False, 'profile': profile,
+        'template_path': str(cached_source_path),
+        'next_action': 'continue generation using this template profile',
+    })
 
 
 def _speaker_notes_language(html: str, meta: dict[str, Any]) -> str:

@@ -56,6 +56,7 @@ from lazymind.chat.engine.subagent.tools import (
     find_user_attachment,
     read_user_attachment,
     string_replace,
+    edit_presentation,
 )
 
 SystemPromptAppendix = dict[str, str | tuple[str, ...]]
@@ -660,8 +661,25 @@ ATTACHMENT_EDIT_TOOL_CONFIG = ToolConfig(
     appendix_system_prompt=ATTACHMENT_EDIT_TOOL_POLICY_APPENDIX,
 )
 
+PRESENTATION_EDIT_TOOL_CONFIG = ToolConfig(
+    name='edit_presentation',
+    label='编辑 PPTX',
+    description='直接检查或替换 PPTX 字体和配色，保留原文件并发布可编辑新版本',
+    tool=edit_presentation,
+    module='attachment',
+    appendix_system_prompt={
+        'tool_policy': (
+            '- `edit_presentation`: use this deterministic attachment tool for simple PPTX font '
+            'inspection/replacement and exact palette replacement. Do not start the PPT generation '
+            'Workflow for these operations. Inspect first when font availability is unknown. A missing '
+            'target font is an error and must never be silently replaced with a default. Applied edits '
+            'publish a new editable PPTX revision and keep the original upload unchanged.'
+        ),
+    },
+)
+
 def visible_attachment_configs(disabled: Collection[str] = ()) -> list[ToolConfig]:
-    return [config for config in (*USER_ATTACHMENT_TOOL_CONFIGS, ATTACHMENT_EDIT_TOOL_CONFIG)
+    return [config for config in (*USER_ATTACHMENT_TOOL_CONFIGS, ATTACHMENT_EDIT_TOOL_CONFIG, PRESENTATION_EDIT_TOOL_CONFIG)
             if config.name not in disabled]
 
 

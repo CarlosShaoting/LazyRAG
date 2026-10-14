@@ -12,12 +12,13 @@ when_to_use: >
   when the user wants to create, plan, draft, or revise a multi-slide
   presentation/deck/PPT. Use it for requests such as "make a PPT", "generate a
   presentation", "帮我做一个路演 PPT", or "做一份汇报幻灯片".
-  Uploaded materials are optional: text-only requests must start immediately
-  from the user's prompt and must never ask for an upload unless the user
-  explicitly asks to base the deck on a source file that is not available.
-  Before starting, collect only any missing presentation topic, slide count,
-  target customer/audience, visual style, and whether AI-generated per-slide
-  background images should be enabled, as declared by runtime policy.
+  Uploaded source materials are optional: text-only requests must start from
+  the user's prompt. The startup card may offer the declared optional PPTX
+  template choice; show its upload control only after the user selects upload,
+  and never ask for a source document merely because uploads are supported.
+  Before starting, collect only missing declared fields: presentation topic,
+  slide count, target customer/audience, visual style, AI-generated per-slide
+  backgrounds, optional template mode, and generation mode.
   Do not trigger for simple one-off explanations, ordinary image generation,
   ordinary long-form writing, or requests that only ask to preview an uploaded
   PowerPoint file.
@@ -126,15 +127,30 @@ runtime:
       choices:
         - 启用｜为每页生成独立 AI 底图
         - 不启用｜使用纯色、渐变和矢量装饰
-    - id: style_flow
-      label: 风格确定方式
-      question: 整体风格希望怎么确定？
+    - id: template_mode
+      label: PPT 模板
+      question: 是否使用现有 PPTX 作为模板？选择上传后可直接在这里添加文件。
       type: single
       choice_policy: fixed
       allow_other: false
       choices:
-        - 直接生成一套｜AI 根据需求确定一套整体风格并继续
-        - 先看三套方案｜先生成三套风格预览，由我选择后继续
+        - 不使用模板｜按需求生成新的视觉风格
+        - 上传 PPTX 模板｜分析母版、字体、配色和版式后生成
+      attachment:
+        when_choice: 上传 PPTX 模板｜分析母版、字体、配色和版式后生成
+        material_id: template_pptx
+        accept: [.pptx]
+        max_files: 1
+        required: true
+    - id: generation_mode
+      label: 生成方式
+      question: 请选择生成方式。两种方式都会自动执行到最终 PPT，不需要分步确认。
+      type: single
+      choice_policy: fixed
+      allow_other: false
+      choices:
+        - 快速生成
+        - 完整生成，耗时较长
 
 tool_scripts:
   - path: scripts/tools.py
@@ -147,6 +163,7 @@ tool_scripts:
       - ppt_prepare_style
       - ppt_generate_background_images
       - check_ppt_workflow_capabilities
+      - ppt_analyze_template
       - ppt_attach_material_images
       - ppt_replace_page_material_image
       - ppt_replace_page_background
@@ -214,6 +231,35 @@ slots:
     cardinality: single
     exposed: false
     summary_max_chars: 40
+
+  - id: generation_mode
+    label: Generation Mode
+    type: text
+    cardinality: single
+    exposed: false
+    summary_max_chars: 40
+
+  - id: template_mode
+    label: Template Mode
+    type: text
+    cardinality: single
+    exposed: false
+    summary_max_chars: 80
+
+  - id: template_pptx
+    label: PPTX Template
+    type: file
+    cardinality: single
+    external: true
+    required: false
+    allow_manual_add: true
+
+  - id: template_profile
+    label: Template Profile
+    type: json
+    cardinality: single
+    exposed: false
+    summary_max_chars: 1200
 
   - id: generate_background_images
     label: Generate Background Images
@@ -362,6 +408,7 @@ ui:
       hide_when_material: skip_material_collection
       layout: list
       slots:
+        - id: template_pptx
         - id: uploaded_materials
         - id: material_summary
         - id: material_images
