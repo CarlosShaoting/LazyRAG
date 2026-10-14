@@ -530,6 +530,8 @@ test("macOS distribution build signs packages while CI owns notarization sequenc
   assert.match(source, /SIGNING_MODE=.*adhoc/);
   assert.match(source, /LAZYMIND_TRUSTED_LOCAL_MODE/);
   assert.match(source, /--trusted-local-mode "\$\{TRUSTED_LOCAL_MODE\}"/);
+  assert.match(source, /cmd\/desktop-launcher/);
+  assert.match(source, /LAZYMIND_DESKTOP_MAC_LAUNCHER="\$\{DESKTOP_LAUNCHER\}"/);
   assert.doesNotMatch(source, /notarytool submit/);
   assert.match(source, /Authority=Developer ID Application:/);
   assert.match(source, /signature_info="\$\(codesign -dv --verbose=4/);
@@ -537,7 +539,13 @@ test("macOS distribution build signs packages while CI owns notarization sequenc
   assert.match(source, /verify_runtime_code_signatures "\$\{APP_PATH\}\/Contents\/Resources\/runtime"/);
   assert.match(packageJson.scripts["dist:mac:arm64"], /--publish never$/);
   assert.match(builderSource, /await splitPythonComponents\(runtimeRoot\);\s+if \(macSigningMode === "none"\) return/);
-  assert.match(builderSource, /await Promise\.all\(workers\);\s+await splitPythonComponents\(runtimeRoot\);\s+stageEmbeddedRuntime/);
+  assert.match(builderSource, /await Promise\.all\(workers\);[\s\S]*await splitPythonComponents\(runtimeRoot\);\s+stageEmbeddedRuntime/);
+  assert.match(builderSource, /function installMacDesktopLauncher\(context\)/);
+  assert.match(builderSource, /electronExecutable = path\.join\(executableDirectory, "LazyMindApp"\)/);
+  assert.match(builderSource, /fs\.copyFileSync\(macDesktopLauncher, publicExecutable, fs\.constants\.COPYFILE_EXCL\)/);
+  assert.match(builderSource, /installMacDesktopLauncher\(context\)/);
+  assert.match(workflow, /ELECTRON_RUN_AS_NODE=1 LAZYMIND_DESKTOP_RUNTIME_ROOT/);
+  assert.match(workflow, /removed inherited ELECTRON_RUN_AS_NODE/);
   assert.match(builderSource, /afterPack:\s*preparePackagedDesktop/);
   assert.match(builderSource, /preparePackagedDesktop[\s\S]*await signAndStageEmbeddedRuntime\(context\)/);
   assert.match(builderSource, /afterSign:\s*restoreRuntimeAndFinalizeSignature/);

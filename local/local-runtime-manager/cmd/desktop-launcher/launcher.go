@@ -6,10 +6,7 @@ import (
 )
 
 const (
-	// The packaged Electron binary stays available under an internal name because
-	// LazyMind intentionally reuses it as Node for managed export workers.
-	electronExecutableName = "LazyMindApp.exe"
-	runAsNodeVariable      = "ELECTRON_RUN_AS_NODE"
+	runAsNodeVariable = "ELECTRON_RUN_AS_NODE"
 )
 
 func electronExecutablePath(launcherPath string) string {

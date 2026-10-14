@@ -11,6 +11,10 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// The packaged Electron binary stays available under an internal name because
+// LazyMind intentionally reuses it as Node for managed export workers.
+const electronExecutableName = "LazyMindApp.exe"
+
 func main() {
 	launcherPath, err := os.Executable()
 	if err != nil {
