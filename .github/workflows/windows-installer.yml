@@ -542,11 +542,22 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $app = Join-Path $env:LOCALAPPDATA "Programs\LazyMind\LazyMind.exe"
+          # Reproduce shells launched by another Electron application. Without
+          # the native launcher this makes the packaged app run as Node and
+          # exit before its main process can create logs or a window.
+          $env:ELECTRON_RUN_AS_NODE = "1"
           node desktop/scripts/packaged-app-smoke.mjs `
             --app $app `
             --runtime-root (Join-Path $env:LOCALAPPDATA "LazyMind") `
             --platform win32 `
             --timeout-ms ${{ matrix.smoke_timeout_ms }}
+          $launcherLog = Join-Path $env:LOCALAPPDATA "LazyMind\Logs\desktop\desktop-launcher.log"
+          if (-not (Test-Path -LiteralPath $launcherLog -PathType Leaf)) {
+            throw "Desktop launcher did not record inherited environment cleanup: $launcherLog"
+          }
+          if (-not (Select-String -LiteralPath $launcherLog -SimpleMatch "removed inherited ELECTRON_RUN_AS_NODE" -Quiet)) {
+            throw "Desktop launcher did not remove ELECTRON_RUN_AS_NODE"
+          }
 
       - name: Uninstall
         id: uninstall

@@ -8,6 +8,7 @@ const delay = (milliseconds) => new Promise((resolve) => {
   setTimeout(resolve, milliseconds);
 });
 const stagedRuntimePaths = new Map();
+const windowsDesktopLauncher = process.env.LAZYMIND_DESKTOP_WINDOWS_LAUNCHER;
 
 const runtimeStage = process.env.LAZYMIND_DESKTOP_RUNTIME_STAGE;
 if (!runtimeStage) {
@@ -316,6 +317,40 @@ async function restoreRuntimeAndFinalizeSignature(context) {
   await execFile("/usr/bin/codesign", ["--verify", "--deep", "--strict", appPath]);
   console.log("Restored embedded runtime and resealed the outer app signature");
 }
+
+function installWindowsDesktopLauncher(context) {
+  if (context.electronPlatformName !== "win32") {
+    return;
+  }
+  // Keep Electron's RunAsNode support for LazyMind's internal export workers,
+  // but shield the public entry point from a polluted parent environment.
+  if (!windowsDesktopLauncher || !fs.statSync(windowsDesktopLauncher, { throwIfNoEntry: false })?.isFile()) {
+    throw new Error("LAZYMIND_DESKTOP_WINDOWS_LAUNCHER must point to the built Windows launcher");
+  }
+  const productFilename = context.packager.appInfo.productFilename;
+  const publicExecutable = path.join(context.appOutDir, `${productFilename}.exe`);
+  const electronExecutable = path.join(context.appOutDir, "LazyMindApp.exe");
+  if (!fs.existsSync(publicExecutable)) {
+    throw new Error(`Packaged Electron executable was not found: ${publicExecutable}`);
+  }
+  if (fs.existsSync(electronExecutable)) {
+    throw new Error(`Refusing to overwrite the internal Electron executable: ${electronExecutable}`);
+  }
+  fs.renameSync(publicExecutable, electronExecutable);
+  try {
+    fs.copyFileSync(windowsDesktopLauncher, publicExecutable, fs.constants.COPYFILE_EXCL);
+  } catch (error) {
+    fs.renameSync(electronExecutable, publicExecutable);
+    throw error;
+  }
+  console.log(`Installed Windows startup launcher; Electron runtime: ${path.basename(electronExecutable)}`);
+}
+
+async function preparePackagedDesktop(context) {
+  installWindowsDesktopLauncher(context);
+  await signAndStageEmbeddedRuntime(context);
+}
+
 if (process.env.LAZYMIND_DESKTOP_WINDOWS_ICON) {
   extraResources.push({
     from: process.env.LAZYMIND_DESKTOP_WINDOWS_ICON,
@@ -380,6 +415,6 @@ module.exports = {
     differentialPackage: false,
     runAfterFinish: true,
   },
-  afterPack: signAndStageEmbeddedRuntime,
+  afterPack: preparePackagedDesktop,
   afterSign: restoreRuntimeAndFinalizeSignature,
 };
