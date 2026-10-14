@@ -464,6 +464,8 @@ test("Windows NSIS installer uses electron-builder's default LZMA payload", () =
   assert.match(workflow, /install_arguments: "\/S --full-install"/);
   assert.match(workflow, /Submodule checkout attempt \$attempt\/3 failed/);
   assert.match(workflow, /pnpm activation attempt \$attempt\/3 failed/);
+  assert.match(workflow, /LAZYMIND_DESKTOP_LAUNCHER_LOG = \$launcherLog/);
+  assert.match(workflow, /RUNNER_TEMP/);
   assert.match(workflow, /\$env:ELECTRON_RUN_AS_NODE = "1"/);
   assert.match(workflow, /removed inherited ELECTRON_RUN_AS_NODE/);
 });

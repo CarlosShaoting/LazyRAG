@@ -50,10 +50,14 @@ func failLaunch(operation string, err error) {
 
 func logLaunch(format string, args ...any) {
 	localAppData := os.Getenv("LOCALAPPDATA")
-	if localAppData == "" {
+	defaultPath := ""
+	if localAppData != "" {
+		defaultPath = filepath.Join(localAppData, "LazyMind", "Logs", "desktop", "desktop-launcher.log")
+	}
+	logPath := launcherLogPath(defaultPath)
+	if logPath == "" {
 		return
 	}
-	logPath := filepath.Join(localAppData, "LazyMind", "Logs", "desktop", "desktop-launcher.log")
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
 		return
 	}

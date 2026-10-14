@@ -38,10 +38,14 @@ func failLaunch(operation string, err error) {
 
 func logLaunch(format string, args ...any) {
 	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
+	defaultPath := ""
+	if err == nil && home != "" {
+		defaultPath = filepath.Join(home, "Library", "Logs", "LazyMind", "desktop-launcher.log")
+	}
+	logPath := launcherLogPath(defaultPath)
+	if logPath == "" {
 		return
 	}
-	logPath := filepath.Join(home, "Library", "Logs", "LazyMind", "desktop-launcher.log")
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
 		return
 	}
