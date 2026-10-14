@@ -9,8 +9,8 @@ const (
 	runAsNodeVariable = "ELECTRON_RUN_AS_NODE"
 )
 
-func electronExecutablePath(launcherPath string) string {
-	return filepath.Join(filepath.Dir(launcherPath), electronExecutableName)
+func electronExecutablePath(launcherPath string, executableName string) string {
+	return filepath.Join(filepath.Dir(launcherPath), executableName)
 }
 
 func sanitizedEnvironment(environment []string) ([]string, bool) {

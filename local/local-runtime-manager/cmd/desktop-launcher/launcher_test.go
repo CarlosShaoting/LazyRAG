@@ -37,8 +37,8 @@ func TestSanitizedEnvironmentPreservesCleanEnvironment(t *testing.T) {
 
 func TestElectronExecutablePathUsesLauncherDirectory(t *testing.T) {
 	launcher := filepath.Join("install", "LazyMind.exe")
-	want := filepath.Join("install", electronExecutableName)
-	if got := electronExecutablePath(launcher); got != want {
+	want := filepath.Join("install", "LazyMindApp.exe")
+	if got := electronExecutablePath(launcher, "LazyMindApp.exe"); got != want {
 		t.Fatalf("path=%q want %q", got, want)
 	}
 }

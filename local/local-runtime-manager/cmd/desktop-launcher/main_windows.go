@@ -20,7 +20,7 @@ func main() {
 	if err != nil {
 		failLaunch("resolve the LazyMind launcher path", err)
 	}
-	electronPath := electronExecutablePath(launcherPath)
+	electronPath := electronExecutablePath(launcherPath, electronExecutableName)
 	environment, removedRunAsNode := sanitizedEnvironment(os.Environ())
 	if removedRunAsNode {
 		logLaunch("removed inherited %s before starting %s", runAsNodeVariable, electronExecutableName)
