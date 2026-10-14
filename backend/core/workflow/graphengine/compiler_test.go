@@ -168,6 +168,33 @@ runtime:
 	}
 }
 
+func TestCompileRuntimeClarificationConditionalAttachment(t *testing.T) {
+	workflowYAML := strings.Replace(validWorkflow, "id: graph-test", `id: graph-test
+runtime:
+  clarification_fields:
+    - id: template_mode
+      question: 是否上传模板？
+      type: single
+      choice_policy: fixed
+      choices: [不使用模板, 上传 PPTX 模板]
+      attachment:
+        when_choice: 上传 PPTX 模板
+        material_id: seed
+        accept: [PPTX]
+        max_files: 1
+        required: true
+`, 1)
+	workflowYAML = strings.Replace(workflowYAML, "{id: seed, external: true}", "{id: seed, type: file, external: true}", 1)
+	result := Compile(workflowYAML, validState, "", ProfilePublish)
+	if !result.Valid {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics)
+	}
+	attachment := result.Graph.Runtime.ClarificationFields[0].Attachment
+	if attachment == nil || attachment.WhenChoice != "上传 PPTX 模板" || attachment.MaterialID != "seed" || len(attachment.Accept) != 1 || attachment.Accept[0] != ".pptx" || attachment.MaxFiles != 1 || !attachment.Required {
+		t.Fatalf("conditional attachment was not compiled: %#v", attachment)
+	}
+}
+
 func TestCompileRejectsMultipleProducerAndSelfOverwrite(t *testing.T) {
 	state := `
 transitions:
