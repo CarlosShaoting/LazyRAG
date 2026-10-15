@@ -1916,6 +1916,11 @@ def _inline_preview_images(html: str, deck: Path, html_path: Path) -> tuple[str,
     The browser signs references when opening a slide, so stored artifacts never
     contain expiring URLs. On-disk HTML retains relative paths for offline export.
     """
+    from lazymind.chat.engine.tools.file_resources.font_library import local_font_css
+    if 'id="lazymind-local-fonts"' not in html:
+        font_css = local_font_css(html)
+        if font_css:
+            html = re.sub(r'</head\s*>', lambda _: '<style id="lazymind-local-fonts">' + font_css + '</style></head>', html, count=1, flags=re.I)
     deck_root = deck.resolve()
     page_root = html_path.parent.resolve()
     inlined = 0
