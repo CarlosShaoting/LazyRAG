@@ -394,10 +394,10 @@ func Compile(workflowYAML, stateYAML, scenario string, profile Profile) CompileR
 			if attachment.MaxFiles == 0 {
 				attachment.MaxFiles = 1
 			}
-			if attachment.MaxFiles < 1 || attachment.MaxFiles > 3 {
+			if attachment.MaxFiles < -1 {
 				result.Diagnostics = append(result.Diagnostics, diag(
 					"E_RUNTIME_CLARIFICATION_ATTACHMENT_MAX_FILES_INVALID", "error", path+".attachment.max_files",
-					"attachment.max_files must be between 1 and 3",
+					"attachment.max_files must be positive, or -1 for unlimited",
 				))
 			}
 		}
