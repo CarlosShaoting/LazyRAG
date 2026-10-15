@@ -81,6 +81,37 @@ with mock.patch.dict(sys.modules, _import_stubs()):
 
 
 class StyleFlowCombinationTest(unittest.TestCase):
+    def test_papers_cache_to_eof_reuse_successes_and_retry_changed_sources(self):
+        reader_module = types.ModuleType('lazymind.chat.engine.tools.file_resources.tools')
+        reader_module.read_file_resource = mock.Mock(side_effect=lambda target, offset, limit: {
+            'text': f'{Path(target).name}: chunk {offset}',
+            'eof': offset == 2, 'next_offset': 2 if offset == 1 else None,
+        })
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            first = root / 'one.pdf'
+            second = root / 'two.pdf'
+            first.write_bytes(b'first')
+            second.write_bytes(b'second')
+            with mock.patch.dict(sys.modules, {reader_module.__name__: reader_module}), mock.patch.object(
+                TOOLS, '_conversation_root', return_value=root,
+            ), mock.patch.object(TOOLS, 'find_user_attachment', side_effect=lambda name: {'path': str(root / name)}):
+                result = TOOLS.ppt_cache_academic_sources(['one.pdf', 'two.pdf', 'missing.pdf'])
+                self.assertEqual(result['success_count'], 2)
+                self.assertEqual(result['sources'][2]['status'], 'error')
+                self.assertEqual(reader_module.read_file_resource.call_count, 4)
+                cached = TOOLS.ppt_cache_academic_sources(['one.pdf', 'two.pdf'])
+                self.assertTrue(all(item['cached'] for item in cached['sources']))
+                self.assertEqual(reader_module.read_file_resource.call_count, 4)
+                page = TOOLS.ppt_read_academic_source(result['sources'][0]['source_id'], 2)
+                self.assertIn('chunk 2', page['reader_result']['text'])
+                self.assertIsNone(page['next_chunk'])
+                second.write_bytes(b'changed')
+                changed = TOOLS.ppt_cache_academic_sources(['one.pdf', 'two.pdf'])
+                self.assertTrue(changed['sources'][0]['cached'])
+                self.assertFalse(changed['sources'][1]['cached'])
+                self.assertEqual(reader_module.read_file_resource.call_count, 6)
+
     def test_academic_selection_changes_only_selected_formula(self):
         html = '<html><body><div data-el="formula-1" data-academic-kind="formula">x<sup>2</sup></div><p>Keep</p></body></html>'
         fragment = '<div data-el="formula-1" data-academic-kind="formula">x<sup>3</sup></div>'

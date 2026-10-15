@@ -89,6 +89,7 @@ type ClarificationField struct {
 	ID           string                   `json:"id" yaml:"id"`
 	Label        string                   `json:"label,omitempty" yaml:"label,omitempty"`
 	Question     string                   `json:"question" yaml:"question"`
+	AskWhen      string                   `json:"ask_when,omitempty" yaml:"ask_when,omitempty"`
 	Type         string                   `json:"type,omitempty" yaml:"type,omitempty"`
 	Choices      []string                 `json:"choices,omitempty" yaml:"choices,omitempty"`
 	ChoicePolicy string                   `json:"choice_policy,omitempty" yaml:"choice_policy,omitempty"`

@@ -116,6 +116,9 @@ steps:
         count.
 
       Uploaded source reading:
+      - For academic tasks, record source filenames and user-provided notes here;
+        defer paper parsing to collect_materials and its cached reader tool.
+        Do not parse the same papers during requirement analysis.
       - You CAN read user-uploaded PPT/PPTX files with the attachment reader.
         When the request asks you to base the new deck on an uploaded PPT/PPTX,
         call read_user_attachment(filename=<uploaded filename>) before writing
@@ -277,6 +280,14 @@ steps:
       retrieval subject to the KB-first gate below.
 
       Uploaded file parsing:
+      - For academic scenarios, call ppt_cache_academic_sources with ALL relevant
+        exact attachment filenames from the original request, conversation and
+        uploaded_materials. This tool parses each file to EOF and persists reader
+        chunks by content hash. Use ppt_read_academic_source for needed chunks.
+        Do not separately call read_user_attachment for those papers. Preserve
+        each filename/source_id in material_summary, list every failure, and
+        do not claim failed papers were analyzed. Repeating the cache call reuses
+        successes and retries failures. User-provided reading notes need no file.
       - You CAN read PPT/PPTX with the attachment reader. If the user uploaded a
         PDF/DOC/DOCX/PPT/PPTX or refers to an uploaded source file, call
         read_user_attachment(filename=<uploaded filename>) to extract text.
@@ -406,6 +417,8 @@ steps:
 
       Stop after saving.
     tools:
+      - ppt_cache_academic_sources
+      - ppt_read_academic_source
       - kb
       - web_search
       - wikipedia
@@ -444,8 +457,10 @@ steps:
       User request: {{user_input}}
       {{runtime_instruction}}
 
-      Reuse collected sources and read_user_attachment for uploaded papers
-      when necessary. Distinguish the user's own paper, one paper, multiple
+      Reuse collected source_ids via ppt_read_academic_source; continue reading
+      chunks needed for each claim. Never infer a full paper from its excerpt.
+      If a source is absent from material_summary, use ppt_cache_academic_sources
+      with its exact attachment filename first. Distinguish the user's own paper, one paper, multiple
       papers, and reading notes. Reading notes alone are valid input: never
       invent a paper or force an upload. Keep each paper's title, authors,
       filename/URL, and available page/figure/table references with its claims.
@@ -463,6 +478,9 @@ steps:
       template analysis. Do not create a second template-selection process.
       Save the full analysis as academic_brief using save_artifact and stop.
       Continue automatically without requesting step confirmation.
+    tools:
+      - ppt_cache_academic_sources
+      - ppt_read_academic_source
     inputs:
       - material: presentation_scenario
         required: true

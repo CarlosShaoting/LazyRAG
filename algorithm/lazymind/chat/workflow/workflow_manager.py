@@ -707,6 +707,7 @@ def _runtime_clarification_fields(runtime_policy: Any) -> List[Dict[str, Any]]:
             'type': question_type,
             'choices': choices,
             'choice_policy': choice_policy,
+            'ask_when': _clean_workflow_text(raw.get('ask_when')),
         }
         # A conditional attachment augments an existing choice question. It uses
         # the normal conversation attachment transport instead of introducing a
@@ -998,6 +999,10 @@ def _startup_clarification_guidance(runtime_policy: Any) -> str:
         'inspect the current request, relevant attachment names/content already available, '
         'and prior conversation turns. Treat a field as present only when it is explicit or '
         'unambiguously inferable. Do not ask for fields that are already present. If one or '
+        'more fields declare ask_when, evaluate that condition against the request, attachments '
+        'and conversation first. Exclude fields whose condition is false. Existing source '
+        'attachments or supplied substantive source text satisfy material questions; never '
+        'ask for those uploads again. A visual template alone is not source material. If one or '
         'more fields are missing, call ask_user exactly once TOTAL with only those missing fields, '
         'putting all of them in that single card, then stop without triggering the Workflow in '
         'that turn. Include each '
@@ -1020,7 +1025,10 @@ def _startup_clarification_guidance(runtime_policy: Any) -> str:
         'the matching ask_user question. The Chat card owns the upload button and sends the file '
         'as a normal conversation attachment; never ask the user to paste a filesystem path. '
         'On the answer turn, bind its declared attachment.material_id to the exact uploaded '
-        'filename in trigger input_bindings. '
+        'filename in trigger input_bindings for a single file. For multiple files, preserve '
+        'EVERY exact attachment filename in request_context so the Workflow can resolve each '
+        'through the conversation attachment reader. Do not stringify a filename list into '
+        'a single file binding; omit that binding when multiple attachments are supplied. '
         'On the answer turn, NEVER call ask_user '
         'again or reassess fields as missing. Combine the original request, all already-known '
         'fields, and the new answers into one concise request_context and pass that value to '
