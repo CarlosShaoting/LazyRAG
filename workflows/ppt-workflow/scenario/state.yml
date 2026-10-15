@@ -24,16 +24,28 @@ transitions:
         ppt_capability_requirements is exactly AI_BACKGROUND_IMAGES: disabled.
 
   collect_materials:
+    - to: analyze_academic_sources
+      when: presentation_scenario is research_report, paper_review, thesis_defense, or reading_notes.
+    - to: choose_style
+      when: presentation_scenario is general or absent, and style_flow is exactly preview_choice.
+    - to: plan_background_prompts
+      when: >
+        presentation_scenario is general or absent, and style_flow is exactly auto and ppt_capability_requirements is exactly
+        AI_BACKGROUND_IMAGES: enabled.
+    - to: build_outline
+      when: >
+        presentation_scenario is general or absent, and style_flow is exactly auto and ppt_capability_requirements is exactly
+        AI_BACKGROUND_IMAGES: disabled.
+
+  analyze_academic_sources:
     - to: choose_style
       when: style_flow is exactly preview_choice.
     - to: plan_background_prompts
       when: >
-        style_flow is exactly auto and ppt_capability_requirements is exactly
-        AI_BACKGROUND_IMAGES: enabled.
+        style_flow is exactly auto and ppt_capability_requirements is exactly AI_BACKGROUND_IMAGES: enabled.
     - to: build_outline
       when: >
-        style_flow is exactly auto and ppt_capability_requirements is exactly
-        AI_BACKGROUND_IMAGES: disabled.
+        style_flow is exactly auto and ppt_capability_requirements is exactly AI_BACKGROUND_IMAGES: disabled.
 
   choose_style:
     - to: plan_background_prompts
@@ -119,6 +131,10 @@ steps:
         Do not read or summarize it here; generate_ppt owns template analysis.
 
       Include:
+      - Save presentation_scenario as exactly general, research_report,
+        paper_review, thesis_defense, or reading_notes according to the user's
+        intent. Academic scenarios MUST enter collect_materials even in quick
+        mode; never save skip_material_collection for these scenarios.
       - presentation goal
       - presentation topic
       - target customer / audience
@@ -151,6 +167,7 @@ steps:
       these facts and may complete without any network search.
 
       Save the result:
+        save_artifact(key='presentation_scenario', content_type='text', value=<scenario>)
         save_artifact(key='requirement_analysis', content_type='text', value=<analysis>)
         save_artifact(
           key='ppt_capability_requirements',
@@ -204,6 +221,7 @@ steps:
       After both artifacts are saved, Executor runs the deterministic model
       capability check. Stop after saving. Do not call advance tools yourself.
     outputs:
+      - material: presentation_scenario
       - material: requirement_analysis
       - material: ppt_capability_requirements
       - material: style_flow
@@ -414,6 +432,53 @@ steps:
       as individual image-list artifacts so the Materials tab can preview them
       and later steps can embed them in HTML.
 
+  analyze_academic_sources:
+    label: 科研内容分析
+    mode: auto
+    route: choice
+    prompt: |
+      Analyze the supplied academic sources for this presentation.
+      Scenario: {{presentation_scenario}}
+      Requirements: {{requirement_analysis}}
+      Collected evidence: {{material_summary}}
+      User request: {{user_input}}
+      {{runtime_instruction}}
+
+      Reuse collected sources and read_user_attachment for uploaded papers
+      when necessary. Distinguish the user's own paper, one paper, multiple
+      papers, and reading notes. Reading notes alone are valid input: never
+      invent a paper or force an upload. Keep each paper's title, authors,
+      filename/URL, and available page/figure/table references with its claims.
+      For each source extract research question, method, experimental setup,
+      evidence, conclusions, contributions, and limitations. Mark unavailable
+      evidence explicitly. Separate author claims from the user's reflections.
+      For multiple papers compare methods and results only where metrics and
+      experimental conditions are comparable; preserve attribution per claim.
+      Inventory formulas with variable meanings and original notation, and
+      figures with captions, source locations and available image references.
+      Never invent experimental values, citations, formulas or visual assets.
+      Suggest a narrative for research_report, paper_review, thesis_defense,
+      or reading_notes and identify content that needs a dedicated slide.
+      Templates use the existing optional template_pptx upload and final-step
+      template analysis. Do not create a second template-selection process.
+      Save the full analysis as academic_brief using save_artifact and stop.
+      Continue automatically without requesting step confirmation.
+    inputs:
+      - material: presentation_scenario
+        required: true
+      - material: requirement_analysis
+        required: true
+      - material: material_summary
+        required: true
+      - material: uploaded_materials
+        required: false
+    outputs:
+      - material: academic_brief
+    acceptance_criteria: |
+      academic_brief identifies source attribution, findings, uncertainties,
+      formulas/figures when present, and an appropriate academic narrative.
+      Missing evidence is explicit; no fabricated claims or forced uploads.
+
   choose_style:
     label: Choose Style
     mode: auto
@@ -497,6 +562,13 @@ steps:
 
       Material summary (may be empty if collect_materials was skipped):
       {{material_summary}}
+
+      Academic analysis (optional):
+      {{academic_brief}}
+      When present, carry its source attribution, formulas, figure references,
+      evidence and limitations into outline_markdown. Use the requested academic
+      narrative. Keep long formulas on dedicated slides or split at meaningful
+      mathematical boundaries, preserving notation and explaining variables.
 
       Original user request:
       {{user_input}}
@@ -592,6 +664,8 @@ steps:
       - material: requirement_analysis
         required: true
       - material: material_summary
+        required: false
+      - material: academic_brief
         required: false
       - material: material_images
         required: false
