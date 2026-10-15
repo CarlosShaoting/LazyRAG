@@ -66,6 +66,7 @@ from lazymind.chat.engine.subagent.tools import (
     find_user_attachment,
 )
 from lazymind.chat.engine.tools.multimodal import image_generator
+from lazymind.chat.engine.tools.file_resources.presentation_edit import available_font_families
 from lazymind.chat.service.utils.static_file_url import (
     _upload_root,
     file_relative_path,
@@ -7346,6 +7347,126 @@ def ppt_publish_pages(
             detail=json.dumps(result, ensure_ascii=False)[:1500],
         )
     return _tool_success('ppt_publish_pages', result)
+
+
+def _font_override_css(target_font: str, text_scope: str) -> str:
+    escaped = target_font.replace('\\', '\\\\').replace('"', '\\"')
+    selectors = {
+        'all': 'html body, html body *',
+        'titles': (
+            'h1, h2, h3, h4, h5, h6, [data-el="title"], [data-el$="-title"], '
+            '.title, .slide-title, .heading, .headline'
+        ),
+        'body': (
+            'p, li, td, th, label, blockquote, [data-el^="bullet"], '
+            '[data-el*="detail"], .body, .content, .description'
+        ),
+    }
+    return f'{selectors[text_scope]} {{ font-family: "{escaped}" !important; }}'
+
+
+def _upsert_font_override(html: str, target_font: str, text_scope: str) -> str:
+    style_id = f'lazymind-font-override-{text_scope}'
+    block = f'<style id="{style_id}">\n{_font_override_css(target_font, text_scope)}\n</style>'
+    pattern = re.compile(
+        rf'<style\b[^>]*\bid=["\']{re.escape(style_id)}["\'][^>]*>[\s\S]*?</style>',
+        re.IGNORECASE,
+    )
+    if pattern.search(html):
+        return pattern.sub(block, html, count=1)
+    head_close = re.search(r'</head\s*>', html, re.IGNORECASE)
+    if head_close:
+        return html[:head_close.start()] + block + '\n' + html[head_close.start():]
+    return block + '\n' + html
+
+
+def ppt_replace_deck_fonts(
+    deck_dir: str,
+    target_font: str,
+    pages: Optional[Union[str, list, int]] = None,
+    text_scope: str = 'all',
+) -> dict:
+    """Replace fonts in generated HTML without regenerating slide content.
+
+    Omit pages to update the entire deck and its style_spec. Pass one or more
+    1-based pages for page-local CSS only. text_scope accepts all, titles, body.
+    The changed pages are republished immediately so the right preview refreshes.
+    """
+    try:
+        deck = _resolve_deck_dir(deck_dir)
+        page_list = _parse_page_list(pages)
+    except (FileNotFoundError, ValueError) as exc:
+        return _tool_error('ppt_replace_deck_fonts', str(exc))
+    scope = _coerce_str(text_scope, 'all').strip().lower()
+    if scope not in {'all', 'titles', 'body'}:
+        return _tool_error('ppt_replace_deck_fonts', "text_scope must be 'all', 'titles', or 'body'")
+    requested = _coerce_str(target_font).strip()
+    if not requested:
+        return _tool_error('ppt_replace_deck_fonts', 'target_font is required')
+    installed = available_font_families()
+    installed_by_name = {family.casefold(): family for family in installed}
+    if requested.casefold() not in installed_by_name:
+        suggestions = sorted(
+            family for family in installed
+            if requested.casefold() in family.casefold() or family.casefold() in requested.casefold()
+        )[:8]
+        suffix = f' Available close matches: {", ".join(suggestions)}.' if suggestions else ''
+        return _tool_error(
+            'ppt_replace_deck_fonts',
+            f'Target font {requested!r} is not available on this system; choose or upload another font.' + suffix,
+        )
+    target = installed_by_name[requested.casefold()]
+    targets = page_list if page_list is not None else _iter_page_numbers(deck)
+    if not targets:
+        return _tool_error('ppt_replace_deck_fonts', 'No generated HTML pages were found')
+    missing = [page for page in targets if not _page_html_path(deck, page).is_file()]
+    if missing:
+        return _tool_error('ppt_replace_deck_fonts', f'HTML pages do not exist: {missing}')
+
+    originals = {page: _page_html_path(deck, page).read_text(encoding='utf-8') for page in targets}
+    style_path = deck / 'style_spec.json'
+    original_style = style_path.read_bytes() if style_path.is_file() else None
+    try:
+        for page, html in originals.items():
+            updated = _upsert_font_override(html, target, scope)
+            temporary = _page_html_path(deck, page).with_suffix('.html.tmp')
+            temporary.write_text(updated, encoding='utf-8')
+            os.replace(temporary, _page_html_path(deck, page))
+        style_updated = page_list is None
+        if style_updated:
+            style = _read_style_spec(deck)
+            typography = style.setdefault('typography', {})
+            if not isinstance(typography, dict):
+                typography = {}
+                style['typography'] = typography
+            css_family = f'"{target}", Microsoft YaHei, Arial, sans-serif'
+            if scope in {'all', 'titles'}:
+                typography['heading_font'] = css_family
+            if scope in {'all', 'body'}:
+                typography['body_font'] = css_family
+            temporary_style = style_path.with_suffix('.json.tmp')
+            temporary_style.write_text(json.dumps(style, ensure_ascii=False, indent=2), encoding='utf-8')
+            os.replace(temporary_style, style_path)
+        published = _publish_pages_from_disk(deck, targets, with_notes=True)
+        if published.get('failed_count') or published.get('published_count') != len(targets):
+            raise RuntimeError('preview publication failed')
+    except Exception as exc:
+        for page, html in originals.items():
+            _page_html_path(deck, page).write_text(html, encoding='utf-8')
+        if original_style is None:
+            style_path.unlink(missing_ok=True)
+        else:
+            style_path.write_bytes(original_style)
+        _publish_pages_from_disk(deck, targets, with_notes=True)
+        return _tool_error('ppt_replace_deck_fonts', f'font replacement rolled back: {exc}')
+    return _tool_success('ppt_replace_deck_fonts', {
+        'deck_dir': str(deck.resolve()),
+        'target_font': target,
+        'text_scope': scope,
+        'pages': targets,
+        'style_spec_updated': page_list is None,
+        'published_count': published['published_count'],
+    })
 
 
 def ppt_read_page_html(deck_dir: str, page: int) -> dict:

@@ -653,13 +653,14 @@ ATTACHMENT_EDIT_TOOL_CONFIG = ToolConfig(
 PRESENTATION_EDIT_TOOL_CONFIG = ToolConfig(
     name='edit_presentation',
     label='编辑 PPTX',
-    description='直接检查或替换 PPTX 字体和配色，保留原文件并发布可编辑新版本',
+    description='直接检查或按整套、指定页、标题或正文替换 PPTX 字体，并支持精确调色',
     tool=edit_presentation,
     module='attachment',
     appendix_system_prompt={
         'tool_policy': (
             '- `edit_presentation`: use this deterministic attachment tool for simple PPTX font '
-            'inspection/replacement and exact palette replacement. Do not start the PPT generation '
+            'inspection/replacement and exact palette replacement. Font replacement may target the '
+            'whole deck, selected 1-based pages, titles, or body text. Do not start the PPT generation '
             'Workflow for these operations. Inspect first when font availability is unknown. A missing '
             'target font is an error and must never be silently replaced with a default. Applied edits '
             'publish a new editable PPTX revision and keep the original upload unchanged.'

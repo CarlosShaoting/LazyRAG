@@ -1703,14 +1703,18 @@ def edit_presentation(
     source_font: Optional[str] = None,
     target_font: Optional[str] = None,
     color_map: Optional[Union[Dict[str, str], str]] = None,
+    pages: Optional[Union[List[int], str, int]] = None,
+    text_scope: Literal['all', 'titles', 'body'] = 'all',
     turn: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Inspect or directly edit an uploaded PPTX without starting a Workflow.
 
     `inspect` reports fonts, missing fonts, and colors. `replace_fonts` replaces
     one source family, or all explicit/theme font references when source_font is
-    omitted. `replace_palette` applies exact #RRGGBB mappings. Edits preserve the
-    original upload and publish one editable PPTX revision.
+    omitted. `pages` can select one or more 1-based slides and `text_scope` can
+    limit replacement to `titles` or `body`. `replace_palette` applies exact
+    #RRGGBB mappings to the whole deck. Edits preserve the original upload and
+    publish one editable PPTX revision.
     """
     matched, err = _resolve_attachment(filename, turn)
     if err:
@@ -1745,6 +1749,8 @@ def edit_presentation(
         requested = installed_by_name[requested.casefold()]
         colors = None
     elif normalized_action == 'replace_palette':
+        if pages not in (None, '') or str(text_scope or 'all').strip().lower() != 'all':
+            raise ToolExecutionError('pages/text_scope are supported for replace_fonts only')
         try:
             colors = normalize_color_map(color_map)
         except ValueError as exc:
@@ -1762,6 +1768,8 @@ def edit_presentation(
             source_font=source_font if normalized_action == 'replace_fonts' else None,
             target_font=requested,
             color_map=colors,
+            pages=pages if normalized_action == 'replace_fonts' else None,
+            text_scope=text_scope if normalized_action == 'replace_fonts' else 'all',
         )
         os.replace(candidate, draft.draft_path)
     except (OSError, ValueError) as exc:
