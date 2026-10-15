@@ -873,7 +873,7 @@ steps:
 
       ## Template analysis (must be first)
 
-      When template_mode is upload, the FIRST tool call in this step must be
+      For a full generation request when template_mode is upload, the FIRST tool call in this step must be
       ppt_analyze_template(template_file=<the exact attached .pptx filename>,
       deck_dir=<existing deck_dir when already known>). Do not call
       ppt_find_deck, ppt_generate_pages, or any editing tool before it. Reuse
@@ -881,7 +881,8 @@ steps:
       fails, surface that exact error and stop; never silently fall back to a
       non-template design. The analyzer updates the saved deck-wide palette and
       typography contract from the template before page rendering. When
-      template_mode is none, do not call the analyzer.
+      template_mode is none, do not call the analyzer. Incremental edits to an
+      existing deck, including font-only edits, do not re-analyze the template.
 
       ## Mode selection
 
@@ -970,7 +971,15 @@ steps:
       explain that this changes the deck-wide background capability instead of
       pretending a one-page replacement succeeded.
 
-      ### E) Full deck HTML generation (default)
+      ### E) Font-only edit on an existing HTML deck
+      For requests such as “全部改成宋体”, “第 1 页改成宋体”, or “第 2 页标题
+      改成宋体”, call ppt_find_deck and then ppt_replace_deck_fonts exactly once.
+      Omit pages for the whole deck; otherwise pass the requested 1-based pages.
+      Use text_scope=all, titles, or body. The tool refreshes only the changed
+      previews and updates the deck-wide style contract only for whole-deck edits.
+      Stop afterward; do not rerun style, outline, page HTML generation, or export.
+
+      ### F) Full deck HTML generation (default)
       Page prompts already exist from plan_page_prompts. Do NOT call ppt_init_deck,
       stage=style, or stage=outline again.
 
@@ -1006,6 +1015,10 @@ steps:
       - Never stage=outline / style / ppt_init_deck on a full generate after
         build_outline already ran (unless ppt_find_deck finds nothing).
       - Never export PPTX from tools — UI Export only.
+      - Font-only request on an existing HTML deck → ppt_find_deck, then
+        ppt_replace_deck_fonts. Omit pages for the whole deck, or pass the
+        requested 1-based pages; use text_scope=all/titles/body. Do not rerun
+        outline, style, or page generation. Stop after the preview refreshes.
       - All visible slide text must match the user's language.
       - After tools finish, stop.
 
@@ -1017,6 +1030,7 @@ steps:
       - ppt_run_stage
       - ppt_list_pages
       - ppt_publish_outline
+      - ppt_replace_deck_fonts
       - ppt_read_page_html
       - ppt_read_page_outline
       - ppt_patch_page_outline

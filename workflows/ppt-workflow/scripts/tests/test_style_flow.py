@@ -31,6 +31,10 @@ def _import_stubs() -> dict[str, types.ModuleType]:
     }
     multimodal = types.ModuleType('lazymind.chat.engine.tools.multimodal')
     multimodal.image_generator = lambda *args, **kwargs: None
+    presentation_edit = types.ModuleType(
+        'lazymind.chat.engine.tools.file_resources.presentation_edit'
+    )
+    presentation_edit.available_font_families = lambda: {'Arial', 'SimSun', '宋体'}
     static_file = types.ModuleType('lazymind.chat.service.utils.static_file_url')
     static_file._upload_root = lambda: Path(tempfile.gettempdir())
     static_file.file_relative_path = lambda value: value
@@ -54,6 +58,10 @@ def _import_stubs() -> dict[str, types.ModuleType]:
         'lazymind.chat.engine.subagent.tools': subagent_tools,
         'lazymind.chat.engine.tools': types.ModuleType('lazymind.chat.engine.tools'),
         'lazymind.chat.engine.tools.multimodal': multimodal,
+        'lazymind.chat.engine.tools.file_resources': types.ModuleType(
+            'lazymind.chat.engine.tools.file_resources'
+        ),
+        'lazymind.chat.engine.tools.file_resources.presentation_edit': presentation_edit,
         'lazymind.chat.service': types.ModuleType('lazymind.chat.service'),
         'lazymind.chat.service.utils': types.ModuleType('lazymind.chat.service.utils'),
         'lazymind.chat.service.utils.static_file_url': static_file,
@@ -332,6 +340,67 @@ class StyleFlowCombinationTest(unittest.TestCase):
             )
             self.assertEqual(result['status'], 'ready')
             self.assertEqual(result['style_flow'], flow)
+
+    def test_html_font_replacement_can_target_one_page_title_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            deck = Path(temp) / 'deck'
+            pages = deck / 'pages'
+            pages.mkdir(parents=True)
+            page_html = (
+                '<!doctype html><html><head></head><body>'
+                '<h1 data-el="title">Title</h1><p data-el="bullet-1">Body</p>'
+                '</body></html>'
+            )
+            (pages / 'page_001.html').write_text(page_html, encoding='utf-8')
+            (pages / 'page_002.html').write_text(page_html, encoding='utf-8')
+            original_style = {'typography': {'heading_font': 'Arial', 'body_font': 'Arial'}}
+            (deck / 'style_spec.json').write_text(
+                json.dumps(original_style), encoding='utf-8',
+            )
+            with mock.patch.object(TOOLS, '_resolve_deck_dir', return_value=deck), mock.patch.object(
+                TOOLS, '_publish_pages_from_disk', return_value={
+                    'published_count': 1, 'failed_count': 0,
+                },
+            ):
+                result = TOOLS.ppt_replace_deck_fonts(
+                    str(deck), '宋体', pages=1, text_scope='titles',
+                )
+
+            self.assertEqual(result['target_font'], '宋体')
+            changed = (pages / 'page_001.html').read_text(encoding='utf-8')
+            untouched = (pages / 'page_002.html').read_text(encoding='utf-8')
+            self.assertIn('lazymind-font-override-titles', changed)
+            self.assertIn('font-family: "宋体"', changed)
+            self.assertEqual(untouched, page_html)
+            self.assertEqual(
+                json.loads((deck / 'style_spec.json').read_text(encoding='utf-8')),
+                original_style,
+            )
+
+    def test_whole_html_deck_font_replacement_updates_style_spec(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            deck = Path(temp) / 'deck'
+            pages = deck / 'pages'
+            pages.mkdir(parents=True)
+            (pages / 'page_001.html').write_text(
+                '<html><head></head><body><h1>Title</h1><p>Body</p></body></html>',
+                encoding='utf-8',
+            )
+            (deck / 'style_spec.json').write_text('{}', encoding='utf-8')
+            with mock.patch.object(TOOLS, '_resolve_deck_dir', return_value=deck), mock.patch.object(
+                TOOLS, '_publish_pages_from_disk', return_value={
+                    'published_count': 1, 'failed_count': 0,
+                },
+            ):
+                result = TOOLS.ppt_replace_deck_fonts(
+                    str(deck), 'SimSun', text_scope='all',
+                )
+
+            style = json.loads((deck / 'style_spec.json').read_text(encoding='utf-8'))
+            self.assertEqual(result['target_font'], 'SimSun')
+            self.assertTrue(result['style_spec_updated'])
+            self.assertIn('SimSun', style['typography']['heading_font'])
+            self.assertIn('SimSun', style['typography']['body_font'])
 
 
 if __name__ == '__main__':
