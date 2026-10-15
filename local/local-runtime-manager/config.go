@@ -14,6 +14,7 @@ import (
 
 const (
 	runtimeProfileEnvVar             = "LAZYMIND_RUNTIME_PROFILE"
+	ragEnabledEnvVar                 = "LAZYMIND_RAG_ENABLED"
 	runtimeRootEnvVar                = "LAZYMIND_RUNTIME_ROOT"
 	localBuildRootEnvVar             = "LAZYMIND_LOCAL_BUILD_ROOT"
 	runtimeResourcesRootEnvVar       = "LAZYMIND_RUNTIME_RESOURCES_ROOT"
@@ -1015,8 +1016,9 @@ func newRuntimeConfigWithOptions(opts RuntimeConfigOptions, skipPortChecks bool)
 	if err != nil {
 		return RuntimeConfig{}, p, err
 	}
-	ragDisabled := profile == "desktop" && componentCatalog != nil &&
-		installedPythonComponentPath(p, componentCatalog.Components["rag"]) == ""
+	ragDisabled := !envBool(ragEnabledEnvVar, true) ||
+		(profile == "desktop" && componentCatalog != nil &&
+			installedPythonComponentPath(p, componentCatalog.Components["rag"]) == "")
 	modeProfile := localRuntimeModeProfile(milvusPort, milvusLiteDBPath)
 	if ragDisabled {
 		modeProfile.VectorStore.ManagedProcess = false

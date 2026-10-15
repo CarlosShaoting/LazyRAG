@@ -132,6 +132,14 @@ func TestPythonComponentMissingRAGRespondsWithInstallLink(t *testing.T) {
 	}
 }
 
+func TestLegacyPythonComponentStatusRespectsExplicitDisable(t *testing.T) {
+	t.Setenv("LAZYMIND_RAG_ENABLED", "false")
+	status := pythonComponentStatus(t.TempDir(), nil, "rag")
+	if status.Active || !status.Installed || !status.RestartRequired {
+		t.Fatalf("status = %#v, want installed but inactive legacy component", status)
+	}
+}
+
 // Set these only for an opt-in test against real, platform-matched build artifacts.
 // It uses the production download/extract/import/atomic-activation path, with a
 // local TLS server instead of publishing anything to a cloud account.

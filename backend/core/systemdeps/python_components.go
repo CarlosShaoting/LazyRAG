@@ -131,6 +131,8 @@ func PythonComponentActive(id string) bool {
 func pythonComponentStatus(root string, catalog *pythonCatalog, id string) PythonComponentStatus {
 	status := PythonComponentStatus{ID: id, Installed: true, Active: true}
 	if catalog == nil {
+		status.Active = PythonComponentActive(id)
+		status.RestartRequired = status.Installed && !status.Active
 		return status // Source/cloud and legacy full packages.
 	}
 	entry := catalog.Components[id]

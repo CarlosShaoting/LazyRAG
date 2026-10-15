@@ -70,7 +70,7 @@ func installedPythonComponentPath(paths RuntimePaths, entry pythonComponent) str
 	return site
 }
 
-func pythonComponentEnvironment(paths RuntimePaths) []string {
+func pythonComponentEnvironment(paths RuntimePaths, ragDisabled bool) []string {
 	values := []string{
 		"LAZYMIND_PYTHON_COMPONENT_CATALOG=" + filepath.Join(paths.ResourcesRoot, "config", "python-components.json"),
 		"LAZYMIND_ALGORITHM_PYTHON=" + paths.AlgorithmPython,
@@ -78,12 +78,15 @@ func pythonComponentEnvironment(paths RuntimePaths) []string {
 	}
 	catalog, err := loadPythonComponentCatalog(paths)
 	if err != nil || catalog == nil {
+		if ragDisabled {
+			values = append(values, ragEnabledEnvVar+"=0")
+		}
 		return values
 	}
 	var sites []string
 	for _, id := range []string{"rag"} {
 		enabled := "0"
-		if site := installedPythonComponentPath(paths, catalog.Components[id]); site != "" {
+		if site := installedPythonComponentPath(paths, catalog.Components[id]); site != "" && !ragDisabled {
 			sites = append(sites, site)
 			enabled = "1"
 		}
