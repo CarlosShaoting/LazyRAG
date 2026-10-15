@@ -111,25 +111,24 @@ describe("AskCard read-only history", () => {
     ]);
   });
 
-  it("submits all uploaded academic papers in one answer", async () => {
+  it("submits more than three academic papers without a count limit", async () => {
     const onSubmit = vi.fn();
     const { container } = render(<AskCard askPending={{
       ask_id: "papers",
       questions: [{ text: "Research materials", type: "single", choices: ["Upload papers"],
         attachment: { when_choice: "Upload papers", material_id: "uploaded_materials",
-          accept: [".pdf"], max_files: 3, required: true } }],
+          accept: [".pdf"], max_files: -1, required: true } }],
     }} onSubmit={onSubmit} />);
     fireEvent.click(screen.getByRole("radio", { name: "Upload papers" }));
     const submit = screen.getByRole("button", { name: "chat.askCardSubmit" });
     expect(submit).toBeDisabled();
     fireEvent.change(container.querySelector('input[type="file"]')!, {
-      target: { files: [new File(["one"], "one.pdf", { type: "application/pdf" }),
-        new File(["two"], "two.pdf", { type: "application/pdf" })] },
+      target: { files: [1, 2, 3, 4, 5].map((i) => new File([String(i)], `${i}.pdf`, { type: "application/pdf" })) },
     });
     await waitFor(() => expect(submit).toBeEnabled());
     fireEvent.click(submit);
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
-    expect(onSubmit.mock.calls[0][0].files.map((file: File) => file.name)).toEqual(["one.pdf", "two.pdf"]);
+    expect(onSubmit.mock.calls[0][0].files.map((file: File) => file.name)).toEqual(["1.pdf", "2.pdf", "3.pdf", "4.pdf", "5.pdf"]);
   });
 
   it.each(["yes", "no"])("localizes boolean %s in the message but preserves its structured token", async (choice) => {

@@ -86,7 +86,7 @@ runtime:
         text or reading notes have already been supplied in this conversation.
         Reuse existing materials without asking again. A PPTX visual template
         is not a research source. Do not ask this question for general PPT tasks.
-      question: 请提供科研材料，可上传单篇或多篇论文（本次最多 3 份），也可以直接输入研究内容或阅读心得。
+      question: 请提供科研材料，可上传单篇或多篇论文，也可以直接输入研究内容或阅读心得。
       type: single
       choice_policy: seed
       allow_other: true
@@ -96,7 +96,7 @@ runtime:
         when_choice: 上传论文或研究材料
         material_id: uploaded_materials
         accept: [.pdf, .doc, .docx, .txt, .md]
-        max_files: 3
+        max_files: -1
         required: true
     - id: topic
       label: 主题

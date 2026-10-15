@@ -460,7 +460,7 @@ export default function AskCard({
                 <div className="ask-wizard__attachment">
                   <ImageUpload
                     ref={(instance) => { attachmentRefs.current[currentIndex] = instance; }}
-                    max={currentQ.attachment.max_files ?? 1}
+                    max={currentQ.attachment.max_files === -1 ? Infinity : (currentQ.attachment.max_files ?? 1)}
                     listNum={0}
                     types={currentQ.attachment.accept}
                     disabled={isReadOnly}

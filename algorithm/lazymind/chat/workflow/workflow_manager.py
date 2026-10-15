@@ -724,7 +724,7 @@ def _runtime_clarification_fields(runtime_policy: Any) -> List[Dict[str, Any]]:
             max_files = raw_attachment.get('max_files', 1)
             if (
                 when_choice in choices and material_id and accept
-                and isinstance(max_files, int) and 1 <= max_files <= 3
+                and type(max_files) is int and (max_files == -1 or max_files >= 1)
             ):
                 field['attachment'] = {
                     'when_choice': when_choice,

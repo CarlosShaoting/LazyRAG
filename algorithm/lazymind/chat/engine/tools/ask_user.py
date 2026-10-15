@@ -113,9 +113,9 @@ def _normalise_questions(raw: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 raise ToolExecutionError(
                     f'Question {i} attachment.accept must be a non-empty list.'
                 )
-            if not isinstance(max_files, int) or not 1 <= max_files <= 3:
+            if type(max_files) is not int or (max_files != -1 and max_files < 1):
                 raise ToolExecutionError(
-                    f'Question {i} attachment.max_files must be between 1 and 3.'
+                    f'Question {i} attachment.max_files must be positive, or -1 for unlimited.'
                 )
             question['attachment'] = {
                 'when_choice': when_choice,
