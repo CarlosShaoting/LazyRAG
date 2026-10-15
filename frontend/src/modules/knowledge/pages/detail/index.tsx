@@ -76,6 +76,7 @@ import {
   effectiveProcessingLevel,
   type ProcessingLevel,
 } from "@/modules/knowledge/utils/processingLevel";
+import { useRAGComponent } from "@/modules/modelProvider/contexts/RAGComponentContext";
 
 import "./index.scss";
 
@@ -127,6 +128,13 @@ async function writeTextToClipboard(text: string) {
 
 const Detail = () => {
   const { t } = useTranslation();
+  const { availability: ragAvailability } = useRAGComponent();
+  const ragReady = ragAvailability === "ready";
+  const ragUnavailableReason = ragAvailability === "checking"
+    ? "正在检查本地知识库组件状态"
+    : ragAvailability === "error"
+      ? "无法确认本地知识库组件状态，请重试"
+      : "请先安装本地知识库组件，并重启本地服务";
   const knowledgeListRef = useRef<IKnowledgeListRef>(null);
   const createFolderRef = useRef<RenameModalRef>(null);
   const importKnowledgeRef = useRef<IImportKnowledgeModalRef>();
@@ -453,14 +461,17 @@ const Detail = () => {
   const canImport = hasUploadPermission || hasWritePermission;
   const isDocumentParsingUnavailable = documentParsingEnabled !== true;
   const importDisabled =
+    !ragReady ||
     isDocumentParsingUnavailable ||
     embeddingReady === false ||
     multimodalEmbeddingReady === false;
-  const importDisabledReason = isDocumentParsingUnavailable
-    ? documentParsingEnabled === false
-      ? "文档解析已暂停，请在设置中重新启用"
-      : "正在读取文档解析状态"
-    : undefined;
+  const importDisabledReason = !ragReady
+    ? ragUnavailableReason
+    : isDocumentParsingUnavailable
+      ? documentParsingEnabled === false
+        ? "文档解析已暂停，请在设置中重新启用"
+        : "正在读取文档解析状态"
+      : undefined;
   const showDataSourceSync = isDatasetCreatedByDataSource(
     detail as DatasetWithDataSourceFlag | undefined,
   );
@@ -520,6 +531,8 @@ const Detail = () => {
             <div>
               <Button
                 icon={<EditOutlined />}
+                disabled={!ragReady}
+                title={!ragReady ? ragUnavailableReason : undefined}
                 onClick={() => {
                   createUpdateRef.current?.onOpen(detail);
                 }}
@@ -541,6 +554,8 @@ const Detail = () => {
               <Button
                 danger
                 icon={<DeleteOutlined />}
+                disabled={!ragReady}
+                title={!ragReady ? ragUnavailableReason : undefined}
                 onClick={() => {
                   const knowledgeName = detail?.display_name || id;
                   confirmRef.current?.onOpen({
@@ -600,6 +615,7 @@ const Detail = () => {
               <KnowledgeBaseSyncNow
                 datasetId={detail.dataset_id}
                 documentParsingEnabled={documentParsingEnabled}
+                enabled={ragReady}
                 onSyncComplete={refreshKnowledgeAfterSync}
               />
             ) : null}
@@ -608,6 +624,8 @@ const Detail = () => {
                 color="primary"
                 variant="outlined"
                 ghost
+                disabled={!ragReady}
+                title={!ragReady ? ragUnavailableReason : undefined}
                 onClick={() => {
                   createFolderRef.current?.onOpen({
                     title: t("knowledge.createFolder"),
@@ -722,6 +740,7 @@ const Detail = () => {
                             )}
                           </>
                         ),
+                        disabled: !ragReady,
                       },
                     ],
                     onClick: ({ key }) => {
@@ -767,6 +786,7 @@ const Detail = () => {
                     {
                       key: "importPaperReferences",
                       label: "导入所选论文的参考文献",
+                      disabled: !ragReady,
                       onClick: () => {
                         knowledgeListRef.current?.importSelectedPaperReferences?.();
                       },
@@ -774,6 +794,7 @@ const Detail = () => {
                     {
                       key: "batchMove",
                       label: t("knowledge.batchMove"),
+                      disabled: !ragReady,
                       onClick: () => {
                         knowledgeListRef.current?.openBatchMove?.();
                       },
@@ -781,6 +802,7 @@ const Detail = () => {
                     {
                       key: "batchDelete",
                       label: t("knowledge.batchDelete"),
+                      disabled: !ragReady,
                       onClick: () => {
                         knowledgeListRef.current?.deleteKnowledge();
                       },
@@ -788,7 +810,7 @@ const Detail = () => {
                     {
                       key: "batchReparse",
                       label: t("knowledge.batchReparse"),
-                      disabled: isDocumentParsingUnavailable,
+                      disabled: !ragReady || isDocumentParsingUnavailable,
                       onClick: () => {
                         knowledgeListRef.current?.restartCheckedKnowledge();
                       },

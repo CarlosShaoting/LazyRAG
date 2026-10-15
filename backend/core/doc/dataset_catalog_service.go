@@ -9,6 +9,7 @@ import (
 
 	"lazymind/core/acl"
 	"lazymind/core/common/orm"
+	"lazymind/core/systemdeps"
 )
 
 type DatasetServiceErrorCode string
@@ -94,6 +95,9 @@ func (s *DatasetCatalogService) ListDatasets(ctx context.Context, req DatasetLis
 	userID := strings.TrimSpace(req.UserID)
 	if userID == "" {
 		return DatasetListResult{}, &DatasetServiceError{Code: DatasetServiceInvalidArgument, Message: "user_id is required"}
+	}
+	if !systemdeps.PythonComponentActive("rag") {
+		return DatasetListResult{Datasets: []Dataset{}}, nil
 	}
 	pageSize := normalizeDatasetPageSize(req.Limit)
 	offset := req.Offset
@@ -204,6 +208,9 @@ func (s *DatasetCatalogService) GetDataset(ctx context.Context, req DatasetGetRe
 	userID := strings.TrimSpace(req.UserID)
 	if userID == "" {
 		return Dataset{}, &DatasetServiceError{Code: DatasetServiceInvalidArgument, Message: "user_id is required"}
+	}
+	if !systemdeps.PythonComponentActive("rag") {
+		return Dataset{}, &DatasetServiceError{Code: DatasetServiceUnavailable, Message: "local knowledge base component is not active"}
 	}
 	datasetID := strings.TrimSpace(req.DatasetID)
 	if datasetID == "" {
