@@ -50,7 +50,9 @@ runtime:
     constraints, deck-wide visual direction, or whether AI backgrounds are
     enabled to analyze_requirements.
     Route requests to add, replace, refresh, research, or cite source material
-    to collect_materials. Route requests to rewrite the deck-wide or selected
+    to collect_materials. Route requests to revise academic interpretation or
+    cross-paper comparison to analyze_academic_sources when available.
+    Route requests to rewrite the deck-wide or selected
     AI-background prompt plan to plan_background_prompts. Route requests to
     regenerate existing AI background images without changing their approved
     prompts to generate_backgrounds. Route changes to deck structure, section
@@ -199,6 +201,8 @@ steps:
     label: Analyze Requirements
   - id: collect_materials
     label: Collect Materials
+  - id: analyze_academic_sources
+    label: Analyze Academic Sources
   - id: choose_style
     label: Choose Style
   - id: plan_background_prompts
@@ -213,6 +217,16 @@ steps:
     label: Generate PPT
 
 slots:
+  - id: presentation_scenario
+    label: Presentation Scenario
+    type: text
+    cardinality: single
+    exposed: false
+  - id: academic_brief
+    label: 科研内容分析
+    type: text
+    cardinality: single
+    summary_max_chars: 2000
   - id: requirement_analysis
     label: Requirement Analysis
     type: text

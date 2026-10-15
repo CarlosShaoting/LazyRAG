@@ -31,6 +31,7 @@ def _import_stubs() -> dict[str, types.ModuleType]:
     }
     multimodal = types.ModuleType('lazymind.chat.engine.tools.multimodal')
     multimodal.image_generator = lambda *args, **kwargs: None
+    multimodal.image_editor = lambda *args, **kwargs: None
     presentation_edit = types.ModuleType(
         'lazymind.chat.engine.tools.file_resources.presentation_edit'
     )
@@ -80,6 +81,37 @@ with mock.patch.dict(sys.modules, _import_stubs()):
 
 
 class StyleFlowCombinationTest(unittest.TestCase):
+    def test_academic_selection_changes_only_selected_formula(self):
+        html = '<html><body><div data-el="formula-1" data-academic-kind="formula">x<sup>2</sup></div><p>Keep</p></body></html>'
+        fragment = '<div data-el="formula-1" data-academic-kind="formula">x<sup>3</sup></div>'
+        with mock.patch.object(TOOLS, '_agent_llm_call', return_value=json.dumps({'op': 'replace_academic_element', 'html': fragment})):
+            ops, _, _ = TOOLS._selection_edit_ops('将指数改为三', {'el': 'formula-1'}, TOOLS._HtmlTree(html))
+        edited, _, _, _ = TOOLS._apply_html_ops(html, ops)
+        TOOLS._validate_local_html_edit(html, edited)
+        self.assertIn('x<sup>3</sup>', edited)
+        self.assertIn('<p>Keep</p>', edited)
+
+    def test_academic_markup_rejects_scripts_and_image_edit_requires_model(self):
+        with self.assertRaises(ValueError):
+            TOOLS._validated_academic_fragment('<svg><script>alert(1)</script></svg>')
+        with mock.patch.object(TOOLS, 'is_model_role_available', return_value=False):
+            with self.assertRaisesRegex(ValueError, 'image_editor'):
+                TOOLS._selection_edit_ops('调整曲线颜色', {'el': 'image-1'}, TOOLS._HtmlTree('<img data-el="image-1" src="source.png">'))
+
+    def test_image_editor_result_updates_only_selected_image(self):
+        with tempfile.TemporaryDirectory() as temp:
+            image_path = Path(temp) / 'edited.png'
+            image_path.write_bytes(b'\x89PNG\r\n\x1a\nexample')
+            html = '<html><body><img data-el="image-1" src="source.png"><p>Keep</p></body></html>'
+            with mock.patch.object(TOOLS, 'is_model_role_available', return_value=True), mock.patch.object(
+                TOOLS, 'image_editor', return_value={'local_path': str(image_path)},
+            ) as editor:
+                ops, _, _ = TOOLS._selection_edit_ops('改为灰度图', {'el': 'image-1'}, TOOLS._HtmlTree(html))
+            edited, _, _, _ = TOOLS._apply_html_ops(html, ops)
+            self.assertIn('data:image/png;base64,', edited)
+            self.assertIn('<p>Keep</p>', edited)
+            editor.assert_called_once()
+
     COMBINATIONS = (
         ('auto', False, 'fast'),
         ('auto', True, 'fast'),
