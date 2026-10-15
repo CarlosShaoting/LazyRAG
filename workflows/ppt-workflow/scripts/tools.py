@@ -662,6 +662,79 @@ def _apply_template_profile_to_style(deck: Path, profile: dict[str, Any]) -> boo
     return True
 
 
+def ppt_cache_academic_sources(filenames: list[str]) -> dict[str, Any]:
+    """Read each conversation paper through the shared reader; cache complete pages by SHA256.
+
+    Returns compact per-source manifests, not all full texts. Failed sources
+    remain explicit and never invalidate successful sources. Repeating the
+    call reuses completed files and retries only failures/changed uploads.
+    """
+    from lazymind.chat.engine.tools.file_resources.tools import read_file_resource
+
+    if not isinstance(filenames, list) or not filenames or any(not isinstance(n, str) or not n.strip() for n in filenames):
+        raise ValueError('filenames must be a non-empty list of exact attachment names')
+    root = _conversation_root() / 'academic_sources'
+    root.mkdir(parents=True, exist_ok=True)
+    results = []
+    for filename in dict.fromkeys(filenames):
+        try:
+            found = find_user_attachment(filename)
+            path = Path(_coerce_str(found.get('path'))).expanduser()
+            if not path.is_file():
+                raise ValueError('Attachment is not available as a local file for content hashing')
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            cache = root / f'{digest}.json'
+            cached = False
+            if cache.is_file():
+                try:
+                    payload = json.loads(cache.read_text(encoding='utf-8'))
+                    cached = payload.get('complete') is True and payload.get('sha256') == digest
+                except (ValueError, OSError):
+                    cached = False
+            if not cached:
+                chunks = []
+                offset = 1
+                while True:
+                    chunk = read_file_resource(str(path), offset=offset, limit=2000)
+                    if not isinstance(chunk, dict) or 'text' not in chunk:
+                        raise ValueError('Reader returned no text payload')
+                    chunks.append(chunk)
+                    if chunk.get('eof') is True:
+                        break
+                    next_offset = chunk.get('next_offset')
+                    if not isinstance(next_offset, int) or next_offset <= offset:
+                        raise ValueError('Reader did not reach EOF or provide a progressing next_offset')
+                    offset = next_offset
+                payload = {'sha256': digest, 'complete': True, 'chunks': chunks}
+                temporary = cache.with_name(f'{digest}.{uuid.uuid4().hex}.tmp')
+                temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
+                os.replace(temporary, cache)
+            results.append({'filename': filename, 'source_id': digest, 'status': 'ok',
+                            'cached': cached, 'chunk_count': len(payload['chunks']),
+                            'excerpt': payload['chunks'][0]['text'][:1200]})
+        except Exception as exc:
+            results.append({'filename': filename, 'status': 'error', 'error': str(exc)})
+    manifest = {'sources': results, 'success_count': sum(r['status'] == 'ok' for r in results)}
+    temporary = root / f'manifest.{uuid.uuid4().hex}.tmp'
+    temporary.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
+    os.replace(temporary, root / 'manifest.json')
+    return manifest
+
+
+def ppt_read_academic_source(source_id: str, chunk: int = 1) -> dict[str, Any]:
+    """Read one cached reader chunk (1-based) without parsing the upload again."""
+    if not re.fullmatch(r'[0-9a-f]{64}', source_id):
+        raise ValueError('source_id must be returned by ppt_cache_academic_sources')
+    path = _conversation_root() / 'academic_sources' / f'{source_id}.json'
+    payload = json.loads(path.read_text(encoding='utf-8'))
+    chunks = payload['chunks']
+    if not isinstance(chunk, int) or not 1 <= chunk <= len(chunks):
+        raise ValueError('chunk is outside this source')
+    return {'source_id': source_id, 'chunk': chunk, 'chunk_count': len(chunks),
+            'reader_result': chunks[chunk - 1],
+            'next_chunk': chunk + 1 if chunk < len(chunks) else None}
+
+
 def ppt_analyze_template(
     template_file: str,
     deck_dir: Optional[str] = None,

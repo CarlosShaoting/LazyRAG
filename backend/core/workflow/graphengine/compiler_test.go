@@ -174,6 +174,7 @@ runtime:
   clarification_fields:
     - id: template_mode
       question: 是否上传模板？
+      ask_when: Only when source material is missing.
       type: single
       choice_policy: fixed
       choices: [不使用模板, 上传 PPTX 模板]
@@ -190,6 +191,9 @@ runtime:
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics)
 	}
 	attachment := result.Graph.Runtime.ClarificationFields[0].Attachment
+	if result.Graph.Runtime.ClarificationFields[0].AskWhen != "Only when source material is missing." {
+		t.Fatal("conditional Ask applicability was lost during compilation")
+	}
 	if attachment == nil || attachment.WhenChoice != "上传 PPTX 模板" || attachment.MaterialID != "seed" || len(attachment.Accept) != 1 || attachment.Accept[0] != ".pptx" || attachment.MaxFiles != 1 || !attachment.Required {
 		t.Fatalf("conditional attachment was not compiled: %#v", attachment)
 	}

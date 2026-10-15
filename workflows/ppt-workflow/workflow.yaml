@@ -78,6 +78,26 @@ runtime:
         style_flow: style_flow
         generate_background_images: generate_background_images
   clarification_fields:
+    - id: academic_materials
+      label: 科研材料
+      ask_when: >
+        Only for research reports, paper reviews, thesis defenses or reading-note
+        presentations when no relevant source attachments, substantive research
+        text or reading notes have already been supplied in this conversation.
+        Reuse existing materials without asking again. A PPTX visual template
+        is not a research source. Do not ask this question for general PPT tasks.
+      question: 请提供科研材料，可上传单篇或多篇论文（本次最多 3 份），也可以直接输入研究内容或阅读心得。
+      type: single
+      choice_policy: seed
+      allow_other: true
+      choices:
+        - 上传论文或研究材料
+      attachment:
+        when_choice: 上传论文或研究材料
+        material_id: uploaded_materials
+        accept: [.pdf, .doc, .docx, .txt, .md]
+        max_files: 3
+        required: true
     - id: topic
       label: 主题
       question: 这份 PPT 的主题是什么？
@@ -166,6 +186,8 @@ tool_scripts:
       - ppt_generate_background_images
       - check_ppt_workflow_capabilities
       - ppt_analyze_template
+      - ppt_cache_academic_sources
+      - ppt_read_academic_source
       - ppt_attach_material_images
       - ppt_replace_page_material_image
       - ppt_replace_page_background
