@@ -163,6 +163,8 @@ def _set_scoped_shape_font(
 
 def available_font_families() -> set[str]:
     """Return installed font family names without guessing a fallback font."""
+    from lazymind.chat.engine.tools.file_resources.font_library import local_fonts
+    managed = {alias for font in local_fonts() if font['embeddable'] for alias in font['aliases']}
     fc_list = shutil.which('fc-list')
     if fc_list:
         try:
@@ -170,7 +172,7 @@ def available_font_families() -> set[str]:
                 [fc_list, '--format=%{family}\n'], check=True,
                 capture_output=True, text=True, timeout=15,
             )
-            return {
+            return managed | {
                 family.strip()
                 for line in result.stdout.splitlines()
                 for family in line.split(',')
@@ -184,7 +186,7 @@ def available_font_families() -> set[str]:
         Path.home() / 'Library' / 'Fonts', Path('/usr/share/fonts'),
         Path('/usr/local/share/fonts'), Path(os.environ.get('WINDIR', 'C:/Windows')) / 'Fonts',
     ]
-    families: set[str] = set()
+    families: set[str] = set(managed)
     try:
         from fontTools.ttLib import TTFont
     except ImportError:
