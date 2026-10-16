@@ -46,11 +46,17 @@ interface FileItem extends RcFile {
 }
 
 export const allowedImageTypes = [".png", ".jpg", ".jpeg"];
-export const allowedFileTypes = [".pdf", ".docx", ".doc", ".pptx", ".xls", ".xlsx"];
+export const allowedSpreadsheetTypes = [".csv", ".tsv", ".xls", ".xlsx"];
+export const allowedFileTypes = [
+  ".pdf",
+  ".docx",
+  ".doc",
+  ".pptx",
+  ...allowedSpreadsheetTypes,
+];
 // Keep this list aligned with algorithm CHAT_TEXT_EXTENSIONS and core common textFileExtensions.
-// CSV/TSV remain text-compatible, while the chat backend routes them through the pandas extractor.
 export const allowedTextTypes = [
-  ".txt", ".md", ".markdown", ".lmd", ".csv", ".tsv", ".json", ".jsonl", ".ndjson",
+  ".txt", ".md", ".markdown", ".lmd", ".json", ".jsonl", ".ndjson",
   ".xml", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".log", ".sql",
   ".html", ".htm", ".css", ".scss", ".sass", ".less",
   ".py", ".pyi", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx",

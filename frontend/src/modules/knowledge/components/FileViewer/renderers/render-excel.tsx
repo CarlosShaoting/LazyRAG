@@ -11,6 +11,41 @@ type ExcelSheet = { name: string; rows: Record<number, { cells: Record<number, {
 type ExcelRange = { startRowIndex: number; startColumnIndex: number; endRowIndex: number; endColumnIndex: number };
 export type ExcelSelection = { text: string; context: string; page: number };
 
+function hasRenderableCells(workbookSheets: ExcelSheet[]): boolean {
+  return workbookSheets.some((sheet) =>
+    Object.values(sheet.rows || {}).some((row) =>
+      Object.values(row.cells || {}).some((cell) =>
+        cell.text !== undefined && cell.text !== null && String(cell.text) !== "",
+      ),
+    ),
+  );
+}
+
+function normalizeXlsxForPreview(fileData: ArrayBuffer): ArrayBuffer | null {
+  try {
+    const workbook = XLSX.read(new Uint8Array(fileData), {
+      type: "array",
+      cellDates: true,
+      cellStyles: true,
+    });
+    const normalized = XLSX.write(workbook, {
+      type: "array",
+      bookType: "xlsx",
+      cellStyles: true,
+    }) as ArrayBuffer | Uint8Array;
+    if (normalized instanceof ArrayBuffer) {
+      return normalized;
+    }
+    return normalized.buffer.slice(
+      normalized.byteOffset,
+      normalized.byteOffset + normalized.byteLength,
+    ) as ArrayBuffer;
+  } catch (error) {
+    console.warn("Failed to normalize XLSX preview data:", error);
+    return null;
+  }
+}
+
 interface RenderOfficeProps {
   fileData: ArrayBuffer;
   fileType: "excel";
@@ -241,9 +276,26 @@ const RenderExcel = (props: RenderOfficeProps) => {
         },
         cellsSelected: (range: ExcelRange) => { selectedRange.current = range; },
       };
-      reader.current = readerType.init(showFile.current, options);
-      if (reader.current && reader.current.preview) {
+      const initReader = () => readerType.init(showFile.current!, options) as JsPreviewType;
+      reader.current = initReader();
+      if (reader.current?.preview) {
         await reader.current.preview(fileData);
+
+        // Some valid XLSX producers emit workbook metadata that the pinned
+        // preview library accepts without throwing but renders as an empty
+        // grid. Re-serializing through SheetJS keeps the workbook values and
+        // sheets while giving the canvas preview a canonical XLSX package.
+        if (!hasRenderableCells(sheets.current)) {
+          const normalized = normalizeXlsxForPreview(fileData);
+          if (normalized) {
+            reader.current.destroy?.();
+            showFile.current.innerHTML = "";
+            sheets.current = [];
+            selectedRange.current = null;
+            reader.current = initReader();
+            await reader.current.preview(normalized);
+          }
+        }
       }
     } catch (err) {
       console.error("Office preview error:", err);
