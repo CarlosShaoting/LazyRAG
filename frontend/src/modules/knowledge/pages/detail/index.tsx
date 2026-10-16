@@ -588,6 +588,13 @@ const Detail = () => {
           }
         }}
       />
+      {ragReady && detail?.processing_level === "stored" && (
+        <Alert
+          type="info"
+          showIcon
+          message={t("knowledge.storedModeRagReadyHint")}
+        />
+      )}
       {uploadingNoticeVisible && (
         <Alert
           className="knowledge-parsing-notice"

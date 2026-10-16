@@ -363,7 +363,8 @@ func registerAllRoutes(r *mux.Router) {
 	handleAPI(r, "DELETE", "/datasets/{dataset}/documents/{document}/pdf-artifacts/{artifact}", []string{"document.write"}, systemdeps.RequireRAG(doc.DeletePDFArtifact))
 	handleAPI(r, "DELETE", "/datasets/{dataset}/documents/{document}", []string{"document.write"}, systemdeps.RequireRAG(doc.DeleteDocument))
 	handleAPI(r, "PATCH", "/datasets/{dataset}/documents/{document}", []string{"document.write"}, systemdeps.RequireRAG(doc.UpdateDocument))
-	handleAPI(r, "POST", "/datasets/{dataset}/documents:search", []string{"document.read"}, systemdeps.RequireRAG(doc.SearchDocuments))
+	// File-directory filtering is a local catalog read, not semantic RAG search.
+	handleAPI(r, "POST", "/datasets/{dataset}/documents:search", []string{"document.read"}, doc.SearchDocuments)
 	handleAPI(r, "POST", "/datasets/{dataset}/documents:batchUpdateTags", []string{"document.write"}, systemdeps.RequireRAG(doc.BatchUpdateDocumentTags))
 	handleAPI(r, "POST", "/documents:listByDatasets", []string{"document.read"}, systemdeps.RequireRAG(doc.ListDocumentsByDatasets))
 	handleAPI(r, "POST", "/documents:search", []string{"document.read"}, systemdeps.RequireRAG(doc.SearchAllDocuments))

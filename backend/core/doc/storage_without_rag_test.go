@@ -94,6 +94,14 @@ func TestKnowledgeStorageWithoutRAG(t *testing.T) {
 	if document.LazyllmDocID != "" {
 		t.Fatal("document submitted to RAG")
 	}
+	rec = httptest.NewRecorder()
+	SearchDocuments(rec, request("POST", "/datasets/storage-test/documents:search", `{ "page_size": 20 }`))
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), document.ID) {
+		t.Fatalf("stored document missing from frontend listing: %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"retained_only":true`) {
+		t.Fatalf("stored document must expose first-ingestion action: %s", rec.Body.String())
+	}
 	var state orm.DocumentProcessingState
 	if err := db.First(&state, "document_id = ?", document.ID).Error; err != nil {
 		t.Fatal(err)
@@ -120,5 +128,10 @@ func TestKnowledgeStorageWithoutRAG(t *testing.T) {
 	results, err = startTasksInternal(request("POST", "/", ""), ds.ID, []string{tasks[0].ID})
 	if err == nil || len(results) != 1 || results[0].SubmitStatus != "REJECTED" {
 		t.Fatalf("reparse must be rejected without RAG: %v %v", results, err)
+	}
+	db.First(&tasks[0], "id = ?", tasks[0].ID)
+	json.Unmarshal(tasks[0].Ext, &ext)
+	if ext.TaskState != string(TaskStateFailed) || ext.ErrorMessage == "" {
+		t.Fatalf("rejected task must persist terminal failure: %+v", ext)
 	}
 }

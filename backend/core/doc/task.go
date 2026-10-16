@@ -1482,6 +1482,12 @@ func startTasksInternal(r *http.Request, datasetID string, taskIDs []string) ([]
 	startedCount := 0
 	for _, taskID := range orderedUniqueIDs {
 		if result, ok := resultsByTaskID[taskID]; ok {
+			if result.Status == "FAILED" {
+				var row orm.Task
+				if err := store.DB().WithContext(r.Context()).Where("id = ? AND dataset_id = ? AND deleted_at IS NULL", taskID, datasetID).Take(&row).Error; err == nil {
+					markTaskStartFailed(r.Context(), datasetID, row, result.Message)
+				}
+			}
 			if result.Status == "STARTED" {
 				startedCount++
 			}
@@ -1564,6 +1570,10 @@ func startParseTasksInternalAtLevel(r *http.Request, datasetID string, taskIDs [
 			resultsByTaskID[taskID] = StartTaskResult{TaskID: taskID, DocumentID: docRow.ID, DisplayName: docRow.DisplayName, Status: "FAILED", SubmitStatus: "REJECTED", Message: "uploaded file path is empty"}
 			continue
 		}
+		var submittedExt taskExt
+		_ = json.Unmarshal(taskRow.Ext, &submittedExt)
+		submittedExt.ProcessingLevel = processingLevel
+		taskRow.Ext = mustJSON(submittedExt)
 		candidate := startCandidate{task: taskRow, doc: docRow, docExt: dExt}
 		candidates = append(candidates, candidate)
 		if needsOfficeConvertBeforeParse(dExt, ocrConfig, parseProfile) {
@@ -2115,7 +2125,9 @@ func validateCreateTaskItem(item CreateTaskItem, datasetID, taskType string) err
 		return nil
 	}
 	if TaskType(taskType) == TaskTypeParse || TaskType(taskType) == TaskTypeParseUploaded {
-		return fmt.Errorf("upload_file_id is required for parse task")
+		if strings.TrimSpace(item.Task.DocumentID) == "" && len(item.Task.DocumentIDs) == 0 {
+			return fmt.Errorf("upload_file_id or document_id is required for parse task")
+		}
 	}
 	if strings.TrimSpace(item.Task.DocumentID) == "" && len(item.Task.DocumentIDs) == 0 {
 		return fmt.Errorf("document_id is required")
@@ -2134,7 +2146,7 @@ func expandCreateTaskItems(item CreateTaskItem, taskType string) []CreateTaskIte
 		return []CreateTaskItem{item}
 	}
 	switch TaskType(taskType) {
-	case TaskTypeReparse, TaskTypeCopy, TaskTypeMove:
+	case TaskTypeParse, TaskTypeParseUploaded, TaskTypeReparse, TaskTypeCopy, TaskTypeMove:
 		expanded := make([]CreateTaskItem, 0, len(item.Task.DocumentIDs))
 		for _, documentID := range item.Task.DocumentIDs {
 			docID := strings.TrimSpace(documentID)
@@ -2188,6 +2200,8 @@ func bindExternalBatchAddResults(datasetID string, baseTasks []orm.Task, baseDoc
 			_ = json.Unmarshal(baseTask.Ext, &ext)
 			ext.MarketSubmission = "submitted"
 			ext.MarketPreviousTaskID = ""
+			ext.TaskState = string(TaskStateRunning)
+			ext.ErrorMessage = ""
 			ext.DisplayName = displayName
 			ext.DataSourceType = "LOCAL_FILE"
 			updatesTask := map[string]any{"lazyllm_task_id": newLazyllmTask, "display_name": displayName, "ext": mustJSON(ext), "updated_at": now}
@@ -2789,6 +2803,18 @@ func createTaskFromExistingDocument(r *http.Request, datasetID, userID, userName
 	if TaskType(tType) == TaskTypeReparse && isFolderLikeDocument(baseDoc) {
 		return orm.Task{}, fmt.Errorf("folder document cannot be reparsed")
 	}
+	if TaskType(tType) == TaskTypeParse || TaskType(tType) == TaskTypeParseUploaded {
+		if isFolderLikeDocument(baseDoc) || strings.TrimSpace(baseDoc.LazyllmDocID) != "" {
+			return orm.Task{}, fmt.Errorf("only retained files can be ingested; use reparse for registered documents")
+		}
+		var ds orm.Dataset
+		if err := store.DB().WithContext(r.Context()).Where("id = ? AND deleted_at IS NULL", datasetID).Take(&ds).Error; err != nil {
+			return orm.Task{}, err
+		}
+		if !systemdeps.PythonComponentActive("rag") || effectiveProcessingLevel(ds.ProcessingLevel) == ProcessingLevelStored {
+			return orm.Task{}, fmt.Errorf("enable RAG and select a processing level before ingesting retained files")
+		}
+	}
 	if TaskType(tType) == TaskTypeCopy || TaskType(tType) == TaskTypeMove {
 		if err := validateTransferTarget(r.Context(), strings.TrimSpace(item.Task.TargetDatasetID), strings.TrimSpace(item.Task.TargetPID)); err != nil {
 			return orm.Task{}, err
@@ -2817,6 +2843,7 @@ func createTaskFromExistingDocument(r *http.Request, datasetID, userID, userName
 		tFiles = []TaskFile{{DisplayName: displayName, StoredName: dExt.StoredName, StoredPath: dExt.StoredPath, ParseStoredPath: dExt.ParseStoredPath, FileSize: dExt.FileSize, RelativePath: dExt.RelativePath, ContentType: dExt.ContentType}}
 	}
 	tExt := taskExt{TaskType: tType, DocumentPID: documentPID, DisplayName: displayName, TargetDatasetID: strings.TrimSpace(item.Task.TargetDatasetID), TargetPID: strings.TrimSpace(item.Task.TargetPID), TargetPath: strings.TrimSpace(item.Task.TargetPath), DataSourceType: firstNonEmpty(strings.TrimSpace(item.Task.DataSourceType), "LOCAL_FILE"), Files: tFiles, DocumentTags: tags, ReparseGroups: item.Task.ReparseGroups, ReparseMode: strings.TrimSpace(item.Task.ReparseMode)}
+	tExt.TaskState = string(TaskStateCreating)
 	now := time.Now().UTC()
 	taskRow := orm.Task{ID: taskID, LazyllmTaskID: "", DocID: baseDoc.ID, KbID: datasetKbIDByID(datasetID), AlgoID: datasetAlgoIDByID(datasetID), DatasetID: datasetID, TaskType: tType, DocumentPID: documentPID, TargetPID: strings.TrimSpace(item.Task.TargetPID), TargetDatasetID: strings.TrimSpace(item.Task.TargetDatasetID), DisplayName: displayName, Ext: mustJSON(tExt), BaseModel: orm.BaseModel{CreateUserID: userID, CreateUserName: userName, CreatedAt: now, UpdatedAt: now}}
 	if err := store.DB().WithContext(r.Context()).Transaction(func(tx *gorm.DB) error {
@@ -2886,23 +2913,20 @@ func startReparseTasksInternal(r *http.Request, datasetID string, taskIDs []stri
 			continue
 		}
 		if !shouldSubmitReparseToLazyLLM(processingLevel) {
-			var ext taskExt
-			_ = json.Unmarshal(taskRow.Ext, &ext)
-			ext.TaskState = string(TaskStateSucceeded)
-			now := time.Now().UTC()
-			if err := store.DB().WithContext(r.Context()).Model(&orm.Task{}).
-				Where("id = ? AND dataset_id = ? AND deleted_at IS NULL", taskRow.ID, datasetID).
-				Updates(map[string]any{"ext": mustJSON(ext), "updated_at": now}).Error; err != nil {
-				results = append(results, StartTaskResult{TaskID: taskRow.ID, DocumentID: docRow.ID, DisplayName: docRow.DisplayName, Status: "FAILED", SubmitStatus: "FAILED", Message: "store document task failed"})
-				continue
-			}
-			results = append(results, StartTaskResult{TaskID: taskRow.ID, DocumentID: docRow.ID, DisplayName: docRow.DisplayName, Status: "STARTED", SubmitStatus: "ACCEPTED", Message: "document already stored; parsing was not requested"})
+			message := "知识库当前为仅储存模式，请先在编辑中提高处理级别，再重解析。"
+			markTaskStartFailed(r.Context(), datasetID, taskRow, message)
+			results = append(results, StartTaskResult{TaskID: taskRow.ID, DocumentID: docRow.ID, DisplayName: docRow.DisplayName, Status: "FAILED", SubmitStatus: "REJECTED", Message: message})
 			continue
 		}
 		if strings.TrimSpace(docRow.LazyllmDocID) == "" {
-			applog.Logger.Warn().Str("handler", "StartReparseTask").Str("task_id", taskID).Str("doc_id", docRow.ID).Msg("lazyllm doc id is empty")
-			markTaskStartFailed(r.Context(), datasetID, taskRow, "lazyllm doc id is empty")
-			results = append(results, StartTaskResult{TaskID: taskID, DocumentID: docRow.ID, DisplayName: docRow.DisplayName, Status: "FAILED", SubmitStatus: "REJECTED", Message: "lazyllm doc id is empty"})
+			// A retained file has never been submitted to RAG. Its first
+			// reparse is an add, not a rebuild of a nonexistent remote doc.
+			items, err := startParseTasksInternal(r, datasetID, []string{taskID})
+			results = append(results, items...)
+			if err != nil && len(items) == 0 {
+				markTaskStartFailed(r.Context(), datasetID, taskRow, err.Error())
+				results = append(results, StartTaskResult{TaskID: taskID, DocumentID: docRow.ID, Status: "FAILED", SubmitStatus: "FAILED", Message: err.Error()})
+			}
 			continue
 		}
 		docIDs = append(docIDs, strings.TrimSpace(docRow.LazyllmDocID))
@@ -2968,7 +2992,9 @@ func startReparseTasksInternal(r *http.Request, datasetID string, taskIDs []stri
 		var ext taskExt
 		_ = json.Unmarshal(taskRow.Ext, &ext)
 		ext.TaskState = string(TaskStateRunning)
+		ext.ErrorMessage = ""
 		lazyllmTaskID := ""
+		ext.ProcessingLevel = processingLevel
 		if i < len(lazyllmTaskIDs) {
 			lazyllmTaskID = strings.TrimSpace(lazyllmTaskIDs[i])
 		}

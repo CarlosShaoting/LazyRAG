@@ -11,11 +11,9 @@ import {
   DocDataSourceTypeEnum,
   DocDocumentStageEnum,
   DocTypeEnum,
-  JobJobTypeEnum,
 } from "@/api/generated/knowledge-client";
 import {
   DocumentServiceApi,
-  JobServiceApi,
   TaskServiceApi,
   normalizeProxyableUrl,
 } from "@/modules/knowledge/utils/request";
@@ -65,7 +63,6 @@ import RestartKnowledgeModal, {
 import TreeUtils from "@/modules/knowledge/utils/tree";
 import UIUtils from "@/modules/knowledge/utils/ui";
 import { useDatasetPermissionStore } from "@/modules/knowledge/store/dataset_permission";
-import type { Job } from "@/api/generated/knowledge-client";
 
 import CopyMoveModal from "../CopyMoveModal";
 import EditTags from "./editTags";
@@ -74,6 +71,7 @@ import BatchMoveModal from "../batchMoveModal";
 import { previewDocumentReferencesImport, startReferenceImport } from "@/modules/knowledge/api/academicReferences";
 
 export interface TreeNode extends Doc {
+  retained_only?: boolean;
   key: string;
   title: string;
   children?: TreeNode[];
@@ -1033,8 +1031,7 @@ const KnowledgeTable = forwardRef<IKnowledgeListRef, Props>((props, ref) => {
 
         const isParsePending =
           record.document_stage === DocDocumentStageEnum.DocumentParsing;
-        const isUnParse =
-          record.document_stage === DocDocumentStageEnum.DocumentUploaded;
+        const isUnParse = record.retained_only === true;
 
         const defaultItems: MenuProps["items"] = [
           {
@@ -1053,7 +1050,7 @@ const KnowledgeTable = forwardRef<IKnowledgeListRef, Props>((props, ref) => {
           if (isUnParse) {
             isLeftItems.push({
               key: "parse",
-              label: t("knowledge.parse"),
+              label: t("knowledge.ingestRetained"),
               disabled: isDocumentParsingUnavailable,
             });
           } else {
@@ -1187,25 +1184,14 @@ const KnowledgeTable = forwardRef<IKnowledgeListRef, Props>((props, ref) => {
         break;
       }
       case "parse":
-        JobServiceApi()
-          .jobServiceCreateJob({
-            dataset: record?.dataset_id || "",
-            job: {
-              document_ids: [record?.document_id || ""].filter((i) => !!i),
-              job_type: JobJobTypeEnum.JobTypeParseUploaded,
-            } as unknown as Job,
-          })
-          .then(() => {
-            message.success(t("knowledge.parseTaskCreated"));
-          })
-          .catch((error) => {
-            console.error(error);
-          })
-          .finally(() => {
-            setCurrentNode(null);
-            getImportingTotal();
-            tableDataRefresh();
-          });
+        restartKnowledgeRef.current?.onOpen({
+          title: t("knowledge.ingestRetained"),
+          dataset: record?.dataset_id || "",
+          ids: [record?.document_id || ""],
+          names: [record?.display_name || ""],
+          processingLevel: detail.processing_level,
+          ingest: true,
+        });
         break;
       case "reparse":
         restartKnowledgeRef.current?.onOpen({
@@ -1376,12 +1362,14 @@ const KnowledgeTable = forwardRef<IKnowledgeListRef, Props>((props, ref) => {
       message.warning(t("knowledge.selectAtLeastOneFile"));
       return;
     }
+    const ingest = records.every((record) => record.retained_only === true);
     restartKnowledgeRef.current?.onOpen({
-      title: t("knowledge.reparse"),
+      title: t(ingest ? "knowledge.ingestRetained" : "knowledge.reparse"),
       dataset: detail.dataset_id!,
       ids: records.map((record) => record.document_id || ""),
       names: records.map((record) => record.display_name || ""),
       processingLevel: detail.processing_level,
+      ingest,
     });
   };
 
