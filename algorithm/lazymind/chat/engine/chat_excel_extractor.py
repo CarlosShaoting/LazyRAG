@@ -11,6 +11,21 @@ MAX_INLINE_CHARS = 30_000
 MAX_FULL_PARSE_BYTES = 512 * 1024
 PREVIEW_ROWS = 5
 
+_INLINE_ANALYSIS_INSTRUCTION = (
+    'This is the complete spreadsheet content. Answer directly from this context. '
+    'Do not call Python, calculator, or another analysis tool merely to re-read, re-sum, '
+    'or verify values that are already present. Use a tool only when the user explicitly '
+    'requests a transformation or analysis that cannot be answered reliably from this complete content.'
+)
+_LARGE_ANALYSIS_INSTRUCTION = (
+    'The preview is not the complete spreadsheet. Before answering any question that depends on '
+    'whole-file calculations, filtering, grouping, statistics, joins, comparisons, or conclusions, '
+    'you MUST resolve this exact attachment with `find_user_attachment` and use an available Python '
+    'execution tool with pandas to analyze the original file. Never calculate whole-file results from '
+    'the preview or by manually copying values into calculator calls. If this runtime does not expose '
+    'Python execution, say so and limit the answer to facts visible in the preview.'
+)
+
 
 @dataclass(frozen=True)
 class SpreadsheetExtraction:
@@ -76,11 +91,7 @@ def extract_spreadsheet(file_path: str) -> SpreadsheetExtraction:
             f'Large spreadsheet detected from source size ({source_bytes} bytes); full dimensions '
             'were intentionally not loaded into chat context.\n\n'
             f'{previews}\n\n'
-            'The preview is not the complete spreadsheet. For calculations, filtering, grouping, '
-            'statistics, joins, or other substantive analysis, resolve this exact attachment with '
-            '`find_user_attachment` and use an available Python execution tool with pandas to analyze '
-            'the original file. Do not infer whole-file results from the preview. If this runtime does '
-            'not expose Python execution, say so and limit the answer to the preview.'
+            f'{_LARGE_ANALYSIS_INSTRUCTION}'
         )
         return SpreadsheetExtraction(
             text=text,
@@ -103,7 +114,8 @@ def extract_spreadsheet(file_path: str) -> SpreadsheetExtraction:
     if inline:
         text = (
             f'Spreadsheet parsed with pandas: {len(sheets)} sheet(s), '
-            f'{total_rows} data row(s), {total_cells} cell(s).\n\n{full_text}'
+            f'{total_rows} data row(s), {total_cells} cell(s).\n'
+            f'{_INLINE_ANALYSIS_INSTRUCTION}\n\n{full_text}'
         )
     else:
         shape_lines = '\n'.join(
@@ -116,11 +128,7 @@ def extract_spreadsheet(file_path: str) -> SpreadsheetExtraction:
         text = (
             f'Large spreadsheet detected: {len(sheets)} sheet(s), {total_rows} data row(s), '
             f'{total_cells} cell(s).\n{shape_lines}\n\n{previews}\n\n'
-            'The preview is not the complete spreadsheet. For calculations, filtering, grouping, '
-            'statistics, joins, or other substantive analysis, resolve this exact attachment with '
-            '`find_user_attachment` and use an available Python execution tool with pandas to analyze '
-            'the original file. Do not infer whole-file results from the preview. If this runtime does '
-            'not expose Python execution, say so and limit the answer to the preview.'
+            f'{_LARGE_ANALYSIS_INSTRUCTION}'
         )
     return SpreadsheetExtraction(
         text=text,

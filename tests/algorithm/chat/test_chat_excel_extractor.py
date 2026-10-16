@@ -21,6 +21,8 @@ def test_small_csv_is_parsed_with_pandas_and_inlined(tmp_path) -> None:
     assert result.total_cells == 4
     assert result.sheet_shapes == {'sales': (2, 2)}
     assert 'Spreadsheet parsed with pandas' in result.text
+    assert 'This is the complete spreadsheet content' in result.text
+    assert 'Do not call Python, calculator' in result.text
     assert '上海,12' in result.text
 
 
@@ -53,7 +55,9 @@ def test_large_spreadsheet_returns_preview_and_python_analysis_instruction(tmp_p
     assert 'Large spreadsheet detected' in result.text
     assert 'first 5 rows' in result.text
     assert '`find_user_attachment`' in result.text
+    assert 'MUST resolve this exact attachment' in result.text
     assert 'Python execution tool with pandas' in result.text
+    assert 'manually copying values into calculator calls' in result.text
     assert '\n200,200\n' not in result.text
 
 
