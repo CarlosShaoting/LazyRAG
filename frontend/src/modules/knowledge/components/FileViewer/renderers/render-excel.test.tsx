@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import * as XLSX from "xlsx";
 
-const previewState = vi.hoisted(() => ({ calls: 0, renderOnRetry: true }));
+const previewState = vi.hoisted(() => ({ calls: 0, renderOnRetry: true, mismatchedSheet: false }));
 
 vi.mock("@/i18n", () => ({ default: { t: (key: string) => key } }));
 vi.mock("@js-preview/excel", () => ({
@@ -21,6 +21,12 @@ vi.mock("@js-preview/excel", () => ({
             rows: { 0: { cells: { 0: { text: "Item" } } } },
           }]);
           container.textContent = "Item";
+        } else if (previewState.mismatchedSheet) {
+          options.transformData([{
+            name: "sheet4",
+            rows: { 0: { cells: { 0: { text: "ghost" } } } },
+          }]);
+          container.textContent = "sheet4";
         } else {
           options.transformData([{ name: "Orders", rows: {} }]);
         }
@@ -35,6 +41,7 @@ describe("Excel preview compatibility", () => {
   it("normalizes and retries a valid XLSX that initially renders as an empty grid", async () => {
     previewState.calls = 0;
     previewState.renderOnRetry = true;
+    previewState.mismatchedSheet = false;
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(
       workbook,
@@ -62,6 +69,7 @@ describe("Excel preview compatibility", () => {
   it("renders a multi-sheet table when the canvas preview stays empty", async () => {
     previewState.calls = 0;
     previewState.renderOnRetry = false;
+    previewState.mismatchedSheet = true;
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(
       workbook,

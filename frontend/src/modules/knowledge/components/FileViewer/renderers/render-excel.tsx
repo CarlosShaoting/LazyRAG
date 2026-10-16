@@ -21,6 +21,31 @@ function hasRenderableCells(workbookSheets: ExcelSheet[]): boolean {
   );
 }
 
+function previewMatchesWorkbook(fileData: ArrayBuffer, previewSheets: ExcelSheet[]): boolean {
+  if (!hasRenderableCells(previewSheets)) {
+    return false;
+  }
+
+  try {
+    const workbook = XLSX.read(new Uint8Array(fileData), {
+      type: "array",
+      cellDates: true,
+    });
+    const sourceSheets = workbook.SheetNames.filter((sheetName) => {
+      const sheet = workbook.Sheets[sheetName];
+      return XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: "" })
+        .some((row) => row.some((value) => value !== "" && value !== null && value !== undefined));
+    });
+    const renderedNames = previewSheets.map((sheet) => sheet.name);
+    return sourceSheets.length > 0 &&
+      sourceSheets.length === renderedNames.length &&
+      sourceSheets.every((sheetName, index) => sheetName === renderedNames[index]);
+  } catch (error) {
+    console.warn("Failed to validate XLSX preview data:", error);
+    return false;
+  }
+}
+
 function normalizeXlsxForPreview(fileData: ArrayBuffer): ArrayBuffer | null {
   try {
     const workbook = XLSX.read(new Uint8Array(fileData), {
@@ -118,6 +143,15 @@ function renderWorkbookTableFallback(
     return true;
   } catch (error) {
     console.warn("Failed to render XLSX table fallback:", error);
+    return false;
+  }
+}
+
+function requiresTableRenderer(fileData: ArrayBuffer): boolean {
+  try {
+    const workbook = XLSX.read(new Uint8Array(fileData), { type: "array" });
+    return !workbook.Props?.Application && !workbook.Props?.Creator;
+  } catch {
     return false;
   }
 }
@@ -340,6 +374,14 @@ const RenderExcel = (props: RenderOfficeProps) => {
             console.error("Failed to parse .xls with SheetJS:", xlsErr);
           }
         }
+
+        // Render minimal-metadata XLSX workbooks from the source bytes. The canvas
+        // preview library can resolve successfully and then asynchronously
+        // replace valid workbooks with an empty synthetic sheet ("sheet4").
+        // A SheetJS-backed table is deterministic and keeps every worksheet.
+        if (requiresTableRenderer(fileData) && renderWorkbookTableFallback(showFile.current, fileData)) {
+          return;
+        }
       } catch (hdrErr) {
         console.warn("Header check failed:", hdrErr);
       }
@@ -361,7 +403,7 @@ const RenderExcel = (props: RenderOfficeProps) => {
         // preview library accepts without throwing but renders as an empty
         // grid. Re-serializing through SheetJS keeps the workbook values and
         // sheets while giving the canvas preview a canonical XLSX package.
-        if (!hasRenderableCells(sheets.current)) {
+        if (!previewMatchesWorkbook(fileData, sheets.current)) {
           const normalized = normalizeXlsxForPreview(fileData);
           if (normalized) {
             reader.current.destroy?.();
@@ -370,11 +412,15 @@ const RenderExcel = (props: RenderOfficeProps) => {
             selectedRange.current = null;
             reader.current = initReader();
             await reader.current.preview(normalized);
-            if (!hasRenderableCells(sheets.current)) {
+            if (!previewMatchesWorkbook(fileData, sheets.current)) {
               reader.current.destroy?.();
               reader.current = null;
               renderWorkbookTableFallback(showFile.current, fileData);
             }
+          } else {
+            reader.current.destroy?.();
+            reader.current = null;
+            renderWorkbookTableFallback(showFile.current, fileData);
           }
         }
       }
