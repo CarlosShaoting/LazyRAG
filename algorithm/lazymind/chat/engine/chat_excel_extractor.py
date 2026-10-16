@@ -15,15 +15,26 @@ _INLINE_ANALYSIS_INSTRUCTION = (
     'This is the complete spreadsheet content. Answer directly from this context. '
     'Do not call Python, calculator, or another analysis tool merely to re-read, re-sum, '
     'or verify values that are already present. Use a tool only when the user explicitly '
-    'requests a transformation or analysis that cannot be answered reliably from this complete content.'
+    'requests a transformation or analysis that cannot be answered reliably from this complete content. '
+    'The inline representation contains cell values, not a faithful model of formatting, merged ranges, '
+    'hidden rows or columns, or formula freshness; do not make claims about those features from this text.'
 )
 _LARGE_ANALYSIS_INSTRUCTION = (
     'The preview is not the complete spreadsheet. Before answering any question that depends on '
     'whole-file calculations, filtering, grouping, statistics, joins, comparisons, or conclusions, '
     'you MUST resolve this exact attachment with `find_user_attachment` and use an available Python '
-    'execution tool with pandas to analyze the original file. Never calculate whole-file results from '
-    'the preview or by manually copying values into calculator calls. If this runtime does not expose '
-    'Python execution, say so and limit the answer to facts visible in the preview.'
+    'execution tool with pandas to analyze the original file. Use openpyxl as well when merged cells, '
+    'hidden rows or columns, formulas, cached values, or workbook structure affect the answer. '
+    'The code analysis MUST: (1) inspect all sheet names and dimensions before choosing data; '
+    '(2) identify the header and data ranges and state the selected sheet/range; (3) define units, '
+    'hidden-row policy, and exclusions such as title, subtotal, and total rows; (4) analyze the complete '
+    'selected ranges rather than only head rows; and (5) validate covered record counts, missing or '
+    'unmatched values, and suspicious formula caches before reporting results. Do not recalculate formulas '
+    'or modify the original workbook unless the user asks; if saved formula values are missing or stale, '
+    'report that limitation instead of treating them as zero. Never calculate whole-file results from the '
+    'preview or by manually copying values into calculator calls. Return the analysis scope and material '
+    'anomalies with the result. If this runtime does not expose Python execution, say so and limit the '
+    'answer to facts visible in the preview.'
 )
 
 
