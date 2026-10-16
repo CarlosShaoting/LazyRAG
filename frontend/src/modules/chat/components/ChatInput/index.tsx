@@ -892,12 +892,8 @@ const ChatInput = forwardRef<ChatInputImperativeProps, ChatInputProps>(
       : allowKnowledgeBaseSelection
         ? t("chat.knowledgeSearchDisabled")
         : t("chat.sideChat.knowledgeInheritedOnly");
-    const uploadTypes = useMemo(
-      () => ragReady
-        ? allowedUploadTypes
-        : [...allowedImageTypes, ...allowedTextTypes],
-      [ragReady],
-    );
+    // Chat attachments use the independent reader, not knowledge-base indexing.
+    const uploadTypes = allowedUploadTypes;
 
     const debouncedSaveInput = useMemo(
       () =>
@@ -1222,10 +1218,6 @@ const ChatInput = forwardRef<ChatInputImperativeProps, ChatInputProps>(
         return;
       }
       if (isStreaming || isSendDisabled || resolvingSkillWorkflow) {
-        return;
-      }
-      if (!ragReady && fileList.some((file) => allowedFileTypes.includes(getSuffix(file)))) {
-        message.warning("PDF 和 Office 附件需要先安装并启用本地知识库组件");
         return;
       }
       const normalizedText = value.trim();

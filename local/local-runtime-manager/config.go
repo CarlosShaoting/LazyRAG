@@ -1016,9 +1016,12 @@ func newRuntimeConfigWithOptions(opts RuntimeConfigOptions, skipPortChecks bool)
 	if err != nil {
 		return RuntimeConfig{}, p, err
 	}
-	ragDisabled := !envBool(ragEnabledEnvVar, true) ||
-		(profile == "desktop" && componentCatalog != nil &&
-			installedPythonComponentPath(p, componentCatalog.Components["rag"]) == "")
+	ragDisabled := !envBool(ragEnabledEnvVar, true)
+	if componentCatalog != nil {
+		ragDisabled = installedPythonComponentPath(p, componentCatalog.Components["rag"]) == ""
+	} else if sourceRAGInstalled(p) {
+		ragDisabled = false
+	}
 	modeProfile := localRuntimeModeProfile(milvusPort, milvusLiteDBPath)
 	if ragDisabled {
 		modeProfile.VectorStore.ManagedProcess = false

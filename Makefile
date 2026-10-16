@@ -162,8 +162,10 @@ export LAZYMIND_RESET_ALGO_ON_STARTUP ?= false
 export LAZYMIND_RESET_ALL_ON_STARTUP ?= false
 export LAZYLLM_ALGO_REGISTER_POLICY ?= none
 # Local source runtime includes RAG by default. Override with
-# `make local-up LAZYMIND_RAG_ENABLED=false` to run without knowledge features.
+# `make local-up LAZYMIND_RAG_ENABLED=false` to skip initial RAG dependencies.
+# Users can install RAG later from Settings; completed manual installs stay enabled.
 export LAZYMIND_RAG_ENABLED ?= true
+export LAZYMIND_DYNAMIC_PROMPT_MODULES ?= false
 
 # Core database
 export LAZYMIND_CORE_DATABASE_URL ?= postgresql+psycopg://root:123456@db:5432/core

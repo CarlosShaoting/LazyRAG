@@ -30,6 +30,7 @@ import (
 	"lazymind/core/modelconfig"
 	"lazymind/core/settings"
 	"lazymind/core/store"
+	"lazymind/core/systemdeps"
 
 	"github.com/gorilla/mux"
 	"gorm.io/gorm"
@@ -1371,7 +1372,7 @@ func startTasksInternal(r *http.Request, datasetID string, taskIDs []string) ([]
 	moveTaskIDs := make([]string, 0, len(taskIDs))
 	var dataset orm.Dataset
 	_ = store.DB().WithContext(r.Context()).Where("id = ? AND deleted_at IS NULL", datasetID).Take(&dataset).Error
-	storeOnly := effectiveProcessingLevel(dataset.ProcessingLevel) == ProcessingLevelStored
+	storeOnly := !systemdeps.PythonComponentActive("rag") || effectiveProcessingLevel(dataset.ProcessingLevel) == ProcessingLevelStored
 
 	for _, rawTaskID := range taskIDs {
 		taskID := strings.TrimSpace(rawTaskID)
@@ -1414,10 +1415,22 @@ func startTasksInternal(r *http.Request, datasetID string, taskIDs []string) ([]
 			}
 			parseTaskIDs = append(parseTaskIDs, taskID)
 		case TaskTypeReparse:
+			if !systemdeps.PythonComponentActive("rag") {
+				resultsByTaskID[taskID] = StartTaskResult{TaskID: taskID, Status: "FAILED", SubmitStatus: "REJECTED", Message: "document retained; RAG component is required for parsing"}
+				continue
+			}
 			reparseTaskIDs = append(reparseTaskIDs, taskID)
 		case TaskTypeCopy:
+			if !systemdeps.PythonComponentActive("rag") {
+				resultsByTaskID[taskID] = StartTaskResult{TaskID: taskID, Status: "FAILED", SubmitStatus: "REJECTED", Message: "RAG component is required for this operation"}
+				continue
+			}
 			copyTaskIDs = append(copyTaskIDs, taskID)
 		case TaskTypeMove:
+			if !systemdeps.PythonComponentActive("rag") {
+				resultsByTaskID[taskID] = StartTaskResult{TaskID: taskID, Status: "FAILED", SubmitStatus: "REJECTED", Message: "RAG component is required for this operation"}
+				continue
+			}
 			moveTaskIDs = append(moveTaskIDs, taskID)
 		default:
 			resultsByTaskID[taskID] = StartTaskResult{TaskID: taskID, DocumentID: taskRow.DocID, DisplayName: taskRow.DisplayName, Status: "FAILED", SubmitStatus: "REJECTED", Message: "unsupported task type"}
@@ -1488,6 +1501,9 @@ func startParseTasksInternal(r *http.Request, datasetID string, taskIDs []string
 // startParseTasksInternalAtLevel allows on-demand readers to request only the
 // parsed artifact without changing the dataset's default processing level.
 func startParseTasksInternalAtLevel(r *http.Request, datasetID string, taskIDs []string, requestedLevel string) ([]StartTaskResult, error) {
+	if !systemdeps.PythonComponentActive("rag") {
+		return nil, fmt.Errorf("请先安装本地知识库组件，并重启本地服务。")
+	}
 	kbID := datasetKbIDByID(datasetID)
 	if kbID == "" {
 		return nil, fmt.Errorf("dataset kb mapping not found")

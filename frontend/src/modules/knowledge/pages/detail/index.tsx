@@ -460,14 +460,12 @@ const Detail = () => {
   );
   const canImport = hasUploadPermission || hasWritePermission;
   const isDocumentParsingUnavailable = documentParsingEnabled !== true;
-  const importDisabled =
-    !ragReady ||
-    isDocumentParsingUnavailable ||
-    embeddingReady === false ||
-    multimodalEmbeddingReady === false;
-  const importDisabledReason = !ragReady
+  const storageOnly = !ragReady || detail?.processing_level === "stored";
+  const importDisabled = ragAvailability === "checking" || ragAvailability === "error" ||
+    (!storageOnly && (isDocumentParsingUnavailable || embeddingReady === false || multimodalEmbeddingReady === false));
+  const importDisabledReason = ragAvailability === "checking" || ragAvailability === "error"
     ? ragUnavailableReason
-    : isDocumentParsingUnavailable
+    : !storageOnly && isDocumentParsingUnavailable
       ? documentParsingEnabled === false
         ? "文档解析已暂停，请在设置中重新启用"
         : "正在读取文档解析状态"
@@ -668,7 +666,7 @@ const Detail = () => {
               <Tooltip
                 title={
                   importDisabledReason ||
-                  (embeddingReady === false || multimodalEmbeddingReady === false ? (
+                  (!storageOnly && (embeddingReady === false || multimodalEmbeddingReady === false) ? (
                     isAdmin ? (
                       <span>
                         {embeddingReady === false
@@ -867,6 +865,7 @@ const Detail = () => {
       />
 
       <ImportKnowledgeModal
+        storageOnly={storageOnly}
         ref={importKnowledgeRef}
         onParsingStart={() => setUploadingNoticeVisible(true)}
         onParsingSettled={() => setUploadingNoticeVisible(false)}

@@ -249,7 +249,7 @@ const KnowledgePage: FC<KnowledgePageProps> = ({
   const isCloudArchiveView = sourceCategory === "cloudArchive";
   const isOfficialView = sourceCategory === "official";
   const { availability: ragAvailability } = useRAGComponent();
-  const createActionDisabled = ragAvailability !== "ready";
+  const createActionDisabled = ragAvailability === "checking" || ragAvailability === "error";
   const createActionDisabledTooltip = ragAvailability === "checking"
     ? "正在检查本地知识库组件状态"
     : ragAvailability === "error"

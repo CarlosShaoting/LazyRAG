@@ -140,6 +140,25 @@ func TestLegacyPythonComponentStatusRespectsExplicitDisable(t *testing.T) {
 	}
 }
 
+func TestDeferredSourceRAGCanBeInstalled(t *testing.T) {
+	t.Setenv("LAZYMIND_RUNTIME_MODE", "local")
+	t.Setenv("LAZYMIND_RAG_ENABLED", "false")
+	t.Setenv("LAZYMIND_SOURCE_COMPONENT_INSTALLER", "/runtime/manager")
+	t.Setenv("LAZYMIND_ALGORITHM_PYTHON", "/runtime/python")
+	root := t.TempDir()
+	status := pythonComponentStatus(root, nil, "rag")
+	if status.Installed || status.Active || !status.InstallSupported || status.InstallMethod != "source" {
+		t.Fatalf("deferred status: %#v", status)
+	}
+	dir := filepath.Join(root, "deps", "python-components", "rag")
+	os.MkdirAll(dir, 0755)
+	os.WriteFile(filepath.Join(dir, "source.ready"), []byte("/runtime/python"), 0644)
+	status = pythonComponentStatus(root, nil, "rag")
+	if !status.Installed || !status.RestartRequired || status.Active {
+		t.Fatalf("installed status: %#v", status)
+	}
+}
+
 // Set these only for an opt-in test against real, platform-matched build artifacts.
 // It uses the production download/extract/import/atomic-activation path, with a
 // local TLS server instead of publishing anything to a cloud account.

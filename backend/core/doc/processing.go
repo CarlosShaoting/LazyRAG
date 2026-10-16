@@ -14,6 +14,7 @@ import (
 	"lazymind/core/common/orm"
 	"lazymind/core/modelprovider"
 	"lazymind/core/store"
+	"lazymind/core/systemdeps"
 )
 
 const (
@@ -74,7 +75,7 @@ func capabilitiesForProcessingLevel(level string) DatasetCapabilities {
 }
 
 func datasetRequiresEmbedding(ds *orm.Dataset) bool {
-	return ds == nil || effectiveProcessingLevel(ds.ProcessingLevel) == ProcessingLevelIndexed
+	return systemdeps.PythonComponentActive("rag") && (ds == nil || effectiveProcessingLevel(ds.ProcessingLevel) == ProcessingLevelIndexed)
 }
 
 func newDocumentProcessingState(datasetID, documentID string, now time.Time) orm.DocumentProcessingState {

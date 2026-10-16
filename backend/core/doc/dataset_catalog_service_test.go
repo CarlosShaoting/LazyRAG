@@ -64,7 +64,7 @@ func TestDatasetCatalogServiceListFiltersStatsAndPaginates(t *testing.T) {
 	}
 }
 
-func TestDatasetCatalogServiceListReturnsNoKnowledgeBasesWhenRAGIsInactive(t *testing.T) {
+func TestDatasetCatalogServiceListRetainsKnowledgeBasesWhenRAGIsInactive(t *testing.T) {
 	t.Setenv("LAZYMIND_RAG_ENABLED", "0")
 	db := newDocumentTestDB(t)
 	service := mustDatasetCatalogService(t, db.DB)
@@ -77,8 +77,8 @@ func TestDatasetCatalogServiceListReturnsNoKnowledgeBasesWhenRAGIsInactive(t *te
 	if err != nil {
 		t.Fatalf("ListDatasets returned error: %v", err)
 	}
-	if len(result.Datasets) != 0 || result.TotalSize != 0 || result.HasMore {
-		t.Fatalf("result = %#v, want an empty knowledge-base catalog", result)
+	if len(result.Datasets) != 1 || result.TotalSize != 1 || result.HasMore {
+		t.Fatalf("result = %#v, want the retained knowledge-base catalog", result)
 	}
 }
 

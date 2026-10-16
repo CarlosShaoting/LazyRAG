@@ -32,11 +32,11 @@ describe("KnowledgeApp optional RAG component", () => {
     mocks.availability = "missing";
   });
 
-  it("treats an inactive RAG component as no knowledge-base capability", () => {
+  it("keeps knowledge-base storage accessible without the RAG component", () => {
     renderApp();
 
     expect(screen.getByText("rag-notice")).toBeInTheDocument();
-    expect(screen.queryByText("knowledge-list")).not.toBeInTheDocument();
+    expect(screen.getByText("knowledge-list")).toBeInTheDocument();
   });
 
   it("mounts knowledge-base routes after the component is active", () => {

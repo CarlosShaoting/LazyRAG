@@ -50,6 +50,7 @@ import {
 import { useNavigate } from "react-router-dom";
 import { cloneDeep } from "lodash";
 import { useTranslation } from "react-i18next";
+import { useRAGComponent } from "@/modules/modelProvider/contexts/RAGComponentContext";
 import { ColumnType } from "antd/es/table";
 import { AgentAppsAuth } from "@/components/auth";
 import FileUtils from "@/modules/knowledge/utils/file";
@@ -171,6 +172,7 @@ const KnowledgeTable = forwardRef<IKnowledgeListRef, Props>((props, ref) => {
     getImportingTotal,
   } = props;
   const { t } = useTranslation();
+  const { availability: ragAvailability } = useRAGComponent();
   const navigate = useNavigate();
   const [tableData, setTableData] = useState<TreeNode[]>([]);
   const [selectedRowKeys, setSelectedRowKeys] = useState<string[]>([]);
@@ -904,14 +906,14 @@ const KnowledgeTable = forwardRef<IKnowledgeListRef, Props>((props, ref) => {
     },
     {
       title:
-        detail.processing_level === "stored"
+        (ragAvailability !== "ready" || detail.processing_level === "stored")
           ? t("knowledge.storageStatus")
           : t("knowledge.parseStatus"),
       dataIndex: "document_stage",
       width: 100,
       render: (document_stage: string, record: TreeNode) => {
         if (
-          detail.processing_level === "stored" &&
+          (ragAvailability !== "ready" || detail.processing_level === "stored") &&
           record.type !== DocTypeEnum.Folder
         ) {
           const parsed = [

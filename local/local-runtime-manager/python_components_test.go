@@ -71,6 +71,7 @@ func TestPythonComponentEnvironmentRequiresAtomicCompatibleInstallation(t *testi
 
 func TestLocalRAGFlagDisablesKnowledgeProcessesAndEnvironment(t *testing.T) {
 	repo := t.TempDir()
+	t.Setenv(runtimeRootEnvVar, t.TempDir())
 	writeComposeFixture(t, repo)
 	t.Setenv(ragEnabledEnvVar, "false")
 	cfg, paths, err := NewRuntimeConfig("local", repo)
@@ -94,5 +95,22 @@ func TestLocalRAGFlagDisablesKnowledgeProcessesAndEnvironment(t *testing.T) {
 	}
 	if env := strings.Join(pythonComponentEnvironment(paths, cfg.Algorithm.RAGDisabled), "\n"); !strings.Contains(env, ragEnabledEnvVar+"=0") {
 		t.Fatalf("RAG disable flag missing from service environment: %s", env)
+	}
+	marker := filepath.Join(paths.RuntimeRoot, "deps", "python-components", "rag", "source.ready")
+	if err := os.MkdirAll(filepath.Dir(marker), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(marker, []byte(paths.AlgorithmPython), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, paths, err = NewRuntimeConfig("local", repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Algorithm.RAGDisabled {
+		t.Fatal("manual installation must override initial opt-out")
+	}
+	if env := strings.Join(pythonComponentEnvironment(paths, false), "\n"); !strings.Contains(env, ragEnabledEnvVar+"=1") {
+		t.Fatal(env)
 	}
 }
