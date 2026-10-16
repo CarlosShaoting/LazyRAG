@@ -46,6 +46,82 @@ function normalizeXlsxForPreview(fileData: ArrayBuffer): ArrayBuffer | null {
   }
 }
 
+function renderWorkbookTableFallback(
+  container: HTMLDivElement,
+  fileData: ArrayBuffer,
+): boolean {
+  try {
+    const workbook = XLSX.read(new Uint8Array(fileData), {
+      type: "array",
+      cellDates: true,
+      cellStyles: true,
+    });
+    if (workbook.SheetNames.length === 0) {
+      return false;
+    }
+
+    const root = document.createElement("div");
+    root.className = "excel-table-fallback";
+    const panes = document.createElement("div");
+    panes.className = "excel-table-fallback-panes";
+    const tabs = document.createElement("div");
+    tabs.className = "excel-table-fallback-tabs";
+    const paneElements: HTMLDivElement[] = [];
+    const tabButtons: HTMLButtonElement[] = [];
+
+    const activateSheet = (activeIndex: number) => {
+      paneElements.forEach((pane, index) => {
+        pane.hidden = index !== activeIndex;
+      });
+      tabButtons.forEach((button, index) => {
+        button.classList.toggle("active", index === activeIndex);
+      });
+    };
+
+    workbook.SheetNames.forEach((sheetName, sheetIndex) => {
+      const sheet = workbook.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json<(string | number | boolean)[]>(sheet, {
+        header: 1,
+        raw: false,
+        defval: "",
+      });
+      const pane = document.createElement("div");
+      pane.className = "excel-table-fallback-pane";
+      const table = document.createElement("table");
+      table.className = "excel-table-fallback-grid";
+
+      rows.forEach((row) => {
+        const tr = document.createElement("tr");
+        row.forEach((value) => {
+          const td = document.createElement("td");
+          td.textContent = String(value ?? "");
+          tr.appendChild(td);
+        });
+        table.appendChild(tr);
+      });
+      pane.appendChild(table);
+      panes.appendChild(pane);
+      paneElements.push(pane);
+
+      const tab = document.createElement("button");
+      tab.type = "button";
+      tab.textContent = sheetName;
+      tab.addEventListener("click", () => activateSheet(sheetIndex));
+      tabs.appendChild(tab);
+      tabButtons.push(tab);
+    });
+
+    root.appendChild(panes);
+    root.appendChild(tabs);
+    container.replaceChildren(root);
+    activateSheet(0);
+    return true;
+  } catch (error) {
+    console.warn("Failed to render XLSX table fallback:", error);
+    return false;
+  }
+}
+
 interface RenderOfficeProps {
   fileData: ArrayBuffer;
   fileType: "excel";
@@ -294,6 +370,11 @@ const RenderExcel = (props: RenderOfficeProps) => {
             selectedRange.current = null;
             reader.current = initReader();
             await reader.current.preview(normalized);
+            if (!hasRenderableCells(sheets.current)) {
+              reader.current.destroy?.();
+              reader.current = null;
+              renderWorkbookTableFallback(showFile.current, fileData);
+            }
           }
         }
       }
