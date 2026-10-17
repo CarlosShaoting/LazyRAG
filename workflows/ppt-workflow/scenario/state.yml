@@ -104,6 +104,14 @@ steps:
         this workflow supports optional uploaded materials.
 
       Startup clarification contract:
+      - Uploaded PPTX templates take precedence over visual-style and AI
+        background answers. When template_mode=upload, use style_flow=auto,
+        generate_background_images=disabled, and capability marker
+        AI_BACKGROUND_IMAGES: disabled. Save both skip_style_choices and
+        skip_background_images. This also applies to full generation: keep
+        generation_mode=full for content collection, but skip style candidates,
+        background prompts and background generation. The template is analyzed
+        in generate_ppt as before. Do not require an image model for this path.
       - The Chat host collects presentation topic, exact slide count, target
         customer/audience, visual style, whether per-slide AI background generation
         is enabled, whether a PPTX template is used, and generation mode before
@@ -158,7 +166,7 @@ steps:
       - AI background generation: record exactly enabled or disabled from the
         startup answer. This is independent from foreground material images.
       - Style flow is an internal route, not a user confirmation mode: record
-        auto for 快速生成, or preview_choice for 完整生成 so the full path creates
+        auto for uploaded templates or 快速生成, otherwise preview_choice for 完整生成 so the full path creates
         three candidates and automatically continues with the recommended one.
       - Generation mode: record exactly quick for 快速生成, or full for
         完整生成，耗时较长.
@@ -175,13 +183,13 @@ steps:
         save_artifact(
           key='ppt_capability_requirements',
           content_type='text',
-          value='AI_BACKGROUND_IMAGES: enabled' if the startup answer enabled
+          value='AI_BACKGROUND_IMAGES: enabled' only if no template is used and the startup answer enabled
                 per-slide AI backgrounds, otherwise
                 'AI_BACKGROUND_IMAGES: disabled',
         )
         save_artifact(
           key='style_flow', content_type='text',
-          value='auto' for 快速生成, otherwise 'preview_choice',
+          value='auto' for 快速生成 or an uploaded template, otherwise 'preview_choice',
         )
         save_artifact(
           key='generation_mode', content_type='text',
@@ -193,9 +201,9 @@ steps:
         )
         save_artifact(
           key='generate_background_images', content_type='text',
-          value='enabled' if AI backgrounds are enabled, otherwise 'disabled',
+          value='enabled' only if no template is used and AI backgrounds are enabled, otherwise 'disabled',
         )
-        For 快速生成 only, save:
+        For 快速生成 or an uploaded template, save:
           save_artifact(key='skip_style_choices', content_type='text', value='skip')
         When and only when AI background generation is disabled, also save:
           save_artifact(
@@ -243,9 +251,11 @@ steps:
       explicit visual constraints, structure, constraints, and assumptions.
       ppt_capability_requirements must be exactly AI_BACKGROUND_IMAGES: enabled
       or AI_BACKGROUND_IMAGES: disabled. style_flow must be auto for quick mode
-      or preview_choice for full mode.
+      or preview_choice for full mode without a template. Uploaded templates always use auto.
       generation_mode must be exactly quick or full, and template_mode must be
       exactly none or upload.
+      Uploaded templates require style_flow=auto, disabled backgrounds and both
+      skip markers, regardless of generation_mode or earlier background answers.
       Executor must run the configured
       deterministic check exactly once before this Attempt can pass.
 

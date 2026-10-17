@@ -77,6 +77,7 @@ runtime:
         capability_requirements: ppt_capability_requirements
         style_flow: style_flow
         generate_background_images: generate_background_images
+        template_mode: template_mode
   clarification_fields:
     - id: academic_materials
       label: 科研材料
@@ -116,8 +117,24 @@ runtime:
       label: 对应客户
       question: 这份 PPT 面向哪位客户或哪类受众？
       type: text
+    - id: template_mode
+      label: PPT 模板
+      question: 是否使用现有 PPTX 作为模板？选择上传后可直接添加文件，将沿用模板风格并跳过 AI 底图。
+      type: single
+      choice_policy: fixed
+      allow_other: false
+      choices:
+        - 不使用模板｜按需求生成新的视觉风格
+        - 上传 PPTX 模板｜分析母版、字体、配色和版式后生成
+      attachment:
+        when_choice: 上传 PPTX 模板｜分析母版、字体、配色和版式后生成
+        material_id: template_pptx
+        accept: [.pptx]
+        max_files: 1
+        required: true
     - id: visual_style
       label: 风格
+      ask_when: Only when no PPTX template has been uploaded or selected. Use the uploaded template's visual style otherwise.
       question: >
         希望采用什么视觉风格？请基于当前主题，从下面的可导出风格配方中
         推荐并展示最匹配的 2-4 项；不要改写“｜”前的标准风格名。
@@ -142,6 +159,7 @@ runtime:
         - 卡通可爱｜圆润造型、活泼色彩、友好叙事
     - id: generate_background_images
       label: AI 底图
+      ask_when: Only when no PPTX template has been uploaded or selected. Uploaded templates always disable AI backgrounds.
       question: 是否为每一页启用 AI 生成底图？启用后会根据需求和素材先生成一组相互关联、可编辑的底图提示词，再生成 16:9 无文字背景并应用到幻灯片背景层。
       type: single
       choice_policy: fixed
@@ -149,21 +167,6 @@ runtime:
       choices:
         - 启用｜为每页生成独立 AI 底图
         - 不启用｜使用纯色、渐变和矢量装饰
-    - id: template_mode
-      label: PPT 模板
-      question: 是否使用现有 PPTX 作为模板？选择上传后可直接在这里添加文件。
-      type: single
-      choice_policy: fixed
-      allow_other: false
-      choices:
-        - 不使用模板｜按需求生成新的视觉风格
-        - 上传 PPTX 模板｜分析母版、字体、配色和版式后生成
-      attachment:
-        when_choice: 上传 PPTX 模板｜分析母版、字体、配色和版式后生成
-        material_id: template_pptx
-        accept: [.pptx]
-        max_files: 1
-        required: true
     - id: generation_mode
       label: 生成方式
       question: 请选择生成方式。两种方式都会自动执行到最终 PPT，不需要分步确认。

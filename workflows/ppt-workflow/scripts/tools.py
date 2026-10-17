@@ -127,6 +127,7 @@ def check_ppt_workflow_capabilities(
     capability_requirements: str,
     style_flow: str = 'auto',
     generate_background_images: Optional[str] = None,
+    template_mode: str = 'none',
 ) -> dict[str, Any]:
     """Check the image model only when startup Ask enabled AI backgrounds."""
     marker = str(capability_requirements or '').strip()
@@ -137,6 +138,15 @@ def check_ppt_workflow_capabilities(
             'AI_BACKGROUND_IMAGES: enabled or AI_BACKGROUND_IMAGES: disabled'
         )
     normalized_style_flow = _normalize_style_flow(style_flow)
+    if template_mode == 'upload':
+        if (matched.group(1) != 'disabled'
+                or _coerce_str(generate_background_images).strip().lower() not in {'', 'disabled'}
+                or normalized_style_flow != 'auto'):
+            raise ValueError('上传 PPTX 模板时必须关闭 AI 底图并使用模板风格：'
+                             'generate_background_images=disabled, style_flow=auto。')
+        return {'status': 'ready', 'workflow': 'PPT', 'required': [], 'checks': [],
+                'missing': [], 'style_flow': 'auto',
+                'message': '使用上传模板，跳过风格候选和 AI 底图，不需要文生图模型。'}
     background_value = _coerce_str(generate_background_images).strip().lower()
     if not background_value:
         background_value = matched.group(1)

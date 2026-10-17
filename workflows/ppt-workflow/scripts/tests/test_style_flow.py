@@ -81,6 +81,20 @@ with mock.patch.dict(sys.modules, _import_stubs()):
 
 
 class StyleFlowCombinationTest(unittest.TestCase):
+    def test_uploaded_template_never_requires_image_model(self):
+        with mock.patch.object(TOOLS, 'is_model_role_available') as check:
+            result = TOOLS.check_ppt_workflow_capabilities(
+                'AI_BACKGROUND_IMAGES: disabled', template_mode='upload',
+                generate_background_images='disabled', style_flow='auto',
+            )
+            self.assertEqual(result['required'], [])
+            with self.assertRaisesRegex(ValueError, '模板'):
+                TOOLS.check_ppt_workflow_capabilities(
+                    'AI_BACKGROUND_IMAGES: enabled', template_mode='upload',
+                    generate_background_images='enabled',
+                )
+            check.assert_not_called()
+
     def test_papers_cache_to_eof_reuse_successes_and_retry_changed_sources(self):
         reader_module = types.ModuleType('lazymind.chat.engine.tools.file_resources.tools')
         reader_module.read_file_resource = mock.Mock(side_effect=lambda target, offset, limit: {
