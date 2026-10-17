@@ -203,6 +203,7 @@ class StyleRenderingRecipeTest(unittest.TestCase):
                 'capability_requirements': 'ppt_capability_requirements',
                 'style_flow': 'style_flow',
                 'generate_background_images': 'generate_background_images',
+                'template_mode': 'template_mode',
             },
         }])
         self.assertFalse(slots['ppt_capability_requirements']['exposed'])
