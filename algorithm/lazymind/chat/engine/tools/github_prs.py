@@ -10,7 +10,10 @@ from .file_resources.github_contributions import normalize_scope, collect_page, 
 
 GITHUB_PR_POLICY = {'tool_policy': (
     'For GitHub personal contributions or PR-description summaries, use GitHubPRToolkit directly; '
-    'no PPT workflow is required. Extract repository, author and filters from supplied /pulls?q= URLs. '
+    'no PPT workflow is required. The default input is a repository URL or owner/repo plus a username. '
+    'Pass repository and author separately to collect; the tool constructs the GitHub API URL and pagination. '
+    'Never require the user to construct a /pulls?q= URL. Such filter URLs are optional convenience inputs only; '
+    'extract their repository, author and filters when supplied. '
     'Ask only for missing repository/actual author, and missing dates when a bounded period is requested. '
     'Never infer the author from a connection; branch is optional and not author identity. '
     'Public repositories can be read anonymously without connecting an account. Never request tokens in chat. '
@@ -41,8 +44,10 @@ class GitHubPRToolkit:
         """Fetch one page of PR descriptions and cache them in this conversation.
 
         Args:
-            repository: owner/repo, repository URL or GitHub /pulls?q= filter URL.
-            author: Actual GitHub username; may be extracted from the filter URL.
+            repository: owner/repo or repository URL. The tool builds the API request;
+                a GitHub /pulls?q= filter URL is optional, never required from the user.
+            author: Actual GitHub username supplied separately; ask if missing.
+                May also be extracted from an optional filter URL.
             start_date: Inclusive PR creation date YYYY-MM-DD in UTC; omit both dates for all dates.
             end_date: Inclusive PR creation end date YYYY-MM-DD in UTC.
             branch: Optional exact branch, not a substitute for author.

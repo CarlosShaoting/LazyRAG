@@ -335,6 +335,7 @@ API 依据：[GitHub PR 列表接口](https://docs.github.com/en/rest/pulls/pull
 
 ### 8.9 普通 Chat 的通用 PR 读取（2026-10-19）
 
+- 默认入口为仓库地址（或 owner/repo）+ GitHub 用户名；工具自行构造 API 请求及分页。完整 `/pulls?q=` 链接仅为兼容输入，不能要求用户手动拼接。测试覆盖两种仓库输入、独立作者参数及大小写不敏感匹配。
 - 注册通用 `github_prs` / `GitHubPRToolkit`，普通 Chat 可直接读取 PR description，不需要启动 PPT 工作流。复用 8.8 的 URL 解析、匿名/连接读取、分页、正文缓存和校验实现，不新增另一套抓取器。
 - 普通 Chat 缓存使用现有用户/会话隔离 workspace；上下文缺失时拒绝调用。PPT 与 Chat 共用实现，各自保存会话缓存，不隐式跨工作区复制材料。
 - 工具无需 GitHub 连接即可发现/调用；授权模式复用会话连接注入，能力定向加载仅允许 github_prs 加载 GitHub，不扩大到其他云供应商。无状态 external tools 暂不开放，避免缺少会话隔离。

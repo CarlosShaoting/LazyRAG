@@ -312,7 +312,11 @@ steps:
         documents with the existing connection. Never create/update/delete cloud
         documents during material collection. Keep source URLs and cite work records.
       - GitHub PR retrieval is implemented by ppt_collect_github_prs, not by the
-        repository file reader. Call it with the supplied repository, author,
+        repository file reader. Default input is a repository URL or owner/repo
+        plus a separate GitHub username; the tool constructs API requests itself.
+        Never ask the user to construct a /pulls?q= URL. Ask only for missing
+        identity or scope, not a prebuilt filter link.
+        Call it with the supplied repository, author,
         start_date/end_date and optional branch, or pass the exact user-provided
         GitHub /pulls?q= URL directly. The tool parses author/state/head/base/created
         filters and rejects unsupported filters rather than silently broadening.

@@ -16,19 +16,21 @@ def chat_scope(tmp_path, monkeypatch):
     lazyllm.globals['agentic_config'] = previous
 
 
-def test_chat_collect_read_and_isolation(chat_scope, monkeypatch):
+@pytest.mark.parametrize('repository', ['acme/project', 'https://github.com/acme/project'])
+def test_chat_collect_read_and_isolation(chat_scope, monkeypatch, repository):
     calls = []
     def api(method, path, **kwargs):
-        calls.append(path)
+        calls.append((path, kwargs['params']))
         return [{'number': 1, 'user': {'login': 'alice'}, 'body': 'My contribution',
                  'created_at': '2026-05-01T00:00:00Z', 'state': 'closed',
                  'head': {'ref': 'feature'}, 'base': {'ref': 'main'}}]
     monkeypatch.setattr(github_contributions, 'request_api', lambda mode: api)
     tool = github_prs.GitHubPRToolkit()
-    result = tool.collect('https://github.com/acme/project/pulls?q=is%3Apr+state%3Aclosed+author%3Aalice')
+    result = tool.collect(repository, author='ALICE', state='closed')
     source = result['records'][0]['source_id']
     assert tool.read_description(source)['description'] == 'My contribution'
-    assert calls == ['/repos/acme/project/pulls']
+    assert calls == [('/repos/acme/project/pulls', {
+        'state': 'closed', 'sort': 'created', 'direction': 'desc', 'per_page': 100, 'page': 1})]
     lazyllm.globals['agentic_config'] = {'user_id': 'bob', 'conversation_id': 'chat-1'}
     with pytest.raises(ToolExecutionError, match='not found in this conversation'):
         tool.read_description(source)
@@ -52,3 +54,4 @@ def test_registered_without_credentials_and_schema():
     assert manager is not None
     assert 'github_prs' in _CONTEXT_REQUIREMENTS
     assert 'no PPT workflow' in configs[0].appendix_system_prompt['tool_policy']
+    assert 'Never require the user to construct' in configs[0].appendix_system_prompt['tool_policy']
