@@ -255,6 +255,8 @@ artifact_actions:
 steps:
   - id: analyze_requirements
     label: Analyze Requirements
+  - id: read_template
+    label: Read Template Structure
   - id: collect_materials
     label: Collect Materials
   - id: analyze_academic_sources
@@ -335,6 +337,12 @@ slots:
     cardinality: single
     exposed: false
     summary_max_chars: 1200
+
+  - id: template_content_brief
+    label: Template Content Requirements
+    type: json
+    cardinality: single
+    exposed: true
 
   - id: generate_background_images
     label: Generate Background Images
@@ -483,6 +491,13 @@ ui:
       slots:
         - id: requirement_analysis
 
+    - id: template_structure
+      step_id: read_template
+      label: 模板内容需求
+      layout: list
+      slots:
+        - id: template_content_brief
+
     - id: materials
       step_id: collect_materials
       label: Materials
@@ -598,6 +613,7 @@ i18n:
       build_outline: {label: 大纲}
       plan_page_prompts: {label: 每页提示词}
       plan_background_prompts: {label: 底图提示词}
+      read_template: {label: 读取模板结构}
       generate_backgrounds: {label: 生成底图}
       generate_ppt: {label: 生成PPT}
     tabs:

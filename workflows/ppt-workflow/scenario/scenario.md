@@ -16,6 +16,13 @@ This workflow helps users create a multi-slide presentation using the
 
 Workflow:
 
+Uploaded PPTX templates run `read_template` immediately after requirement
+analysis and before material collection. It reads every original page and saves
+`template_content_brief` (sections, slots, evidence requirements and gaps).
+Collection and outline planning follow those sections. Template sample text is
+not user evidence. Template paths skip `choose_style` and both background stages;
+final generation revalidates and fills the original PPTX, not HTML.
+
 1. `analyze_requirements` — goal, audience, length, visual style, constraints,
    and the user's explicit AI-background choice. A deterministic post-step gate
    checks the configured `image_generator` only when that choice is enabled.
