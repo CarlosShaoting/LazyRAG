@@ -120,9 +120,14 @@ steps:
         creating this workflow session. Extract all seven
         faithfully from {{user_input}}; clarification
         answers may have been merged into the original request.
-        Exception: when filling an uploaded template, preserve its original
-        slide count; do not invent a default count or ask again for one. Final
-        template inspection resolves the authoritative count and sections.
+        For an uploaded template, distinguish requested slide count from the
+        actual template count. If the user explicitly asks to fill every existing
+        page or preserve the template length, inspection supplies the count and
+        no page-count question is needed. Otherwise reuse the startup page-count
+        answer (templates may contain only opening/closing pages).
+        Never silently overwrite the user's requested count with the template
+        count. Current native filling cannot add/remove pages: if these differ,
+        state the limitation and do not claim the requested count is fulfilled.
       - Do not replace an explicitly supplied value with a generic default.
       - Preserve the full explicit visual requirements, not just a catalog label:
         colors/hex, background, typography, whitespace/density, layout, references,
@@ -262,6 +267,9 @@ steps:
       approval. Do not search, create images, change the template or call
       ppt_analyze_template here. Without a template, skip inspection and do not
       produce template_content_brief.
+      Include requested_slide_count and actual slide_count separately in the
+      template brief when a count was supplied. Record a page_count_mismatch
+      limitation if they differ; do not invent expansion support.
     tools:
       - ppt_inspect_template_page
     inputs:
@@ -1127,6 +1135,10 @@ steps:
       ## Mode selection
 
       ### Native PPTX output (takes precedence for full generation)
+      If template_content_brief records a requested page count different from
+      the original template count, stop and explain that native template filling
+      currently preserves pages. Request a suitable complete template or agreement
+      to use its original count; never silently ignore the requested count.
       For a full generation request with template_mode=upload: after ppt_analyze_template, call
       ppt_inspect_template_page for EVERY page until next_page is null. Preserve
       the template page count and page sequence even if a generic outline has

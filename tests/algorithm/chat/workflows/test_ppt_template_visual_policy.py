@@ -36,3 +36,16 @@ def test_template_is_read_before_material_collection():
     assert {'id': 'template_content_brief'} in analysis['slots']
     for name in ('collect_materials', 'build_outline', 'generate_ppt'):
         assert {'material': 'template_content_brief', 'required': False} in state['steps'][name]['inputs']
+
+
+def test_template_ask_omits_visuals_but_allows_missing_page_count():
+    root = Path(__file__).resolve().parents[4]
+    workflow = yaml.safe_load((root / 'workflows/ppt-workflow/workflow.yaml').read_text())
+    fields = {field['id']: field for field in workflow['runtime']['clarification_fields']}
+    assert 'never ask about style' in workflow['when_to_use']
+    assert 'uploaded, selected or identified' in fields['visual_style']['ask_when']
+    assert 'Uploaded templates always disable' in fields['generate_background_images']['ask_when']
+    assert 'filling all existing template pages' in fields['slide_count']['ask_when']
+    assert 'opening/closing pages' in fields['slide_count']['ask_when']
+    assert 'do not ask for another upload' in fields['template_mode']['ask_when']
+    assert 'probation defense' in fields['target_customer']['ask_when']
