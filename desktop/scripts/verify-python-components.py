@@ -39,6 +39,38 @@ class HTTPSRedirects(HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
+def signed_team_id(binary):
+    subprocess.run(['/usr/bin/codesign', '--verify', '--strict', str(binary)],
+                   check=True, capture_output=True, text=True)
+    result = subprocess.run(['/usr/bin/codesign', '-dv', '--verbose=4', str(binary)],
+                            check=True, capture_output=True, text=True)
+    team = next((line.split('=', 1)[1].strip() for line in result.stderr.splitlines()
+                 if line.startswith('TeamIdentifier=')), '')
+    require(team and team != 'not set', f'Missing signing TeamIdentifier: {binary}')
+    return team
+
+
+def verify_macos_team_id(overlay):
+    require(sys.platform == 'darwin', 'macOS signature verification requires native macOS')
+    expected = signed_team_id(Path(sys.executable).resolve())
+    magics = {bytes.fromhex(value) for value in (
+        'feedface', 'feedfacf', 'cefaedfe', 'cffaedfe',
+        'cafebabe', 'bebafeca', 'cafebabf', 'bfbafeca')}
+    checked = 0
+    for binary in sorted(overlay.rglob('*')):
+        if not binary.is_file():
+            continue
+        with binary.open('rb') as stream:
+            if stream.read(4) not in magics:
+                continue
+        actual = signed_team_id(binary)
+        require(actual == expected,
+                f'RAG signing TeamIdentifier mismatch: {binary}: {actual}, Python: {expected}')
+        checked += 1
+    require(checked > 0, 'RAG bundle contains no Mach-O binaries to verify')
+    print(f'RAG_SIGNATURE_OK TeamIdentifier={expected} binaries={checked}', flush=True)
+
+
 def base_imports(without_grpc=False):
     forbidden = ('spacy', 'pymilvus', 'milvus_lite')
     if without_grpc:
@@ -231,6 +263,8 @@ def main():
     parser.add_argument('--report', type=Path, help='JSON report; defaults to desktop/dist/component-check/<platform>/report.json')
     parser.add_argument('--require-windows-milvus-patch', action='store_true',
                         help='Reject Windows bundles without the reviewed manifest replacement fix')
+    parser.add_argument('--require-macos-team-id', action='store_true',
+                        help='Require valid RAG Mach-O signatures matching the running Python Team ID')
     parser.add_argument('--worker', choices=['base', 'overlay', 'milvus', 'server'], help=argparse.SUPPRESS)
     parser.add_argument('--overlay', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--data', type=Path, help=argparse.SUPPRESS)
@@ -299,6 +333,8 @@ def main():
             root = Path(temporary)
             archive = check('bundle download/local file + SHA256', lambda: acquire_bundle(entry, root, args.bundle_dir))
             overlay = check('bundle extraction + manifest', lambda: extract_bundle(archive, root / 'payload', entry))
+            if args.require_macos_team_id:
+                check('macOS RAG signatures match Python Team ID', lambda: verify_macos_team_id(overlay))
             if args.require_windows_milvus_patch:
                 spec = importlib.util.spec_from_file_location(
                     'windows_milvus_patch', Path(__file__).with_name('patch-windows-milvus.py'))

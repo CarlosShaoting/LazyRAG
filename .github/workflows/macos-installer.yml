@@ -650,6 +650,10 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -z "${HF_TOKEN:-}" ]]; then
+            if [[ "${{ steps.release.outputs.official_release }}" == "true" ]]; then
+              echo "::error::Official releases require HF_TOKEN to publish the paired signed RAG bundle."
+              exit 1
+            fi
             echo "::notice::HF_TOKEN is not configured; the macOS RAG component was packaged but not published."
             exit 0
           fi
@@ -862,6 +866,27 @@ jobs:
           if [[ "${{ needs.build-macos-installer.outputs.official_release }}" == "true" ]]; then
             spctl --assess --type execute --verbose=4 "${INSTALLED_APP}"
           fi
+
+      - name: Verify published RAG with installed signed Python
+        if: needs.build-macos-installer.outputs.official_release == 'true'
+        env:
+          INSTALLED_APP: ${{ steps.install.outputs.app }}
+        run: |
+          set -euo pipefail
+          runtime="${INSTALLED_APP}/Contents/Resources/runtime"
+          "${runtime}/deps/python/algorithm/bin/python" -I -B desktop/scripts/verify-python-components.py \
+            --runtime "${runtime}" \
+            --require-macos-team-id \
+            --report "${RUNNER_TEMP}/installed-rag-verification/report.json"
+
+      - name: Upload installed RAG verification reports
+        if: always() && needs.build-macos-installer.outputs.official_release == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-installed-rag-verification
+          path: ${{ runner.temp }}/installed-rag-verification/
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Run installed application smoke
         env:

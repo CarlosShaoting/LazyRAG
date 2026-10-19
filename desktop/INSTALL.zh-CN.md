@@ -1,5 +1,16 @@
 # Mac 本地构建、上传依赖与安装验证
 
+## Mac RAG 签名验证
+
+Developer ID 构建始终使用本次签名后的原生依赖重新生成 RAG ZIP，不能复用历史固定 ZIP。
+构建时检查 ZIP 内每个 Mach-O 的有效签名和 TeamIdentifier，要求与运行验证的 Python 一致；
+保留 Hardened Runtime、Library Validation 和 ZIP SHA-256 校验。
+官方发布必须配置 `HF_TOKEN`。DMG 安装测试使用安装后的 Python，从清单 URL 下载组件，
+再次检查 SHA、Team ID、RAG 导入及 Milvus 写入、重启和检索；报告保存为
+`macos-installed-rag-verification` artifact。该测试使用临时数据，不修改用户知识库，
+也不替代界面“安装组件”及服务重启的交互测试。
+个人仓库的 ad-hoc 开发构建仍可使用原有流程，但不证明官方 Developer ID 签名链路通过。
+
 ## Actions 自动发布 RAG（2026-10-16）
 
 macOS / Windows Actions 都生成与当前安装包配套的 RAG ZIP。设置 GitHub 仓库
