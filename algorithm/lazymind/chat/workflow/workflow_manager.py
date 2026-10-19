@@ -250,6 +250,42 @@ def _artifact_by_handle(toolkit: HostWorkflowToolkit, session_id: str,
     return matches[0]
 
 
+def _native_pptx_editor(toolkit: HostWorkflowToolkit, session_id: str):
+    """Expose a scoped CAS editor, never arbitrary file access, for a selected deck."""
+    rows = toolkit.list_artifacts(session_id).get('artifacts') or []
+    matches = [row for row in rows if isinstance(row, dict)
+               and row.get('slot') == 'native_pptx'
+               and row.get('selected', True) and not row.get('deleted')
+               and row.get('validity', 'effective') == 'effective']
+    if len(matches) != 1:
+        return None
+
+    @_register_host_file('NONE' if _trusted_workflow_toolkit(toolkit) else 'UNDECLARED')
+    def edit_current_pptx(action: str, source_sha256: str = '',
+                          text_edits: Optional[List[Dict[str, Any]]] = None,
+                          speaker_notes: Optional[List[Dict[str, Any]]] = None,
+                          require_all_notes: bool = False) -> Dict[str, Any]:
+        """Directly inspect/edit the selected native PPTX, without rerunning any step.
+
+        First call inspect_content to get source_sha256, text slots and notes.
+        Then edit_content with that hash, sparse text_edits [{id,expected_text,text}]
+        and/or speaker_notes [{page,text}], with 1-based pages. For all-page speeches
+        set require_all_notes=true; write detailed, factual page-specific speech
+        in notes, never slide text. Unspecified slide content/style is preserved.
+        Publishes one new Workflow artifact revision; stop after success.
+        """
+        if action not in ('inspect_content', 'edit_content'):
+            raise ValueError('Only inspect_content and edit_content are supported')
+        from lazymind.chat.engine.subagent.tools import edit_presentation
+        return edit_presentation(
+            filename='native_pptx', action=action, source_sha256=source_sha256,
+            text_edits=text_edits, speaker_notes=speaker_notes,
+            require_all_notes=require_all_notes, workflow_session_id=session_id,
+        )
+
+    return edit_current_pptx
+
+
 def _compact_model_frontier(result: Dict[str, Any]) -> Dict[str, Any]:
     """Keep runtime routing/approval evidence without replaying the compiled package.
 
@@ -1684,7 +1720,11 @@ def resolve_workflow_injection(
             if isinstance(projection.get('projection'), dict) else {}
         )
         completed_followup = ''
+        native_editor = None
         if session_projection.get('completed'):
+            native_editor = _native_pptx_editor(toolkit, session_id)
+            if native_editor is not None:
+                tools.append(native_editor)
             completed_followup = (
                 'A completed Session is not immutable. When the current user query asks to '
                 'revise, delete, fix, or regenerate an existing Workflow output, do not '
@@ -1726,6 +1766,18 @@ def resolve_workflow_injection(
                         'owns the existing artifacts and publishes their new revisions; never '
                         'paste replacement content into chat as a substitute. '
                     )
+        if native_editor is not None:
+            completed_followup = (
+                'The selected native_pptx supports direct revision editing. For date, title, '
+                'slide text or speaker-note changes, including every-page detailed speeches, '
+                'MUST use edit_current_pptx: inspect_content then edit_content. Read existing '
+                'material artifacts if needed; do not collect sources again. Do NOT call '
+                'advance_step, rewind, generate_ppt or another Workflow for these edits. '
+                'Publish once and stop; the Session remains completed. If an edit cannot fit '
+                'or is unsupported, explain the limitation instead of regenerating. '
+                'Only an explicit user request to regenerate/restructure the deck uses '
+                'the following step routing rules:\n' + completed_followup
+            )
         runtime_context = (
             '## Workflow Runtime [AUTHORITATIVE]\n'
             + 'The Host owns session/version concurrency fields. Never ask the user for '
@@ -1757,6 +1809,9 @@ def resolve_workflow_injection(
             + completed_followup
             + '\n'
             + 'Artifact-mutation guard: when the user asks to change an Artifact already '
+            + ('owned by this Workflow, direct text/notes edits through edit_current_pptx '
+               'are an authorized exception to this guard. For other changes to artifacts '
+               if native_editor is not None else '')
             + 'owned by this active Workflow, including inserting, replacing, moving, or '
             + 'deleting an image in the current document, rerun the earliest owning Workflow '
             + 'step. Do not bypass the Workflow with generic file, image, artifact, or SubAgent '

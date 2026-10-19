@@ -814,6 +814,53 @@ def test_active_workflow_forwards_current_edit_request_and_focus_to_step():
     assert 'sort order 2' in command.runtime_instruction
 
 
+def test_completed_native_deck_exposes_scoped_editor_despite_old_rerun_policy():
+    toolkit = MagicMock()
+    toolkit.list_artifacts.return_value = {'artifacts': [
+        {'slot': 'native_pptx', 'selected': True, 'validity': 'effective'},
+    ]}
+    with patch('lazymind.chat.workflow.workflow_manager.HostWorkflowToolkit',
+               return_value=toolkit), patch(
+        'lazymind.chat.workflow.workflow_manager._client',
+    ) as client_factory, patch(
+        'lazymind.chat.engine.subagent.tools.edit_presentation',
+        return_value={'status': 'ok'},
+    ) as edit:
+        client_factory.return_value.get_state.return_value = {
+            'status': 'completed', 'projection': {'completed': True},
+        }
+        contribution = resolve_workflow_injection(
+            {'session_id': 'session-1', 'workflow_id': 'deck-workflow'},
+            conversation_id='conversation-1', current_query='修改日期并写每页讲稿',
+            workflow_catalog=[{'workflow_ref': 'builtin:deck-workflow',
+                               'workflow_id': 'deck-workflow',
+                               'runtime': {'completed_edit_step': 'generate_ppt'}}],
+        )
+        # This is in workflow_tools, which survive ChatService's bound isolation.
+        editor = _tool(contribution, 'edit_current_pptx')
+        editor('inspect_content')
+        assert edit.call_args.kwargs['filename'] == 'native_pptx'
+        assert edit.call_args.kwargs['workflow_session_id'] == 'session-1'
+        editor('edit_content', 'hash', speaker_notes=[{'page': 1, 'text': '演讲稿'}])
+        assert edit.call_args.kwargs['source_sha256'] == 'hash'
+        toolkit.advance_step.assert_not_called()
+        assert 'Do NOT call' in contribution.runtime_context
+        assert 'Only an explicit user request to regenerate/restructure' in contribution.runtime_context
+        assert 'authorized exception' in contribution.runtime_context
+        with pytest.raises(ValueError):
+            editor('replace_fonts')
+
+
+def test_native_editor_rejects_stale_or_ambiguous_selection():
+    from lazymind.chat.workflow.workflow_manager import _native_pptx_editor
+    toolkit = MagicMock()
+    for rows in ([], [{'slot': 'native_pptx', 'validity': 'stale'}],
+                 [{'slot': 'native_pptx', 'selected': False}],
+                 [{'slot': 'native_pptx'}, {'slot': 'native_pptx'}]):
+        toolkit.list_artifacts.return_value = {'artifacts': rows}
+        assert _native_pptx_editor(toolkit, 'session-1') is None
+
+
 def test_manager_preserves_continue_for_all_workflows():
     toolkit = MagicMock()
     toolkit.get_ready_steps.return_value = {
