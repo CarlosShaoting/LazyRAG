@@ -495,12 +495,6 @@ ui:
       maxHeight: 200
 
   tabs:
-    - id: native_pptx
-      step_id: generate_ppt
-      label: PPTX 文件
-      layout: list
-      slots:
-        - id: native_pptx
     - id: analysis
       step_id: analyze_requirements
       label: Analysis
@@ -604,15 +598,21 @@ ui:
             - editable-pptx
           alignment: sort_order
       slots:
+        - id: native_pptx
         - id: preview_html
         - id: preview_notes
       composite_layout:
         direction: column
         children:
+          - slot: native_pptx
+            weight: 1
           - slot: preview_html
             weight: 3
           - slot: preview_notes
             weight: 1
+      composite_behavior:
+        hide_empty_columns: true
+        empty_column_scope: selected
 
 i18n:
   zh-CN:

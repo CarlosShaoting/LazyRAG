@@ -49,3 +49,15 @@ def test_template_ask_omits_visuals_but_allows_missing_page_count():
     assert 'opening/closing pages' in fields['slide_count']['ask_when']
     assert 'do not ask for another upload' in fields['template_mode']['ask_when']
     assert 'probation defense' in fields['target_customer']['ask_when']
+
+
+def test_native_pptx_is_a_final_result_not_a_separate_tab():
+    root = Path(__file__).resolve().parents[4]
+    workflow = yaml.safe_load((root / 'workflows/ppt-workflow/workflow.yaml').read_text())
+    tabs = workflow['ui']['tabs']
+    assert tabs[0]['id'] == 'analysis'
+    assert all(tab['id'] != 'native_pptx' for tab in tabs)
+    final = next(tab for tab in tabs if tab['id'] == 'composite_preview')
+    assert final['step_id'] == 'generate_ppt'
+    assert {'id': 'native_pptx'} in final['slots']
+    assert any(child.get('slot') == 'native_pptx' for child in final['composite_layout']['children'])
