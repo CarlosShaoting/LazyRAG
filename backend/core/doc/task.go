@@ -1574,6 +1574,9 @@ func startParseTasksInternalAtLevel(r *http.Request, datasetID string, taskIDs [
 		_ = json.Unmarshal(taskRow.Ext, &submittedExt)
 		submittedExt.ProcessingLevel = processingLevel
 		taskRow.Ext = mustJSON(submittedExt)
+		if normalizeSpreadsheetDirectParse(&dExt) {
+			persistDocumentConvertState(r.Context(), datasetID, docRow.ID, dExt)
+		}
 		candidate := startCandidate{task: taskRow, doc: docRow, docExt: dExt}
 		candidates = append(candidates, candidate)
 		if needsOfficeConvertBeforeParse(dExt, ocrConfig, parseProfile) {

@@ -84,9 +84,10 @@ vi.mock("../ImageUpload", async () => {
   const React = await vi.importActual<typeof import("react")>("react");
   return {
     allowedImageTypes: [".png"],
-    allowedFileTypes: [".pdf"],
+    allowedSpreadsheetTypes: [".csv", ".tsv", ".xls", ".xlsx"],
+    allowedFileTypes: [".pdf", ".csv", ".tsv", ".xls", ".xlsx"],
     allowedTextTypes: [".txt"],
-    allowedUploadTypes: [".png", ".pdf", ".txt"],
+    allowedUploadTypes: [".png", ".pdf", ".csv", ".tsv", ".xls", ".xlsx", ".txt"],
     default: React.forwardRef(function MockImageUpload(props: { types: string[]; updateFiles: (files: any[]) => void }, ref) {
       const files = React.useRef<File[]>([]);
       React.useImperativeHandle(ref, () => ({
