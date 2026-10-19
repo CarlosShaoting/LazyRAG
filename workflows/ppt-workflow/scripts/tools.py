@@ -745,17 +745,55 @@ def ppt_read_academic_source(source_id: str, chunk: int = 1) -> dict[str, Any]:
             'next_chunk': chunk + 1 if chunk < len(chunks) else None}
 
 
+def ppt_inspect_template_page(template_file: str, page: int = 1) -> dict[str, Any]:
+    """Read a template page's text slot IDs and shape geometry. Read all pages before filling."""
+    from lazymind.chat.engine.tools.file_resources.pptx_template_fill import inspect_template
+    source, _ = _resolve_template_file(template_file)
+    return inspect_template(source, page)
+
+
+def ppt_fill_template(template_file: str, source_sha256: str, edits: list[dict]) -> dict[str, Any]:
+    """Publish a complete new PPTX preserving all template pages and non-text objects.
+
+    edits: one {id, expected_text, action: keep|replace, text?} per inspected text
+    slot across ALL pages. Never pass XML. Original template is never overwritten.
+    """
+    from lazymind.chat.engine.tools.file_resources.pptx_template_fill import fill_template
+    source, _ = _resolve_template_file(template_file)
+    digest = hashlib.sha256(json.dumps([source_sha256, edits], ensure_ascii=False,
+                                      sort_keys=True).encode()).hexdigest()
+    root = _conversation_root() / 'native_pptx' / f'fill-v1-{digest}'
+    output = root / 'presentation.pptx'
+    temporary = root / f'{uuid.uuid4().hex}.pptx'
+    try:
+        # Validate every request, including retries; publication can safely reuse
+        # deterministic content without modifying the original or another version.
+        stats = fill_template(source, temporary, source_sha256, edits)
+        os.replace(temporary, output)
+    finally:
+        temporary.unlink(missing_ok=True)
+    published = _save_artifact(key='native_pptx', value=str(output), content_type='file',
+                               source_tool='ppt_fill_template', internal_publish=True)
+    if _tool_failed(published):
+        raise ValueError(f'PPTX publication failed: {_tool_fail_reason(published)}')
+    return {'representation': 'native_pptx', **stats,
+            'filename': output.name, 'message': '模板内容已填充为新 PPTX，原文件未修改。'}
+
+
 def ppt_generate_native_pptx(slides: list[dict], template_file: str = '') -> dict[str, Any]:
     """Publish editable PPTX directly, without HTML generation.
 
     slides: ordered [{title, bullets: [plain text], notes?}] authored from the
-    approved per-page briefs. template_file is the exact uploaded PPTX name.
-    Template masters/layouts/themes are preserved; sample slides are excluded.
+    approved per-page briefs. template_file must be empty; uploaded templates
+    require ppt_inspect_template_page followed by ppt_fill_template instead.
     This path supports editable text and notes, not generated charts or formulas.
     """
     from lazymind.chat.engine.tools.file_resources.native_presentation import build_native_pptx
 
-    template = _resolve_template_file(template_file)[0] if template_file else None
+    if template_file:
+        raise ValueError('Uploaded templates must use ppt_inspect_template_page and ppt_fill_template; '
+                         'do not discard original template pages')
+    template = None
     digest = hashlib.sha256(json.dumps(slides, ensure_ascii=False, sort_keys=True).encode())
     digest.update(b'native-pptx-v1')
     if template:

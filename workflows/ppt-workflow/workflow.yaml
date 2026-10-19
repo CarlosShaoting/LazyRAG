@@ -3,9 +3,8 @@ name: AI PPT Planner
 preflight_disabled: true
 description: >
   Plan a presentation from a user request, collect useful source material,
-  then generate free-form HTML slides via the workflow runtime (SenseNova-derived
-  subset under runtime/). Preview shows HTML pages in a flippable composite
-  workspace with speaker notes below. PPTX export is UI-only (Export button).
+  then generate HTML slides or fill uploaded PPTX templates in place into a new
+  native PPTX. Native files open in the dedicated versioned preview page.
 
 when_to_use: >
   Trigger this workflow when the user explicitly asks to use the PPT workflow, or
@@ -80,6 +79,16 @@ runtime:
         generate_background_images: generate_background_images
         template_mode: template_mode
   clarification_fields:
+    - id: contribution_scope
+      label: 个人贡献范围
+      ask_when: >
+        Only when the user requests personal work/contribution analysis from
+        GitHub or Git and author identity, repository or date range is missing.
+        Reuse explicit information already supplied. Do not infer that a connected
+        account is the contribution author. Branch is optional, not a substitute
+        for author identity. Ask only for missing fields in one question.
+      question: 请补充尚未提供的 GitHub 用户名（本地 Git 可用作者邮箱）、仓库及实习起止时间；如需限定分支，请同时提供。
+      type: text
     - id: academic_materials
       label: 科研材料
       ask_when: >
@@ -106,6 +115,7 @@ runtime:
       type: text
     - id: slide_count
       label: 页数
+      ask_when: Only when no uploaded template is being filled in place and the slide count is unknown. Template filling preserves its original page count.
       question: 希望生成多少页？请输入任意正整数；下列常用页数仅供快速选择。
       type: single
       choice_policy: seed
@@ -200,6 +210,8 @@ tool_scripts:
       - ppt_publish_deck_outline
       - ppt_generate_pages
       - ppt_generate_native_pptx
+      - ppt_inspect_template_page
+      - ppt_fill_template
       - ppt_init_deck
       - ppt_find_deck
       - ppt_run_stage
