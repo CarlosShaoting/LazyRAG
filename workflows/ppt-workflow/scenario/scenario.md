@@ -16,8 +16,8 @@ This workflow helps users create a multi-slide presentation using the
 
 Workflow:
 
-Uploaded PPTX templates run `read_template` immediately after requirement
-analysis and before material collection. It reads every original page and saves
+Uploaded PPTX templates are read inside `analyze_requirements`, before material
+collection. This step reads every original page and additionally saves
 `template_content_brief` (sections, slots, evidence requirements and gaps).
 Collection and outline planning follow those sections. Template sample text is
 not user evidence. Template paths skip `choose_style` and both background stages;

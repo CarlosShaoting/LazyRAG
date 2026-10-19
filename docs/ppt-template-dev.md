@@ -351,7 +351,7 @@ API 依据：[GitHub PR 列表接口](https://docs.github.com/en/rest/pulls/pull
 
 ### 8.11 先读模板再收集材料（2026-10-19）
 
-- 上传模板路径改为需求分析 → read_template → collect_materials → 大纲/生成，无模板路径不变。预读复用只读页检查工具，逐页提取栏目、文本槽、现有视觉、所需证据和缺口，保存 template_content_brief JSON artifact。
+- 模板预读合并到 analyze_requirements，不新增 step：需求分析（含模板逐页读取）→ collect_materials → 大纲/生成。复用只读页检查工具，逐页提取栏目、文本槽、现有视觉、所需证据和缺口，新增 template_content_brief JSON slot，与 requirement_analysis 同在 Analysis 面板展示。无模板时不读取、不生成此 slot。
 - 收集、大纲和最终生成显式消费模板内容需求；PR/知识库等按模板栏目补证据，模板示例姓名/指标不能当用户成果。默认自动继续，不增加分步确认，不启用底图。
 - 最后一步保留模板分析、逐页检查和已有 SHA 校验。提示要求预读与最终模板哈希一致，否则停止并复核材料；尚未增加独立确定性的跨步骤哈希门禁。真实模型栏目识别和填充质量仍待端到端验收。
 

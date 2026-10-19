@@ -22,11 +22,17 @@ def test_template_is_read_before_material_collection():
     root = Path(__file__).resolve().parents[4]
     state = yaml.safe_load((root / 'workflows/ppt-workflow/scenario/state.yml').read_text())
     routes = state['transitions']['analyze_requirements']
-    assert routes[0] == {'to': 'read_template', 'when': 'template_mode is exactly upload.'}
+    assert routes[0]['to'] == 'collect_materials'
+    assert 'template_mode is upload' in routes[0]['when']
     assert all('template_mode is none' in route['when'] for route in routes[1:])
-    assert state['transitions']['read_template'] == [{'to': 'collect_materials'}]
-    read = state['steps']['read_template']
+    assert 'read_template' not in state['transitions']
+    assert 'read_template' not in state['steps']
+    read = state['steps']['analyze_requirements']
     assert read['tools'] == ['ppt_inspect_template_page']
     assert 'following next_page until null' in read['prompt']
+    assert {'material': 'template_content_brief', 'required': False} in read['outputs']
+    workflow = yaml.safe_load((root / 'workflows/ppt-workflow/workflow.yaml').read_text())
+    analysis = next(tab for tab in workflow['ui']['tabs'] if tab['id'] == 'analysis')
+    assert {'id': 'template_content_brief'} in analysis['slots']
     for name in ('collect_materials', 'build_outline', 'generate_ppt'):
         assert {'material': 'template_content_brief', 'required': False} in state['steps'][name]['inputs']

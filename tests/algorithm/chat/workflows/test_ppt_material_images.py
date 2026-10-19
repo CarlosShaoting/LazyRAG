@@ -64,7 +64,7 @@ def test_ppt_analysis_routes_optional_collection_and_backgrounds():
 
     transitions = state['transitions']['analyze_requirements']
     assert {item['to'] for item in transitions} == {
-        'read_template', 'collect_materials', 'choose_style', 'plan_background_prompts', 'build_outline',
+        'collect_materials', 'choose_style', 'plan_background_prompts', 'build_outline',
     }
     assert all(item.get('when') for item in transitions)
     routes = {item['to']: item['when'] for item in transitions}
