@@ -250,6 +250,10 @@ steps:
       saved, Executor runs the deterministic model capability check. Then stop.
       Do not call advance tools yourself.
       Before saving the final requirement brief, if a template is uploaded:
+      Read the original PPTX directly with native template tools. Never call
+      Office-to-PDF, HTML or OCR conversion tools for template inspection/filling.
+      Conversion errors from upstream are not permission to invent a replacement
+      template or silently switch to a different format.
       Template: {{template_pptx}}
       Call ppt_inspect_template_page with the exact attached filename, starting
       at page=1 and following next_page until null. Read every page. On failure,

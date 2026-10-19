@@ -23,6 +23,9 @@ when_to_use: >
   or AI backgrounds, even via a custom question. Reuse supplied facts and ask
   only missing content/scope fields. Ask page count when unknown unless the
   user explicitly asks to fill all existing pages or preserve template length.
+  For an uploaded PPTX template, preserve the original file and inspect it
+  through the native template tools. Never invoke Office-to-PDF, HTML conversion
+  or an OCR conversion tool merely to read or fill the template.
   Do not trigger for simple one-off explanations, ordinary image generation,
   ordinary long-form writing, or requests that only ask to preview an uploaded
   PowerPoint file.
