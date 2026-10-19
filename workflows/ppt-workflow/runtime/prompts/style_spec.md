@@ -25,6 +25,18 @@ You design a PPT-wide style spec as strict JSON.
 }
 ```
 
+## Explicit visual constraints take precedence
+
+The user's complete qualified request and task_pack_params.explicit_visual_constraints
+are mandatory. Keep requested colors (including exact hex), backgrounds, typography,
+density, margins, composition, reference direction and prohibited motifs. Do not
+reduce "light ivory technology style, olive accents, no HUD/neon/blue" to a generic
+technology recipe. Catalog IDs are classification metadata, not permission to
+override these constraints. If explicit colors conflict with catalog compatibility,
+keep the user colors in palette and primary_color.hex. The catalog hex and
+compatibility rules below apply only to unspecified properties. Do not infer a
+dark/cyan scheme just because the topic is technical.
+
 ## Rules for the triple
 
 1. **One deck-wide contract** — Select exactly one visual triple for the whole deck. This result is authoritative for every slide; downstream pages must reuse it instead of selecting their own page-specific styles or palettes.
@@ -37,13 +49,13 @@ You design a PPT-wide style spec as strict JSON.
 
 ## Rules for palette / typography
 
-- `palette.primary` MUST equal `primary_color.hex` literally.
+- `palette.primary` MUST equal `primary_color.hex` literally. When the user specifies a custom color, use that color in both fields instead of the catalog hex.
 - `palette.accent` and `palette.neutral` are your creative choice **but must harmonize** with the primary + tone. Use hex uppercase.
 - `typography` must match the design_style's personality (科技感 → Inter / Roboto Mono; 国潮 → serif like "Noto Serif SC"; 卡通可爱 → rounded like ZCOOL KuaiLe; etc.). Keep distinct heading and body stacks when the style calls for them; do not collapse every design to Arial/system-ui. Put the intended named face first and include a portable Office fallback later in each CSS stack (for Chinese, e.g. Microsoft YaHei/SimSun/KaiTi as appropriate; for Latin, e.g. Arial/Georgia/Courier New).
 
 ## What NOT to do
 
 - Do NOT invent a design_style / color_tone / primary_color outside the catalog.
-- Do NOT change the chosen primary_color.hex.
+- Do NOT change an explicit user color to the catalog's primary_color.hex.
 - Do NOT generate separate palettes for individual slides.
 - JSON must be valid.

@@ -47,7 +47,7 @@ runtime:
     new explicit request.
 
     Route changes to presentation goal, audience, tone, slide count, global
-    constraints, deck-wide visual direction, or whether AI backgrounds are
+    constraints affecting content, or whether AI backgrounds are
     enabled to analyze_requirements.
     Route requests to add, replace, refresh, research, or cite source material
     to collect_materials. Route requests to revise academic interpretation or
@@ -61,6 +61,10 @@ runtime:
     plan_page_prompts. Route slide rendering, page content, layout, element,
     foreground image, ordinary background, and page-scoped visual changes to
     generate_ppt.
+    Pure palette/color, typography, spacing, whitespace and visual restyling
+    requests on an existing deck go directly to generate_ppt, even deck-wide.
+    Preserve approved content and page count; do not restart requirement analysis
+    or material collection for these visual-only changes.
 
     For a request to insert or add a whole slide into an already generated deck,
     first call read_artifact(artifact_ref='ppt_capability_requirements') to inspect
@@ -145,12 +149,16 @@ runtime:
         required: true
     - id: visual_style
       label: 风格
-      ask_when: Only when no PPTX template has been uploaded or selected. Use the uploaded template's visual style otherwise.
+      ask_when: >
+        Only when no PPTX template is selected AND the user has supplied no
+        visual direction. Any explicit colors, typography, layout/density,
+        references, prohibitions or qualified style description satisfies this
+        field, even if it is not a catalog style. Preserve all qualifiers verbatim.
       question: >
-        希望采用什么视觉风格？请基于当前主题，从下面的可导出风格配方中
-        推荐并展示最匹配的 2-4 项；不要改写“｜”前的标准风格名。
+        希望采用什么视觉风格？仅在尚未提供视觉要求时询问；根据主题提供
+        2-4 个相关建议，也支持自定义描述。已提供的配色、布局和禁用元素不会被建议覆盖。
       type: single
-      choice_policy: subset
+      choice_policy: seed
       choices:
         - 赛博朋克｜霓虹暗底、电影式非对称大图、HUD 信息轨道
         - 科技感｜深色数据界面、蓝青信号线、专业克制
@@ -210,6 +218,7 @@ tool_scripts:
       - ppt_publish_deck_outline
       - ppt_generate_pages
       - ppt_generate_native_pptx
+      - ppt_restyle_pages
       - ppt_inspect_template_page
       - ppt_fill_template
       - ppt_init_deck

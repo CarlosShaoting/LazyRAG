@@ -50,7 +50,7 @@ class StyleRenderingRecipeTest(unittest.TestCase):
         self.assertTrue(direction['forbidden_effects'])
         self.assertIn('small centered banner', direction['composition'][0])
 
-    def test_workflow_ask_uses_recipe_options_as_a_ranked_subset(self) -> None:
+    def test_workflow_ask_preserves_custom_visual_requirements(self) -> None:
         recipes = json.loads(
             run_stage._STYLE_RENDERING_RECIPES_PATH.read_text(encoding='utf-8')
         )
@@ -61,7 +61,8 @@ class StyleRenderingRecipeTest(unittest.TestCase):
             if field['id'] == 'visual_style'
         )
 
-        self.assertEqual(style_field['choice_policy'], 'subset')
+        self.assertEqual(style_field['choice_policy'], 'seed')
+        self.assertIn('no visual direction', style_field['ask_when'].replace('\n', ' '))
         self.assertEqual(
             style_field['choices'],
             [option['label'] for option in recipes['ask_options']],
@@ -309,6 +310,52 @@ class OutlineReferenceImageRepairTest(unittest.TestCase):
 
 
 class PagePromptModeTest(unittest.TestCase):
+    def test_current_visual_edit_reaches_renderer_and_unchanged_output_fails(self):
+        original = '<html><head></head><body><div id="ct">Original</div></body></html>'
+        with tempfile.TemporaryDirectory() as temp:
+            deck = self._deck(Path(temp))
+            target = deck / 'pages' / 'page_001.html'
+            target.write_text(original, encoding='utf-8')
+            calls = []
+            def model(system, user, **kwargs):
+                calls.append((system, user))
+                return original
+            result = run_stage.cmd_page_html(deck, 1, llm_call=model,
+                                             edit_instruction='第1页减少留白，保留文字，不要蓝色')
+            self.assertNotEqual(result, 0)
+            self.assertIn('第1页减少留白，保留文字，不要蓝色', calls[0][1])
+            self.assertIn('current_html', calls[0][1])
+            self.assertIn('VISUAL PRIORITY', calls[0][0])
+            self.assertEqual(target.read_text(encoding='utf-8'), original)
+
+    def test_brief_revision_receives_instruction_and_original(self):
+        with tempfile.TemporaryDirectory() as temp:
+            deck = self._deck(Path(temp))
+            (deck / 'pages' / 'page_001.html').write_text('<html><body>Old</body></html>')
+            calls = []
+            def model(system, user, **kwargs):
+                calls.append(user)
+                return '<html><head></head><body><div id="ct" style="color:#556B2F">Old</div></body></html>'
+            self.assertEqual(run_stage.cmd_page_html_from_brief(
+                deck, 1, '旧蓝色风格', llm_call=model, edit_instruction='改为橄榄绿'), 0)
+            self.assertIn('改为橄榄绿', calls[0])
+            self.assertIn('current_html', calls[0])
+
+    def test_explicit_palette_survives_catalog_repair(self):
+        style = {'design_style': {'id': 1}, 'color_tone': {'id': 1},
+                 'primary_color': {'id': 3}, 'palette': {'primary': '#556B2F'},
+                 'explicit_visual_constraints': '米白科技风，橄榄绿，不要蓝色和HUD'}
+        dims = {'design_styles': [{'id': 1, 'compatible_tones': [1], 'compatible_colors': [3]}],
+                'color_tones': [{'id': 1, 'compatible_colors': [3]}],
+                'primary_colors': [{'id': 3, 'hex': '#1976D2'}]}
+        actual, _ = run_stage._repair_style_triple(style, dims)
+        self.assertEqual(actual['palette']['primary'], '#556B2F')
+        self.assertEqual(actual['primary_color']['hex'], '#556B2F')
+        enriched = run_stage._attach_style_rendering_recipe(actual)
+        self.assertIn('Advisory only', enriched['art_direction']['priority'])
+        with self.assertRaisesRegex(ValueError, 'refusing an arbitrary fallback'):
+            run_stage._repair_style_triple({'design_style': {'id': 999}}, dims)
+
     def _deck(self, root: Path) -> Path:
         deck = root / "deck"
         (deck / "pages").mkdir(parents=True)

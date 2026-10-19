@@ -561,12 +561,22 @@ def _attach_style_rendering_recipe(data: dict) -> dict:
             else:
                 art_direction[key] = value
     result["art_direction"] = art_direction
+    if result.get('explicit_visual_constraints'):
+        result['art_direction']['priority'] = (
+            'Advisory only: explicit_visual_constraints override every conflicting '
+            'catalog color, motif, typography and composition. Do not add default HUD/neon/dark backgrounds.')
     return result
 
 
 def _load_deck_style(deck: Path) -> dict:
     """Load a style contract and enrich older decks with current recipes."""
-    return _attach_style_rendering_recipe(_load_json(deck / "style_spec.json"))
+    style = _load_json(deck / "style_spec.json")
+    task_path = deck / 'task_pack.json'
+    if task_path.exists():
+        constraints = _load_json(task_path).get('params', {}).get('explicit_visual_constraints')
+        if constraints:
+            style['explicit_visual_constraints'] = constraints
+    return _attach_style_rendering_recipe(style)
 
 
 def _repair_style_triple(data: dict, dims: dict) -> tuple[dict, list[str]]:
@@ -594,12 +604,9 @@ def _repair_style_triple(data: dict, dims: dict) -> tuple[dict, list[str]]:
     ct_id = _as_id(data.get("color_tone"))
     pc_id = _as_id(data.get("primary_color"))
 
-    # design_style: must exist. If not, default to row 1 (科技感) as a last
-    # resort — this should be rare; the prompt is explicit.
+    # Invalid model output is not authorization to silently choose technology.
     if ds_id not in ds_rows:
-        fallback_id = next(iter(ds_rows), 1)
-        notes.append(f"design_style.id {ds_id!r} not in catalog; fell back to {fallback_id}")
-        ds_id = fallback_id
+        raise ValueError(f'design_style.id {ds_id!r} not in catalog; refusing an arbitrary fallback')
     ds_row = ds_rows[ds_id]
 
     # color_tone: must be in design_style.compatible_tones.
@@ -651,7 +658,11 @@ def _repair_style_triple(data: dict, dims: dict) -> tuple[dict, list[str]]:
     if not isinstance(palette, dict):
         palette = {}
         data["palette"] = palette
-    if (palette.get("primary") or "").upper() != canonical_hex:
+    if data.get('explicit_visual_constraints') and re.fullmatch(r'#[0-9a-fA-F]{6}', str(palette.get('primary', ''))):
+        data['primary_color']['hex'] = palette['primary']
+        data['primary_color']['name_zh'] = '用户自定义主色'
+        data['primary_color']['name_en'] = 'User-defined primary'
+    elif (palette.get("primary") or "").upper() != canonical_hex:
         if palette.get("primary"):
             notes.append(
                 f"palette.primary {palette.get('primary')!r} overwritten to {canonical_hex}"
@@ -1104,10 +1115,16 @@ def cmd_style(deck: Path, sample_id: str | None = None, *, llm_call=None) -> int
 
     if not _valid_deck_style(data):
         return _fail("style: expected non-empty design_style, palette, and typography objects")
+    constraints = tp.get('params', {}).get('explicit_visual_constraints')
+    if constraints:
+        data['explicit_visual_constraints'] = constraints
     repair_notes: list[str] = []
     dims = _load_style_dimensions()
     if dims is not None:
-        data, repair_notes = _repair_style_triple(data, dims)
+        try:
+            data, repair_notes = _repair_style_triple(data, dims)
+        except ValueError as exc:
+            return _fail(f'style: {exc}')
     data = _attach_style_rendering_recipe(data)
     if repair_notes:
         data["_repairs"] = repair_notes
@@ -1150,7 +1167,13 @@ def cmd_style_samples(deck: Path, *, llm_call=None) -> int:
     all_repairs: list[str] = []
     used_triples: set[tuple[int | None, int | None, int | None]] = set()
     for i, sample in enumerate(raw_samples[:3]):
-        normalized, repair_notes = _normalize_style_sample(sample, i, dims)
+        constraints = tp.get('params', {}).get('explicit_visual_constraints')
+        if constraints and isinstance(sample, dict) and isinstance(sample.get('style_spec'), dict):
+            sample['style_spec']['explicit_visual_constraints'] = constraints
+        try:
+            normalized, repair_notes = _normalize_style_sample(sample, i, dims)
+        except ValueError as exc:
+            return _fail(f'style-samples: {exc}')
         spec = normalized.get("style_spec") or {}
         triple = (
             (spec.get("design_style") or {}).get("id"),
@@ -1401,6 +1424,9 @@ def cmd_outline(
                 ):
                     raise ValueError("invalid generated style_spec")
                 style = candidate_style
+                constraints = tp.get('params', {}).get('explicit_visual_constraints')
+                if constraints:
+                    style['explicit_visual_constraints'] = constraints
                 dims = _load_style_dimensions()
                 if dims is not None:
                     style, notes = _repair_style_triple(style, dims)
@@ -1832,7 +1858,7 @@ def _resolve_background_image(deck: Path, page_no: int) -> dict | None:
     return None
 
 
-def cmd_page_html(deck: Path, page_no: int, *, llm_call=None) -> int:
+def cmd_page_html(deck: Path, page_no: int, *, llm_call=None, edit_instruction: str = '') -> int:
     """Generate one HTML slide from its structured page plan.
 
     The default fast path deterministically assembles outline, style, and asset
@@ -1991,6 +2017,7 @@ def cmd_page_html(deck: Path, page_no: int, *, llm_call=None) -> int:
         prompt_mode=prompt_mode,
         language=_resolve_language(tp, ip),
         llm_call=llm_call,
+        edit_instruction=edit_instruction,
     )
 
 
@@ -2000,6 +2027,7 @@ def cmd_page_html_from_brief(
     brief: str,
     *,
     llm_call=None,
+    edit_instruction: str = '',
 ) -> int:
     """Generate one HTML slide from a pre-authored page brief (slide_outline).
 
@@ -2045,6 +2073,7 @@ def cmd_page_html_from_brief(
         prompt_mode='slide-outline-brief',
         language=_resolve_language(tp, ip),
         llm_call=llm_call,
+        edit_instruction=edit_instruction,
     )
 
 
@@ -2059,11 +2088,26 @@ def _write_page_html_from_query(
     prompt_mode: str,
     language: str,
     llm_call=None,
+    edit_instruction: str = '',
 ) -> int:
     """Shared HTML generation path used by deterministic / rewrite / brief modes."""
     rewritten_query = (rewritten_query or '').strip()
     if not rewritten_query:
         return _fail(f'page-html p{page_no}: empty query', page_no=page_no)
+
+    current_path = deck / 'pages' / f'page_{page_no:03d}.html'
+    current_html = current_path.read_text(encoding='utf-8') if edit_instruction and current_path.exists() else ''
+    if edit_instruction:
+        if not current_html:
+            return _fail('Cannot revise a missing page; no original HTML to preserve', page_no=page_no)
+        rewritten_query += '\n\n' + json.dumps({
+            'current_edit_instruction': edit_instruction,
+            'current_html': current_html,
+            'revision_contract': 'Apply the current edit over older style/brief defaults only where they conflict. '
+                'Preserve text, facts, images and unaffected properties. For less whitespace, reduce '
+                'padding/gaps or increase content area without inventing content. For recoloring, change '
+                'the actual visible backgrounds/text/accents, not only unused CSS variables. Return complete HTML.',
+        }, ensure_ascii=False)
 
     if language == 'zh-Hant':
         lang_hint = (
@@ -2085,6 +2129,14 @@ def _write_page_html_from_query(
 
     started_at = time.monotonic()
     gen_system = _load_prompt('page_html.md')
+    gen_system += (
+        '\n\nVISUAL PRIORITY: current_edit_instruction overrides older instructions only for the '
+        'requested properties. Then visual_revision_instructions, then explicit_visual_constraints, '
+        'then the saved style contract, then catalog recipes/defaults. Preserve every user qualifier '
+        'and prohibition. A label like technology does not authorize dark backgrounds, cyan, HUD or '
+        'neon when the user requests something else. Never print these instructions on the slide. '
+        'For edits, use current_html as the baseline; do not recreate unrelated content.'
+    )
     try:
         html = (llm_call or llm)(
             gen_system,
@@ -2095,6 +2147,8 @@ def _write_page_html_from_query(
         return _fail(f'page-html p{page_no}: {e}', page_no=page_no)
 
     html = _sanitize_page_html(html)
+    if edit_instruction and html.strip() == current_html.strip():
+        return _fail('Revision returned unchanged HTML; requested change was not applied', page_no=page_no)
 
     extra_paths: list[str] = []
     if inherited_image and inherited_image.get('local_path'):
@@ -2172,6 +2226,8 @@ def _write_page_html_from_query(
                 page_no=page_no,
             )
 
+    if edit_instruction and html.strip() == current_html.strip():
+        return _fail('Revision remained unchanged after repair; not publishing', page_no=page_no)
     out_path = deck / 'pages' / f'page_{page_no:03d}.html'
     _write_text(out_path, html)
     return _ok(

@@ -122,6 +122,10 @@ steps:
         slide count; do not invent a default count or ask again for one. Final
         template inspection resolves the authoritative count and sections.
       - Do not replace an explicitly supplied value with a generic default.
+      - Preserve the full explicit visual requirements, not just a catalog label:
+        colors/hex, background, typography, whitespace/density, layout, references,
+        and prohibited motifs. A later broad Ask answer supplements these unless
+        the user explicitly revokes them. Carry them verbatim into style_hint.
       - Do not interpret the phrase "make a PPT" itself as a presentation topic,
         and do not confuse the number of source files with the requested slide
         count.
@@ -1061,6 +1065,18 @@ steps:
       Stop after delete. Do NOT re-run outline/style/batch-page-html.
 
       ### C) Single-page content edit
+      Visual-only requests such as "第3页留白少一点", "页面紧凑些", "整体改成
+      米白和橄榄绿，不要蓝色" MUST use ppt_find_deck then ppt_restyle_pages.
+      Pass the full current request as instruction, retaining all qualifiers and
+      prohibitions; pass pages=[N] for selected pages, omit pages for deck-wide
+      changes. This passes existing HTML and the current request directly to the
+      renderer, publishes affected pages, and persists whole-deck visual changes.
+      Do not restart outline/style/material collection, do not call the full
+      generation default, and do not merely change a brief without updating HTML.
+      Font-only requests still use section E. This is for html_deck only, never
+      convert native_pptx to HTML for editing. Report tool failures/partial updates
+      exactly; visual quality is not proven just by a successful publication.
+
       If user_input / runtime_instruction asks to modify specific pages
       (e.g. "改第3页", "page 2", "这一页", "删掉最后一个要点", or a focused sort_order):
 
@@ -1084,6 +1100,8 @@ steps:
       5. Use ppt_run_stage(deck_dir, stage='page-html', page=N) ONLY when the user
          explicitly requests a structural/layout redesign, a new visual block, or
          the existing HTML has no addressable element for the requested content.
+         Pass edit_instruction=<the full current change request> for an existing
+         page. Otherwise the renderer receives only the stale brief and style.
       6. ppt_edit_page_html and page-html auto-publish. Stop immediately afterward:
          do NOT call ppt_publish_pages and do NOT call save_artifacts.
 
@@ -1185,6 +1203,7 @@ steps:
     tools:
       - ppt_analyze_template
       - ppt_generate_native_pptx
+      - ppt_restyle_pages
       - ppt_inspect_template_page
       - ppt_fill_template
       - ppt_generate_pages

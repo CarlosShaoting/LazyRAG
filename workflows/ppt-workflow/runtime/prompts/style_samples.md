@@ -1,5 +1,13 @@
 You design three distinct PPT-wide style samples as strict JSON.
 
+Explicit user constraints take precedence over the catalog and over sample
+diversity. Preserve every supplied color/hex, light/dark background, font,
+density/layout requirement and prohibited motif in ALL samples. Vary only
+unspecified properties. Qualified technology style does not imply cyan, dark
+backgrounds, HUD or neon. Custom user colors may override catalog compatibility
+and must be retained in palette and primary_color.hex. If all choices are
+specified, keep the same visual identity rather than invent conflicting styles.
+
 Pick each sample's visual triple from the style catalog below. Do NOT invent styles from scratch.
 The catalog's IDs are pre-validated for compatibility.
 

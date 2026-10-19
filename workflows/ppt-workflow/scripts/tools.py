@@ -4445,6 +4445,7 @@ def _run_stage_inprocess(
     end_page: int = 0,
     insert_before: int = 0,
     sample: str = '',
+    edit_instruction: str = '',
 ) -> dict:
     _mc, rs = _load_sn_ppt_modules()
     try:
@@ -4505,6 +4506,7 @@ def _run_stage_inprocess(
                     page,
                     brief,
                     llm_call=_agent_llm_call,
+                    edit_instruction=edit_instruction,
                 )
             else:
                 code, payload = rs._capture_cmd(
@@ -4512,6 +4514,7 @@ def _run_stage_inprocess(
                     deck,
                     page,
                     llm_call=_agent_llm_call,
+                    edit_instruction=edit_instruction,
                 )
             if isinstance(payload, dict) and payload.get('status', 'ok' if code == 0 else 'failed') == 'ok':
                 try:
@@ -6210,6 +6213,7 @@ def ppt_init_deck(
             'language': _infer_language(query),
             'generate_background_images': _coerce_bool(generate_background_images),
             'style_flow': flow,
+            'explicit_visual_constraints': style,
         },
         'created_at': now,
         'skill_version': '0.1.0',
@@ -7179,6 +7183,7 @@ def ppt_run_stage(
     end_page: int = 0,
     insert_before: int = 0,
     sample: Optional[str] = None,
+    edit_instruction: Optional[str] = None,
 ) -> dict:
     """Run one PPT HTML-pipeline stage (workflows/ppt-workflow/runtime).
 
@@ -7203,11 +7208,16 @@ def ppt_run_stage(
             1-based value as page. This inserts new preview/notes cards while
             leaving all later card revisions untouched.
         sample (str): A, B, or C when applying a preview_choice style.
+        edit_instruction (str): For page-html only, the user's current exact
+            visual/layout revision request. Required when redrawing an existing
+            page to fulfill a change; passed directly with the current HTML.
 
     Returns:
         Stage status fields from run_stage.
     """
     stage_name = _coerce_str(stage).lower()
+    if edit_instruction and stage_name != 'page-html':
+        return _tool_error('ppt_run_stage', 'edit_instruction is supported only for page-html')
     if stage_name == 'export':
         return _tool_error(
             'ppt_run_stage',
@@ -7253,6 +7263,7 @@ def ppt_run_stage(
         payload = _run_stage_inprocess(
             stage_name, deck, page=page_no, concurrency=conc, start_page=sp,
             end_page=ep, insert_before=insertion, sample=selected_sample,
+            edit_instruction=_coerce_str(edit_instruction),
         )
         if stage_name == 'page-html' and insertion and payload.get('status') == 'ok':
             published = payload.get('published') if isinstance(payload, dict) else None
@@ -7261,6 +7272,42 @@ def ppt_run_stage(
         return _stage_tool_result(stage_name, payload)
 
     return _tool_error('ppt_run_stage', f'Unhandled stage {stage_name}')
+
+
+def ppt_restyle_pages(deck_dir: str, instruction: str, pages: Optional[list[int]] = None) -> dict:
+    """Revise visual design without rebuilding content. Omit pages for the whole deck.
+
+    Pass the full user request including colors, prohibitions and intended spacing
+    change. Publishes only successful page revisions; reports partial failures.
+    """
+    deck = _resolve_deck_dir(deck_dir)
+    if not _coerce_str(instruction):
+        return _tool_error('ppt_restyle_pages', 'A non-empty visual edit instruction is required')
+    targets = _iter_page_numbers(deck) if pages is None else pages
+    if not targets or any(type(p) is not int or p < 1 or not _page_html_path(deck, p).is_file() for p in targets):
+        return _tool_error('ppt_restyle_pages', 'Every target must be an existing HTML page')
+    updated = []
+    for page in sorted(set(targets)):
+        try:
+            result = ppt_run_stage(str(deck), 'page-html', page=page, edit_instruction=instruction)
+        except (ToolExecutionError, OSError, ValueError) as exc:
+            return _tool_error('ppt_restyle_pages',
+                               f'Visual edit failed on page {page}; updated_pages={updated}. {exc}')
+        if _tool_failed(result):
+            return _tool_error('ppt_restyle_pages',
+                               f'Visual edit failed on page {page}; updated_pages={updated}. '
+                               f'Unprocessed pages are unchanged. {_tool_fail_reason(result)}')
+        updated.append(page)
+    if pages is None:
+        style_path = deck / 'style_spec.json'
+        style = _read_style_spec(deck)
+        previous = str(style.get('visual_revision_instructions') or '')
+        style['visual_revision_instructions'] = previous + '\nLatest explicit visual revision: ' + instruction
+        temporary = style_path.with_suffix('.json.tmp')
+        temporary.write_text(json.dumps(style, ensure_ascii=False, indent=2), encoding='utf-8')
+        os.replace(temporary, style_path)
+    return _tool_success('ppt_restyle_pages', {'updated_pages': updated,
+                         'visual_validation': 'not_performed', 'deck_style_updated': pages is None})
 
 
 def ppt_list_pages(deck_dir: str) -> dict:
