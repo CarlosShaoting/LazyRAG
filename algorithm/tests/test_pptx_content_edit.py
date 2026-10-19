@@ -41,6 +41,28 @@ def test_notes_and_date_preserve_other_slides_and_source(deck, tmp_path):
                 assert before.read(name) == after.read(name), name
 
 
+def test_page_text_match_accepts_frozen_tool_arguments(deck, tmp_path):
+    from types import MappingProxyType
+    out = tmp_path / 'frozen.pptx'
+    edit_content(deck, out, inspect_content(deck)['sha256'],
+                 (MappingProxyType({'page': 1, 'expected_text': '2026/11/30', 'text': '2025/11/30'}),),
+                 (MappingProxyType({'page': 1, 'text': '详细讲稿'}),))
+    assert Presentation(out).slides[0].shapes.title.text == '2025/11/30'
+    assert Presentation(out).slides[0].notes_slide.notes_text_frame.text == '详细讲稿'
+
+
+def test_ambiguous_page_text_never_guesses(deck, tmp_path):
+    prs = Presentation(deck)
+    from pptx.util import Inches
+    prs.slides[0].shapes.add_textbox(Inches(1), Inches(3), Inches(3), Inches(1)).text = '2026/11/30'
+    prs.save(deck)
+    out = tmp_path / 'ambiguous.pptx'
+    with pytest.raises(ValueError, match='matches 2 slots'):
+        edit_content(deck, out, inspect_content(deck)['sha256'],
+                     [{'page': 1, 'expected_text': '2026/11/30', 'text': '2025/11/30'}])
+    assert not out.exists()
+
+
 def test_notes_only_keeps_every_slide_xml_and_repeated_edit(deck, tmp_path):
     info = inspect_content(deck)
     first, second = tmp_path / 'first.pptx', tmp_path / 'second.pptx'
@@ -73,10 +95,11 @@ def test_stale_source_and_text_rejected(deck, tmp_path):
     assert not output.exists()
 
 
-def test_generated_deck_tool_publishes_selected_revision_with_cas(deck, tmp_path, monkeypatch):
+@pytest.mark.parametrize('id_key', ['id', 'artifact_id'])
+def test_generated_deck_tool_publishes_selected_revision_with_cas(deck, tmp_path, monkeypatch, id_key):
     from lazymind.chat.engine.subagent import tools
     from lazymind.chat.engine.tools.file_resources.attachment_edit import AttachmentEditDraft
-    target = {'id': 'revision-5', 'revision': 5, 'draft_version': 2, 'slot': 'native_pptx',
+    target = {id_key: 'revision-5', 'revision': 5, 'draft_version': 2, 'slot': 'native_pptx',
               'selected': True, 'validity': 'effective', 'value': {'path': str(deck)}}
     monkeypatch.setattr(tools, '_public_workflow_artifacts', lambda *_: [target])
     monkeypatch.setattr(AttachmentEditDraft, 'for_current_conversation', lambda _: SimpleNamespace(

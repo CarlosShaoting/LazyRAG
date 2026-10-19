@@ -29,9 +29,16 @@ def test_scoped_worker_tool_surface():
 def test_publish_receipt_only_after_success(context, monkeypatch):
     edit = MagicMock(return_value={'status': 'ok', 'workflow_artifact': {'id': 'revision-2'}})
     monkeypatch.setattr(pptx_edit.tools, 'edit_presentation', edit)
-    pptx_edit.inspect_current_pptx()
+    edit.return_value = {'sha256': 'hash', 'slide_count': 1,
+                         'pages': [{'page': 1, 'slots': [{'id': '1:5', 'text': 'date', 'run_style': {}}],
+                                    'speaker_notes': '', 'layout_checks': ['large']} ]}
+    view = pptx_edit.inspect_current_pptx()
+    assert view['source_sha256'] == 'hash'
+    assert view['pages'][0]['slots'] == [{'id': '1:5', 'text': 'date'}]
+    assert 'layout_checks' not in view['pages'][0]
     assert edit.call_args.kwargs['workflow_session_id'] == 'session'
     assert not context.local_artifacts()
+    edit.return_value = {'status': 'ok', 'workflow_artifact': {'id': 'revision-2'}}
     notes = [{'page': 1, 'text': '详细讲稿'}]
     pptx_edit.publish_pptx_edit('hash', speaker_notes=notes, require_all_notes=True)
     assert edit.call_args.kwargs['speaker_notes'] == notes
@@ -58,3 +65,27 @@ def test_material_read_is_restricted(context):
     context.agent_type = 'research'
     with pytest.raises(ToolExecutionError):
         pptx_edit.inspect_current_pptx()
+
+
+def test_material_uses_public_artifact_id(context, monkeypatch):
+    monkeypatch.setattr(pptx_edit.tools, '_public_workflow_artifacts', lambda *a: [
+        {'artifact_id': 'public-id', 'selected': True, 'validity': 'effective'}])
+    client = MagicMock()
+    client.read_artifact.return_value.result = {'value': {'text': 'evidence'}}
+    monkeypatch.setattr(pptx_edit.tools, '_workflow_client', lambda: client)
+    assert pptx_edit.read_pptx_edit_material()['artifacts'][0]['value']['text'] == 'evidence'
+    client.read_artifact.assert_called_once_with('public-id')
+
+
+def test_failed_edit_stops_instead_of_spinning():
+    event = {'tool_results': [{'name': 'publish_pptx_edit', 'result': '{"ok":false,"value":"invalid id"}'}]}
+    failures = {}
+    pptx_edit.enforce_failure_budget(event, failures)
+    with pytest.raises(ToolExecutionError, match='failed twice'):
+        pptx_edit.enforce_failure_budget(event, failures)
+
+
+def test_publish_tool_schema_is_buildable():
+    from lazyllm.tools.agent.toolsManager import ModuleTool
+    tool = ModuleTool(apply_func=pptx_edit.publish_pptx_edit, schema_func=pptx_edit.publish_pptx_edit)
+    assert tool is not None

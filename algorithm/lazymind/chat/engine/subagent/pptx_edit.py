@@ -1,11 +1,43 @@
 """Restricted tools for editing a Workflow deck through an ordinary SubAgent."""
+import json
 from typing import Any, Dict, List, Optional
+from typing_extensions import NotRequired, TypedDict
 
 from lazyllm.tools import fc_register
 from lazyllm.tools.agent import ToolExecutionError
 
 from .context import require_context
 from . import tools
+
+
+class TextEdit(TypedDict):
+    expected_text: str
+    text: str
+    id: NotRequired[str]
+    page: NotRequired[int]
+
+
+class SpeakerNote(TypedDict):
+    page: int
+    text: str
+
+
+def enforce_failure_budget(event, failures):
+    """End the task after two failures of one tool, not just block its execution."""
+    for item in event.get('tool_results') or []:
+        name = item.get('name')
+        if name not in {'inspect_current_pptx', 'read_pptx_edit_material', 'publish_pptx_edit'}:
+            continue
+        result = item.get('result', item.get('content'))
+        if isinstance(result, str):
+            try:
+                result = json.loads(result)
+            except ValueError:
+                result = {'ok': False}
+        failed = not isinstance(result, dict) or result.get('ok') is False or result.get('status') == 'error'
+        failures[name] = failures.get(name, 0) + 1 if failed else 0
+        if failures[name] >= 2:
+            raise ToolExecutionError(f'{name} failed twice; editing stopped without further retries. Original PPTX is retained.')
 
 
 def _session() -> str:
@@ -17,9 +49,19 @@ def _session() -> str:
 
 
 @fc_register(host_file='NONE')
-def inspect_current_pptx() -> Dict[str, Any]:
-    """Read current PPTX text slots, source_sha256 and all speaker notes before editing."""
-    return tools.edit_presentation('native_pptx', 'inspect_content', workflow_session_id=_session())
+def inspect_current_pptx(page: int = 1) -> Dict[str, Any]:
+    """Read ONE page's editable text and speaker notes. Pages are 1-based.
+
+    Copy exact slot IDs, never guess. For all-page speeches read each page using
+    next_page until null. Layout/font diagnostics are intentionally omitted.
+    """
+    result = tools.edit_presentation('native_pptx', 'inspect_content', pages=page,
+                                     workflow_session_id=_session())
+    return {'source_sha256': result['sha256'], 'slide_count': result['slide_count'],
+            'pages': [{'page': p['page'],
+                       'next_page': p['page'] + 1 if p['page'] < result['slide_count'] else None,
+                       'slots': [{'id': s['id'], 'text': s['text']} for s in p['slots']],
+                       'speaker_notes': p['speaker_notes']} for p in result['pages']]}
 
 
 @fc_register(host_file='NONE')
@@ -30,17 +72,25 @@ def read_pptx_edit_material(slot: str = 'material_summary') -> Dict[str, Any]:
     rows = tools._public_workflow_artifacts(_session(), slot)
     rows = [row for row in rows if row.get('selected') and row.get('validity') == 'effective'
             and not row.get('deleted')]
-    return {'artifacts': [tools._workflow_client().read_artifact(row['id']).result for row in rows]}
+    values = []
+    for row in rows:
+        artifact_id = row.get('artifact_id') or row.get('id')
+        if not artifact_id:
+            raise ToolExecutionError('Saved material has no artifact reference; do not guess IDs')
+        values.append(tools._workflow_client().read_artifact(artifact_id).result)
+    return {'artifacts': values}
 
 
 @fc_register(host_file='NONE')
 def publish_pptx_edit(source_sha256: str,
-                      text_edits: Optional[List[Dict[str, Any]]] = None,
-                      speaker_notes: Optional[List[Dict[str, Any]]] = None,
+                      text_edits: Optional[List[TextEdit]] = None,
+                      speaker_notes: Optional[List[SpeakerNote]] = None,
                       require_all_notes: bool = False) -> Dict[str, Any]:
     """Publish sparse text edits and/or notes once, then finish the task.
 
-    Use the inspected source_sha256. text_edits: [{id,expected_text,text}].
+    Use the inspected source_sha256. text_edits: [{id,expected_text,text}],
+    or [{page,expected_text,text}] when the original text uniquely matches one
+    editable text slot on that page. Never guess IDs; ambiguous text is rejected.
     speaker_notes: [{page,text}] with 1-based pages. Set require_all_notes=true
     for every-page speeches. Preserve all unspecified text, formatting and notes.
     """

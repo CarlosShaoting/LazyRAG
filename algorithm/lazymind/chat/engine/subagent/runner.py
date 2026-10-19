@@ -95,6 +95,9 @@ from .context import (
 from .db import MemorySubAgentStore
 
 WORKFLOW_TOOL_FAILURE_LIMITS = {
+    'inspect_current_pptx': 2,
+    'read_pptx_edit_material': 2,
+    'publish_pptx_edit': 2,
     'get_artifact': 2,
     'save_artifacts': 2,
     'validate_and_allocate_outline': 1,
@@ -102,6 +105,8 @@ WORKFLOW_TOOL_FAILURE_LIMITS = {
     'validate_proposal_from_inputs': 1,
 }
 WORKFLOW_TOOL_CALL_LIMITS = {
+    'read_pptx_edit_material': 4,
+    'publish_pptx_edit': 3,
     'get_artifact': 6,
     'save_artifacts': 8,
     'validate_and_allocate_outline': 1,
@@ -1512,6 +1517,7 @@ async def run_subagent_stream(
         merged_events = merge_agent_and_stream_events(
             executor.stream(llm, plan), stream_events,
         )
+        pptx_edit_failures = {}
         async with aclosing(merged_events):
             async for source, merged_payload in merged_events:
                 if source == 'stream':
@@ -1561,6 +1567,9 @@ async def run_subagent_stream(
                             _pending_text = ''
                         durable_step = _persist_step(ctx, step_seq, item)
                         step_seq += 1
+                        if effective_agent_type == 'pptx_edit' and tag == 'tool_results':
+                            from .pptx_edit import enforce_failure_budget
+                            enforce_failure_budget(item, pptx_edit_failures)
                         if effective_agent_type == 'workflow_step' and tag == 'tool_results':
                             terminal_error = _terminal_tool_failure(
                                 item, terminal_workflow_tools,

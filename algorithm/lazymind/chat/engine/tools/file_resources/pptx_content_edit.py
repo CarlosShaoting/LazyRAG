@@ -3,6 +3,7 @@ import hashlib
 import posixpath
 import tempfile
 from pathlib import Path
+from collections.abc import Mapping
 from zipfile import ZipFile, ZIP_DEFLATED
 from lxml import etree
 from .pptx_template_fill import _load, _xml, _slots, _inspect_page, fill_template, NS
@@ -84,11 +85,11 @@ def edit_content(source, output, source_sha256, text_edits=None, speaker_notes=N
     infos, data, slides = _load(source)
     text_edits = [] if text_edits is None else text_edits
     speaker_notes = [] if speaker_notes is None else speaker_notes
-    if not isinstance(text_edits, list) or not isinstance(speaker_notes, list) or not (text_edits or speaker_notes):
+    if not isinstance(text_edits, (list, tuple)) or not isinstance(speaker_notes, (list, tuple)) or not (text_edits or speaker_notes):
         raise ValueError('Provide text_edits and/or speaker_notes lists')
     notes = {}
     for item in speaker_notes:
-        if not isinstance(item, dict) or type(item.get('page')) is not int or not 1 <= item['page'] <= len(slides):
+        if not isinstance(item, Mapping) or type(item.get('page')) is not int or not 1 <= item['page'] <= len(slides):
             raise ValueError('Invalid notes page')
         page, text = item['page'], item.get('text')
         if page in notes or not isinstance(text, str) or len(text) > 50000 or any(ord(c) < 32 and c not in '\t\r\n' for c in text):
@@ -101,9 +102,23 @@ def edit_content(source, output, source_sha256, text_edits=None, speaker_notes=N
         slots = {s['id']: s for p, (_, root) in enumerate(slides, 1) for _, s in _slots(root, p)}
         replacements = {}
         for item in text_edits:
-            if not isinstance(item, dict) or item.get('id') not in slots or item['id'] in replacements:
-                raise ValueError('Unknown or duplicate text slot')
-            replacements[item['id']] = {**item, 'action': 'replace'}
+            if not isinstance(item, Mapping):
+                raise ValueError('Each text edit must be an object')
+            slot_id = item.get('id')
+            if slot_id is None:
+                page = item.get('page')
+                if type(page) is not int or not 1 <= page <= len(slides):
+                    raise ValueError('Provide an exact slot id or a valid 1-based page and expected_text')
+                matches = [s['id'] for s in slots.values()
+                           if s['id'].startswith(f'{page}:') and s['text'] == item.get('expected_text')]
+                if len(matches) != 1:
+                    raise ValueError(f'Page {page}: original text matches {len(matches)} slots; inspect this page and use an exact slot id')
+                slot_id = matches[0]
+            if not isinstance(slot_id, str) or slot_id not in slots:
+                raise ValueError(f'Unknown text slot {slot_id!r}; inspect the target page and copy its exact id')
+            if slot_id in replacements:
+                raise ValueError(f'Duplicate text slot {slot_id!r}; submit only one edit per slot')
+            replacements[slot_id] = {**item, 'id': slot_id, 'action': 'replace'}
         edits = [replacements.get(s['id'], {'id': s['id'], 'expected_text': s['text'], 'action': 'keep'}) for s in slots.values()]
         # Reuse the established hash/text guards and pre-publication fit checks.
         with tempfile.TemporaryDirectory(prefix='pptx-content-') as temporary:

@@ -1819,7 +1819,7 @@ def edit_presentation(
                 if len(raw) > 14 * 1024 * 1024:
                     raise ToolExecutionError('Edited file exceeds the inline publication limit (14 MiB)')
                 published = _workflow_client().patch_artifact(
-                    native_artifact['id'], native_artifact['revision'],
+                    native_artifact.get('artifact_id') or native_artifact['id'], native_artifact['revision'],
                     {'storage': 'inline_base64', 'filename': 'presentation.pptx',
                      'content_base64': base64.b64encode(raw).decode(), 'size': len(raw)},
                     content_type='file', caption='Updated presentation text and speaker notes',
