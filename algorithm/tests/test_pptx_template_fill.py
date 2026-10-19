@@ -82,9 +82,89 @@ class TemplateFillTests(unittest.TestCase):
 
     def test_overflow_warning_and_page_bounds(self):
         self.edits[0].update(action='replace', text='Long content ' * 30)
-        self.assertTrue(self.fill()['warnings'])
+        with self.assertRaisesRegex(ValueError, 'does not fit'):
+            self.fill()
+        self.assertFalse(self.output.exists())
         with self.assertRaises(ValueError):
             module.inspect_template(self.source, 0)
+
+    def test_inherited_geometry_and_quality_contract(self):
+        self.assertIn('quality_contract', self.pages[0])
+        self.assertTrue(any(r['status'] != 'unknown' and r['width_pt'] > 0
+                            for r in self.pages[0]['layout_checks']))
+
+    def test_blank_lines_count_towards_capacity(self):
+        self.edits[0].update(action='replace', text='Short' + '\n' * 30)
+        with self.assertRaisesRegex(ValueError, 'does not fit'):
+            self.fill()
+        self.assertFalse(self.output.exists())
+
+    def test_newlines_are_native_breaks_and_preserve_run_style(self):
+        target = next(e for e in self.edits if e['expected_text'] == 'Sample achievement')
+        target.update(action='replace', text='First line\nSecond line')
+        self.fill()
+        with ZipFile(self.output) as archive:
+            root = module._xml(archive.read('ppt/slides/slide1.xml'))
+            self.assertEqual(len(root.findall('.//a:br', module.NS)), 1)
+            self.assertTrue(all('\n' not in (n.text or '') for n in root.findall('.//a:t', module.NS)))
+        paragraphs = Presentation(self.output).slides[0].placeholders[1].text_frame.paragraphs
+        self.assertTrue(all(r.font.bold for r in paragraphs[0].runs))
+
+    def test_table_cell_capacity_rejected_before_writing(self):
+        from pptx.util import Inches
+        prs = Presentation(self.source)
+        table = prs.slides[0].shapes.add_table(1, 1, Inches(1), Inches(2), Inches(2), Inches(.4)).table
+        table.cell(0, 0).text = 'Label'
+        prs.save(self.source)
+        pages = [module.inspect_template(self.source, p) for p in (1, 2)]
+        edits = [{'id': s['id'], 'expected_text': s['text'], 'action': 'replace' if s['text'] == 'Label' else 'keep',
+                  'text': 'Too much text ' * 100} for p in pages for s in p['slots']]
+        with self.assertRaisesRegex(ValueError, 'table:1:1:1'):
+            module.fill_template(self.source, self.output, pages[0]['sha256'], edits)
+        self.assertFalse(self.output.exists())
+
+    def test_shared_cache_reuses_all_pages_and_binds_one_template(self):
+        from unittest.mock import patch
+        workspace = Path(self.temp.name) / 'conversation'
+        first = module.inspect_template(self.source, 1, cache_workspace=workspace)
+        self.assertFalse(first['cache_hit'])
+        with patch.object(module, '_load', side_effect=AssertionError('must not parse again')):
+            second = module.inspect_template(self.source, 2, cache_workspace=workspace)
+        self.assertTrue(second['cache_hit'])
+        self.assertEqual(second['cached_pages'], 2)
+        other = Path(self.temp.name) / 'other.pptx'
+        prs = Presentation(self.source)
+        prs.slides[0].shapes.title.text = 'Other template'
+        prs.save(other)
+        with self.assertRaisesRegex(ValueError, 'different PPTX template'):
+            module.inspect_template(other, 1, cache_workspace=workspace)
+        isolated = module.inspect_template(other, 1, cache_workspace=Path(self.temp.name) / 'another-conversation')
+        self.assertFalse(isolated['cache_hit'])
+
+    def test_single_line_does_not_charge_trailing_line_spacing(self):
+        from pptx.util import Inches
+        prs = Presentation(self.source)
+        box = prs.slides[0].shapes.add_textbox(Inches(1), Inches(1), Inches(4), Inches(.5))
+        p = box.text_frame.paragraphs[0]
+        p.text = 'Short'
+        p.runs[0].font.size = Pt(24)
+        p.line_spacing = 1.5
+        prs.save(self.source)
+        pages = [module.inspect_template(self.source, i) for i in (1, 2)]
+        edits = [{'id': s['id'], 'expected_text': s['text'], 'action': 'replace' if s['text'] == 'Short' else 'keep',
+                  'text': 'New title'} for page in pages for s in page['slots']]
+        module.fill_template(self.source, self.output, pages[0]['sha256'], edits)
+        self.assertTrue(self.output.exists())
+
+    def test_cache_corruption_reparsed_and_invalid_page_does_not_bind(self):
+        workspace = Path(self.temp.name) / 'conversation'
+        with self.assertRaises(ValueError):
+            module.inspect_template(self.source, 99, cache_workspace=workspace)
+        self.assertFalse((workspace / 'pptx-analysis/template.json').exists())
+        first = module.inspect_template(self.source, 1, cache_workspace=workspace)
+        cache = workspace / 'pptx-analysis' / (first['sha256'] + '.json')
+        cache.write_text('broken')
+        self.assertFalse(module.inspect_template(self.source, 1, cache_workspace=workspace)['cache_hit'])
 
 
 if __name__ == '__main__':

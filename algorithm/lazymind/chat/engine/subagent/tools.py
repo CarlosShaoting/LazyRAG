@@ -1733,6 +1733,8 @@ def pptx_analyzer(filename: str, page: int = 1, turn: Optional[int] = None) -> D
         raise ToolExecutionError('pptx_analyzer requires an available .pptx attachment')
     try:
         return inspect_template(Path(matched), page)
+    except ValueError as exc:
+        raise ToolExecutionError(str(exc)) from None
     except Exception as exc:
         raise ToolExecutionError(f'Native PPTX analysis failed ({type(exc).__name__}); no PDF fallback was attempted.') from None
 

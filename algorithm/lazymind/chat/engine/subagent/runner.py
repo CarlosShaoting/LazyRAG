@@ -971,8 +971,10 @@ def _build_subagent_plan(
             tool_state_scope=f'subagent:{ctx.task_id}',
             preload_all_tools=str(ctx.agent_type or '') == 'workflow_step',
             enable_builtin_tools=False if (
-                str(ctx.agent_type or '') == 'workflow_step'
-                and (lazyllm.globals.get('agentic_config') or {}).get('enable_tool_retrieval')
+                ctx.params.get('tools_only') or (
+                    str(ctx.agent_type or '') == 'workflow_step'
+                    and (lazyllm.globals.get('agentic_config') or {}).get('enable_tool_retrieval')
+                )
             ) else None,
             required_tool_groups=('KBToolkit',) if ctx.params.get('filters', {}).get('kb_id') else (),
             workspace_permission=workspace_permission,

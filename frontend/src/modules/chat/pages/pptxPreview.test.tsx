@@ -16,6 +16,8 @@ it('opens the requested revision rather than silently using the latest file', as
   render(<MemoryRouter initialEntries={['/workflow-runs/session/pptx/native_pptx?revision=1&index=-1']}>
     <Routes><Route path="/workflow-runs/:sessionId/pptx/:slotId" element={<Page />} /></Routes>
   </MemoryRouter>);
-  await waitFor(() => expect(screen.getByTestId('viewer')).toHaveTextContent('/first.pptx'));
+  await waitFor(() => expect(screen.getByRole('link', { name: '下载 PPTX' })).toHaveAttribute('href', '/first.pptx'));
+  expect(screen.queryByTestId('viewer')).not.toBeInTheDocument();
+  expect(screen.getByText(/网页暂不支持打开 PPTX/)).toBeInTheDocument();
   expect(api.getSlotItemVersions).toHaveBeenCalledWith('session', 'native_pptx', -1, expect.anything());
 });

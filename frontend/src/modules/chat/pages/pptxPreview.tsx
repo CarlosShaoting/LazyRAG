@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { Alert, Button, Spin } from 'antd';
-import FileViewer from '@/modules/knowledge/components/FileViewer';
 import { WorkflowSessionApi } from '@/modules/chat/utils/request';
 import { resolveCoreAssetUrl } from '@/modules/knowledge/utils/imageUrl';
 import type { SlotVersionEntry } from '@/modules/chat/store/workflowPanel';
@@ -47,7 +46,7 @@ export default function PptxPreviewPage() {
       {file && <Button href={file.url} download={file.name}>下载 PPTX</Button>}
     </div>
     {error ? <Alert type="error" message={error} /> : file
-      ? <div style={{ flex: 1, minHeight: 0 }}><FileViewer file={file.url} fileName={file.name} /></div>
+      ? <Alert type="info" message="网页暂不支持打开 PPTX，请下载后使用 PowerPoint 或 WPS 查看。" />
       : <Spin />}
   </div>;
 }
