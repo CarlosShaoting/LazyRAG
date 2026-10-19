@@ -41,3 +41,12 @@ test("Windows uses stable packaging with functional gates and no size audit", ()
   assert.match(source, /--require-windows-milvus-patch/);
   assert.match(workflow, /windows-python-components/);
 });
+
+test("RAG publishing avoids Xet and supports an alternate Hugging Face dataset", () => {
+  for (const filename of ["macos-installer.yml", "windows-installer.yml"]) {
+    const workflow = readFileSync(path.join(root, ".github/workflows", filename), "utf8");
+    assert.match(workflow, /LAZYMIND_HF_COMPONENT_REPO: \$\{\{ vars\.LAZYMIND_HF_COMPONENT_REPO \|\| 'LazyAGI\/LazyMind' \}\}/);
+    assert.match(workflow, /HF_HUB_DISABLE_XET: "1"/);
+    assert.match(workflow, /--repo-type dataset --revision main/);
+  }
+});

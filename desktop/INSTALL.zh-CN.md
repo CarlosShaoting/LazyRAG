@@ -7,6 +7,11 @@ macOS / Windows Actions 都生成与当前安装包配套的 RAG ZIP。设置 Gi
 值为拥有 Hugging Face dataset `LazyAGI/LazyMind` 写权限的 token。主发布 workflow 已继承 secrets。
 本地代理仅用于本地命令，无需配置到 Actions。
 
+如需发布到其他 dataset，可新增 Actions repository variable
+`LAZYMIND_HF_COMPONENT_REPO`（例如 `owner/dataset`）；token 的 fine-grained scope 必须包含该
+dataset 或所属组织的写权限。上传步骤显式关闭 Xet，使用普通 HTTP/LFS 通道，避免
+`xet-write-token` 授权与大文件上传链路不一致。
+
 有 token 时，构建校验 SHA-256 后自动上传 `RAG/<filename>.zip`，首次上传自动创建目录；
 缺少 token 时保留 GitHub artifact 并提示跳过上传。上传失败会使工作流失败。
 新文件名形如 `lazymind-win-amd64-rag-cp311-20261016T021500Z-<revision>.zip` 或

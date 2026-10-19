@@ -40,7 +40,7 @@ env:
   LAZYMIND_DESKTOP_DEFER_HISTORY: "true"
   LAZYMIND_DESKTOP_DEFER_PYTHON: "true"
   LAZYMIND_PYTHON_COMPONENT_BASE_URL: ${{ vars.LAZYMIND_PYTHON_COMPONENT_BASE_URL || 'https://huggingface.co/datasets/LazyAGI/LazyMind/resolve/main/RAG/' }}
-  LAZYMIND_HF_COMPONENT_REPO: LazyAGI/LazyMind
+  LAZYMIND_HF_COMPONENT_REPO: ${{ vars.LAZYMIND_HF_COMPONENT_REPO || 'LazyAGI/LazyMind' }}
   LAZYMIND_DESKTOP_SHARE_PYTHON: "false"
   LAZYMIND_DESKTOP_PRUNE_PYTHON: "true"
 
@@ -334,6 +334,9 @@ jobs:
         shell: pwsh
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          # Avoid the Xet write-token endpoint: these ZIPs can be uploaded over
+          # the regular Hugging Face HTTP/LFS path.
+          HF_HUB_DISABLE_XET: "1"
         run: |
           $ErrorActionPreference = "Stop"
           if (-not $env:HF_TOKEN) {
