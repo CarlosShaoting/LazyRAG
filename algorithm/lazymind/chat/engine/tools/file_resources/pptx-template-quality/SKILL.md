@@ -35,7 +35,11 @@ not a new research step. Cache hits still require reading the returned content.
   Use its page/shape diagnostics to repair only affected text and resubmit the
   complete action list against the ORIGINAL template hash. At most two repairs;
   if still blocked, report the exact limitation instead of bypassing validation.
-- Geometry/text estimates are not visual validation. When an authorized native
-  renderer is available, inspect every exported page against the template. When
-  unavailable, explicitly report “排版估算已检查，未完成 PowerPoint 视觉验收”.
-  Never describe a successful ZIP write as successful visual verification.
+- Whole-paragraph replacements use newline-separated independent paragraphs;
+  short rich-text run replacements retain inline breaks. Do not paste several
+  unrelated sections into a subtitle. The tool resolves inherited typography.
+- Geometry/text estimates are not visual validation. Validation belongs inside
+  generation, before publication. Successful publication completes generation:
+  neither the subagent nor parent chat should launch post-generation inspection.
+  Report any returned limitations briefly without reopening the workflow or
+  claiming native visual verification. A disclosure is not a pending task.

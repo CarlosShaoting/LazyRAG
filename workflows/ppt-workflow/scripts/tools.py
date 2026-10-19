@@ -812,7 +812,7 @@ def ppt_fill_template(template_file: str, source_sha256: str, edits: list[dict])
     source, _ = _resolve_template_file(template_file)
     digest = hashlib.sha256(json.dumps([source_sha256, edits], ensure_ascii=False,
                                       sort_keys=True).encode()).hexdigest()
-    root = _conversation_root() / 'native_pptx' / f'fill-v1-{digest}'
+    root = _conversation_root() / 'native_pptx' / f'fill-v2-{digest}'
     output = root / 'presentation.pptx'
     temporary = root / f'{uuid.uuid4().hex}.pptx'
     try:
@@ -827,7 +827,8 @@ def ppt_fill_template(template_file: str, source_sha256: str, edits: list[dict])
     if _tool_failed(published):
         raise ValueError(f'PPTX publication failed: {_tool_fail_reason(published)}')
     return {'representation': 'native_pptx', **stats,
-            'filename': output.name, 'message': '模板内容已填充为新 PPTX，原文件未修改。'}
+            'filename': output.name, 'message': '模板内容已填充并发布为新 PPTX，生成已完成。原文件未修改。'
+            '停止调用工具，不需要主 chat 追加检测或 HTML 生成。'}
 
 
 def ppt_generate_native_pptx(slides: list[dict], template_file: str = '') -> dict[str, Any]:

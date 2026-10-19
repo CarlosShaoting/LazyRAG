@@ -99,16 +99,64 @@ class TemplateFillTests(unittest.TestCase):
             self.fill()
         self.assertFalse(self.output.exists())
 
-    def test_newlines_are_native_breaks_and_preserve_run_style(self):
+    def test_whole_paragraph_newlines_create_paragraphs_with_style(self):
         target = next(e for e in self.edits if e['expected_text'] == 'Sample achievement')
         target.update(action='replace', text='First line\nSecond line')
         self.fill()
         with ZipFile(self.output) as archive:
             root = module._xml(archive.read('ppt/slides/slide1.xml'))
-            self.assertEqual(len(root.findall('.//a:br', module.NS)), 1)
+            self.assertEqual(len(root.findall('.//a:br', module.NS)), 0)
             self.assertTrue(all('\n' not in (n.text or '') for n in root.findall('.//a:t', module.NS)))
         paragraphs = Presentation(self.output).slides[0].placeholders[1].text_frame.paragraphs
-        self.assertTrue(all(r.font.bold for r in paragraphs[0].runs))
+        self.assertEqual([p.text for p in paragraphs], ['First line', 'Second line'])
+        self.assertTrue(all(r.font.bold for p in paragraphs for r in p.runs))
+        self.assertTrue(all(r.font.size == Pt(20) for p in paragraphs for r in p.runs))
+
+    def test_empty_placeholder_materializes_inherited_size_and_theme_font(self):
+        empty = next(s for s in self.pages[1]['slots'] if s['empty_paragraph'])
+        next(e for e in self.edits if e['id'] == empty['id']).update(action='replace', text='中文正文\n第二段')
+        stats = self.fill()
+        with ZipFile(self.output) as archive:
+            root = module._xml(archive.read('ppt/slides/slide2.xml'))
+            for run in root.xpath('.//a:r[a:t="中文正文" or a:t="第二段"]', namespaces=module.NS):
+                rp = run.find('a:rPr', module.NS)
+                self.assertIsNotNone(rp.get('sz'))
+                self.assertFalse(rp.find('a:latin', module.NS).get('typeface').startswith('+'))
+        self.assertFalse(stats['post_generation_tools_required'])
+        self.assertEqual(stats['generation_status'], 'completed')
+
+    def test_inline_rich_text_keeps_inline_breaks(self):
+        prs = Presentation(self.source)
+        p = prs.slides[0].placeholders[1].text_frame.paragraphs[0]
+        p.add_run().text = ' suffix'
+        prs.save(self.source)
+        pages = [module.inspect_template(self.source, i) for i in (1, 2)]
+        edits = [{'id': s['id'], 'expected_text': s['text'], 'action': 'replace' if s['text'] == 'Sample achievement' else 'keep',
+                  'text': 'First\nSecond'} for page in pages for s in page['slots']]
+        module.fill_template(self.source, self.output, pages[0]['sha256'], edits)
+        p = Presentation(self.output).slides[0].placeholders[1].text_frame.paragraphs
+        self.assertEqual(len(p), 1)
+        self.assertIn('suffix', p[0].text)
+
+    def test_auto_sized_table_has_no_negative_capacity(self):
+        from pptx.util import Inches
+        prs = Presentation(self.source)
+        table = prs.slides[0].shapes.add_table(1, 1, Inches(1), Inches(2), Inches(2), Inches(.4)).table
+        table.cell(0, 0).text = 'Label'
+        table._tbl.find('a:tr', module.NS).set('h', '0')
+        prs.save(self.source)
+        report = next(r for r in module.inspect_template(self.source)['layout_checks'] if r['shape_id'] == 'table:1:1:1')
+        self.assertEqual(report['status'], 'unknown')
+        self.assertNotIn('height_pt', report)
+
+    def test_unavailable_fonts_are_disclosed_without_substitution(self):
+        from unittest.mock import patch
+        from lazymind.chat.engine.tools.file_resources.pptx_text_style import font_availability
+        with patch('lazymind.chat.engine.tools.file_resources.pptx_text_style._installed_fonts', return_value=frozenset()), \
+             patch('lazymind.chat.engine.tools.file_resources.font_library.local_fonts', return_value=[]):
+            result = font_availability({'Missing Template Font'})
+        self.assertEqual(result['unavailable_locally'], ['Missing Template Font'])
+        self.assertFalse(result['substitution_applied'])
 
     def test_table_cell_capacity_rejected_before_writing(self):
         from pptx.util import Inches

@@ -4,7 +4,7 @@ preflight_disabled: true
 description: >
   Plan a presentation from a user request, collect useful source material,
   then generate HTML slides or fill uploaded PPTX templates in place into a new
-  native PPTX. Native files open in the dedicated versioned preview page.
+  native PPTX. Native files are downloaded for viewing in PowerPoint or WPS.
 
 when_to_use: >
   Trigger this workflow when the user explicitly asks to use the PPT workflow, or
@@ -26,6 +26,9 @@ when_to_use: >
   For an uploaded PPTX template, preserve the original file and inspect it
   through the native template tools. Never invoke Office-to-PDF, HTML conversion
   or an OCR conversion tool merely to read or fill the template.
+  After successful native PPTX publication, generation is complete. Do not
+  launch additional parent-chat inspection, academic analysis or rendering.
+  A reported visual-validation limitation is a disclosure, not a new task.
   Do not trigger for simple one-off explanations, ordinary image generation,
   ordinary long-form writing, or requests that only ask to preview an uploaded
   PowerPoint file.

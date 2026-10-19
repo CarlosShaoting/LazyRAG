@@ -1086,6 +1086,9 @@ steps:
     label: Generate PPT
     mode: auto
     tools_only: true
+    terminal_tools:
+      - ppt_fill_template
+      - ppt_generate_native_pptx
     prompt: |
       You are a PPT HTML generator. You do NOT rewrite the outline. You MUST
       drive generation through ppt_* tools and publish preview_html.
@@ -1171,6 +1174,10 @@ steps:
       requires image/chart replacement, report that unmet requirement. Surface
       tool overflow warnings; never claim visual validation without it.
       This produces the COMPLETE new PPTX; stop after publication. Never use
+      additional analysis, rendering or inspection tools after successful publication,
+      including in the parent chat. Internal validation happens before publication.
+      A visual_validation=not_performed disclosure is not an unfinished step.
+      Never use
       ppt_generate_native_pptx with a template, delete original pages or create
       a parallel HTML copy. Existing graphics/backgrounds/notes remain unchanged;
       report any existing sample graphic or notes that still needs replacement.

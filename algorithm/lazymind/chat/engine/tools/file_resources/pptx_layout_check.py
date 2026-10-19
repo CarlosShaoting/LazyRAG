@@ -64,8 +64,9 @@ def inspect_layout(data, slide_name, root, page):
         off = xfrm.find('a:off', NS) if xfrm is not None else None
         ext = xfrm.find('a:ext', NS) if xfrm is not None else None
         report = {'page': page, 'shape_id': props.get('id') if props is not None else None,
-                  'text': ''.join('\n' if n.tag == '{%s}br' % NS['a'] else n.text or ''
-                                  for n in body.iter() if n.tag in ('{%s}br' % NS['a'], '{%s}t' % NS['a'])),
+                  'text': '\n'.join(''.join('\n' if n.tag == '{%s}br' % NS['a'] else n.text or ''
+                                  for n in p.iter() if n.tag in ('{%s}br' % NS['a'], '{%s}t' % NS['a']))
+                                  for p in body.findall('a:p', NS)),
                   'status': 'unknown', 'method': 'conservative_estimate'}
         reports.append(report)
         # Group transforms/rotations require a renderer; do not pretend local
@@ -76,6 +77,9 @@ def inspect_layout(data, slide_name, root, page):
         bp = _first(chain, 'p:txBody/a:bodyPr')
         width = (_number(ext, 'cx', 0) - _number(bp, 'lIns', 91440) - _number(bp, 'rIns', 91440)) / 12700
         height = (_number(ext, 'cy', 0) - _number(bp, 'tIns', 45720) - _number(bp, 'bIns', 45720)) / 12700
+        if width <= 0 or height <= 0:
+            report['reason'] = 'non-positive text area; auto-sized table/shape requires renderer'
+            continue
         ph = shape.find('p:nvSpPr/p:nvPr/p:ph', NS)
         kind = ph.get('type', 'obj') if ph is not None else 'other'
         category = 'titleStyle' if kind in ('title', 'ctrTitle') else 'bodyStyle' if kind in ('body', 'obj') else 'otherStyle'
@@ -105,6 +109,12 @@ def inspect_layout(data, slide_name, root, page):
             # after the last line (important for one-line template subtitles).
             needed += font * 1.15 + (lines - 1) * line_height
             for key in ('spcBef', 'spcAft'):
+                # Paragraph-after spacing separates paragraphs, not the final
+                # glyph from the box edge. Counting it rejects valid subtitles.
+                if key == 'spcAft' and paragraph is body.findall('a:p', NS)[-1]:
+                    continue
+                if key == 'spcBef' and paragraph is body.findall('a:p', NS)[0]:
+                    continue
                 spacing = _first(defaults, 'a:' + key)
                 if spacing is not None:
                     needed += _number(spacing.find('a:spcPts', NS), 'val', 0) / 100
@@ -112,7 +122,7 @@ def inspect_layout(data, slide_name, root, page):
         outside = size is not None and (_number(off, 'x', 0) < 0 or _number(off, 'y', 0) < 0 or
             _number(off, 'x', 0) + _number(ext, 'cx', 0) > _number(size, 'cx', 0) or
             _number(off, 'y', 0) + _number(ext, 'cy', 0) > _number(size, 'cy', 0))
-        report.update(status='overflow' if outside or needed > height * 1.1 else 'estimated_fit',
+        report.update(status='overflow' if outside or needed > height * 1.02 else 'estimated_fit',
                       x_pt=round(_number(off, 'x', 0) / 12700, 1),
                       y_pt=round(_number(off, 'y', 0) / 12700, 1),
                       width_pt=round(width, 1), height_pt=round(height, 1), font_size_pt=largest,
