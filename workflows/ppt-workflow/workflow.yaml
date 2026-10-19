@@ -342,6 +342,7 @@ slots:
 
   - id: template_pptx
     label: PPTX Template
+    exposed: false
     type: file
     cardinality: single
     external: true
@@ -391,6 +392,7 @@ slots:
 
   - id: uploaded_materials
     label: Uploaded Materials
+    exposed: false
     type: file
     cardinality: list
     ordered: true
@@ -406,6 +408,7 @@ slots:
 
   - id: material_images
     label: Material Images
+    exposed: false
     type: image
     cardinality: list
     ordered: true
@@ -509,10 +512,7 @@ ui:
       hide_when_material: skip_material_collection
       layout: list
       slots:
-        - id: template_pptx
-        - id: uploaded_materials
         - id: material_summary
-        - id: material_images
 
     - id: style
       step_id: choose_style
