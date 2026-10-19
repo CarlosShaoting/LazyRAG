@@ -105,7 +105,10 @@ def test_generated_deck_tool_publishes_selected_revision_with_cas(deck, tmp_path
     monkeypatch.setattr(AttachmentEditDraft, 'for_current_conversation', lambda _: SimpleNamespace(
         root=str(tmp_path), effective_path=str(deck), draft_path=str(tmp_path / 'draft.pptx')))
     client = Mock()
-    client.patch_artifact.return_value.result = {'id': 'revision-6', 'revision': 6}
+    client.patch_artifact.return_value.result = {
+        'id': 'revision-6', 'revision': 6,
+        'value': {'storage': 'inline_base64', 'content_base64': 'NEVER_EXPOSE_FILE_BYTES'},
+    }
     monkeypatch.setattr(tools, '_workflow_client', lambda: client)
     info = tools.edit_presentation('native_pptx', 'inspect_content', workflow_session_id='session')
     result = tools.edit_presentation('native_pptx', 'edit_content', workflow_session_id='session',
@@ -115,6 +118,8 @@ def test_generated_deck_tool_publishes_selected_revision_with_cas(deck, tmp_path
     assert kwargs['base_draft_version'] == 2
     assert args[2]['storage'] == 'inline_base64'
     assert result['workflow_artifact']['revision'] == 6
+    assert 'value' not in result['workflow_artifact']
+    assert 'NEVER_EXPOSE_FILE_BYTES' not in str(result)
     assert hashlib.sha256(deck.read_bytes()).hexdigest() == info['sha256']
 
 

@@ -1848,7 +1848,7 @@ def resolve_workflow_injection(
             # Ready frontier must be returned to the same ChatAgent turn so a
             # user-requested continuous run can keep advancing.  Only the
             # explicit hand-off variant transfers ownership and ends the turn.
-            tools, ['advance_step_and_hand_off'],
+            tools, ['advance_step_and_hand_off', *(['edit_current_pptx'] if native_editor is not None else [])],
             patch, runtime_context, runtime_policy, bind_successor,
         )
 

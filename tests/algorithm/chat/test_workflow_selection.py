@@ -840,6 +840,7 @@ def test_completed_native_deck_exposes_scoped_editor_despite_old_rerun_policy():
         )
         # This is in workflow_tools, which survive ChatService's bound isolation.
         editor = _tool(contribution, 'edit_current_pptx')
+        assert 'edit_current_pptx' in contribution.stop_tools
         editor('修改日期并写每页讲稿，保持其他内容不变')
         args = edit.call_args.kwargs
         assert args['agent_type'] == 'pptx_edit'

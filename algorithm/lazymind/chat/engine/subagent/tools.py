@@ -1824,7 +1824,11 @@ def edit_presentation(
                      'content_base64': base64.b64encode(raw).decode(), 'size': len(raw)},
                     content_type='file', caption='Updated presentation text and speaker notes',
                     base_draft_version=native_artifact.get('draft_version', 0)).result
-                artifact = {'workflow_artifact': published}
+                # Never return the binary transport payload to a model or task card.
+                receipt = {key: published[key] for key in (
+                    'artifact_id', 'id', 'session_id', 'slot', 'revision', 'draft_version',
+                ) if key in published}
+                artifact = {'workflow_artifact': receipt}
             else:
                 os.replace(candidate, draft.draft_path)
                 artifact = _publish_attachment_edit(draft, source_tool='edit_presentation')
