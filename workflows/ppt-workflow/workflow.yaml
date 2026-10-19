@@ -33,6 +33,7 @@ runtime:
     - background_images
     - preview_html
     - preview_notes
+    - native_pptx
   collects_knowledge: true
   completed_edit_step: generate_ppt
   completed_edit_routing: |
@@ -198,6 +199,7 @@ tool_scripts:
       - ppt_insert_outline_page
       - ppt_publish_deck_outline
       - ppt_generate_pages
+      - ppt_generate_native_pptx
       - ppt_init_deck
       - ppt_find_deck
       - ppt_run_stage
@@ -242,6 +244,10 @@ steps:
     label: Generate PPT
 
 slots:
+  - id: native_pptx
+    label: PPTX 文件
+    type: file
+    cardinality: single
   - id: presentation_scenario
     label: Presentation Scenario
     type: text
@@ -435,6 +441,12 @@ ui:
       maxHeight: 200
 
   tabs:
+    - id: native_pptx
+      step_id: generate_ppt
+      label: PPTX 文件
+      layout: list
+      slots:
+        - id: native_pptx
     - id: analysis
       step_id: analyze_requirements
       label: Analysis

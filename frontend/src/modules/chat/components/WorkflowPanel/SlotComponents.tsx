@@ -5147,6 +5147,11 @@ export function SlotFile({ slot, sessionId, slotId, revisionCount, onRefresh, re
         </div>
         <div className='workflow-slot__file-card-actions'>
           <ArtifactSourceButton value={raw} sourceUrl={textSource ? url : undefined} fileRecord={!textSource} />
+          {/\.pptx$/i.test(name) && sessionId && slotId ? <a
+            className='workflow-slot__file-action-btn'
+            href={`/workflow-runs/${encodeURIComponent(sessionId)}/pptx/${encodeURIComponent(slotId)}?revision=${slot.revision}&index=${slot.list_index ?? -1}`}
+            target='_blank' rel='noopener noreferrer'
+          >查看 PPT</a> :
           <button
             className='workflow-slot__file-action-btn'
             onClick={handlePreview}
@@ -5155,7 +5160,7 @@ export function SlotFile({ slot, sessionId, slotId, revisionCount, onRefresh, re
             type='button'
           >
             {tr('chat.slots.preview')}
-          </button>
+          </button>}
           {allowDownload && (
             <a
               href={url}

@@ -988,6 +988,23 @@ steps:
 
       ## Mode selection
 
+      ### Native PPTX output (takes precedence for full generation)
+      When template_mode=upload OR the user explicitly requests direct/native
+      PPTX output, generate a native file instead of preview_html. After template
+      analysis when applicable, convert the approved slide_outline into ordered
+      slides [{title, bullets: [plain text], notes?}], preserving the requested
+      page count, wording and citations. Call ppt_generate_native_pptx once with
+      slides and the exact template_file when uploaded. Stop after publication.
+      Do not call ppt_generate_pages or page-html for this branch. The panel
+      exposes a file link to a dedicated PPTX viewer instead of HTML components.
+      Supported: editable title/body text and notes, with uploaded template
+      masters, layouts, theme and page size. Template sample slides are excluded.
+      Slide-specific decorations, native charts and equations are not synthesized
+      by this tool. If the brief requires unsupported visuals, report that limit
+      before calling the tool; do not silently discard evidence or claim fidelity.
+      Existing native PPTX edits must use the direct PPTX editing capability;
+      never create a parallel HTML deck for a native file.
+
       ### A) Insert an entire page
       If the current request inserted/added one whole slide at position N, its
       outline and page-prompt card were already inserted by upstream steps.
@@ -1124,9 +1141,10 @@ steps:
       - All visible slide text must match the user's language.
       - After tools finish, stop.
 
-      Stop after preview_html pages are published.
+      For the HTML branch, stop after preview_html pages are published.
     tools:
       - ppt_analyze_template
+      - ppt_generate_native_pptx
       - ppt_generate_pages
       - ppt_find_deck
       - ppt_run_stage
@@ -1167,11 +1185,19 @@ steps:
         required: false
     outputs:
       - material: preview_html
+        required: false
       - material: preview_notes
+        required: false
+      - material: native_pptx
+        required: false
       - material: template_profile
         required: false
     acceptance_criteria: |
-      For a full run: the exact requested number of preview_html HTML pages must
+      For the native branch: native_pptx must be a published non-empty PPTX file
+      with the exact requested number of slides. HTML pages and notes slots are
+      not required for this branch. A successful native publication completes
+      the step; do not invoke HTML generation afterward.
+      For a full HTML run: the exact requested number of preview_html HTML pages must
       be saved (DOCTYPE/html documents), with matching preview_notes sort_order.
       Generate pages sequentially; a two-page request still requires both pages.
       preview_notes must be aligned with preview_html; the auto-generated draft is

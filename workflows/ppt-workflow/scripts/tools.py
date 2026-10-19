@@ -745,6 +745,41 @@ def ppt_read_academic_source(source_id: str, chunk: int = 1) -> dict[str, Any]:
             'next_chunk': chunk + 1 if chunk < len(chunks) else None}
 
 
+def ppt_generate_native_pptx(slides: list[dict], template_file: str = '') -> dict[str, Any]:
+    """Publish editable PPTX directly, without HTML generation.
+
+    slides: ordered [{title, bullets: [plain text], notes?}] authored from the
+    approved per-page briefs. template_file is the exact uploaded PPTX name.
+    Template masters/layouts/themes are preserved; sample slides are excluded.
+    This path supports editable text and notes, not generated charts or formulas.
+    """
+    from lazymind.chat.engine.tools.file_resources.native_presentation import build_native_pptx
+
+    template = _resolve_template_file(template_file)[0] if template_file else None
+    digest = hashlib.sha256(json.dumps(slides, ensure_ascii=False, sort_keys=True).encode())
+    digest.update(b'native-pptx-v1')
+    if template:
+        digest.update(template.read_bytes())
+    root = _conversation_root() / 'native_pptx' / digest.hexdigest()
+    output = root / 'presentation.pptx'
+    reused = output.is_file()
+    if not reused:
+        temporary = root / f'{uuid.uuid4().hex}.pptx'
+        try:
+            stats = build_native_pptx(slides, temporary, template)
+            os.replace(temporary, output)
+        finally:
+            temporary.unlink(missing_ok=True)
+    else:
+        stats = {'slide_count': len(slides)}
+    published = _save_artifact(key='native_pptx', value=str(output), content_type='file',
+                               source_tool='ppt_generate_native_pptx', internal_publish=True)
+    if _tool_failed(published):
+        raise ValueError(f'PPTX publication failed: {_tool_fail_reason(published)}')
+    return {'representation': 'native_pptx', 'cached': reused, **stats,
+            'filename': output.name, 'message': '原生 PPTX 已生成，请通过查看 PPT 打开独立预览页。'}
+
+
 def ppt_analyze_template(
     template_file: str,
     deck_dir: Optional[str] = None,
