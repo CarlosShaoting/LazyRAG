@@ -1,4 +1,6 @@
+import asyncio
 import inspect
+import threading
 import json
 from unittest.mock import MagicMock, patch
 
@@ -859,6 +861,51 @@ def test_native_editor_rejects_stale_or_ambiguous_selection():
                  [{'slot': 'native_pptx'}, {'slot': 'native_pptx'}]):
         toolkit.list_artifacts.return_value = {'artifacts': rows}
         assert _native_pptx_editor(toolkit, 'session-1') is None
+
+
+def test_async_workflow_initialization_allows_core_callback_and_preserves_session():
+    from lazymind.chat.workflow.workflow_manager import resolve_workflow_injection_async
+
+    async def scenario():
+        loop = asyncio.get_running_loop()
+        event_loop_thread = threading.get_ident()
+        expected_sid = lazyllm.globals._sid
+        expected_local_sid = lazyllm.locals._sid
+        callbacks = []
+
+        async def inspect_document():
+            callbacks.append('inspected')
+            return {'artifacts': [{'slot': 'native_pptx', 'selected': True,
+                                   'validity': 'effective'}]}
+
+        def list_artifacts(_session_id):
+            assert threading.get_ident() != event_loop_thread
+            assert lazyllm.globals._sid == expected_sid
+            assert lazyllm.locals._sid == expected_local_sid
+            # Reproduce Core waiting for a callback served by the Chat event loop.
+            return asyncio.run_coroutine_threadsafe(inspect_document(), loop).result(timeout=2)
+
+        toolkit = MagicMock()
+        toolkit.list_artifacts.side_effect = list_artifacts
+        with patch('lazymind.chat.workflow.workflow_manager.HostWorkflowToolkit',
+                   return_value=toolkit), patch(
+            'lazymind.chat.workflow.workflow_manager._client',
+        ) as client_factory:
+            client_factory.return_value.get_state.return_value = {
+                'status': 'completed', 'projection': {'completed': True},
+            }
+            contribution = await asyncio.wait_for(resolve_workflow_injection_async(
+                {'session_id': 'session-1', 'workflow_id': 'deck-workflow'},
+                conversation_id='conversation-1', current_query='修改日期',
+            ), timeout=3)
+            assert _tool(contribution, 'edit_current_pptx')
+            assert callbacks == ['inspected']
+
+    asyncio.run(scenario())
+    # The production ASGI path must use the nonblocking adapter too.
+    from pathlib import Path
+    source = Path('algorithm/lazymind/chat/service/chat_service.py').read_text()
+    assert 'workflow_contribution = await resolve_workflow_injection_async(' in source
 
 
 def test_manager_preserves_continue_for_all_workflows():

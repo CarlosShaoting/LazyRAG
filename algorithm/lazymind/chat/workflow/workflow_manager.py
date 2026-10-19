@@ -6,6 +6,7 @@ public Workflow SDK into ChatAgent tools and applies LazyMind's handoff rule.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -25,6 +26,17 @@ from lazymind.workflow_toolkit import (
 )
 
 LOG = logging.getLogger(__name__)
+
+
+async def resolve_workflow_injection_async(*args, **kwargs):
+    """Keep synchronous SDK I/O off the Chat ASGI event loop.
+
+    Core artifact projections may call back into Chat document inspection.
+    Blocking this loop while waiting for Core deadlocks those callbacks.
+    to_thread copies ContextVars, including LazyLLM's user/session scope.
+    """
+    return await asyncio.to_thread(resolve_workflow_injection, *args, **kwargs)
+
 
 _SERIAL_WORKFLOW_EXECUTION_POLICY = (
     'Workflow SubAgent execution is strictly serial. Never issue more than one Workflow '
