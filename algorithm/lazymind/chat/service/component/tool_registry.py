@@ -678,7 +678,7 @@ ATTACHMENT_EDIT_TOOL_CONFIG = ToolConfig(
 PRESENTATION_EDIT_TOOL_CONFIG = ToolConfig(
     name='edit_presentation',
     label='编辑 PPTX',
-    description='直接检查或按整套、指定页、标题或正文替换 PPTX 字体，并支持精确调色',
+    description='直接编辑 PPTX 字体、配色、指定页文字和逐页演讲稿；支持当前工作流生成的 PPTX',
     tool=edit_presentation,
     module='attachment',
     appendix_system_prompt={
@@ -689,6 +689,13 @@ PRESENTATION_EDIT_TOOL_CONFIG = ToolConfig(
             'Workflow for these operations. Inspect first when font availability is unknown. A missing '
             'target font is an error and must never be silently replaced with a default. Applied edits '
             'publish a new editable PPTX revision and keep the original upload unchanged.'
+            ' For a completed native PPTX, use filename="native_pptx", inspect_content then edit_content '
+            'with the active workflow session id. Do not restart a generation Workflow for date/text '
+            'changes or adding speaker notes. Read every requested page before writing detailed notes; '
+            'use existing material evidence, do not invent achievements or search again. Write a real '
+            'page-specific speech with explanations and transitions, not a copy of the slide bullets. '
+            'Set require_all_notes=true when all pages are requested. Publish once for combined date '
+            'and notes edits, then stop. The selected native artifact is updated with revision checks.'
         ),
     },
 )

@@ -1742,13 +1742,18 @@ def pptx_analyzer(filename: str, page: int = 1, turn: Optional[int] = None) -> D
 @fc_register(host_file='NONE')
 def edit_presentation(
     filename: str,
-    action: Literal['inspect', 'replace_fonts', 'replace_palette'],
+    action: Literal['inspect', 'replace_fonts', 'replace_palette', 'inspect_content', 'edit_content'],
     source_font: Optional[str] = None,
     target_font: Optional[str] = None,
     color_map: Optional[Union[Dict[str, str], str]] = None,
     pages: Optional[Union[List[int], str, int]] = None,
     text_scope: Literal['all', 'titles', 'body'] = 'all',
     turn: Optional[int] = None,
+    source_sha256: Optional[str] = None,
+    text_edits: Optional[List[Dict[str, Any]]] = None,
+    speaker_notes: Optional[List[Dict[str, Any]]] = None,
+    require_all_notes: bool = False,
+    workflow_session_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Inspect or directly edit an uploaded PPTX without starting a Workflow.
 
@@ -1758,16 +1763,73 @@ def edit_presentation(
     limit replacement to `titles` or `body`. `replace_palette` applies exact
     #RRGGBB mappings to the whole deck. Edits preserve the original upload and
     publish one editable PPTX revision.
+
+    For generated decks use filename='native_pptx' and the active workflow session
+    (workflow_session_id may be supplied from runtime context). inspect_content
+    reads the selected revision's text slots and speaker notes; edit_content uses
+    that source_sha256, sparse text_edits [{id,expected_text,text}] and/or
+    speaker_notes [{page,text}]. Set require_all_notes=True for every-slide notes.
+    Detailed speeches belong in speaker notes, not visible slide text. Preserve
+    facts, explain each page in natural speech with transitions, not a short stub.
+    The same tool edits ordinary uploaded PPTX files using their filename.
     """
-    matched, err = _resolve_attachment(filename, turn)
-    if err:
-        raise ToolExecutionError(f'Attachment not found: {err}')
+    native_artifact = None
+    if filename == 'native_pptx':
+        import lazyllm
+        cfg = lazyllm.globals.get('agentic_config') or {}
+        runtime = cfg.get('workflow_runtime') or {}
+        session_id = workflow_session_id or cfg.get('workflow_session_id') or runtime.get('session_id')
+        if not session_id:
+            raise ToolExecutionError('Use the active workflow_session_id from runtime context; do not use the original template.')
+        selected = [a for a in _public_workflow_artifacts(session_id, 'native_pptx')
+                    if a.get('selected') and a.get('validity') == 'effective' and not a.get('deleted')]
+        if len(selected) != 1:
+            raise ToolExecutionError('Expected exactly one selected native_pptx revision')
+        native_artifact = selected[0]
+        matched = (native_artifact.get('value') or {}).get('path', '')
+        if action not in ('inspect_content', 'edit_content'):
+            raise ToolExecutionError('For the selected native_pptx use inspect_content or edit_content')
+    else:
+        matched, err = _resolve_attachment(filename, turn)
+        if err:
+            raise ToolExecutionError(f'Attachment not found: {err}')
     matched = _materialize_local_path(matched)
     if not os.path.isfile(matched) or not matched.lower().endswith('.pptx'):
         raise ToolExecutionError('edit_presentation requires one available .pptx attachment')
     draft = AttachmentEditDraft.for_current_conversation(matched)
     effective = draft.effective_path
+    if native_artifact is not None:
+        effective = matched  # The selected immutable revision is authoritative.
     normalized_action = str(action or '').strip().lower()
+    if normalized_action in ('inspect_content', 'edit_content'):
+        from pathlib import Path
+        from lazymind.chat.engine.tools.file_resources.pptx_content_edit import inspect_content, edit_content
+        if normalized_action == 'inspect_content':
+            selected_pages = [pages] if type(pages) is int else pages
+            return {'status': 'ok', **inspect_content(effective, selected_pages)}
+        if not source_sha256:
+            raise ToolExecutionError('Inspect current content first and provide source_sha256')
+        os.makedirs(draft.root, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix='content-', dir=draft.root) as temporary:
+            candidate = Path(temporary) / 'presentation.pptx'
+            stats = edit_content(effective, candidate, source_sha256, text_edits, speaker_notes, require_all_notes)
+            if native_artifact is not None:
+                import base64
+                raw = candidate.read_bytes()
+                if len(raw) > 14 * 1024 * 1024:
+                    raise ToolExecutionError('Edited file exceeds the inline publication limit (14 MiB)')
+                published = _workflow_client().patch_artifact(
+                    native_artifact['id'], native_artifact['revision'],
+                    {'storage': 'inline_base64', 'filename': 'presentation.pptx',
+                     'content_base64': base64.b64encode(raw).decode(), 'size': len(raw)},
+                    content_type='file', caption='Updated presentation text and speaker notes',
+                    base_draft_version=native_artifact.get('draft_version', 0)).result
+                artifact = {'workflow_artifact': published}
+            else:
+                os.replace(candidate, draft.draft_path)
+                artifact = _publish_attachment_edit(draft, source_tool='edit_presentation')
+        return {'status': 'ok', **stats, **artifact,
+                'message': 'PPTX edited and published. Stop; no regeneration or post-generation inspection is required.'}
     if normalized_action == 'inspect':
         try:
             return {'status': 'ok', 'action': 'inspect', **inspect_pptx(effective)}
