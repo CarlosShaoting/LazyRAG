@@ -19,6 +19,7 @@ from lazyllm.tools import fc_register
 from lazyllm.tools.agent.tool_runtime import HostFileAccess, _get_tool_runtime_metadata
 
 from lazymind.chat.engine.tools.intent_writer import enable_workflow_intent_scopes
+from lazymind.chat.engine.tools.artifact_output import artifact_output
 from lazymind.workflow_sdk import AdvanceRequest, StepCommand, WorkflowClient, WorkflowClientError
 from lazymind.workflow_toolkit import (
     AgentWorkflowToolProjection, HostWorkflowToolkit, StepCommandInput,
@@ -513,18 +514,18 @@ def _safe_session_tools(
     @_register_host_file(capability)
     def list_workflow_inputs() -> Dict[str, Any]:
         """List durable input bindings for this Session."""
-        return toolkit.list_workflow_inputs(session_id())
+        return artifact_output(toolkit.list_workflow_inputs(session_id()))
 
     @_register_host_file(capability)
     def list_artifacts() -> Dict[str, Any]:
         """List selected Artifacts for this Session."""
-        return toolkit.list_artifacts(session_id())
+        return artifact_output(toolkit.list_artifacts(session_id()))
 
     @_register_host_file(capability)
     def read_artifact(artifact_ref: str) -> Dict[str, Any]:
         """Read a selected Artifact by exact slot handle such as report or images[0]."""
         artifact = _artifact_by_handle(toolkit, session_id(), artifact_ref)
-        return toolkit.read_artifact(str(artifact.get('artifact_id') or artifact.get('id') or ''))
+        return artifact_output(toolkit.read_artifact(str(artifact.get('artifact_id') or artifact.get('id') or '')))
 
     @_register_host_file(capability)
     def patch_artifact(artifact_ref: str, value: Any, caption: str = '') -> Dict[str, Any]:
@@ -532,9 +533,9 @@ def _safe_session_tools(
         artifact = _artifact_by_handle(toolkit, session_id(), artifact_ref)
         artifact_id = str(artifact.get('artifact_id') or artifact.get('id') or '')
         content_type = str(artifact.get('content_type') or 'json')
-        return toolkit.patch_artifact(
+        return artifact_output(toolkit.patch_artifact(
             artifact_id, int(artifact.get('revision') or 0), value, content_type, caption,
-        )
+        ))
 
     return [
         get_workflow_state, get_ready_steps, advance_step, list_workflow_inputs,

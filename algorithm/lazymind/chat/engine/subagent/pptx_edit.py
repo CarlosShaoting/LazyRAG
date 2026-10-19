@@ -5,6 +5,7 @@ from typing_extensions import NotRequired, TypedDict
 
 from lazyllm.tools import fc_register
 from lazyllm.tools.agent import ToolExecutionError
+from lazymind.chat.engine.tools.artifact_output import artifact_output
 
 from .context import require_context
 from . import tools
@@ -78,7 +79,7 @@ def read_pptx_edit_material(slot: str = 'material_summary') -> Dict[str, Any]:
         if not artifact_id:
             raise ToolExecutionError('Saved material has no artifact reference; do not guess IDs')
         values.append(tools._workflow_client().read_artifact(artifact_id).result)
-    return {'artifacts': values}
+    return artifact_output({'artifacts': values})
 
 
 @fc_register(host_file='NONE')
@@ -107,6 +108,7 @@ def publish_pptx_edit(source_sha256: str,
         raise ToolExecutionError('PPTX publication did not return a successful artifact revision')
     # This receipt satisfies the SubAgent completion contract. The file itself
     # remains authoritative in the Workflow slot; never create a parallel deck.
+    result = artifact_output(result)
     value = {'data': result['workflow_artifact']}
     seq = ctx.next_artifact_seq('pptx_edit_receipt')
     ctx.record_local_artifact('pptx_edit_receipt', 'json', value, seq)

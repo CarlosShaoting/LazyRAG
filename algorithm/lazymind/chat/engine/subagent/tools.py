@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 from lazyllm.tools.agent import ToolExecutionError
 from lazyllm.tools import fc_register
 from pydantic import TypeAdapter, WithJsonSchema
+from lazymind.chat.engine.tools.artifact_output import artifact_output
 from lazymind.chat.engine.tools.host_file_resolution import FileResolution, validate_storage_id, copy_artifact_input
 from typing_extensions import NotRequired, TypedDict
 from lazymind.chat.engine.attachment_reader import (
@@ -1102,7 +1103,7 @@ def _get_public_workflow_artifacts(
             'status': 'empty',
             'message': f"No artifact found for key '{key}' in workflow session {session_id}.",
         }
-    return {'status': 'ok', 'key': key, 'artifacts': artifacts}
+    return artifact_output({'status': 'ok', 'key': key, 'artifacts': artifacts})
 
 
 def patch_artifact(
