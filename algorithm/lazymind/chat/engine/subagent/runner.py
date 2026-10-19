@@ -398,6 +398,9 @@ def _resolve_runtime_tools(
     publisher-owned output slots.
     Names of base tools in the explicit list are silently ignored.
     """
+    if (params or {}).get('_pptx_edit_session_id'):
+        from .pptx_edit import edit_tools
+        return edit_tools()
     disabled = set((lazyllm.globals.get('agentic_config') or {}).get('disabled_tools') or [])
     if explicit is not None:
         core_tool_names = set(SUBAGENT_CORE_TOOL_NAMES)
@@ -854,7 +857,14 @@ def _build_subagent_plan(
     publisher_owned_outputs = _publisher_owns_outputs(ctx)
     _, required_keys = resolve_output_contract(ctx.agent_type, ctx.output_slots, ctx.params)
     output_lines = []
-    if publisher_owned_outputs:
+    if ctx.agent_type == 'pptx_edit':
+        output_lines.append(
+            'publish_pptx_edit publishes the Workflow file revision and automatically '
+            'records the required pptx_edit_receipt. Inspect first, then publish once. '
+            'Do not call save_artifacts or produce a replacement file in chat. '
+            'Without a successful publication receipt the task cannot complete.'
+        )
+    elif publisher_owned_outputs:
         output_lines.append(
             'The declared output slots are publisher-owned. The Workflow package tool '
             'writes them at the correct list_index and revision automatically. Do not call '
@@ -932,7 +942,7 @@ def _build_subagent_plan(
         str(getattr(tool, '__name__', '') or '') for tool in tools
     }
     inherited_skills = (
-        [] if str(ctx.agent_type or '') == 'workflow_step'
+        [] if str(ctx.agent_type or '') in {'workflow_step', 'pptx_edit'}
         else _coerce_str_list(ctx.params.get(SUBAGENT_SKILLS_CONTEXT_KEY))
     )
     inherited_prompt_skills = (
@@ -1395,7 +1405,8 @@ async def run_subagent_stream(
             subagent_tools_all.extend(await asyncio.to_thread(
                 _load_mcp_server_tools, knowledge_management.server_config(server), 'system'))
         host_filesystem_enabled = bool(_cfg['trusted_local_mode']) or bool(agentic_config.get('_core_workspace_context'))
-        if host_filesystem_enabled and effective_agent_type != 'workflow_step':
+        if (host_filesystem_enabled and effective_agent_type != 'workflow_step'
+                and not ctx.params.get('tools_only')):
             from lazyllm.tools.agent import FileSystemToolkit
             subagent_tools_all.append(FileSystemToolkit())
             from lazymind.chat.engine.tools.native_search import native_search, native_search_available

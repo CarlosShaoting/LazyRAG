@@ -273,26 +273,38 @@ def _native_pptx_editor(toolkit: HostWorkflowToolkit, session_id: str):
         return None
 
     @_register_host_file('NONE' if _trusted_workflow_toolkit(toolkit) else 'UNDECLARED')
-    def edit_current_pptx(action: str, source_sha256: str = '',
-                          text_edits: Optional[List[Dict[str, Any]]] = None,
-                          speaker_notes: Optional[List[Dict[str, Any]]] = None,
-                          require_all_notes: bool = False) -> Dict[str, Any]:
-        """Directly inspect/edit the selected native PPTX, without rerunning any step.
+    def edit_current_pptx(instruction: str) -> Dict[str, Any]:
+        """Delegate current native PPTX edits to a dedicated SubAgent.
 
-        First call inspect_content to get source_sha256, text slots and notes.
-        Then edit_content with that hash, sparse text_edits [{id,expected_text,text}]
-        and/or speaker_notes [{page,text}], with 1-based pages. For all-page speeches
-        set require_all_notes=true; write detailed, factual page-specific speech
-        in notes, never slide text. Unspecified slide content/style is preserved.
-        Publishes one new Workflow artifact revision; stop after success.
+        Pass the user's complete edit instruction, including preservation constraints.
+        The SubAgent inspects current content, writes text/notes and publishes a new
+        artifact revision. Do not write speeches or edit files in main Chat, and do
+        not rewind any Workflow step. Report the task result and stop.
         """
-        if action not in ('inspect_content', 'edit_content'):
-            raise ValueError('Only inspect_content and edit_content are supported')
-        from lazymind.chat.engine.subagent.tools import edit_presentation
-        return edit_presentation(
-            filename='native_pptx', action=action, source_sha256=source_sha256,
-            text_edits=text_edits, speaker_notes=speaker_notes,
-            require_all_notes=require_all_notes, workflow_session_id=session_id,
+        if not instruction.strip():
+            raise ValueError('A complete edit instruction is required')
+        from lazymind.chat.engine.tools.subagent_chat_tools import create_subagent
+        return create_subagent(
+            agent_type='pptx_edit', title='PPTX 内容与讲稿编辑',
+            objective=instruction,
+            params={
+                '_pptx_edit_session_id': session_id,
+                'session_id': session_id,
+                'tools_only': True,
+                'terminal_tools': ['publish_pptx_edit'],
+                'output_slot_types': {'pptx_edit_receipt': 'json'},
+                'instruction': (
+                    'Edit the selected native PPTX only. Inspect it first. Reuse saved '
+                    'material_summary and requirement_analysis when needed; never search '
+                    'or regenerate. Preserve all unspecified slide content and formatting. '
+                    'Write requested detailed page-specific speeches in speaker notes, '
+                    'not visible slide text; do not invent facts. For every-page notes '
+                    'set require_all_notes=true. Publish exactly once then stop. If the '
+                    'requested edit is unsupported or overflows, report the limitation.'
+                ),
+            },
+            output_slots=['pptx_edit_receipt'],
+            tools=['inspect_current_pptx', 'read_pptx_edit_material', 'publish_pptx_edit'],
         )
 
     return edit_current_pptx
@@ -1782,8 +1794,9 @@ def resolve_workflow_injection(
             completed_followup = (
                 'The selected native_pptx supports direct revision editing. For date, title, '
                 'slide text or speaker-note changes, including every-page detailed speeches, '
-                'MUST use edit_current_pptx: inspect_content then edit_content. Read existing '
-                'material artifacts if needed; do not collect sources again. Do NOT call '
+                'MUST delegate to edit_current_pptx with the complete user instruction. '
+                'Its dedicated SubAgent performs inspection, writing and publication; '
+                'main Chat must not write the speeches or edit the file itself. Do NOT call '
                 'advance_step, rewind, generate_ppt or another Workflow for these edits. '
                 'Publish once and stop; the Session remains completed. If an edit cannot fit '
                 'or is unsupported, explain the limitation instead of regenerating. '

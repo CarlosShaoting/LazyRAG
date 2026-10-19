@@ -825,7 +825,7 @@ def test_completed_native_deck_exposes_scoped_editor_despite_old_rerun_policy():
                return_value=toolkit), patch(
         'lazymind.chat.workflow.workflow_manager._client',
     ) as client_factory, patch(
-        'lazymind.chat.engine.subagent.tools.edit_presentation',
+        'lazymind.chat.engine.tools.subagent_chat_tools.create_subagent',
         return_value={'status': 'ok'},
     ) as edit:
         client_factory.return_value.get_state.return_value = {
@@ -840,17 +840,20 @@ def test_completed_native_deck_exposes_scoped_editor_despite_old_rerun_policy():
         )
         # This is in workflow_tools, which survive ChatService's bound isolation.
         editor = _tool(contribution, 'edit_current_pptx')
-        editor('inspect_content')
-        assert edit.call_args.kwargs['filename'] == 'native_pptx'
-        assert edit.call_args.kwargs['workflow_session_id'] == 'session-1'
-        editor('edit_content', 'hash', speaker_notes=[{'page': 1, 'text': '演讲稿'}])
-        assert edit.call_args.kwargs['source_sha256'] == 'hash'
+        editor('修改日期并写每页讲稿，保持其他内容不变')
+        args = edit.call_args.kwargs
+        assert args['agent_type'] == 'pptx_edit'
+        assert args['objective'] == '修改日期并写每页讲稿，保持其他内容不变'
+        assert args['params']['_pptx_edit_session_id'] == 'session-1'
+        assert args['params']['tools_only'] is True
+        assert args['params']['terminal_tools'] == ['publish_pptx_edit']
+        assert args['output_slots'] == ['pptx_edit_receipt']
         toolkit.advance_step.assert_not_called()
         assert 'Do NOT call' in contribution.runtime_context
         assert 'Only an explicit user request to regenerate/restructure' in contribution.runtime_context
         assert 'authorized exception' in contribution.runtime_context
         with pytest.raises(ValueError):
-            editor('replace_fonts')
+            editor('')
 
 
 def test_native_editor_rejects_stale_or_ambiguous_selection():

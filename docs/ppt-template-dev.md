@@ -421,6 +421,14 @@ API 依据：[GitHub PR 列表接口](https://docs.github.com/en/rest/pulls/pull
 - 新增回归测试模拟 Core 在同步请求内等待 Chat 事件循环回调，验证初始化完成、编辑工具保留、线程切换及 LazyLLM 会话上下文一致。此前纯同步 mock 未覆盖这个服务回调边界。
 - 验证：工作流选择、模拟模型链路、工具注册、意图写入及 PPTX 内容编辑共 122 项测试通过；真实模型修改日期和逐页讲稿仍由用户重试验收。
 
+### 8.20 工作流成品编辑委托 SubAgent
+
+- 按交互边界修正 8.18：绑定工作流且已有原生 PPTX 时，主 Chat 的 edit_current_pptx 只接受完整修改指令并创建普通 pptx_edit SubAgent，右侧显示“PPTX 内容与讲稿编辑”。不新增 Workflow step、不 rewind generate_ppt；未绑定工作流的普通 Chat 仍可直接调用 edit_presentation。
+- 编辑 SubAgent 仅开放 inspect_current_pptx、read_pptx_edit_material、publish_pptx_edit。复用当前模型配置和已有素材，禁止重新搜索、脚本生成、通用文件改写及技能扩展工具；tools_only 同时禁止追加本地文件系统工具。
+- 发布工具使用原生编辑器和 Workflow Artifact CAS 修订接口，成功后自动记录子任务 JSON 回执并终止；没有回执不能被判为完成。回执不是另一份 PPTX，文件权威源仍是 native_pptx。主 Chat 仅报告结果，不再代写讲稿或进行后检测。
+- 回归覆盖主 Chat 委托及完整指令/固定 Session 传递、受限工具集、发布成功回执、失败不得完成、重复发布拒绝，以及普通 Chat 原有编辑测试。真实模型端到端仍需重试验证。
+- 验证：上述编辑测试及工作流选择、模拟模型链路、工具注册、SubAgent 运行器相关测试共 214 项通过。
+
 ## 9. 最终未完成需求清单
 
 面板调整（2026-10-19）：移除独立的“PPTX 文件”tab，native_pptx 文件 slot 合并到最终“幻灯片”tab，保留现有查看/下载入口，不增加执行步骤。本次按要求不重启服务。
