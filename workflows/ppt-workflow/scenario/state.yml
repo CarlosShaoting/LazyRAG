@@ -153,6 +153,9 @@ steps:
         paper_review, thesis_defense, or reading_notes according to the user's
         intent. Academic scenarios MUST enter collect_materials even in quick
         mode; never save skip_material_collection for these scenarios.
+      - Requests to summarize personal contributions, GitHub PRs, connected Feishu
+        work records or knowledge-base internship evidence MUST enter collect_materials,
+        including quick mode. Never save skip_material_collection for these requests.
       - presentation goal
       - presentation topic
       - target customer / audience
@@ -281,15 +284,62 @@ steps:
       Requirement analysis:
       {{requirement_analysis}}
 
+      Template mode:
+      {{template_mode}}
+
+      Uploaded-template visual gate (takes precedence over image instructions below):
+      When template_mode=upload, reuse the template's existing graphics, backgrounds
+      and layout. Do not plan/generate AI backgrounds, style candidates or decorative
+      images. Default to zero material_images and text/evidence-only collection.
+      Do not search/register/generate images just because a KB is absent, a slide
+      looks sparse, or the user asks for a polished deck. Use image_topk=0 for KB
+      evidence searches unless a necessary visual requirement is identified.
+      Only collect a new image when the user explicitly requests that image or
+      it is indispensable factual evidence (for example a specified experiment
+      figure or product screenshot). State the exact requirement and affected
+      section first; reuse supplied assets before searching. Current in-place
+      template filling cannot replace/add images: report that gap, do not promise
+      automatic insertion, and do not fetch decorative substitutes to hide it.
+      This gate must not skip required text sources, PR descriptions, KB or papers.
+
       Personal contribution / internship / probation defense sources:
       - Reuse supplied author identity, repository, date range and optional branch
         from startup clarification. A connected account is not automatically the
         author. Never attribute all repository activity to the user.
-      - Use existing authorized KB retrieval first. Use connected Feishu/GitHub
-        tools only when actually exposed and authorized for this task. A repository
-        file connection alone does not imply PR access. If PR tools are unavailable,
-        record the missing capability and request PR description exports/links with
-        accessible content; do not pretend the retrieval succeeded.
+      - Use existing authorized KB retrieval first. Call ppt_source_connections
+        to detect enabled GitHub/Feishu credentials. For requested Feishu material,
+        discover the cloud_files read/search tools and search/read the user-scoped
+        documents with the existing connection. Never create/update/delete cloud
+        documents during material collection. Keep source URLs and cite work records.
+      - GitHub PR retrieval is implemented by ppt_collect_github_prs, not by the
+        repository file reader. Call it with the supplied repository, author,
+        start_date/end_date and optional branch, or pass the exact user-provided
+        GitHub /pulls?q= URL directly. The tool parses author/state/head/base/created
+        filters and rejects unsupported filters rather than silently broadening.
+        A supplied author filter satisfies identity; do not ask again. No dates
+        in a filter URL means all matching dates, unless the user requests a
+        bounded reporting period. Dates are inclusive PR CREATED
+        dates in UTC, not merge or commit dates; disclose this basis in the summary.
+        branch_kind=head means source branch; base means target branch. Do not
+        substitute branch or repository owner for the user's identity.
+      - Start at page=1 and follow next_page until null, even when records is
+        empty. For every non-empty source_id call ppt_read_pr_description and
+        follow next_offset to EOF. Reuse the cached descriptions for subsequent
+        analysis. PR pagination and cached reads are exempt from the six-call
+        optional web/image research budget below; do not impose a three-PR or
+        first-page limit. If execution limits interrupt collection, explicitly
+        report the last processed page and remaining coverage, never claim full coverage.
+      - Public GitHub repositories do NOT require authentication. Use
+        access_mode=public when the user explicitly wants anonymous public access;
+        otherwise auto uses an enabled connection if present, anonymous if absent.
+        Do not block public retrieval just because github_available is false.
+        state=closed includes merged and closed-unmerged; report them separately.
+        For private repositories use connected mode and the existing account.
+      - Permission denial, rate limit or read error must
+        be surfaced precisely. If the user's required PR/Feishu evidence cannot
+        be collected, stop without publishing a supposedly complete material_summary;
+        request connection repair or source exports. Never silently substitute web
+        search, repository code or invented work. Do not ask for tokens in chat.
       - For GitHub PRs, filter by author/repository/date and optional branch.
         Analyze ONLY description/body; metadata (URL, author, dates, state, number)
         is for filtering and citation. Do not fetch diffs, code, commits or comments.
@@ -384,8 +434,10 @@ steps:
          a) Register KB image hits first via ppt_register_material_images with
             [{"local_path":..., "caption":..., "source":"kb"}, ...]
             (image_url also works if local_path is absent).
-         b) Call ppt_search_web_images only when a useful slide visual is still
-            missing after KB image retrieval, or when no applicable KB is available.
+         b) Call ppt_search_web_images only when a specific necessary slide visual
+            is still missing after reusing uploads and applicable KB images.
+            No applicable KB alone is not a reason to search images. The uploaded-
+            template visual gate above takes precedence.
             Then register only the necessary results with
             [{"url":..., "caption":..., "source":"web"}, ...] for at most one selected material image per planned slide.
             If a selected image URL is expired, inaccessible (for example
@@ -452,6 +504,10 @@ steps:
 
       Stop after saving.
     tools:
+      - ppt_source_connections
+      - ppt_collect_github_prs
+      - ppt_read_pr_description
+      - cloud_files
       - ppt_cache_academic_sources
       - ppt_read_academic_source
       - kb
@@ -466,6 +522,8 @@ steps:
         required: true
       - material: uploaded_materials
         required: false
+      - material: template_mode
+        required: false
     outputs:
       - material: material_summary
         required: true
@@ -476,7 +534,7 @@ steps:
       when files are present, references, useful evidence, gaps, and assumptions.
       material_images is optional. Its absence must never fail or retry this
       step; a text-only material_summary is sufficient. When usable KB/web/AI
-      material images were found, they should be
+      material images were found AND pass the necessary-visual gate, they should be
       registered via ppt_register_material_images / ppt_generate_material_images
       as individual image-list artifacts so the Materials tab can preview them
       and later steps can embed them in HTML.
@@ -1034,6 +1092,9 @@ steps:
       ppt_generate_native_pptx with a template, delete original pages or create
       a parallel HTML copy. Existing graphics/backgrounds/notes remain unchanged;
       report any existing sample graphic or notes that still needs replacement.
+      Do not collect additional images or generate backgrounds in this template
+      output path. Preserve existing visual assets; explicitly report unsupported
+      requested image changes instead of launching an HTML/background pipeline.
 
       When no template is uploaded and the user explicitly requests direct/native
       PPTX output, generate a native file instead of preview_html. Convert the approved slide_outline into ordered

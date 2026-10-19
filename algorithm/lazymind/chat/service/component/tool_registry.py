@@ -42,6 +42,7 @@ from lazymind.chat.engine.tools import (
 from lazymind.chat.engine.tools.calculator import calculator
 from lazymind.chat.engine.tools.vocab_learn import vocab_learn
 from lazymind.chat.engine.tools.memory import MemoryTools
+from lazymind.chat.engine.tools.github_prs import GitHubPRToolkit, GITHUB_PR_POLICY
 from lazymind.chat.engine.tools.lazy_kb import KBToolkit, kb_tmp_search
 from lazymind.model_config import get_model_role_runtime_identity, is_model_role_available
 from lazymind.chat.engine.tools.ask_user import ask_user
@@ -904,6 +905,12 @@ DEFAULT_TOOLS: list[ToolConfig] = [
         tool=SkillManagementToolkit(), module='personalization',
         label_en='Skill Editing',
         description_en='Create, update, and delete skills. Not for finding or listing skills.',
+    ),
+    ToolConfig(
+        name='github_prs', label='GitHub PR 汇总', description='读取公开或已授权仓库的 PR 描述，汇总个人贡献',
+        tool=GitHubPRToolkit(), module='data', label_en='GitHub PR Descriptions',
+        description_en='Read and cache GitHub PR descriptions for contribution summaries, without a workflow.',
+        appendix_system_prompt=GITHUB_PR_POLICY,
     ),
     ToolConfig(
         name='cloud_files', label='云文件', description='浏览、搜索和管理已连接的云文件系统',

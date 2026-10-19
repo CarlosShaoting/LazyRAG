@@ -745,6 +745,51 @@ def ppt_read_academic_source(source_id: str, chunk: int = 1) -> dict[str, Any]:
             'next_chunk': chunk + 1 if chunk < len(chunks) else None}
 
 
+def ppt_source_connections() -> dict[str, Any]:
+    """Report credential availability for this step, without revealing secrets or assuming author identity."""
+    import lazyllm
+    auth = lazyllm.globals.config['dynamic_fs_auth'] or {}
+    return {'github_available': bool(auth.get('github')),
+            'github_public_read_available': True,
+            'feishu_available': bool(auth.get('feishu') or auth.get('lark')),
+            'notice': 'Availability is not repository/document permission. Use the authorized reader to verify access. '
+                      'A connected account is not automatically the contribution author.'}
+
+
+def ppt_collect_github_prs(repository: str, author: str = '', start_date: str = '', end_date: str = '',
+                           branch: str = '', branch_kind: str = 'head', page: int = 1,
+                           state: str = '', access_mode: str = 'auto') -> dict[str, Any]:
+    """Fetch one page of PR descriptions using the current user's connected GitHub credentials.
+
+    repository: owner/repository, repository URL, or GitHub /pulls?q= filter URL.
+    author: exact GitHub username, or extracted from author: in the supplied URL.
+    Dates: inclusive YYYY-MM-DD PR creation dates in UTC; omit both for all dates.
+    state: all/open/closed/merged/unmerged; URL state:is filters are respected.
+    closed includes both merged and closed-unmerged PRs.
+    access_mode: auto uses an enabled connection when present, otherwise anonymous
+    public API. public never uses credentials; connected requires a connection.
+    branch: optional exact source branch (head), or target branch with branch_kind=base.
+    Follow next_page until null, including empty filtered pages. No PR-count cap.
+    Return description source_ids; read each with ppt_read_pr_description.
+    Never fetches diff, code, commits, comments or writes to GitHub.
+    """
+    from lazymind.chat.engine.tools.file_resources.github_contributions import normalize_scope, collect_page
+    try:
+        scope = normalize_scope(repository, author, start_date, end_date, branch, branch_kind, state, access_mode)
+        return collect_page(_conversation_root() / 'github_pr_sources', scope, page)
+    except (ValueError, OSError) as exc:
+        return _tool_error('ppt_collect_github_prs', str(exc))
+
+
+def ppt_read_pr_description(source_id: str, offset: int = 0, limit: int = 6000) -> dict[str, Any]:
+    """Read a cached PR description to EOF without fetching code or comments again."""
+    from lazymind.chat.engine.tools.file_resources.github_contributions import read_description
+    try:
+        return read_description(_conversation_root() / 'github_pr_sources', source_id, offset, limit)
+    except (ValueError, OSError) as exc:
+        return _tool_error('ppt_read_pr_description', str(exc))
+
+
 def ppt_inspect_template_page(template_file: str, page: int = 1) -> dict[str, Any]:
     """Read a template page's text slot IDs and shape geometry. Read all pages before filling."""
     from lazymind.chat.engine.tools.file_resources.pptx_template_fill import inspect_template
