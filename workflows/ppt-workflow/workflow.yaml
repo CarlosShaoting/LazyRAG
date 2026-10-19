@@ -246,6 +246,7 @@ tool_scripts:
       - ppt_generate_native_pptx
       - ppt_restyle_pages
       - ppt_inspect_template_page
+      - pptx_analyzer
       - ppt_fill_template
       - ppt_init_deck
       - ppt_find_deck

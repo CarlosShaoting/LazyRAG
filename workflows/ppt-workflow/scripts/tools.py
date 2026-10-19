@@ -790,11 +790,16 @@ def ppt_read_pr_description(source_id: str, offset: int = 0, limit: int = 6000) 
         return _tool_error('ppt_read_pr_description', str(exc))
 
 
-def ppt_inspect_template_page(template_file: str, page: int = 1) -> dict[str, Any]:
+def pptx_analyzer(template_file: str, page: int = 1) -> dict[str, Any]:
     """Read a template page's text slot IDs and shape geometry. Read all pages before filling."""
     from lazymind.chat.engine.tools.file_resources.pptx_template_fill import inspect_template
     source, _ = _resolve_template_file(template_file)
     return inspect_template(source, page)
+
+
+def ppt_inspect_template_page(template_file: str, page: int = 1) -> dict[str, Any]:
+    """Compatibility alias for saved workflow versions; use pptx_analyzer."""
+    return pptx_analyzer(template_file, page)
 
 
 def ppt_fill_template(template_file: str, source_sha256: str, edits: list[dict]) -> dict[str, Any]:
