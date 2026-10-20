@@ -11,6 +11,7 @@ import lazyllm
 
 from lazymind.chat.engine.tools.file_resources.store import workspace_for_request
 from lazymind.model_config import is_model_role_available
+from lazymind.common.optional_components import component_enabled
 
 
 def temporary_retrieval_scope(config: dict | None = None) -> str:
@@ -40,6 +41,8 @@ def initialize_temporary_retrieval(config: dict | None = None) -> bool:
             row = connection.execute('SELECT use_embed FROM retrieval_mode WHERE id = 1').fetchone()
             if row is not None:
                 return bool(row[0])
-            use_embed = is_model_role_available('embed_main')
+            # Decide once: installing RAG or changing models later must not
+            # change this conversation's retrieval mode.
+            use_embed = component_enabled('rag') and is_model_role_available('embed_main')
             connection.execute('INSERT INTO retrieval_mode (id, use_embed) VALUES (1, ?)', (int(use_embed),))
             return use_embed
