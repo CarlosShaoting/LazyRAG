@@ -19,9 +19,9 @@ from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
 
-# Shared readers and scientific libraries remain in core for attachments/Skills.
+# Shared readers, BM25 and scientific libraries remain in core for attachments/Skills.
 SEEDS = {
-    'rag': {'milvus-lite', 'pymilvus', 'spacy', 'bm25s', 'pystemmer', 'sentencepiece', 'nltk'},
+    'rag': {'milvus-lite', 'pymilvus', 'spacy', 'sentencepiece', 'nltk'},
 }
 
 

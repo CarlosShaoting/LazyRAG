@@ -1353,6 +1353,8 @@ async def _handle_chat_impl(
             render_file_resource_catalog,
         )
         if conversation_id and not is_context_inspection:
+            from lazymind.chat.engine.tools.temporary_retrieval_session import initialize_temporary_retrieval
+            initialize_temporary_retrieval(agentic_config)
             store = FileResourceStore(chat_agent_workspace(user_id or '0', conversation_id))
             ingest_upload_pdfs(files_map, current_turn_seq=_eff_current_seq, store=store)
             file_catalog = render_file_resource_catalog(store, current_turn_seq=_eff_current_seq)

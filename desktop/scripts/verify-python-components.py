@@ -77,13 +77,23 @@ def base_imports(without_grpc=False):
         forbidden += ('grpc', 'opensearchpy', 'opensearch_protobufs', 'volcenginesdkarkruntime')
     for name in forbidden:
         require(importlib.util.find_spec(name) is None, f'{name} still exists in base; this is not a slim runtime')
-    for name in ('dashscope', 'numpy', 'pandas', 'sklearn', 'umap', 'fitz', 'docx', 'pptx', 'openpyxl'):
+    for name in ('dashscope', 'numpy', 'pandas', 'sklearn', 'umap', 'fitz', 'docx', 'pptx', 'openpyxl',
+                 'bm25s', 'Stemmer', 'jieba'):
         importlib.import_module(name)
         print(f'BASE_IMPORT_OK {name}', flush=True)
     importlib.import_module('lazyllm.tools.rag.readers.ocrReader')
     require('lazyllm.tools.rag.document' not in sys.modules, 'OCR imported knowledge-base document management')
     require('lazyllm.tools.rag.store' not in sys.modules, 'OCR imported knowledge-base storage')
     print('BASE_OCR_IMPORT_OK', flush=True)
+    from lazymind.chat.engine.tools.algo.search_temp import _make_retriever
+    with tempfile.TemporaryDirectory(prefix='base-bm25-check-') as temporary:
+        source = Path(temporary) / 'notes.txt'
+        source.write_text('苹果香蕉水果采购清单。', encoding='utf-8')
+        nodes = _make_retriever(use_embed=False)([str(source)], '苹果水果', topk=1)
+        require(nodes and '苹果' in nodes[0].text, 'Base BM25 retrieval returned no matching text')
+    require('lazymind.chat.engine.tools.algo.search_kb' not in sys.modules,
+            'Temporary retrieval imported knowledge-base service wiring')
+    print('BASE_BM25_RETRIEVAL_OK', flush=True)
 
 
 def overlay_imports(overlay):
@@ -165,7 +175,10 @@ def run_child(name, arguments, logs):
     options = ({'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt'
                else {'start_new_session': True})
     # -B suppresses .pyc but not Numba's JIT cache. Keep signed apps read-only.
-    options['env'] = {**os.environ, 'NUMBA_CACHE_DIR': str(logs / 'numba-cache')}
+    options['env'] = {**os.environ, 'NUMBA_CACHE_DIR': str(logs / 'numba-cache'),
+                      'LAZYLLM_HOME': str(logs / 'lazyllm'), 'LAZYLLM_INIT_DOC': 'False'}
+    if name == 'base':
+        options['env']['LAZYMIND_RAG_ENABLED'] = '0'
     with log_path.open('w', encoding='utf-8') as log:
         child = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, **options)
         try:
@@ -274,6 +287,7 @@ def main():
     args = parser.parse_args()
     if args.worker:
         if args.runtime:
+            sys.path.insert(0, str(args.runtime / 'app/algorithm'))
             source = args.runtime / 'app/algorithm/lazyllm'
             if (source / 'lazyllm').is_dir():
                 sys.path.insert(0, str(source))

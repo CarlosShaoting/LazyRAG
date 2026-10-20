@@ -37,8 +37,9 @@ def _run_probe(script: str, timeout: float = 35) -> dict:
         capture_output=True,
         text=True,
         timeout=timeout,
-        check=True,
+        check=False,
     )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
     return json.loads(completed.stdout.strip().splitlines()[-1])
 
 
@@ -202,34 +203,147 @@ dependency_gate.set()
     assert result['dependencies_released'] is False
 
 
-def test_temporary_attachment_retrieval_triggers_rag_immediately():
-    result = _run_probe('''
+def test_temporary_mode_persists_without_importing_rag(tmp_path):
+    script = r'''
+import importlib.abc
 import json
-import threading
-import time
-import lazymind.chat.runtime_loader as loader
-from lazymind.chat.engine.tools.lazy_kb import kb_tmp_search
-dependency_gate = threading.Event()
-loader._wait_for_kb_runtime = lambda: dependency_gate.wait(30)
-loader.start_background_chat_runtime_warmup()
-real_ensure = loader.ensure_rag_runtime
-def load_then_stop():
-    real_ensure()
-    raise RuntimeError("stop after loading")
-loader.ensure_rag_runtime = load_then_stop
-started = time.perf_counter()
-try:
-    kb_tmp_search("search attachment")
-except RuntimeError as exc:
-    assert str(exc) == "stop after loading"
-print(json.dumps({
-    "elapsed": time.perf_counter() - started,
-    "rag": loader.rag_runtime_status(),
-    "dependencies_released": dependency_gate.is_set(),
-}))
-dependency_gate.set()
-''')
+import sys
+class NoRAG(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == 'lazyllm.tools.rag' or fullname.startswith('lazyllm.tools.rag.'):
+            raise AssertionError('Session initialization imported RAG: ' + fullname)
+sys.meta_path.insert(0, NoRAG())
+from lazymind.chat.engine.tools import temporary_retrieval_session as session
+session.workspace_for_request = lambda **kwargs: TEST_ROOT
+session.is_model_role_available = lambda role: AVAILABLE
+mode = session.initialize_temporary_retrieval({'user_id': 'alice', 'conversation_id': 'chat'})
+assert 'lazyllm.tools.rag' not in sys.modules
+print(json.dumps({'use_embed': mode}))
+'''.replace('TEST_ROOT', repr(str(tmp_path)))
+    assert _run_probe(script.replace('AVAILABLE', 'False')) == {'use_embed': False}
+    # A fresh process and changed configuration still use the saved choice.
+    assert _run_probe(script.replace('AVAILABLE', 'True')) == {'use_embed': False}
 
-    assert result['elapsed'] < 30
-    assert result['rag'] == 'ready'
-    assert result['dependencies_released'] is False
+
+def test_temporary_attachment_retrieval_without_rag(tmp_path):
+    result = _run_probe(r'''
+import importlib.abc
+import json
+import os
+import sys
+from pathlib import Path
+
+class NoOptionalRAG(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split('.')[0] in {
+            'spacy', 'pymilvus', 'milvus_lite', 'grpc', 'opensearchpy',
+            'opensearch_protobufs', 'nltk', 'sentencepiece',
+        }:
+            raise AssertionError("Optional dependency loaded: " + fullname)
+        if fullname in {
+            'lazymind.chat.engine.tools.kb',
+            'lazymind.chat.engine.tools.algo.search_kb',
+        }:
+            raise AssertionError("Knowledge-base service loaded: " + fullname)
+
+sys.meta_path.insert(0, NoOptionalRAG())
+os.environ['LAZYMIND_RAG_ENABLED'] = '0'
+os.environ['LAZYLLM_HOME'] = TEST_ROOT
+import lazyllm
+from lazymind.chat.engine.tools.lazy_kb import kb_tmp_search
+from lazymind.chat.engine.tools import temporary_files
+from lazymind.chat.engine.tools import temporary_retrieval_session as session
+from lazymind.chat.engine.tools.algo import search_temp
+from lazymind.chat import runtime_loader
+from lazymind.chat.engine.tools.file_resources import store
+
+root = Path(TEST_ROOT)
+fruit = root / 'fruit.txt'
+fruit.write_text('苹果香蕉水果采购清单。', encoding='utf-8')
+rail = root / 'rail.txt'
+rail.write_text('火车铁路运行时刻表。', encoding='utf-8')
+lazyllm.globals['agentic_config'] = {
+    'files': [str(fruit), str(rail)],
+    'history_files_per_turn': {},
+    'user_id': 'test',
+    'conversation_id': 'temporary-files-test',
+}
+def workspace(user_id=None, conversation_id=None):
+    cfg = lazyllm.globals['agentic_config']
+    return str(root / (user_id or cfg['user_id']) / (conversation_id or cfg['conversation_id']))
+store.workspace_for_request = workspace
+session.workspace_for_request = workspace
+temporary_files.get_vocab_manager = lambda _: lambda query: query
+available = False
+session.is_model_role_available = lambda role: available
+search_temp._build_reranker = lambda: None
+calls = []
+fail_embed = False
+def embed(text):
+    calls.append(text)
+    if fail_embed:
+        raise RuntimeError('embedding unavailable')
+    return [1.0, 0.0] if '苹果' in text else [0.0, 1.0]
+search_temp.AutoModel = lambda model: embed
+
+bm25 = kb_tmp_search(semantic_query='苹果水果')
+assert bm25['channels']['semantic'] == 'bm25_chinese', bm25
+assert bm25['hits'][0]['target'] == 'fruit.txt', bm25
+assert not bm25['skipped'], bm25
+assert not calls
+grep = kb_tmp_search(grep_patterns=['时刻表'])
+assert grep['hits'][0]['target'] == 'rail.txt', grep
+assert grep['hits'][0]['line'] == 1
+
+available = True
+# Same chat remains BM25 even after cache eviction or a newly configured model.
+original = search_temp._ensure_retriever()
+search_temp._session_retrievers.clear()
+again = kb_tmp_search(semantic_query='苹果水果')
+assert again['channels']['semantic'] == 'bm25_chinese', again
+assert not calls
+assert search_temp._ensure_retriever() is not original
+
+# A separate chat chooses vector retrieval with its own nodes, even for the same files.
+lazyllm.globals['agentic_config']['conversation_id'] = 'vector-chat'
+vector = kb_tmp_search(semantic_query='苹果水果')
+assert vector['channels']['semantic'] == 'vector', vector
+assert vector['hits'][0]['target'] == 'fruit.txt', vector
+assert not vector['skipped'], vector
+assert calls
+vector_retriever = search_temp._ensure_retriever()
+assert vector_retriever is not original
+calls.clear()
+available = False
+still_vector = kb_tmp_search(semantic_query='苹果水果')
+assert still_vector['channels']['semantic'] == 'vector', still_vector
+assert calls
+fail_embed = True
+failed = kb_tmp_search(semantic_query='苹果水果')
+assert failed['channels']['semantic'] == 'degraded', failed
+assert failed['hits'] == [], failed
+assert any('embedding unavailable' in item['reason'] for item in failed['skipped']), failed
+fail_embed = False
+calls.clear()
+lazyllm.globals['agentic_config']['conversation_id'] = 'temporary-files-test'
+again = kb_tmp_search(semantic_query='苹果水果')
+assert again['channels']['semantic'] == 'bm25_chinese', again
+assert not calls
+
+# Two BM25 chats sharing source paths must not share document/chunk instances.
+first = search_temp._ensure_retriever()._get_retrievers((str(fruit), str(rail)))
+lazyllm.globals['agentic_config']['conversation_id'] = 'another-bm25-chat'
+other = kb_tmp_search(semantic_query='苹果水果')
+assert other['hits'][0]['target'] == 'fruit.txt', other
+second = search_temp._ensure_retriever()._get_retrievers((str(fruit), str(rail)))
+assert first is not second
+assert first[0]._docs[0] is not second[0]._docs[0]
+first_ids = {node.uid for node in first[0]('苹果水果')}
+second_ids = {node.uid for node in second[0]('苹果水果')}
+assert first_ids and second_ids and first_ids.isdisjoint(second_ids)
+assert runtime_loader.rag_runtime_status() == 'not_installed'
+print(json.dumps({'bm25': bm25['total'], 'vector': vector['total']}))
+'''.replace('TEST_ROOT', repr(str(tmp_path))))
+
+    assert result['bm25'] > 0
+    assert result['vector'] > 0

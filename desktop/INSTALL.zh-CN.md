@@ -11,6 +11,18 @@ Developer ID 构建始终使用本次签名后的原生依赖重新生成 RAG ZI
 也不替代界面“安装组件”及服务重启的交互测试。
 个人仓库的 ad-hoc 开发构建仍可使用原有流程，但不证明官方 Developer ID 签名链路通过。
 
+## 临时附件检索基础依赖（2026-10-20）
+
+`bm25s`、`pystemmer` 保留在基础 Python 环境，未安装 RAG 也可以使用聊天附件的
+`kb_tmp_search`：每个 chat 首次实际请求时固定检索模式，未配置 embedding 则使用 BM25，
+已配置则使用向量检索；同一对话后续修改配置不切换模式，新对话独立选择。模式保存于该
+用户/对话工作区的 SQLite，临时 chunk/检索器缓存按对话隔离，沿用可选 rerank 和 adaptive-k。
+知识库后台入库与检索仍需启用 RAG。构建验证增加基础环境中的真实 BM25 召回检查。
+
+本次分包边界变更需要重新构建安装包和配套 RAG ZIP。Actions 已开启重新分包；本地 Mac
+构建须设置 `LAZYMIND_DESKTOP_REBUILD_PYTHON_COMPONENTS=true`。旧固定 catalog 会被边界
+校验拒绝；新 ZIP 按同次构建清单发布，保留旧远端包供旧客户端使用。
+
 ## Actions 自动发布 RAG（2026-10-16）
 
 macOS / Windows Actions 都生成与当前安装包配套的 RAG ZIP。设置 GitHub 仓库

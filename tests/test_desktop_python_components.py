@@ -65,7 +65,8 @@ class DependencyGroupsTests(unittest.TestCase):
             binary = site / '../../../bin/milvus-lite'
             binary.parent.mkdir(parents=True)
             binary.write_text('entrypoint stays in base')
-            for name in set.union(*components.SEEDS.values()) | {'numpy', 'dashscope'}:
+            base_packages = {'numpy', 'dashscope', 'bm25s', 'pystemmer', 'jieba', 'scipy'}
+            for name in set.union(*components.SEEDS.values()) | base_packages:
                 module = name.replace('-', '_')
                 (site / module).mkdir()
                 (site / module / '__init__.py').write_text('# test module\n')
@@ -85,6 +86,8 @@ class DependencyGroupsTests(unittest.TestCase):
             self.assertTrue((site / 'numpy/__init__.py').is_file())
             self.assertFalse((site / 'spacy').exists())
             self.assertTrue((site / 'dashscope/__init__.py').is_file())
+            for name in base_packages:
+                self.assertTrue((site / name / '__init__.py').is_file())
             self.assertEqual(set(catalog['components']), {'rag'})
             for ident, item in catalog['components'].items():
                 self.assertRegex(
@@ -99,6 +102,7 @@ class DependencyGroupsTests(unittest.TestCase):
                     self.assertEqual(manifest['id'], ident)
                     self.assertTrue(any(n.endswith('/LICENSE') for n in bundle.namelist()))
                     self.assertFalse(any('bin/' in n or '..' in n for n in bundle.namelist()))
+                    self.assertFalse(base_packages & manifest['packages'].keys())
                 self.assertTrue(item['url'].startswith('https://cdn.example/components/'))
 
 
