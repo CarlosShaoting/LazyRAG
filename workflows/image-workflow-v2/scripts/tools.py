@@ -7,7 +7,10 @@ operations required by the V2 production flow.
 """
 from __future__ import annotations
 
+from functools import lru_cache
+import importlib.util
 import json
+import os
 from pathlib import Path
 import re
 from typing import Any, List, Optional
@@ -672,10 +675,40 @@ def select_meme_delivery_route(delivery_mode: str) -> dict[str, Any]:
     return _select_workflow_route(delivery_mode, _MEME_DELIVERY_TARGETS, 'delivery_mode')
 
 
+@lru_cache(maxsize=1)
 def _legacy_image_tools():
-    """Shared installed runtime; no dependency on another workflow's source tree."""
-    from lazymind.chat.engine.tools.infra import image_workflow_support
-    return image_workflow_support
+    """Load the built-in image workflow's stable search and caption helpers."""
+    import lazymind
+
+    candidates = [
+        Path(lazymind.__file__).resolve().parents[2],
+        Path.cwd(),
+        *Path.cwd().parents,
+        *Path(__file__).resolve().parents,
+    ]
+    repo_root = next(
+        root
+        for root in candidates
+        if (root / 'workflows' / 'image-workflow' / 'scripts' / 'tools.py').is_file()
+    )
+    source = repo_root / 'workflows' / 'image-workflow' / 'scripts' / 'tools.py'
+    if not source.is_file():
+        raise RuntimeError(f'image workflow support module not found: {source}')
+    spec = importlib.util.spec_from_file_location('_lazymind_image_workflow_v1_tools', source)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f'cannot load image workflow support module: {source}')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    configured_font = str(os.getenv('LAZYMIND_MEME_FONT_PATH') or '').strip()
+    module._CJK_FONT_CANDIDATES = tuple(
+        candidate for candidate in (configured_font, *module._CJK_FONT_CANDIDATES)
+        if candidate
+    )
+    module._LATIN_FONT_CANDIDATES = tuple(
+        candidate for candidate in (configured_font, *module._LATIN_FONT_CANDIDATES)
+        if candidate
+    )
+    return module
 
 
 def image_search_and_validate(
