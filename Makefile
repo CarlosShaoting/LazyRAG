@@ -165,7 +165,7 @@ export LAZYLLM_ALGO_REGISTER_POLICY ?= none
 # `make local-up LAZYMIND_RAG_ENABLED=false` to skip initial RAG dependencies.
 # Users can install RAG later from Settings; completed manual installs stay enabled.
 export LAZYMIND_RAG_ENABLED ?= true
-export LAZYMIND_DYNAMIC_PROMPT_MODULES ?= false
+export LAZYMIND_DYNAMIC_PROMPT_MODULES ?= true
 # Short flags for local development (also accept the full environment names).
 # Explicit short flags take precedence when both forms are supplied.
 ifneq ($(strip $(ENABLE_RAG)),)
@@ -253,8 +253,8 @@ help:
 	@echo "  make kong-refresh - Restart Kong only (fixes 上游服务错误 / Kong 502 after a partial compose rebuild)"
 	@echo "                    Use SERVICES=svc1,svc2 to target specific services"
 	@echo "  make local-up - Build/start local LazyMind without containers"
-	@echo "                    Alias: make localup DYNAMIC_PROMPT=true ENABLE_RAG=false"
-	@echo "                    Defaults: DYNAMIC_PROMPT=false ENABLE_RAG=true; installed RAG stays enabled"
+	@echo "                    Test deployment: make localup DYNAMIC_PROMPT=false ENABLE_RAG=false"
+	@echo "                    Defaults: DYNAMIC_PROMPT=true ENABLE_RAG=true; installed RAG stays enabled"
 	@echo "  make local-up-lan - Build/start local LazyMind for LAN access with local admin auto-login enabled"
 	@echo "  make desktop-dev - Start source Electron + Desktop Vite HMR against a running make local-up"
 	@echo "  make desktop-dev-down - Stop Desktop dev processes without stopping Local Runtime"
