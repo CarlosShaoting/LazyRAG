@@ -1,42 +1,29 @@
 from __future__ import annotations
 
 import json
-import math
 from pathlib import Path
 import re
 from typing import Any, Dict, List, Optional, Union
 
-import lazyllm
 from lazyllm.tools.agent import ToolExecutionError
-from lazyllm.tools.tool_config_inject import effective_env_value
-from PIL import Image
 
-from lazymind.chat.engine.tools.infra.image_generation_support import (
-    _resolve_source_image_paths,
-    run_image_model_instance,
+from lazymind.chat.engine.tools.multimodal import (
+    image_editor,
+    image_generator,
 )
 
-_BAOYU_ADAPTER = 'baoyu-image-gen'
-_BAOYU_PROVIDER = 'seedream'
-_BAOYU_SOURCE = 'doubao'
-_BAOYU_MODEL = 'doubao-seedream-5-0-260128'
-_TARGET_PIXELS = 2048 * 2048
-_MIN_DIMENSION = 512
-_MAX_DIMENSION = 4096
-_DIMENSION_MULTIPLE = 8
-
 _ASPECT_RATIO_SIZES = {
-    '1:1': '2048x2048',
-    # Seedream 5.0 requires more than 3,686,400 pixels. 2560x1440 is exactly
-    # that boundary and is rejected by the Ark API, so use the next exact 16:9
-    # dimensions that are also multiples of eight.
-    '16:9': '2688x1512',
-    '9:16': '1512x2688',
-    '4:3': '2304x1728',
-    '3:4': '1728x2304',
-    '3:2': '2496x1664',
-    '2:3': '1664x2496',
-    '21:9': '3024x1296',
+    # Keep hints near LazyMind's provider-neutral 1024px default. Concrete
+    # providers may normalize them further, while the prompt also carries the
+    # requested ratio so models that expose only fixed sizes retain the intent.
+    '1:1': '1024x1024',
+    '16:9': '1344x768',
+    '9:16': '768x1344',
+    '4:3': '1152x864',
+    '3:4': '864x1152',
+    '3:2': '1152x768',
+    '2:3': '768x1152',
+    '21:9': '1344x576',
 }
 
 _SUPPORTED_RATIO_RE = re.compile(
@@ -65,30 +52,6 @@ def _coerce_url_list(urls: Optional[Union[str, List[str]]]) -> List[str]:
     return [text]
 
 
-def _seedream_api_key() -> str:
-    key = effective_env_value('ARK_API_KEY').strip()
-    if not key:
-        try:
-            key = str(lazyllm.config['doubao_api_key'] or '').strip()
-        except (KeyError, TypeError):
-            key = ''
-    if not key:
-        raise ToolExecutionError.with_missing_env(
-            'Baoyu Seedream image generation requires ARK_API_KEY.',
-            ['ARK_API_KEY'],
-        )
-    return key
-
-
-def _seedream_model(*, editing: bool) -> Any:
-    return lazyllm.OnlineMultiModalModule(
-        source=_BAOYU_SOURCE,
-        model=_BAOYU_MODEL,
-        type='image_editing' if editing else 'text2image',
-        api_key=_seedream_api_key(),
-    )
-
-
 def _size_for_aspect_ratio(aspect_ratio: str) -> str:
     ratio = str(aspect_ratio or '').strip()
     try:
@@ -100,58 +63,75 @@ def _size_for_aspect_ratio(aspect_ratio: str) -> str:
         ) from exc
 
 
-def _round_dimension(value: float) -> int:
-    rounded = int(round(value / _DIMENSION_MULTIPLE) * _DIMENSION_MULTIPLE)
-    return max(_MIN_DIMENSION, min(_MAX_DIMENSION, rounded))
-
-
-def _size_for_source_image(source_path: str) -> str:
-    try:
-        with Image.open(Path(source_path)) as image:
-            width, height = image.size
-    except (OSError, ValueError) as exc:
+def _require_generated_result(result: Dict[str, Any], role: str) -> Dict[str, Any]:
+    """Convert a missing global media role into a clear workflow failure."""
+    if not isinstance(result, dict):
+        raise ToolExecutionError(f'Configured {role} returned an invalid result.')
+    if result.get('status') == 'blocked':
+        control = result.get('_agent_control')
+        marker = control.get('final_text') if isinstance(control, dict) else ''
         raise ToolExecutionError(
-            f'Cannot inspect source image dimensions: {source_path}'
-        ) from exc
-    if width < 1 or height < 1:
-        raise ToolExecutionError('Source image has invalid dimensions.')
-    ratio = width / height
-    target_height = math.sqrt(_TARGET_PIXELS / ratio)
-    target_width = target_height * ratio
-    return f'{_round_dimension(target_width)}x{_round_dimension(target_height)}'
+            str(marker or result.get('message') or f'No configured {role} model is available.')
+        )
+    images = result.get('images') or []
+    if not images and not result.get('local_path'):
+        raise ToolExecutionError(f'Configured {role} returned no generated image files.')
+    result.setdefault('model_role', role)
+    return result
 
 
-def _run_seedream(
+def _generate_with_configured_model(
     prompt: str,
     *,
-    files: Optional[List[str]],
-    image_size: str,
+    aspect_ratio: str,
+    urls: Optional[Union[str, List[str]]] = None,
 ) -> Dict[str, Any]:
-    model = _seedream_model(editing=bool(files))
-    return run_image_model_instance(
-        model,
-        prompt,
-        files=files,
+    """Generate through the request-scoped LazyMind media-model roles."""
+    references = _coerce_url_list(urls)
+    image_size = _size_for_aspect_ratio(aspect_ratio)
+    ratio_prompt = f'{prompt}\nRequested output aspect ratio: {aspect_ratio}.'
+    if references:
+        result = image_editor(
+            ratio_prompt,
+            references,
+            image_size=image_size,
+            batch_size=1,
+        )
+        return _require_generated_result(result, 'image_editor')
+    result = image_generator(
+        ratio_prompt,
         image_size=image_size,
         batch_size=1,
-        # Seedream 5.0 rejects the legacy guidance_scale field. LazyLLM's
-        # Doubao adapter still defaults it to 2.5, so explicitly pass None;
-        # the Ark SDK omits null optionals from the request payload.
-        # LazyLLM's Doubao adapter names the provider field ``size`` and ignores
-        # the generic ``image_size`` kwarg. Pass both through the normalizer so
-        # the Ark request does not silently fall back to 1024x1024.
-        model_call_options={
-            'size': image_size,
-            'watermark': False,
-            'guidance_scale': None,
-        },
-        metadata={
-            'adapter': _BAOYU_ADAPTER,
-            'provider': _BAOYU_PROVIDER,
-            'model': _BAOYU_MODEL,
-            'attempts': 1,
-        },
     )
+    return _require_generated_result(result, 'image_generator')
+
+
+def _edit_with_configured_model(
+    prompt: str,
+    urls: Union[str, List[str]],
+    *,
+    aspect_ratio: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Edit one authoritative image through the configured editor role."""
+    references = _coerce_url_list(urls)
+    if len(references) != 1:
+        raise ToolExecutionError(
+            'Configured image editing requires exactly one authoritative source image.'
+        )
+    ratio = str(aspect_ratio or '').strip()
+    image_size = _size_for_aspect_ratio(ratio or '1:1')
+    edit_prompt = prompt
+    if ratio:
+        edit_prompt += f'\nRequested output aspect ratio: {ratio}.'
+    else:
+        edit_prompt += '\nPreserve the source image aspect ratio.'
+    result = image_editor(
+        edit_prompt,
+        references,
+        image_size=image_size,
+        batch_size=1,
+    )
+    return _require_generated_result(result, 'image_editor')
 
 
 def _artifact_rows(key: str) -> List[Dict[str, Any]]:
@@ -235,19 +215,19 @@ def _immutable_request() -> str:
 
 
 def _publish_generated_images(slot: str, result: Dict[str, Any], source_tool: str) -> Dict[str, Any]:
-    """Publish only files returned by the in-process image provider call."""
+    """Publish only files returned by the configured LazyMind media model."""
     from lazymind.chat.engine.subagent.tools import _save_artifact
 
     images = result.get('images') if isinstance(result, dict) else None
     if not isinstance(images, list) or not images:
-        raise ToolExecutionError('Seedream returned no normalized image payloads.')
+        raise ToolExecutionError('Configured media model returned no normalized image payloads.')
     saved = []
     for index, image in enumerate(images):
         if not isinstance(image, dict):
-            raise ToolExecutionError('Seedream returned an invalid image payload.')
+            raise ToolExecutionError('Configured media model returned an invalid image payload.')
         local_path = str(image.get('local_path') or '').strip()
         if not local_path or not Path(local_path).is_file():
-            raise ToolExecutionError('Seedream image payload has no real local file.')
+            raise ToolExecutionError('Configured media-model payload has no real local file.')
         save_options: Dict[str, Any] = {
             'content_type': 'image',
             'source_tool': source_tool,
@@ -260,37 +240,11 @@ def _publish_generated_images(slot: str, result: Dict[str, Any], source_tool: st
         'status': 'ok',
         'slot': slot,
         'saved_count': len(saved),
+        'model_role': result.get('model_role'),
         'provider': result.get('provider'),
         'model': result.get('model'),
         'image_size': result.get('image_size'),
     }
-
-
-def baoyu_image_generator(
-    prompt: str,
-    aspect_ratio: str = '1:1',
-    urls: Optional[Union[str, List[str]]] = None,
-) -> Dict[str, Any]:
-    """Generate one image through Baoyu's Seedream routing contract.
-
-    This is LazyMind's deployable, in-process adapter for the Baoyu image
-    workflow. It pins Seedream 5.0 and never launches Bun, npx, or a shell.
-
-    Args:
-        prompt: Detailed prompt describing the requested final image.
-        aspect_ratio: One of 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, or 21:9.
-        urls: Optional reference image path(s) for reference-guided generation.
-
-    Returns:
-        A single generated image using LazyMind's signed image payload contract.
-    """
-    references = _coerce_url_list(urls)
-    files = _resolve_source_image_paths(references) if references else None
-    return _run_seedream(
-        prompt,
-        files=files,
-        image_size=_size_for_aspect_ratio(aspect_ratio),
-    )
 
 
 def generate_ordinary_image() -> Dict[str, Any]:
@@ -302,7 +256,7 @@ def generate_ordinary_image() -> Dict[str, Any]:
     """
     prompt = _artifact_text('ordinary_prompt')
     references = _artifact_image_refs('source_image', 'material_images')
-    result = baoyu_image_generator(
+    result = _generate_with_configured_model(
         prompt,
         aspect_ratio=_requested_aspect_ratio(_immutable_request()),
         urls=references or None,
@@ -310,42 +264,6 @@ def generate_ordinary_image() -> Dict[str, Any]:
     return _publish_generated_images(
         'ordinary_output', result, 'generate_ordinary_image',
     )
-
-
-def baoyu_image_editor(
-    prompt: str,
-    urls: Union[str, List[str]],
-    aspect_ratio: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Edit exactly one authoritative image through Baoyu and Seedream 5.0.
-
-    The source image's aspect ratio is preserved unless ``aspect_ratio`` is
-    explicitly provided by the user.
-
-    Args:
-        prompt: Precise edit contract, including what must remain unchanged.
-        urls: Exactly one authoritative source image path or signed URL.
-        aspect_ratio: Optional explicit output ratio; omitted preserves source ratio.
-
-    Returns:
-        A new edited image; the source file is never overwritten.
-    """
-    references = _coerce_url_list(urls)
-    if len(references) != 1:
-        raise ToolExecutionError(
-            'baoyu_image_editor requires exactly one authoritative source image.'
-        )
-    files = _resolve_source_image_paths(references)
-    if len(files) != 1:
-        raise ToolExecutionError(
-            'Exactly one authoritative source image must resolve successfully.'
-        )
-    image_size = (
-        _size_for_aspect_ratio(aspect_ratio)
-        if str(aspect_ratio or '').strip()
-        else _size_for_source_image(files[0])
-    )
-    return _run_seedream(prompt, files=files, image_size=image_size)
 
 
 def generate_edit_candidate() -> Dict[str, Any]:
@@ -371,7 +289,7 @@ def generate_edit_candidate() -> Dict[str, Any]:
     request = _immutable_request()
     explicit_ratio = _SUPPORTED_RATIO_RE.search(request)
     aspect_ratio = _requested_aspect_ratio(request) if explicit_ratio else None
-    result = baoyu_image_editor(
+    result = _edit_with_configured_model(
         prompt,
         source_refs,
         aspect_ratio=aspect_ratio,

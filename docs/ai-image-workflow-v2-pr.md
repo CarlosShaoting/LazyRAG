@@ -56,7 +56,7 @@
 2. 图片局部编辑；
 3. 静态或动态表情包生产。
 
-普通生图和局部编辑经过工作流包内的 Baoyu 适配层调用 Seedream 5.0；表情包分支保留 LazyMind 原有图片、视频、FFmpeg 和确定性字幕工具链。
+普通生图和局部编辑使用 LazyMind 全局配置的 `image_generator` 和 `image_editor` 模型角色；表情包分支继续使用同一套图片、视频、FFmpeg 和确定性字幕工具链。
 
 本 PR 不替换原有 `image-workflow`，而是增加可独立加载、评审和验证的 V2 工作流。
 
@@ -94,10 +94,10 @@ classify_request → ordinary_prepare → ordinary_generate → end
 
 - 从不可变的启动请求确定性生成素材摘要和生图提示词，避免准备步骤替换主题或遗漏约束；
 - 识别用户明确要求的画面比例，未指定时默认 1:1；
-- 通过 Baoyu 适配层固定调用 `doubao-seedream-5-0-260128`；
+- 无参考图时调用全局 `image_generator`，带参考图时调用全局 `image_editor`；
 - 上传图或素材图可以作为参考，但不会因此将普通生图误判为局部编辑；
 - Provider 返回真实本地图片文件后才发布 `ordinary_output`；
-- 不自动切换 Provider，也不回退到通用 `image_generator`。
+- 不绕过或改写用户在 LazyMind 中选择的媒体模型。
 
 ### 5.2 图片局部编辑
 
@@ -112,7 +112,7 @@ classify_request → edit_prepare → edit_candidate → end
 - 只接受一个权威源图；
 - 编辑前生成包含 `requested_edit`、`edit_scope`、`preserve` 和 `do_not` 的编辑契约；
 - 默认保持源图比例，只有用户明确指定支持的比例时才改变；
-- 通过 Baoyu 适配层调用 Seedream 5.0 图片编辑能力；
+- 通过 LazyMind 全局配置的 `image_editor` 模型角色调用图片编辑能力；
 - 新图片发布为 `edit_candidate`，不覆盖原图；
 - 调用失败时不创建占位图片、伪造 URL 或错误的成功状态。
 
@@ -157,22 +157,19 @@ plan_dynamic
 
 动态分支先生成一个视频样片，再生成其余视频，最后转换并合成带字幕 GIF。静态分支不会进入任何动态图节点。
 
-## 6. Baoyu 与 Seedream 适配
+## 6. 全局媒体模型适配
 
-工作流包新增 `scripts/baoyu.py`，为普通生图和局部编辑提供 Seedream 调用及可信产物发布能力。
+工作流包通过 `scripts/media.py` 为普通生图和局部编辑提供可信产物发布能力，并复用 LazyMind 请求级全局媒体模型配置。
 
 关键约束：
 
-- Provider 固定为 `seedream`；
-- 模型固定为 `doubao-seedream-5-0-260128`；
-- 不通过 shell、Bun 或 npx 启动外部进程；
-- Seedream 5.0 请求不发送已废弃的 `guidance_scale`；
-- 工作流图片尺寸显式映射到 Doubao 请求字段 `size`，避免静默回退到 1024×1024；
-- 16:9 使用 2688×1512，9:16 使用 1512×2688，以满足 Seedream 像素限制；
+- 普通纯文本生图使用当前请求配置的 `image_generator` 角色；
+- 带参考图的普通生成和局部编辑使用 `image_editor` 角色；
+- 模型和凭据由 LazyMind 正常模型配置注入，不读取工作流专用环境变量；
+- 没有配置所需模型能力时返回明确的媒体能力缺失错误；
+- 比例提示使用接近 1024 像素的供应商中立尺寸，并同时保留在模型提示词中；
 - 复用 LazyMind 现有图片产物搬运、签名 URL 和来源登记逻辑；
 - 只有 Provider 返回并成功落盘的真实图片才能成为 Workflow artifact。
-
-共享图片支持模块新增 `run_image_model_instance(...)`，原有 `run_image_model(...)` 继续保留，并转调新函数。既有调用方的参数、返回值和异常行为未被改变。
 
 ## 7. 安全与一致性约束
 
@@ -217,14 +214,14 @@ plan_dynamic
 - `workflows/image-workflow-v2/workflow.yaml`
 - `workflows/image-workflow-v2/scenario/state.yml`
 - `workflows/image-workflow-v2/scenario/scenario.md`
-- `workflows/image-workflow-v2/scripts/baoyu.py`
+- `workflows/image-workflow-v2/scripts/media.py`
 - `workflows/image-workflow-v2/scripts/tools.py`
 - `algorithm/lazymind/chat/engine/tools/infra/image_generation_support.py`
 - `backend/core/workflow/graphengine/compiler_test.go`
 
 专项测试：
 
-- `tests/algorithm/chat/test_image_workflow_v2_baoyu.py`
+- `tests/algorithm/chat/test_image_workflow_v2_media.py`
 - `tests/algorithm/chat/test_image_workflow_v2_tools.py`
 - `tests/algorithm/chat/workflows/test_image_workflow_v2_contract.py`
 
@@ -288,9 +285,9 @@ Windows 环境没有安装 `make` 和 `golangci-lint`，因此 `make lint` 是�
 
 ## 13. 已知兼容边界与风险
 
-- 普通生图和编辑依赖 Seedream Provider 配置及有效凭据；
-- 模型版本被固定为 `doubao-seedream-5-0-260128`，后续模型升级需要显式修改并重新验收；
-- `baoyu.py` 是工作流内的适配实现，不代表运行时直接安装或调用本地 Codex Skill 包；
+- 普通生图和编辑依赖 LazyMind 中已配置且支持相应能力的全局媒体模型；
+- 参考图生成和局部编辑要求当前模型提供 `image_editor` 能力；
+- `media.py` 只负责工作流原子发布，不保存或读取供应商专用凭据；
 - V2 当前与原工作流并存，产品侧是否替换默认入口应由后续评审决定；
 - 动态表情包依赖视频模型与 FFmpeg，运行成本和失败面明显高于静态路线；
 - 在三项未完成的真实验收补齐前，建议 PR 标注为“功能实现完成、部分 E2E 待补”。

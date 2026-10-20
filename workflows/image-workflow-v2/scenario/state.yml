@@ -76,9 +76,10 @@ steps:
     prompt: |
       Call generate_ordinary_image exactly once with no arguments. The package
       tool reads the approved prompt and optional references, derives the ratio
-      from the immutable launch request, calls Baoyu with Seedream 5.0, verifies
-      the returned local file, and publishes ordinary_output atomically. Do not
-      call save_artifacts, retry, switch providers, or synthesize an image URL.
+      from the immutable launch request, calls the globally configured LazyMind
+      image-generator role (or image-editor role when references are supplied),
+      verifies the returned local file, and publishes ordinary_output atomically.
+      Do not call save_artifacts, retry, switch providers, or synthesize an image URL.
       Stop immediately after the tool succeeds.
     terminal_tools: [generate_ordinary_image]
     tools: [generate_ordinary_image]
@@ -128,9 +129,9 @@ steps:
     rerun_when: The user rejects the candidate and explicitly chooses a same-model retry or another configured model with more precise edit instructions.
     prompt: |
       Call generate_edit_candidate exactly once with no arguments. The package
-      tool reads the authoritative image and complete edit contract, calls Baoyu
-      with Seedream 5.0, verifies the returned local file, and publishes the new
-      edit_candidate atomically without overwriting the source. Do not call
+      tool reads the authoritative image and complete edit contract, calls the
+      globally configured LazyMind image-editor role, verifies the returned local
+      file, and publishes the new edit_candidate atomically without overwriting the source. Do not call
       save_artifacts, retry, switch providers, or synthesize an image URL. Stop
       for visual user approval after the tool succeeds. On rejection, record the
       user's explicit choice and rewind this step.

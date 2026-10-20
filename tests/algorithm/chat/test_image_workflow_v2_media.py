@@ -6,122 +6,106 @@ from types import SimpleNamespace
 
 import pytest
 from lazyllm.tools.agent import ToolExecutionError
-from PIL import Image
 
-MODULE_PATH = Path(__file__).resolve().parents[3] / 'workflows' / 'image-workflow-v2' / 'scripts' / 'baoyu.py'
-SPEC = importlib.util.spec_from_file_location('image_workflow_v2_baoyu', MODULE_PATH)
+MODULE_PATH = Path(__file__).resolve().parents[3] / 'workflows' / 'image-workflow-v2' / 'scripts' / 'media.py'
+SPEC = importlib.util.spec_from_file_location('image_workflow_v2_media', MODULE_PATH)
 assert SPEC is not None and SPEC.loader is not None
 module = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(module)
 
 
-def test_supported_aspect_ratios_use_explicit_seedream_sizes():
-    assert module._size_for_aspect_ratio('1:1') == '2048x2048'
-    assert module._size_for_aspect_ratio('16:9') == '2688x1512'
-    assert module._size_for_aspect_ratio('9:16') == '1512x2688'
+def test_supported_aspect_ratios_use_provider_neutral_sizes():
+    assert module._size_for_aspect_ratio('1:1') == '1024x1024'
+    assert module._size_for_aspect_ratio('16:9') == '1344x768'
+    assert module._size_for_aspect_ratio('9:16') == '768x1344'
     with pytest.raises(ToolExecutionError, match='Unsupported aspect_ratio'):
         module._size_for_aspect_ratio('5:4')
 
 
-def test_editor_preserves_source_ratio_when_no_ratio_is_requested(
-    tmp_path: Path,
+def test_editor_uses_global_role_and_preserves_source_ratio_in_prompt(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    source = tmp_path / 'source.png'
-    Image.new('RGB', (1600, 900), 'white').save(source)
     captured = {}
 
-    monkeypatch.setattr(
-        module,
-        '_resolve_source_image_paths',
-        lambda urls: [str(source)],
-    )
-
-    def fake_run(prompt, *, files, image_size):
-        captured.update(prompt=prompt, files=files, image_size=image_size)
+    def fake_editor(prompt, urls, *, image_size, batch_size):
+        captured.update(
+            prompt=prompt, urls=urls, image_size=image_size, batch_size=batch_size,
+        )
         return {'local_path': 'edited.png'}
 
-    monkeypatch.setattr(module, '_run_seedream', fake_run)
+    monkeypatch.setattr(module, 'image_editor', fake_editor)
 
-    result = module.baoyu_image_editor('Change only the hat.', [str(source)])
+    result = module._edit_with_configured_model('Change only the hat.', ['source.png'])
 
-    assert result == {'local_path': 'edited.png'}
+    assert result['local_path'] == 'edited.png'
+    assert result['model_role'] == 'image_editor'
     assert captured == {
-        'prompt': 'Change only the hat.',
-        'files': [str(source)],
-        'image_size': '2728x1536',
+        'prompt': 'Change only the hat.\nPreserve the source image aspect ratio.',
+        'urls': ['source.png'],
+        'image_size': '1024x1024',
+        'batch_size': 1,
     }
 
 
 def test_editor_requires_one_authoritative_source():
     with pytest.raises(ToolExecutionError, match='exactly one authoritative'):
-        module.baoyu_image_editor('edit', [])
+        module._edit_with_configured_model('edit', [])
     with pytest.raises(ToolExecutionError, match='exactly one authoritative'):
-        module.baoyu_image_editor('edit', ['a.png', 'b.png'])
+        module._edit_with_configured_model('edit', ['a.png', 'b.png'])
 
 
-def test_seedream_model_is_pinned_and_uses_session_ark_key(
+def test_plain_generation_uses_global_generator_without_provider_env(
     monkeypatch: pytest.MonkeyPatch,
 ):
     captured = {}
-    sentinel = object()
 
-    monkeypatch.setattr(
-        module,
-        'effective_env_value',
-        lambda name: 'session-key' if name == 'ARK_API_KEY' else '',
+    def fake_generator(prompt, *, image_size, batch_size):
+        captured.update(prompt=prompt, image_size=image_size, batch_size=batch_size)
+        return {'local_path': 'generated.png'}
+
+    monkeypatch.setattr(module, 'image_generator', fake_generator)
+
+    result = module._generate_with_configured_model(
+        'A fox', aspect_ratio='16:9', urls=None,
     )
 
-    def fake_online_module(**kwargs):
-        captured.update(kwargs)
-        return sentinel
-
-    monkeypatch.setattr(module.lazyllm, 'OnlineMultiModalModule', fake_online_module)
-
-    assert module._seedream_model(editing=True) is sentinel
+    assert result['model_role'] == 'image_generator'
     assert captured == {
-        'source': 'doubao',
-        'model': 'doubao-seedream-5-0-260128',
-        'type': 'image_editing',
-        'api_key': 'session-key',
+        'prompt': 'A fox\nRequested output aspect ratio: 16:9.',
+        'image_size': '1344x768',
+        'batch_size': 1,
     }
 
 
-def test_seedream_key_failure_is_structured(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(module, 'effective_env_value', lambda name: '')
-    monkeypatch.setattr(module.lazyllm, 'config', {'doubao_api_key': ''})
-
-    with pytest.raises(ToolExecutionError) as raised:
-        module._seedream_api_key()
-
-    assert raised.value.missing_env == ['ARK_API_KEY']
-
-
-def test_seedream_result_records_adapter_provenance(monkeypatch: pytest.MonkeyPatch):
-    sentinel = object()
+def test_reference_generation_uses_global_editor_role(monkeypatch: pytest.MonkeyPatch):
     captured = {}
-    monkeypatch.setattr(module, '_seedream_model', lambda *, editing: sentinel)
 
-    def fake_run(model, prompt, **kwargs):
-        captured.update(model=model, prompt=prompt, **kwargs)
-        return {'local_path': 'generated.png', **kwargs['metadata']}
+    def fake_editor(prompt, urls, *, image_size, batch_size):
+        captured.update(
+            prompt=prompt, urls=urls, image_size=image_size, batch_size=batch_size,
+        )
+        return {'local_path': 'generated.png'}
 
-    monkeypatch.setattr(module, 'run_image_model_instance', fake_run)
+    monkeypatch.setattr(module, 'image_editor', fake_editor)
 
-    result = module._run_seedream('A fox', files=None, image_size='2048x2048')
+    result = module._generate_with_configured_model(
+        'Restyle this image', aspect_ratio='1:1', urls=['reference.png'],
+    )
 
-    assert captured['model'] is sentinel
-    assert captured['files'] is None
-    assert captured['batch_size'] == 1
-    assert captured['model_call_options'] == {
-        'size': '2048x2048',
-        'watermark': False,
-        'guidance_scale': None,
-    }
-    assert result['adapter'] == 'baoyu-image-gen'
-    assert result['provider'] == 'seedream'
-    assert result['model'] == 'doubao-seedream-5-0-260128'
-    assert result['attempts'] == 1
+    assert result['model_role'] == 'image_editor'
+    assert captured['urls'] == ['reference.png']
+
+
+def test_missing_global_media_role_is_a_clear_workflow_error(monkeypatch: pytest.MonkeyPatch):
+    marker = 'MEDIA_CAPABILITY_DEPENDENCY_MISSING {"required":["image_generator"]}'
+    monkeypatch.setattr(module, 'image_generator', lambda *args, **kwargs: {
+        'status': 'blocked',
+        'message': 'No configured image generator.',
+        '_agent_control': {'final_text': marker},
+    })
+
+    with pytest.raises(ToolExecutionError, match='MEDIA_CAPABILITY_DEPENDENCY_MISSING'):
+        module._generate_with_configured_model('A fox', aspect_ratio='1:1')
 
 
 @pytest.mark.parametrize(
@@ -150,12 +134,11 @@ def test_generate_ordinary_image_only_publishes_real_provider_file(
     monkeypatch.setattr(module, '_immutable_request', lambda: '16:9 横版')
     monkeypatch.setattr(
         module,
-        'baoyu_image_generator',
+        '_generate_with_configured_model',
         lambda prompt, aspect_ratio, urls: {
             'images': [{'local_path': str(generated), 'image_url': '/static-files/x'}],
-            'provider': 'seedream',
-            'model': 'seedream-5',
-            'image_size': '2688x1512',
+            'model_role': 'image_generator',
+            'image_size': '1344x768',
         },
     )
     fake_tools = SimpleNamespace(
@@ -179,7 +162,7 @@ def test_generate_ordinary_image_cannot_publish_after_provider_failure(
     monkeypatch.setattr(module, '_immutable_request', lambda: '1:1')
     monkeypatch.setattr(
         module,
-        'baoyu_image_generator',
+        '_generate_with_configured_model',
         lambda *args, **kwargs: (_ for _ in ()).throw(ToolExecutionError('provider failed')),
     )
 
@@ -212,12 +195,11 @@ def test_generate_edit_candidate_uses_contract_and_real_source(
         captured.update(prompt=prompt, urls=urls, aspect_ratio=aspect_ratio)
         return {
             'images': [{'local_path': str(generated)}],
-            'provider': 'seedream',
-            'model': 'seedream-5',
-            'image_size': '2048x2048',
+            'model_role': 'image_editor',
+            'image_size': '1024x1024',
         }
 
-    monkeypatch.setattr(module, 'baoyu_image_editor', fake_editor)
+    monkeypatch.setattr(module, '_edit_with_configured_model', fake_editor)
     fake_tools = SimpleNamespace(
         _save_artifact=lambda *args, **kwargs: saved.append((args, kwargs)) or {'status': 'ok'}
     )

@@ -1,11 +1,11 @@
 id: image-workflow-v2
 name: AI Image Production V2
 description: >
-  Locally customized image production workflow with three final-deliverable
+  Image production workflow with three final-deliverable
   routes: ordinary image generation, authoritative-source local editing, and
   static or dynamic meme-pack production. Ordinary generation and local editing
-  use LazyMind's built-in Baoyu adapter pinned to Seedream 5.0; meme production
-  keeps the existing native LazyMind media toolchain and establishes an
+  use LazyMind's request-scoped global image-generator and image-editor model
+  roles; meme production uses the same native media toolchain and establishes an
   approved canonical character and extracts one grounded visual identity lock
   before state planning. The same lock is reused unchanged for every dynamic key
   image, and each state uses exactly one key image as the locked visual
@@ -15,7 +15,9 @@ description: >
   captions are rendered locally after inspecting the actual whitespace.
 
 when_to_use: >
-  Use for complex image generation, local image editing, static memes, animated
+  Use for ordinary image generation, authoritative local editing, or reviewed
+  multi-state meme production with the media models configured in LazyMind.
+  Use for static memes, animated
   GIF stickers, reaction images, or multi-state meme packs that benefit from
   explicit planning and review. Final meme delivery overrides whether a source
   image is uploaded, searched, or generated. For memes, choose exactly one
@@ -25,10 +27,8 @@ runtime:
   publisher_owned_slots: [route_plan, material_summary, ordinary_prompt, ordinary_output, edit_candidate]
 
 tool_scripts:
-  - path: scripts/baoyu.py
+  - path: scripts/media.py
     functions:
-      - baoyu_image_generator
-      - baoyu_image_editor
       - generate_ordinary_image
       - generate_edit_candidate
   - path: scripts/tools.py

@@ -29,16 +29,14 @@ def test_package_declares_three_final_deliverable_routes():
     assert state['steps']['ordinary_prepare']['terminal_tools'] == ['prepare_ordinary_request']
 
 
-def test_ordinary_and_edit_routes_use_workflow_owned_baoyu_seedream_tools():
+def test_ordinary_and_edit_routes_use_configured_global_media_models():
     workflow = _load('workflow.yaml')
     state = _load('scenario/state.yml')
     declarations = {
         entry['path']: set(entry['functions'])
         for entry in workflow['tool_scripts']
     }
-    assert declarations['scripts/baoyu.py'] == {
-        'baoyu_image_generator',
-        'baoyu_image_editor',
+    assert declarations['scripts/media.py'] == {
         'generate_ordinary_image',
         'generate_edit_candidate',
     }
@@ -46,9 +44,12 @@ def test_ordinary_and_edit_routes_use_workflow_owned_baoyu_seedream_tools():
     assert state['steps']['ordinary_generate']['terminal_tools'] == ['generate_ordinary_image']
     assert state['steps']['edit_candidate']['tools'] == ['generate_edit_candidate']
     assert state['steps']['edit_candidate']['terminal_tools'] == ['generate_edit_candidate']
-    assert 'Seedream 5.0' in state['steps']['ordinary_generate']['prompt']
+    ordinary_prompt = ' '.join(state['steps']['ordinary_generate']['prompt'].split())
+    assert 'globally configured LazyMind' in ordinary_prompt
+    assert 'Seedream' not in ordinary_prompt
     edit_prompt = ' '.join(state['steps']['edit_candidate']['prompt'].split())
     assert 'authoritative image and complete edit contract' in edit_prompt
+    assert 'globally configured LazyMind image-editor role' in edit_prompt
 
 
 def test_meme_route_keeps_native_media_toolchain_and_validated_brief():

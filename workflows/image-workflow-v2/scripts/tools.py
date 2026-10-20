@@ -251,8 +251,8 @@ def prepare_ordinary_request() -> dict[str, Any]:
     """Publish a faithful ordinary-image prompt from the immutable request.
 
     The deterministic wrapper prevents a planning model from substituting an
-    unrelated subject or forgetting one of the required artifacts. Seedream
-    accepts multilingual prompts, so the user's exact wording stays intact.
+    unrelated subject or forgetting one of the required artifacts. The user's
+    exact wording stays intact for the configured global media model.
 
     Returns:
         The published material summary and ordinary image prompt.
