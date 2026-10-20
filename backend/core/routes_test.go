@@ -21,6 +21,20 @@ func TestStoredDocumentSearchRouteDoesNotRequireRAG(t *testing.T) {
 	}
 }
 
+func TestNativeSegmentDetailRouteDoesNotRequireRAG(t *testing.T) {
+	t.Setenv("LAZYMIND_RAG_ENABLED", "false")
+	router := mux.NewRouter()
+	registerAllRoutes(router)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/datasets/test/documents/test/segments/test", nil))
+	if rec.Code == http.StatusServiceUnavailable {
+		t.Fatalf("native segment detail blocked by RAG gate: %s", rec.Body.String())
+	}
+	if rec.Code == http.StatusOK {
+		t.Fatal("segment detail must still require identity")
+	}
+}
+
 func TestWriterDocumentSyncRouteParsesSingleSlotIndex(t *testing.T) {
 	r := mux.NewRouter()
 	r.UseEncodedPath()

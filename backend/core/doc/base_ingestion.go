@@ -148,6 +148,9 @@ func baseDocumentChunks(artifact *baseArtifact, pageToken string, pageSize int, 
 		return DocumentChunksResult{}, err
 	}
 	nodes := artifact.Chunks
+	if group != "" && group != "block" && group != "Chunk" && group != RootNodeGroup {
+		return DocumentChunksResult{Chunks: []DocumentChunk{}, TotalSize: 0}, nil
+	}
 	if group == RootNodeGroup {
 		nodes = artifact.Roots
 	}

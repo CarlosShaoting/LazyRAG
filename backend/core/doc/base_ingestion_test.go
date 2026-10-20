@@ -16,6 +16,21 @@ import (
 	"lazymind/core/common/readonlyorm"
 )
 
+func TestNativeChunksDoNotMasqueradeAsOtherGroups(t *testing.T) {
+	artifact := &baseArtifact{Chunks: []baseNode{{ID: "chunk", Text: "text"}},
+		Roots: []baseNode{{Text: "root"}}}
+	for _, group := range []string{"image", "summary", "qa"} {
+		result, err := baseDocumentChunks(artifact, "", 20, group)
+		if err != nil || result.TotalSize != 0 || len(result.Chunks) != 0 {
+			t.Fatalf("unexpected %s chunks: %+v, %v", group, result, err)
+		}
+	}
+	result, err := baseDocumentChunks(artifact, "", 20, "block")
+	if err != nil || result.TotalSize != 1 || result.Chunks[0].Text != "text" {
+		t.Fatalf("missing native chunks: %+v, %v", result, err)
+	}
+}
+
 func TestNativeIngestionWithoutRAGAndDeferredSubmission(t *testing.T) {
 	t.Setenv("LAZYMIND_RAG_ENABLED", "false")
 	t.Setenv("LAZYMIND_RUNTIME_MODE", "local")

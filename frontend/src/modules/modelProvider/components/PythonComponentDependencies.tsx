@@ -86,6 +86,6 @@ export function RAGComponentNotice() {
     action={<Button onClick={refresh}>重试</Button>} />;
   if (availability !== "missing") return null;
   return <Alert type="info" showIcon style={{ margin: 16 }} message="本地知识库组件尚未启用"
-    description="文件仍保留在知识库内，也可以继续上传保存；未安装组件时不解析、不切分、不生成向量。解析与检索需要安装并启用组件。"
+    description="未安装组件时仍可保存原文件，并对支持的格式提取文本、生成基础分块；不生成向量。图片文字需要 OCR。安装组件且 embedding 就绪后，目标为索引的文档会继续处理。"
     action={<Link to="/settings?section=system_tools#python-rag-dependency">安装组件</Link>} />;
 }

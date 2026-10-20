@@ -439,7 +439,7 @@ func fetchChunksPage(r *http.Request, datasetID, kbID, documentID, lazyDocID, al
 			}
 		}
 	}
-	if strings.TrimSpace(lazyDocID) == "" {
+	if strings.TrimSpace(lazyDocID) == "" || !systemdeps.PythonComponentActive("rag") {
 		return map[string]any{"items": []any{}, "total_size": 0}, "", nil
 	}
 	queryURL := buildChunksURL(kbID, algoID, lazyDocID, group, page, pageSize)

@@ -374,7 +374,7 @@ func registerAllRoutes(r *mux.Router) {
 	handleAPI(r, "GET", "/document/tags", []string{"document.read"}, doc.AllDocumentTags)
 	// ----- text -----
 	handleAPI(r, "GET", "/datasets/{dataset}/documents/{document}/segments", []string{"document.read"}, doc.ListSegments)
-	handleAPI(r, "GET", "/datasets/{dataset}/documents/{document}/segments/{segment}", []string{"document.read"}, systemdeps.RequireRAG(doc.GetSegment))
+	handleAPI(r, "GET", "/datasets/{dataset}/documents/{document}/segments/{segment}", []string{"document.read"}, doc.GetSegment)
 	handleAPI(r, "POST", "/datasets/{dataset}/documents/{document}/segments:search", []string{"document.read"}, doc.SearchSegments)
 
 	// ----- DatasetMembertext -----

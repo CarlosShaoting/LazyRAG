@@ -62,6 +62,28 @@ def split_baseline(text, size=2048):
 
 def _read_nodes(path):
     suffix = path.suffix.lower()
+    if suffix in ('.tif', '.tiff', '.png', '.jpg', '.jpeg', '.bmp', '.webp', '.gif'):
+        raise ValueError('图片文件需要 OCR 才能提取文字；原文件已保留，请配置 OCR 后重试。')
+    if suffix == '.ipynb':
+        notebook = json.loads(path.read_text(encoding='utf-8'))
+        if not isinstance(notebook, dict) or notebook.get('nbformat') != 4:
+            raise ValueError('Invalid notebook: expected nbformat 4')
+        cells = notebook.get('cells')
+        if not isinstance(cells, list):
+            raise ValueError('Invalid notebook cells')
+        nodes = []
+        for index, cell in enumerate(cells):
+            if not isinstance(cell, dict):
+                raise ValueError('Invalid notebook cell')
+            source = cell.get('source', '')
+            if isinstance(source, list) and all(isinstance(line, str) for line in source):
+                source = ''.join(source)
+            if not isinstance(source, str):
+                raise ValueError('Invalid notebook cell source')
+            if source.strip():
+                nodes.append({'text': source, 'metadata': {'cell_index': index,
+                                                          'cell_type': cell.get('cell_type', '')}})
+        return nodes
     readers = {'.pdf': LocalDocumentReader._read_pdf, '.docx': LocalDocumentReader._read_docx,
                '.pptx': LocalDocumentReader._read_pptx}
     if suffix in readers:

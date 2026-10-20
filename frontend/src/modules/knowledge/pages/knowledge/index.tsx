@@ -83,7 +83,6 @@ import {
   processingLevelSupportsSegments,
   type ProcessingLevel,
 } from "@/modules/knowledge/utils/processingLevel";
-import { useRAGComponent } from "@/modules/modelProvider/contexts/RAGComponentContext";
 import "./index.scss";
 
 type KnowledgeDetail = Doc & {
@@ -1411,31 +1410,7 @@ const KnowledgeDocumentContent = () => {
 };
 
 const Detail = () => {
-  const { availability, refresh } = useRAGComponent();
-  const navigate = useNavigate();
-
-  if (availability === "ready") {
-    return <KnowledgeDocumentContent />;
-  }
-
-  return (
-    <Alert
-      type={availability === "error" ? "warning" : "info"}
-      showIcon
-      style={{ margin: 24 }}
-      message={availability === "checking"
-        ? "正在检查本地知识库组件状态"
-        : availability === "error"
-          ? "无法确认本地知识库组件状态"
-          : "需要启用本地知识库组件"}
-      description="文档解析、分段、检索和 PDF 处理依赖本地知识库组件。"
-      action={availability === "error"
-        ? <Button onClick={refresh}>重试</Button>
-        : availability === "missing"
-          ? <Button type="primary" onClick={() => navigate("/settings?section=system_tools#python-rag-dependency")}>安装组件</Button>
-          : undefined}
-    />
-  );
+  return <KnowledgeDocumentContent />;
 };
 
 export default Detail;

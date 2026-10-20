@@ -13,6 +13,7 @@ import "./index.scss";
 import type { ParserConfig } from "@/api/generated/knowledge-client";
 import { TaskServiceApi } from "@/modules/knowledge/utils/request";
 import { getLocalizedErrorMessage, localizeErrorCode } from "@/components/request";
+import { useRAGComponent } from "@/modules/modelProvider/contexts/RAGComponentContext";
 import {
   RuntimeReadinessError,
   waitForRuntimeCapability,
@@ -61,6 +62,7 @@ const RestartKnowledgeModal = (
 ) => {
   const { parsers, onFinish } = props;
   const { t } = useTranslation();
+  const { availability } = useRAGComponent();
   const [visible, setVisible] = useState(false);
   const [loading, setLoading] = useState(false);
   const [runtimeWaiting, setRuntimeWaiting] = useState(false);
@@ -125,10 +127,12 @@ const RestartKnowledgeModal = (
 
       const controller = new AbortController();
       runtimeWaitAbortRef.current = controller;
-      await waitForRuntimeCapability("parser", {
-        signal: controller.signal,
-        onWaiting: () => setRuntimeWaiting(true),
-      });
+      if (availability === "ready") {
+        await waitForRuntimeCapability("parser", {
+          signal: controller.signal,
+          onWaiting: () => setRuntimeWaiting(true),
+        });
+      }
       setRuntimeWaiting(false);
 
       const docNames = (modalInfo.names || []).filter(Boolean);
@@ -203,10 +207,11 @@ const RestartKnowledgeModal = (
       label: t("knowledge.reparseStrategyFullReparse"),
     },
   ].filter((option) =>
-    supportsVectorReparse(modalInfo?.processingLevel) ||
+    (availability === "ready" && supportsVectorReparse(modalInfo?.processingLevel)) ||
     option.value !== REPARSE_SCOPE_SLICE_AND_EMBED,
   );
-  const supportsSegments = !modalInfo?.ingest && supportsSegmentReparse(modalInfo?.processingLevel);
+  const supportsSegments = availability === "ready" && !modalInfo?.ingest &&
+    supportsSegmentReparse(modalInfo?.processingLevel);
 
   const reparseStrategyLabel = (
     <span className="reparse-strategy-label">

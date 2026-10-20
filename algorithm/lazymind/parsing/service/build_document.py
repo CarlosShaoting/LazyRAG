@@ -195,7 +195,7 @@ def _register_document_readers(docs: Document) -> None:
     if _runtime_mode() == 'local':
         # Wrap native/default readers without modifying the third-party registry.
         from lazymind.chat.config import CHAT_TEXT_EXTENSIONS
-        for suffix in ('.pdf', '.docx', '.pptx', '.xls', '.xlsx', '.csv', *CHAT_TEXT_EXTENSIONS):
+        for suffix in ('.pdf', '.docx', '.pptx', '.xls', '.xlsx', '.csv', '.ipynb', *CHAT_TEXT_EXTENSIONS):
             if suffix in ('.docx', '.pptx'):
                 fallback = NativeOfficeReader(presentation_reader=pdf_reader)
             elif suffix == '.pdf':
