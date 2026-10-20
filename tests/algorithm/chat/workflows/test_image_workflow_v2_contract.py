@@ -61,15 +61,24 @@ def test_meme_route_keeps_native_media_toolchain_and_validated_brief():
     )
     assert {
         'save_validated_meme_brief',
+        'run_and_save_meme_preflight',
         'compose_character_anchor_sheet',
         'meme_add_caption',
         'meme_video_to_captioned_gif',
     } <= support_tools
     assert state['steps']['meme_brief']['tools'] == ['save_validated_meme_brief']
+    assert state['steps']['meme_preflight']['tools'] == ['run_and_save_meme_preflight']
+    assert state['steps']['meme_preflight']['terminal_tools'] == ['run_and_save_meme_preflight']
     assert state['steps']['render_static']['tools'] == ['image_editor']
     assert state['steps']['render_keyframes']['tools'] == ['image_editor']
     assert state['steps']['video_canary']['tools'] == ['video_generator']
     assert state['steps']['caption_dynamic']['tools'] == ['meme_video_to_captioned_gif']
+    review_inputs = state['steps']['review_pack']['inputs']
+    assert {'material': 'canonical_character_image', 'required': True} in review_inputs
+    assert (
+        'Never fan out concurrent multimodal calls'
+        in state['steps']['review_pack']['prompt']
+    )
 
 
 def test_ui_uses_picture_production_and_hides_empty_branch_outputs():

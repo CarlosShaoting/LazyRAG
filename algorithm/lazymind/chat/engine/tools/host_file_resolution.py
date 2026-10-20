@@ -23,6 +23,50 @@ from lazymind.chat.engine.tools.workspace_context import (
 _STAGED_INPUTS = ContextVar('approved_input_directories', default=(None, ()))
 
 
+def resolve_workflow_media_binding(value: str) -> str:
+    """Resolve an exact Workflow image/video slot name to its bound file.
+
+    Workflow prompts sometimes pass a material key (for example,
+    ``canonical_character_image``) to a media tool.  Resolve that key before
+    ordinary relative-path handling turns it into a nonexistent workspace
+    filename.  Only typed media inputs are eligible, so arbitrary user text is
+    never reinterpreted as a Workflow binding.
+    """
+    raw = str(value or '').strip()
+    if not raw:
+        return raw
+    try:
+        from lazymind.chat.engine.subagent.context import get_context
+
+        ctx = get_context()
+    except Exception:
+        ctx = None
+    params = getattr(ctx, 'params', None)
+    if not isinstance(params, dict):
+        return raw
+    remote_inputs = params.get('remote_inputs')
+    if not isinstance(remote_inputs, dict) or raw not in remote_inputs:
+        return raw
+    input_type = str((params.get('remote_input_types') or {}).get(raw) or '').strip().lower()
+    if input_type not in {'image', 'video'}:
+        return raw
+    bound = remote_inputs[raw]
+    if isinstance(bound, list):
+        values = [item for item in bound if item not in (None, '')]
+        if len(values) != 1:
+            raise ToolExecutionError(
+                f'Workflow media binding {raw!r} contains {len(values)} files; '
+                'pass one concrete file reference to this argument.'
+            )
+        bound = values[0]
+    if isinstance(bound, dict):
+        bound = bound.get('path') or bound.get('image_url') or bound.get('video_url') or bound.get('url')
+    resolved = str(bound or '').strip()
+    if not resolved:
+        raise ToolExecutionError(f'Workflow media binding {raw!r} has no resolvable file path.')
+    return resolved
+
+
 def validate_storage_id(value: object) -> None:
     if isinstance(value, str) and (value in {'.', '..'} or any(c in value for c in ('/', '\\', '\0'))):
         raise ToolExecutionError('Storage identifiers must not contain path components.')
@@ -99,7 +143,7 @@ class FileResolution:
         from lazymind.chat.engine.tools.infra.image_generation_support import _image_url_registry
         from lazymind.chat.service.utils.static_file_url import local_path_from_static_file_url
 
-        raw = str(value or '').strip()
+        raw = resolve_workflow_media_binding(value)
         resolution = get_tool_resolution_context()
         citation = resolution.citation_state if resolution else _image_url_registry()
         raw = str((citation.get('_image_url_registry') or {}).get(raw) or raw)

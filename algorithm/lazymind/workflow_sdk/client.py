@@ -129,7 +129,8 @@ class WorkflowClient:
                  host: str = '', timeout: float = 15.0, read_retries: int = 2,
                  execution_timeout: float = 7200.0, transport: Any = httpx,
                  trace_context: Optional[Callable[[], Any]] = None,
-                 enable_tool_retrieval: Optional[bool] = None):
+                 enable_tool_retrieval: Optional[bool] = None,
+                 thinking_depth: Optional[str] = None):
         connection = ConnectionInfo(_connection_url(base_url), 'argument') if base_url else discover_connection()
         self.connection = connection
         self.base_url = connection.base_url
@@ -144,6 +145,7 @@ class WorkflowClient:
         self.transport = transport
         self.trace_context = trace_context
         self.enable_tool_retrieval = enable_tool_retrieval
+        self.thinking_depth = thinking_depth
 
     def _headers(self, command_id: str = '') -> Dict[str, str]:
         headers = {'Workflow-Contract-Version': CONTRACT_VERSION}
@@ -445,8 +447,14 @@ class WorkflowClient:
                    'workflow_mode': request.workflow_mode,
                    'retry_origin': request.retry_origin,
                    'steps': [asdict(step) for step in request.steps]}
+        parent_agentic_config: Dict[str, Any] = {}
         if self.enable_tool_retrieval is not None:
-            payload['parent_agentic_config'] = {'enable_tool_retrieval': self.enable_tool_retrieval}
+            parent_agentic_config['enable_tool_retrieval'] = self.enable_tool_retrieval
+        if self.thinking_depth in {'low', 'medium', 'high', 'max'}:
+            parent_agentic_config['thinking_depth'] = self.thinking_depth
+            payload['_thinking_depth'] = self.thinking_depth
+        if parent_agentic_config:
+            payload['parent_agentic_config'] = parent_agentic_config
         if self.trace_context is not None:
             context = self.trace_context()
             if context.trace_id and context.parent_span_id:

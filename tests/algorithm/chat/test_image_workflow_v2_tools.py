@@ -224,3 +224,69 @@ def test_meme_brief_publisher_uses_immutable_context_request(monkeypatch) -> Non
     assert result['validation']['explicit_request_count'] == 4
     assert calls[0][0][:2] == ('meme_brief_data', brief)
     assert calls[0][1]['internal_publish'] is True
+
+
+def test_meme_brief_direct_execution_is_auto_approved(monkeypatch) -> None:
+    from lazymind.chat.engine.subagent import context as context_module
+    from lazymind.chat.engine.subagent import tools as subagent_tools
+
+    request = '生成1个静态表情包。方案自动生成后视为已批准，直接执行，无需二次确认。'
+    brief = _approved_brief(['开心啦'])
+    brief.update({
+        'delivery_mode': 'static',
+        'allowed_count': 12,
+        'caption_source': 'proposed',
+        'caption_review_status': 'pending',
+        'brief_status': 'blocked',
+    })
+    brief['states'][0]['caption_review_status'] = 'pending'
+    calls = []
+    monkeypatch.setattr(
+        context_module,
+        'require_context',
+        lambda: SimpleNamespace(params={'user_input': request}),
+    )
+    monkeypatch.setattr(
+        subagent_tools,
+        '_save_artifact',
+        lambda *args, **kwargs: calls.append((args, kwargs)) or {'status': 'ok'},
+    )
+
+    result = image_workflow_support.save_validated_meme_brief(brief)
+
+    saved_brief = calls[0][0][1]
+    assert result['auto_approved'] is True
+    assert saved_brief['caption_review_status'] == 'approved'
+    assert saved_brief['brief_status'] == 'approved'
+    assert saved_brief['states'][0]['caption_review_status'] == 'approved'
+
+
+def test_atomic_meme_preflight_requires_ready_and_saves(monkeypatch) -> None:
+    from lazymind.chat.engine.subagent import tools as subagent_tools
+
+    brief = _approved_brief(['开心啦'])
+    brief['delivery_mode'] = 'static'
+    brief['allowed_count'] = 12
+    calls = []
+    monkeypatch.setattr(
+        subagent_tools,
+        'get_artifact',
+        lambda key: {'status': 'ok', 'artifacts': [{'value': {'data': brief}}]},
+    )
+    monkeypatch.setattr(
+        subagent_tools,
+        '_save_artifact',
+        lambda *args, **kwargs: calls.append((args, kwargs)) or {'status': 'ok'},
+    )
+    monkeypatch.setattr(
+        image_workflow_support,
+        'image_media_preflight',
+        lambda **kwargs: {'ready': True, 'checks': kwargs, 'missing': []},
+    )
+
+    result = image_workflow_support.run_and_save_meme_preflight()
+
+    assert result['status'] == 'ok'
+    assert calls[0][0][0] == 'preflight_report'
+    assert calls[0][0][1]['ready'] is True
+    assert calls[0][1]['internal_publish'] is True

@@ -1027,6 +1027,14 @@ def _open_caption_source(image_url: str) -> Any:
     if not raw:
         raise ValueError('image_url is required')
     if raw.startswith(('http://', 'https://')):
+        # Generated workflow artifacts are commonly exposed to the browser as
+        # absolute localhost URLs. Inside the Chat container, localhost points
+        # back to the worker even though the same file is already mounted under
+        # the shared upload root. Resolve that static-file path locally first.
+        parsed_path = urlparse(raw).path
+        local = local_path_from_static_file_url(parsed_path)
+        if local and Path(local).is_file():
+            return Image.open(local)
         response = requests.get(raw, headers={'User-Agent': _USER_AGENT}, timeout=60)
         response.raise_for_status()
         return Image.open(BytesIO(response.content))

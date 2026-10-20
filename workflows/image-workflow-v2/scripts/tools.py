@@ -71,6 +71,11 @@ _NEGATED_EDIT_RE = re.compile(
     r'(?:image|photo|picture)',
     re.IGNORECASE,
 )
+_MEME_DIRECT_EXECUTION_RE = re.compile(
+    r'(?:方案自动生成后视为已批准|方案(?:已|视为)批准|无需(?:二次)?确认|'
+    r'直接执行(?:生成)?|auto[ -]?approve|execute\s+directly)',
+    re.IGNORECASE,
+)
 
 _MEME_COUNT_PATTERNS = (
     re.compile(
@@ -471,19 +476,42 @@ def save_validated_meme_brief(meme_brief_data: dict[str, Any]) -> dict[str, Any]
     from lazymind.chat.engine.subagent.tools import _save_artifact
 
     ctx = require_context()
-    original_request = str((ctx.params or {}).get('user_input') or '')
+    original_request = effective_image_request(ctx.params or {})
+    normalized_brief = dict(meme_brief_data)
+    normalized_brief['states'] = [
+        dict(state) if isinstance(state, dict) else state
+        for state in (meme_brief_data.get('states') or [])
+    ]
+    auto_approved = bool(_MEME_DIRECT_EXECUTION_RE.search(original_request))
+    if auto_approved:
+        count_status = str(normalized_brief.get('count_status') or '').strip().lower()
+        requires_decision = normalized_brief.get('requires_count_decision')
+        if count_status != 'compliant' or requires_decision is not False:
+            raise ToolExecutionError(
+                'Direct execution cannot auto-approve an over-limit or unresolved meme brief.'
+            )
+        normalized_brief['caption_review_status'] = 'approved'
+        normalized_brief['brief_status'] = 'approved'
+        for state in normalized_brief['states']:
+            if isinstance(state, dict):
+                state['caption_review_status'] = 'approved'
     validation = validate_meme_brief_data(
-        meme_brief_data,
+        normalized_brief,
         original_request,
     )
     saved = _save_artifact(
         'meme_brief_data',
-        meme_brief_data,
+        normalized_brief,
         content_type='json',
         source_tool='save_validated_meme_brief',
         internal_publish=True,
     )
-    return {'status': 'ok', 'validation': validation, 'artifact': saved}
+    return {
+        'status': 'ok',
+        'validation': validation,
+        'auto_approved': auto_approved,
+        'artifact': saved,
+    }
 
 
 def _select_workflow_route(value: str, targets: dict[str, str], field: str) -> dict[str, Any]:
@@ -720,6 +748,54 @@ def image_media_preflight(
             checks.update({'caption_font': False, 'caption_error': str(exc)})
     missing = [name for name, value in checks.items() if isinstance(value, bool) and not value]
     return {'ready': not missing, 'checks': checks, 'missing': missing}
+
+
+def run_and_save_meme_preflight() -> dict[str, Any]:
+    """Validate the approved brief, run media preflight, and publish it atomically."""
+    from lazymind.chat.engine.subagent.tools import _save_artifact, get_artifact
+
+    artifact_result = get_artifact('meme_brief_data')
+    rows = artifact_result.get('artifacts') if isinstance(artifact_result, dict) else None
+    if not rows:
+        raise ToolExecutionError('Required workflow artifact meme_brief_data is missing.')
+    value = rows[-1].get('value') if isinstance(rows[-1], dict) else None
+    brief = value.get('data') if isinstance(value, dict) and 'data' in value else value
+    if isinstance(brief, str):
+        try:
+            brief = json.loads(brief)
+        except json.JSONDecodeError as exc:
+            raise ToolExecutionError('meme_brief_data is not valid JSON.') from exc
+    if not isinstance(brief, dict):
+        raise ToolExecutionError('meme_brief_data must be a JSON object.')
+
+    gates = {
+        'brief_status': brief.get('brief_status') == 'approved',
+        'caption_review_status': brief.get('caption_review_status') == 'approved',
+        'count_status': brief.get('count_status') == 'compliant',
+        'requires_count_decision': brief.get('requires_count_decision') is False,
+    }
+    failed_gates = [name for name, passed in gates.items() if not passed]
+    if failed_gates:
+        raise ToolExecutionError(
+            'Meme brief is not approved for media generation: ' + ', '.join(failed_gates)
+        )
+
+    report = image_media_preflight(
+        require_image_editing=True,
+        require_video=brief.get('delivery_mode') == 'dynamic',
+        require_caption=brief.get('caption_mode') != 'no_text',
+    )
+    if report.get('ready') is not True:
+        missing = ', '.join(str(value) for value in (report.get('missing') or []))
+        raise ToolExecutionError('Media preflight is not ready: ' + (missing or 'unknown'))
+    saved = _save_artifact(
+        'preflight_report',
+        report,
+        content_type='json',
+        source_tool='run_and_save_meme_preflight',
+        internal_publish=True,
+    )
+    return {'status': 'ok', 'preflight_report': report, 'artifact': saved}
 
 
 def compose_character_anchor_sheet(

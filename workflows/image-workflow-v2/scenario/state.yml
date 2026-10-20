@@ -202,6 +202,12 @@ steps:
       caption_review_status=approved at the top level and on every state.
       If delivery mode is missing, ask instead of guessing; never plan both.
 
+      If the immutable launch request explicitly says the generated scheme is
+      already approved, requests direct execution, or says no further
+      confirmation is needed, preserve the generated proposal and pass it to
+      save_validated_meme_brief. The validator owns the deterministic approval
+      normalization; do not second-guess or delay that terminal call.
+
       For dynamic delivery, default caption_mode to caption unless the user
       explicitly requests no text. When the user already supplied exact captions,
       preserve them verbatim and map them to the matching states. Otherwise,
@@ -261,20 +267,14 @@ steps:
     label: Preflight Media Runtime
     mode: auto
     prompt: |
-      Execute only this deterministic preflight step. Do not inspect workflow
-      history, choose or advance another step, or discuss downstream generation.
-      First require meme_brief_data.brief_status=approved,
-      caption_review_status=approved, count_status=compliant, and
-      requires_count_decision=false. Then immediately call
-      image_media_preflight exactly once with require_image_editing=true,
-      require_video=true only when delivery_mode is dynamic, and
-      require_caption=true unless caption_mode is no_text. When ready is true,
-      immediately save the exact tool result as preflight_report. If the brief,
-      captions, or count are unresolved, or ready is false, stop
-      without calling any paid media tool.
-      Never retry, rewind, or call a workflow control tool.
-    terminal_tools: [save_artifacts]
-    tools: [image_media_preflight]
+      Call run_and_save_meme_preflight exactly once with no arguments. The tool
+      reads the authoritative meme_brief_data, rejects an unapproved or
+      over-limit brief, checks every required media capability, requires
+      ready=true, and publishes preflight_report atomically. Do not call
+      image_media_preflight or save_artifacts separately. Do not return prose,
+      retry, rewind, or call a workflow control tool.
+    terminal_tools: [run_and_save_meme_preflight]
+    tools: [run_and_save_meme_preflight]
     inputs: [{material: meme_brief_data, required: true}]
     outputs: [{material: preflight_report, required: true}]
     acceptance_criteria: preflight_report.ready is true; otherwise the workflow fails closed before paid calls.
@@ -662,6 +662,14 @@ steps:
     mode: auto
     prompt: |
       Perform one whole-pack review of the available static_final or gif_output.
+      Use the canonical_character_image materialized in the current SubAgent
+      workspace inputs directory as the identity reference. Resolve and inspect
+      its real absolute local file path; never pass an artifact key, signed URL,
+      or bare material name to a multimodal tool.
+      Inspect inputs strictly one image at a time: wait for each multimodal call
+      to finish before starting the next one. If a call fails with a transient
+      provider 5xx error, retry that same image up to two times before recording
+      it as an inspection failure. Never fan out concurrent multimodal calls.
       Check identity, state readability, action uniqueness, prop/environment
       causality, caption accuracy and safety, and obvious media defects. Save
       pack_review JSON with overall_status, passed_state_ids, and failed_units.
@@ -674,6 +682,7 @@ steps:
     tools: [multimodal]
     terminal_tools: [save_artifacts]
     inputs:
+      - {material: canonical_character_image, required: true}
       - {material: static_final, required: false}
       - {material: gif_output, required: false}
       - {material: meme_brief_data, required: true}

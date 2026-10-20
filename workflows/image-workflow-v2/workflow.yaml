@@ -38,6 +38,7 @@ tool_scripts:
       - image_search_and_validate
       - validate_image_ref
       - image_media_preflight
+      - run_and_save_meme_preflight
       - compose_character_anchor_sheet
       - save_validated_meme_brief
       - select_meme_delivery_route

@@ -872,6 +872,28 @@ def _build_subagent_plan(
         output_lines.append(
             'Optional output artifact keys: ' + ', '.join(optional_keys)
         )
+    workflow_step_id = str(ctx.params.get('step_id') or '').strip()
+    if not publisher_owned_outputs and workflow_step_id == 'render_static':
+        output_lines.append(
+            '## Mandatory all-state render batch\n'
+            'Read the complete static_plan list before the first media call. Attempt every '
+            'planned state exactly once with image_editor, in list order. A successful image '
+            'for one state is an intermediate result, not permission to finish the step. After '
+            'each image_editor result, immediately continue with the next unattempted state '
+            'until no planned state remains. Only then call save_artifacts once, with one '
+            'hero_no_text entry for every successful state in the same order. Never call '
+            'save_artifacts while any planned state is still unattempted.'
+        )
+    elif not publisher_owned_outputs and workflow_step_id == 'caption_static':
+        output_lines.append(
+            '## Mandatory all-image caption batch\n'
+            'Read the complete hero_no_text list before inspecting the first image. Process '
+            'every input image in list order. One completed caption is an intermediate result, '
+            'not permission to finish the step. Continue until every input image has been '
+            'inspected and captioned (or intentionally preserved for no_text mode). Only then '
+            'call save_artifacts once, with one static_final entry for every successful input '
+            'in the same order. Never call save_artifacts while an input image is unprocessed.'
+        )
     if not publisher_owned_outputs:
         output_lines.append(
             '## Exact save_artifacts call shape\n'

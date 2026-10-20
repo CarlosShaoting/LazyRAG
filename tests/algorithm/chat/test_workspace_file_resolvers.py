@@ -104,6 +104,57 @@ def test_canonical_image_path_is_not_reinterpreted_as_upload(host_root, monkeypa
     assert images.resolve_tool_image_path(target) == target
 
 
+def test_media_resolves_typed_workflow_material_key_before_relative_path(host_root, monkeypatch):
+    from lazymind.chat.engine.subagent import context as contexts
+
+    source = host_root / 'canonical.png'
+    source.write_bytes(b'canonical image')
+    ctx = SimpleNamespace(params={
+        'remote_inputs': {'canonical_character_image': str(source)},
+        'remote_input_types': {'canonical_character_image': 'image'},
+    })
+    monkeypatch.setattr(contexts, 'get_context', lambda: ctx)
+
+    result = resolve_media_files({
+        'prompt': 'keep identity',
+        'urls': ['canonical_character_image'],
+    })
+
+    assert result.arguments['urls'] == [str(source)]
+    assert [item.path for item in result.files] == [str(source)]
+
+
+def test_direct_image_resolution_accepts_typed_workflow_material_key(host_root, monkeypatch):
+    from lazymind.chat.engine.subagent import context as contexts
+    from lazymind.chat.engine.tools.infra import image_generation_support as images
+
+    source = host_root / 'canonical.png'
+    source.write_bytes(b'canonical image')
+    ctx = SimpleNamespace(params={
+        'remote_inputs': {
+            'canonical_character_image': {'path': str(source), 'caption': 'approved'},
+        },
+        'remote_input_types': {'canonical_character_image': 'image'},
+    })
+    monkeypatch.setattr(contexts, 'get_context', lambda: ctx)
+    monkeypatch.setattr(images, 'resolve_local_image_path', lambda value: value)
+
+    assert images.resolve_tool_image_path('canonical_character_image') == str(source)
+
+
+def test_single_media_argument_rejects_multi_file_workflow_binding(host_root, monkeypatch):
+    from lazymind.chat.engine.subagent import context as contexts
+
+    ctx = SimpleNamespace(params={
+        'remote_inputs': {'face_anchor_images': ['one.png', 'two.png']},
+        'remote_input_types': {'face_anchor_images': 'image'},
+    })
+    monkeypatch.setattr(contexts, 'get_context', lambda: ctx)
+
+    with pytest.raises(Exception, match='contains 2 files'):
+        resolve_media_files({'urls': ['face_anchor_images']})
+
+
 def test_tool_resolution_snapshot_does_not_use_mutable_subagent_workspace(tmp_path, monkeypatch):
     from lazymind.chat.engine.subagent import context as contexts
     from lazymind.chat.engine.tools.workspace_context import (
