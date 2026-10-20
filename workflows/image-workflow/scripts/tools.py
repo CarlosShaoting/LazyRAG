@@ -492,11 +492,28 @@ def _resolve_local_file(path: str) -> str:
 
 def _probe_local_image(path: str) -> Tuple[str, int, int, str]:
     file_path = _resolve_local_file(path)
+    data = bytearray()
+    width, height, fmt = 0, 0, 'UNKNOWN'
     with open(file_path, 'rb') as fh:
-        data = fh.read(_PROBE_BYTES)
+        while len(data) < _MAX_PROBE_BYTES:
+            chunk = fh.read(min(16 * 1024, _MAX_PROBE_BYTES - len(data)))
+            if not chunk:
+                break
+            data.extend(chunk)
+            if len(data) >= _PROBE_BYTES and _looks_like_image_bytes(data):
+                try:
+                    width, height, fmt = _probe_image_dimensions(bytes(data))
+                    break
+                except Exception:
+                    # Local JPEGs can also carry metadata blocks larger than the
+                    # first 8 KiB. Keep reading up to the same bounded limit used
+                    # by the remote probe instead of rejecting a valid upload as
+                    # a truncated image.
+                    pass
     if not _looks_like_image_bytes(data):
         raise ValueError('local file is not a recognizable image')
-    width, height, fmt = _probe_image_dimensions(data)
+    if not width or not height:
+        width, height, fmt = _probe_image_dimensions(bytes(data))
     return file_path, width, height, fmt
 
 
