@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 from lazyllm.tools.agent import ToolExecutionError
+from PIL import Image
 
 MODULE_PATH = Path(__file__).resolve().parents[3] / 'workflows' / 'image-workflow-v2' / 'scripts' / 'media.py'
 SPEC = importlib.util.spec_from_file_location('image_workflow_v2_media', MODULE_PATH)
@@ -23,9 +24,12 @@ def test_supported_aspect_ratios_use_provider_neutral_sizes():
 
 
 def test_editor_uses_global_role_and_preserves_source_ratio_in_prompt(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
     captured = {}
+    source = tmp_path / 'source.png'
+    Image.new('RGB', (1600, 900)).save(source)
 
     def fake_editor(prompt, urls, *, image_size, batch_size):
         captured.update(
@@ -35,16 +39,74 @@ def test_editor_uses_global_role_and_preserves_source_ratio_in_prompt(
 
     monkeypatch.setattr(module, 'image_editor', fake_editor)
 
-    result = module._edit_with_configured_model('Change only the hat.', ['source.png'])
+    monkeypatch.setattr(module, '_resolve_source_image_paths', lambda urls: [str(source)])
+
+    result = module._edit_with_configured_model('Change only the hat.', [str(source)])
 
     assert result['local_path'] == 'edited.png'
     assert result['model_role'] == 'image_editor'
     assert captured == {
         'prompt': 'Change only the hat.\nPreserve the source image aspect ratio.',
-        'urls': ['source.png'],
-        'image_size': '1024x1024',
+        'urls': [str(source)],
+        'image_size': '1368x768',
         'batch_size': 1,
     }
+
+
+@pytest.mark.parametrize(
+    ('source_size', 'expected'),
+    [
+        ((2688, 1512), '1368x768'),
+        ((1536, 2048), '888x1184'),
+        ((1200, 1200), '1024x1024'),
+    ],
+)
+def test_source_preserving_size_handles_landscape_portrait_and_square(
+    tmp_path: Path,
+    source_size: tuple[int, int],
+    expected: str,
+):
+    source = tmp_path / f'{source_size[0]}x{source_size[1]}.png'
+    Image.new('RGB', source_size).save(source)
+
+    assert module._source_preserving_image_size(str(source)) == expected
+
+
+def test_editor_explicit_ratio_overrides_source_ratio(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    source = tmp_path / 'portrait.png'
+    Image.new('RGB', (900, 1600)).save(source)
+    captured = {}
+
+    def fake_editor(prompt, urls, *, image_size, batch_size):
+        captured.update(
+            prompt=prompt, urls=urls, image_size=image_size, batch_size=batch_size,
+        )
+        return {'local_path': 'edited.png'}
+
+    monkeypatch.setattr(module, '_resolve_source_image_paths', lambda urls: [str(source)])
+    monkeypatch.setattr(module, 'image_editor', fake_editor)
+
+    module._edit_with_configured_model(
+        'Extend the background.', [str(source)], aspect_ratio='16:9',
+    )
+
+    assert captured['image_size'] == '1344x768'
+    assert captured['prompt'].endswith('Requested output aspect ratio: 16:9.')
+
+
+def test_source_preserving_size_rejects_invalid_or_extreme_sources(tmp_path: Path):
+    invalid = tmp_path / 'invalid.png'
+    invalid.write_bytes(b'not an image')
+    with pytest.raises(ToolExecutionError, match='could not be read'):
+        module._source_preserving_image_size(str(invalid))
+
+    extreme = tmp_path / 'extreme.png'
+    Image.new('RGB', (4096, 256)).save(extreme)
+    with pytest.raises(ToolExecutionError, match='too extreme'):
+        module._source_preserving_image_size(str(extreme))
 
 
 def test_editor_requires_one_authoritative_source():

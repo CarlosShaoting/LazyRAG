@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 import re
 from typing import Any, Dict, List, Optional, Union
 
 from lazyllm.tools.agent import ToolExecutionError
 
+from lazymind.chat.engine.tools.infra.image_generation_support import (
+    _resolve_source_image_paths,
+)
 from lazymind.chat.engine.tools.multimodal import (
     image_editor,
     image_generator,
@@ -32,6 +36,11 @@ _SUPPORTED_RATIO_RE = re.compile(
     r'1\s*[:：]\s*1)(?!\d)',
     re.IGNORECASE,
 )
+
+_SOURCE_SIZE_TARGET_PIXELS = 1024 * 1024
+_SOURCE_SIZE_MIN_EDGE = 512
+_SOURCE_SIZE_MAX_EDGE = 2048
+_SOURCE_SIZE_STEP = 8
 
 
 def _coerce_url_list(urls: Optional[Union[str, List[str]]]) -> List[str]:
@@ -61,6 +70,47 @@ def _size_for_aspect_ratio(aspect_ratio: str) -> str:
         raise ToolExecutionError(
             f'Unsupported aspect_ratio {ratio!r}. Supported values: {supported}.'
         ) from exc
+
+
+def _source_preserving_image_size(source_path: str) -> str:
+    """Return a provider-neutral edit size that retains the source orientation."""
+    try:
+        from PIL import Image
+
+        with Image.open(source_path) as image:
+            width, height = image.size
+            orientation = image.getexif().get(274)
+            if orientation in {5, 6, 7, 8}:
+                width, height = height, width
+            image.load()
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise ToolExecutionError(
+            'The authoritative source image could not be read for aspect-ratio preservation.'
+        ) from exc
+
+    if width <= 0 or height <= 0:
+        raise ToolExecutionError(
+            'The authoritative source image has invalid dimensions.'
+        )
+
+    min_scale = max(_SOURCE_SIZE_MIN_EDGE / width, _SOURCE_SIZE_MIN_EDGE / height)
+    max_scale = min(_SOURCE_SIZE_MAX_EDGE / width, _SOURCE_SIZE_MAX_EDGE / height)
+    if min_scale > max_scale:
+        raise ToolExecutionError(
+            'The authoritative source image aspect ratio is too extreme to preserve within '
+            f'{_SOURCE_SIZE_MIN_EDGE}-{_SOURCE_SIZE_MAX_EDGE}px media-model limits.'
+        )
+
+    target_scale = math.sqrt(_SOURCE_SIZE_TARGET_PIXELS / (width * height))
+    scale = min(max(target_scale, min_scale), max_scale)
+
+    def _aligned(value: float) -> int:
+        rounded = int(round(value / _SOURCE_SIZE_STEP) * _SOURCE_SIZE_STEP)
+        return min(_SOURCE_SIZE_MAX_EDGE, max(_SOURCE_SIZE_MIN_EDGE, rounded))
+
+    output_width = _aligned(width * scale)
+    output_height = _aligned(height * scale)
+    return f'{output_width}x{output_height}'
 
 
 def _require_generated_result(result: Dict[str, Any], role: str) -> Dict[str, Any]:
@@ -118,8 +168,17 @@ def _edit_with_configured_model(
         raise ToolExecutionError(
             'Configured image editing requires exactly one authoritative source image.'
         )
+    resolved_references = _resolve_source_image_paths(references)
+    if len(resolved_references) != 1:
+        raise ToolExecutionError(
+            'Configured image editing requires exactly one resolved authoritative source image.'
+        )
     ratio = str(aspect_ratio or '').strip()
-    image_size = _size_for_aspect_ratio(ratio or '1:1')
+    image_size = (
+        _size_for_aspect_ratio(ratio)
+        if ratio
+        else _source_preserving_image_size(resolved_references[0])
+    )
     edit_prompt = prompt
     if ratio:
         edit_prompt += f'\nRequested output aspect ratio: {ratio}.'
@@ -127,7 +186,7 @@ def _edit_with_configured_model(
         edit_prompt += '\nPreserve the source image aspect ratio.'
     result = image_editor(
         edit_prompt,
-        references,
+        resolved_references,
         image_size=image_size,
         batch_size=1,
     )
