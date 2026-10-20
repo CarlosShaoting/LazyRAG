@@ -153,6 +153,10 @@ func applyChatMentions(ctx context.Context, db *gorm.DB, raw map[string]any, use
 	for _, mention := range mentions {
 		denied := (mention.Type == "tool" || mention.Type == "workflow") && mentionIsDenied(query, mention)
 		switch mention.Type {
+		case "document_directory":
+			// Old turns may still contain directory references when regenerated.
+			// Keep their history readable without binding directory Q&A again.
+			continue
 		case "knowledge_base":
 			if !systemdeps.PythonComponentActive("rag") {
 				continue

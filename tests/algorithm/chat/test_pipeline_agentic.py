@@ -30,7 +30,8 @@ async def _collect_streaming_response(response):
 
 
 @pytest.mark.parametrize('mcp_failure', [None, 'timeout', 'authorization', 'all_failed'])
-def test_handle_chat_constructs_react_agent_from_runtime_context(monkeypatch, mcp_failure, tmp_path):
+@pytest.mark.parametrize('directories_enabled', [True, False])
+def test_handle_chat_constructs_react_agent_from_runtime_context(monkeypatch, mcp_failure, directories_enabled, tmp_path):
     from lazymind.chat.engine.tools import temporary_retrieval_session as session
     monkeypatch.setattr(session, 'workspace_for_request', lambda **kwargs: str(tmp_path))
     monkeypatch.setattr(session, 'is_model_role_available', lambda role: False)
@@ -122,6 +123,7 @@ def test_handle_chat_constructs_react_agent_from_runtime_context(monkeypatch, mc
             conversation={
                 'session_id': 'sid-1',
                 'conversation_id': 'conversation-1',
+                'history_id': 'history-1', 'run_id': 'run-1',
                 'user_id': 'user-1',
             },
             retrieval={'filters': {}},
@@ -131,6 +133,7 @@ def test_handle_chat_constructs_react_agent_from_runtime_context(monkeypatch, mc
             },
             personalization={'use_memory': True},
             agent={
+                'document_directories_enabled': directories_enabled,
                 'disabled_tools': [
                     'kb',
                     'wikipedia',
@@ -180,6 +183,8 @@ def test_handle_chat_constructs_react_agent_from_runtime_context(monkeypatch, mc
     assert agent_calls[0]['kwargs']['stream'] is True
     tool_names = {getattr(tool, '__name__', '') for tool in agent_calls[0]['tools']}
     assert {'search_file_resource', 'read_file_resource', 'save_chat_artifact'} <= tool_names
+    assert ('list_document_directories' in tool_names) is directories_enabled
+    assert ('background organization handles discoveries' in agent_queries[0]) is directories_enabled
     workspace = chat_service.chat_agent_workspace('user-1', 'conversation-1')
     assert agent_calls[0]['kwargs']['workspace'] == workspace
     assert f'Use `{workspace}` as the single working directory' in agent_calls[0]['kwargs']['prompt']
