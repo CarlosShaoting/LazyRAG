@@ -24,7 +24,7 @@ when_to_use: >
   delivery mode: static or dynamic.
 
 runtime:
-  publisher_owned_slots: [route_plan, material_summary, ordinary_prompt, ordinary_output, edit_candidate]
+  publisher_owned_slots: [route_plan, material_summary, ordinary_prompt, ordinary_output, authoritative_image, edit_contract, edit_candidate]
 
 tool_scripts:
   - path: scripts/media.py
@@ -35,6 +35,7 @@ tool_scripts:
     functions:
       - classify_image_request
       - prepare_ordinary_request
+      - publish_edit_contract
       - image_search_and_validate
       - validate_image_ref
       - image_media_preflight
