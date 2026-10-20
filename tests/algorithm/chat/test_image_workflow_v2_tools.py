@@ -206,7 +206,6 @@ def test_anchor_sheet_rejects_reused_output_reference() -> None:
         image_workflow_support.compose_character_anchor_sheet([duplicate] * 4)
 
 
-
 def _approved_brief(captions: list[str]) -> dict:
     return {
         'delivery_mode': 'dynamic',
