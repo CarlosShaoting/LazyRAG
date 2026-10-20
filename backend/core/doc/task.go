@@ -1372,7 +1372,7 @@ func startTasksInternal(r *http.Request, datasetID string, taskIDs []string) ([]
 	moveTaskIDs := make([]string, 0, len(taskIDs))
 	var dataset orm.Dataset
 	_ = store.DB().WithContext(r.Context()).Where("id = ? AND deleted_at IS NULL", datasetID).Take(&dataset).Error
-	storeOnly := !systemdeps.PythonComponentActive("rag") || effectiveProcessingLevel(dataset.ProcessingLevel) == ProcessingLevelStored
+	storeOnly := effectiveProcessingLevel(dataset.ProcessingLevel) == ProcessingLevelStored
 
 	for _, rawTaskID := range taskIDs {
 		taskID := strings.TrimSpace(rawTaskID)
@@ -1400,6 +1400,15 @@ func startTasksInternal(r *http.Request, datasetID string, taskIDs []string) ([]
 
 		switch TaskType(strings.TrimSpace(taskRow.TaskType)) {
 		case TaskTypeParse, TaskTypeParseUploaded:
+			if !storeOnly && !systemdeps.PythonComponentActive("rag") {
+				result := StartTaskResult{TaskID: taskID, DocumentID: taskRow.DocID, DisplayName: taskRow.DisplayName,
+					Status: "STARTED", SubmitStatus: "ACCEPTED", Message: "native parsing and chunks saved; vector indexing deferred"}
+				if err := prepareBaseDocument(r, datasetID, taskRow); err != nil {
+					result.Status, result.SubmitStatus, result.Message = "FAILED", "FAILED", err.Error()
+				}
+				resultsByTaskID[taskID] = result
+				continue
+			}
 			if storeOnly {
 				var ext taskExt
 				_ = json.Unmarshal(taskRow.Ext, &ext)
@@ -1416,7 +1425,16 @@ func startTasksInternal(r *http.Request, datasetID string, taskIDs []string) ([]
 			parseTaskIDs = append(parseTaskIDs, taskID)
 		case TaskTypeReparse:
 			if !systemdeps.PythonComponentActive("rag") {
-				resultsByTaskID[taskID] = StartTaskResult{TaskID: taskID, Status: "FAILED", SubmitStatus: "REJECTED", Message: "document retained; RAG component is required for parsing"}
+				if storeOnly {
+					resultsByTaskID[taskID] = StartTaskResult{TaskID: taskID, Status: "FAILED", SubmitStatus: "REJECTED",
+						Message: "select a parsing level before parsing stored documents"}
+					continue
+				}
+				result := StartTaskResult{TaskID: taskID, DocumentID: taskRow.DocID, Status: "STARTED", SubmitStatus: "ACCEPTED"}
+				if err := prepareBaseDocument(r, datasetID, taskRow); err != nil {
+					result.Status, result.SubmitStatus, result.Message = "FAILED", "FAILED", err.Error()
+				}
+				resultsByTaskID[taskID] = result
 				continue
 			}
 			reparseTaskIDs = append(reparseTaskIDs, taskID)
@@ -1574,6 +1592,7 @@ func startParseTasksInternalAtLevel(r *http.Request, datasetID string, taskIDs [
 		_ = json.Unmarshal(taskRow.Ext, &submittedExt)
 		submittedExt.ProcessingLevel = processingLevel
 		taskRow.Ext = mustJSON(submittedExt)
+		bindNativeIndexTask(r.Context(), datasetID, docRow.ID, taskRow.ID, processingLevel)
 		if normalizeSpreadsheetDirectParse(&dExt) || normalizeLocalOfficeDirectParse(&dExt, parseProfile) {
 			persistDocumentConvertState(r.Context(), datasetID, docRow.ID, dExt)
 		}
@@ -2822,8 +2841,8 @@ func createTaskFromExistingDocument(r *http.Request, datasetID, userID, userName
 		if err := store.DB().WithContext(r.Context()).Where("id = ? AND deleted_at IS NULL", datasetID).Take(&ds).Error; err != nil {
 			return orm.Task{}, err
 		}
-		if !systemdeps.PythonComponentActive("rag") || effectiveProcessingLevel(ds.ProcessingLevel) == ProcessingLevelStored {
-			return orm.Task{}, fmt.Errorf("enable RAG and select a processing level before ingesting retained files")
+		if effectiveProcessingLevel(ds.ProcessingLevel) == ProcessingLevelStored {
+			return orm.Task{}, fmt.Errorf("select a processing level before ingesting retained files")
 		}
 	}
 	if TaskType(tType) == TaskTypeCopy || TaskType(tType) == TaskTypeMove {
@@ -3006,6 +3025,7 @@ func startReparseTasksInternal(r *http.Request, datasetID string, taskIDs []stri
 		ext.ErrorMessage = ""
 		lazyllmTaskID := ""
 		ext.ProcessingLevel = processingLevel
+		bindNativeIndexTask(r.Context(), datasetID, taskRow.DocID, taskRow.ID, processingLevel)
 		if i < len(lazyllmTaskIDs) {
 			lazyllmTaskID = strings.TrimSpace(lazyllmTaskIDs[i])
 		}

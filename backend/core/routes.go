@@ -276,13 +276,13 @@ func registerAllRoutes(r *mux.Router) {
 	handleAPI(r, "GET", "/datasets", []string{"document.read"}, doc.ListDatasets)
 	handleAPI(r, "POST", "/internal/datasets/usage:batch", nil, doc.InternalBatchDatasetUsage)
 	handleAPI(r, "POST", "/datasets", []string{"document.write"}, doc.CreateDataset)
-	handleAPI(r, "POST", "/datasets/processing/preflight", []string{"document.write"}, systemdeps.RequireRAG(doc.ProcessingPreflight))
+	handleAPI(r, "POST", "/datasets/processing/preflight", []string{"document.write"}, doc.ProcessingPreflight)
 	handleAPI(r, "GET", "/datasets/{dataset}", []string{"document.read"}, doc.GetDataset)
 	handleAPI(r, "DELETE", "/datasets/{dataset}", []string{"document.write"}, systemdeps.RequireRAG(doc.DeleteDataset))
 	handleAPI(r, "PATCH", "/datasets/{dataset}", []string{"document.write"}, systemdeps.RequireRAG(doc.UpdateDataset))
-	handleAPI(r, "PATCH", "/datasets/{dataset}/processing-level", []string{"document.write"}, systemdeps.RequireRAG(doc.UpdateProcessingLevel))
-	handleAPI(r, "POST", "/datasets/{dataset}/documents/{document}:ensure-parsed", []string{"document.read"}, systemdeps.RequireRAG(doc.EnsureParsed))
-	handleAPI(r, "GET", "/datasets/{dataset}/documents/{document}:read", []string{"document.read"}, systemdeps.RequireRAG(doc.ReadDocument))
+	handleAPI(r, "PATCH", "/datasets/{dataset}/processing-level", []string{"document.write"}, doc.UpdateProcessingLevel)
+	handleAPI(r, "POST", "/datasets/{dataset}/documents/{document}:ensure-parsed", []string{"document.read"}, doc.EnsureParsed)
+	handleAPI(r, "GET", "/datasets/{dataset}/documents/{document}:read", []string{"document.read"}, doc.ReadDocument)
 	handleAPI(r, "GET", "/datasets/{dataset}/processing-status", []string{"document.read"}, doc.GetProcessingStatus)
 
 	// ----- Academic references and paper imports -----
@@ -373,9 +373,9 @@ func registerAllRoutes(r *mux.Router) {
 	handleAPI(r, "GET", "/document/creators", []string{"document.read"}, systemdeps.RequireRAG(doc.AllDocumentCreators))
 	handleAPI(r, "GET", "/document/tags", []string{"document.read"}, doc.AllDocumentTags)
 	// ----- text -----
-	handleAPI(r, "GET", "/datasets/{dataset}/documents/{document}/segments", []string{"document.read"}, systemdeps.RequireRAG(doc.ListSegments))
+	handleAPI(r, "GET", "/datasets/{dataset}/documents/{document}/segments", []string{"document.read"}, doc.ListSegments)
 	handleAPI(r, "GET", "/datasets/{dataset}/documents/{document}/segments/{segment}", []string{"document.read"}, systemdeps.RequireRAG(doc.GetSegment))
-	handleAPI(r, "POST", "/datasets/{dataset}/documents/{document}/segments:search", []string{"document.read"}, systemdeps.RequireRAG(doc.SearchSegments))
+	handleAPI(r, "POST", "/datasets/{dataset}/documents/{document}/segments:search", []string{"document.read"}, doc.SearchSegments)
 
 	// ----- DatasetMembertext -----
 	handleAPI(r, "GET", "/datasets/{dataset}/members", []string{"document.read"}, doc.ListDatasetMembers)

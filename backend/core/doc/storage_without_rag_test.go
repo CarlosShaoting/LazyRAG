@@ -41,7 +41,7 @@ func TestKnowledgeStorageWithoutRAG(t *testing.T) {
 		return mux.SetURLVars(r, map[string]string{"dataset": "storage-test"})
 	}
 	rec := httptest.NewRecorder()
-	CreateDataset(rec, request("POST", "/datasets?dataset_id=storage-test", `{"display_name":"StorageTest","processing_level":"indexed","algo":{"algo_id":"general_algo"}}`))
+	CreateDataset(rec, request("POST", "/datasets?dataset_id=storage-test", `{"display_name":"StorageTest","processing_level":"stored","algo":{"algo_id":"general_algo"}}`))
 	if rec.Code != 200 {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
 	}
@@ -53,10 +53,9 @@ func TestKnowledgeStorageWithoutRAG(t *testing.T) {
 		t.Fatalf("level=%s", ds.ProcessingLevel)
 	}
 	// Existing indexed databases must also accept storage without an embedding model.
-	if err := db.Model(&ds).Update("processing_level", ProcessingLevelIndexed).Error; err != nil {
-		t.Fatal(err)
-	}
-	if datasetRequiresEmbedding(&ds) {
+	indexed := ds
+	indexed.ProcessingLevel = ProcessingLevelIndexed
+	if datasetRequiresEmbedding(&indexed) {
 		t.Fatal("storage unexpectedly requires embedding")
 	}
 	var body bytes.Buffer

@@ -129,7 +129,7 @@ func ProcessingPreflight(w http.ResponseWriter, r *http.Request) {
 	if level != ProcessingLevelStored && !req.ReaderFallbackAccepted {
 		resp.Warnings = append(resp.Warnings, processingIssue{Code: "OCR_PROVIDER_NOT_CONFIGURED", Fallback: "builtin_pdf_reader", Message: "Scanned or image-only PDFs may not yield reliable text."})
 	}
-	if level == ProcessingLevelIndexed {
+	if level == ProcessingLevelIndexed && systemdeps.PythonComponentActive("rag") {
 		ready, checkErr := modelprovider.IsModelReady(r.Context(), store.DB(), userID, "embed_main")
 		if checkErr != nil {
 			common.ReplyErr(w, "algorithm service unavailable: cannot check embedding model", http.StatusBadGateway)
@@ -169,10 +169,10 @@ func UpdateProcessingLevel(w http.ResponseWriter, r *http.Request) {
 		common.ReplyErr(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if level == ProcessingLevelIndexed && replyEmbedNotReady(w, r, userID) {
+	if systemdeps.PythonComponentActive("rag") && level == ProcessingLevelIndexed && replyEmbedNotReady(w, r, userID) {
 		return
 	}
-	if level != ProcessingLevelStored && (effectiveProcessingLevel(ds.ProcessingLevel) == ProcessingLevelStored || parseDatasetAlgo(ds.Ext).AlgoID == "") {
+	if systemdeps.PythonComponentActive("rag") && level != ProcessingLevelStored && (effectiveProcessingLevel(ds.ProcessingLevel) == ProcessingLevelStored || parseDatasetAlgo(ds.Ext).AlgoID == "") {
 		if err := ensureDatasetRAG(r, ds); err != nil {
 			common.ReplyErr(w, err.Error(), http.StatusBadGateway)
 			return
@@ -331,7 +331,22 @@ func syncProcessingTaskStates(r *http.Request, datasetID string) {
 		if ext.ProcessingLevel == ProcessingLevelIndexed {
 			updates["index_status"] = status
 		}
-		_ = store.DB().WithContext(r.Context()).Model(&orm.DocumentProcessingState{}).Where("dataset_id = ? AND document_id = ?", datasetID, task.DocID).Updates(updates).Error
+		var base orm.DocumentProcessingState
+		if store.DB().WithContext(r.Context()).Where("dataset_id = ? AND document_id = ?", datasetID, task.DocID).
+			Take(&base).Error == nil && base.ParseArtifactRef != "" {
+			if ext.ProcessingLevel == ProcessingLevelIndexed && base.IndexArtifactRef != "core-task:"+task.ID {
+				continue // A previous generation must not complete a newly prepared artifact.
+			}
+			// A vector failure must not erase independently usable native artifacts.
+			delete(updates, "parse_status")
+			delete(updates, "chunk_status")
+		}
+		query := store.DB().WithContext(r.Context()).Model(&orm.DocumentProcessingState{}).
+			Where("dataset_id = ? AND document_id = ?", datasetID, task.DocID)
+		if ext.ProcessingLevel == ProcessingLevelIndexed {
+			query = query.Where("index_status <> ?", status)
+		}
+		_ = query.Updates(updates).Error
 	}
 }
 

@@ -927,9 +927,6 @@ func CreateDataset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.Tags = normalizedTags
-	if !systemdeps.PythonComponentActive("rag") {
-		body.ProcessingLevel = ProcessingLevelStored
-	}
 	processingLevelRequested := strings.TrimSpace(body.ProcessingLevel) != ""
 	processingLevel, err := normalizeProcessingLevel(body.ProcessingLevel)
 	if err != nil {
@@ -939,7 +936,7 @@ func CreateDataset(w http.ResponseWriter, r *http.Request) {
 	// Preserve the old client's creation contract: an omitted level still defaults
 	// to indexed, while readiness is enforced when a new client explicitly asks
 	// for indexed processing.
-	if processingLevelRequested && processingLevel == ProcessingLevelIndexed && replyEmbedNotReady(w, r, userID) {
+	if systemdeps.PythonComponentActive("rag") && processingLevelRequested && processingLevel == ProcessingLevelIndexed && replyEmbedNotReady(w, r, userID) {
 		return
 	}
 	// Provide explicit feedback for duplicate dataset names under the same user.

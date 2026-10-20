@@ -152,7 +152,9 @@ const ImportKnowledgeModal = (props: IProps, ref: Ref<unknown> | undefined) => {
       setRuntimeWaiting(false);
 
       await submitWithHashReuse(fileItems, values.tags, startMode);
-      message.success(storageOnly ? "文件已保留在知识库内，未解析、未建立索引" : t("knowledge.uploadCompleteParsingStarted"));
+      message.success(props.storageOnly ? "文件已保留在知识库内，未解析、未建立索引"
+        : availability !== "ready" ? "原文件、解析文本和基础切片已保存；组件及模型就绪后将自动建立索引"
+        : t("knowledge.uploadCompleteParsingStarted"));
       handleClose();
       onOk({ pId: data.p_id });
     } catch (err) {
@@ -252,7 +254,8 @@ const ImportKnowledgeModal = (props: IProps, ref: Ref<unknown> | undefined) => {
     >
       {storageOnly && (
         <Alert type="info" showIcon style={{ marginBottom: 16 }}
-          message="文件将保留在知识库内，仅保存原文件，不解析、不建立索引。" />
+          message={props.storageOnly ? "文件将保留在知识库内，仅保存原文件，不解析、不建立索引。"
+            : "无需安装 RAG 即可保存解析文本和基础切片。安装组件并配置 embedding 后自动建立索引；扫描件需要 OCR。"} />
       )}
       {loading && (
         <Alert

@@ -154,7 +154,7 @@ const CreateKnowledgeBaseModal = forwardRef<
     return Promise.all([algorithmsRequest, preferencesRequest, catalogRequest]).then(
       ([, documentParsingEnabled]) => {
         form.setFieldsValue({
-          processing_level: !ragReady ? "stored" : highestSupportedProcessingLevel(
+          processing_level: !ragReady ? (documentParsingEnabled === false ? "stored" : "indexed") : highestSupportedProcessingLevel(
             documentParsingEnabled,
             embeddingReady,
           ),
@@ -210,7 +210,6 @@ const CreateKnowledgeBaseModal = forwardRef<
     form.validateFields().then(async (values) => {
       // Preset fields may not be mounted inside the developer-only Collapse.
       const params = { ...form.getFieldsValue(true), ...values };
-      if (!ragReady) params.processing_level = "stored";
       const selectedAlgoId =
         params.algo_id ||
         (algorithm.length === 1 ? algorithm[0]?.algo_id : undefined);
@@ -383,10 +382,10 @@ const CreateKnowledgeBaseModal = forwardRef<
                         <Select options={PROCESSING_LEVEL_ORDER.map((level) => ({
                           value: level,
                           label: t(`knowledge.processing${level[0].toUpperCase()}${level.slice(1)}`),
-                          disabled: (!ragReady && level !== "stored") || (level === "indexed" && embeddingReady !== true),
+                          disabled: ragReady && level === "indexed" && embeddingReady !== true,
                         }))} />
                       </Form.Item>
-                      {algorithm.length !== 1 && (
+                      {ragReady && algorithm.length !== 1 && (
                         <Form.Item
                           name="algo_id"
                           label={t("knowledge.parseAlgorithm")}

@@ -872,7 +872,7 @@ const Detail = () => {
       />
 
       <ImportKnowledgeModal
-        storageOnly={storageOnly}
+        storageOnly={detail?.processing_level === "stored"}
         ref={importKnowledgeRef}
         onParsingStart={() => setUploadingNoticeVisible(true)}
         onParsingSettled={() => setUploadingNoticeVisible(false)}

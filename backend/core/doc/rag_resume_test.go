@@ -75,8 +75,8 @@ func TestRetainedFileIngestionTask(t *testing.T) {
 	}
 	db.Model(&ds).Update("processing_level", ProcessingLevelIndexed)
 	t.Setenv("LAZYMIND_RAG_ENABLED", "false")
-	if _, err := createTaskFromExistingDocument(req, ds.ID, "u1", "User", item, string(TaskTypeParseUploaded)); err == nil {
-		t.Fatal("missing RAG must not claim ingestion")
+	if _, err := createTaskFromExistingDocument(req, ds.ID, "u1", "User", item, string(TaskTypeParseUploaded)); err != nil {
+		t.Fatalf("native parsing should be available without RAG: %v", err)
 	}
 	t.Setenv("LAZYMIND_RAG_ENABLED", "true")
 	db.Model(&document).Update("lazyllm_doc_id", document.ID)

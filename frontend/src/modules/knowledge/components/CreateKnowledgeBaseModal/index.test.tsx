@@ -90,14 +90,14 @@ async function selectEnglishProfile() {
 }
 
 describe("knowledge creation capability submission", () => {
-  it("creates storage-only knowledge bases without RAG even when parsing preferences are enabled", async () => {
+  it("preserves the indexing target for deferred ingestion without RAG", async () => {
     rag.availability = "missing";
     vi.mocked(fetchUserUiPreferences).mockResolvedValue({ document_parsing_enabled: true } as Awaited<ReturnType<typeof fetchUserUiPreferences>>);
     const { onCreate } = await mountModal();
     await fillRequiredFields();
     expect(screen.getByRole("tab", { name: "knowledge.createFromCloudDisk" })).toHaveAttribute("aria-disabled", "true");
     fireEvent.click(screen.getByRole("button", { name: "common.confirm" }));
-    await waitFor(() => expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ processing_level: "stored" })));
+    await waitFor(() => expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ processing_level: "indexed" })));
   });
 
   it.each([false, true])("submits the general preset without opening advanced settings (developer=%s)", async (developer) => {

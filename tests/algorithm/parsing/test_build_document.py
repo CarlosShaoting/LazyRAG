@@ -2,6 +2,7 @@ import pytest
 
 import lazymind.parsing.service.build_document as build_document
 from lazymind.parsing.engine.readers.native_office import NativeOfficeReader
+from lazymind.parsing.engine.readers.retained import RetainedReader
 
 
 @pytest.mark.parametrize('mode,profile,native', [
@@ -21,10 +22,12 @@ def test_office_reader_registration_by_runtime(monkeypatch, mode, profile, nativ
     monkeypatch.setattr(build_document, '_build_pdf_reader', lambda: pdf_reader)
     docs = Readers()
     build_document._register_document_readers(docs)
-    assert docs.readers['*.pdf'] is pdf_reader
+    assert (isinstance(docs.readers['*.pdf'], RetainedReader) if mode == 'local'
+            else docs.readers['*.pdf'] is pdf_reader)
     if native:
-        assert isinstance(docs.readers['*.docx'], NativeOfficeReader)
-        assert docs.readers['*.pptx'] is docs.readers['*.docx']
+        reader_type = RetainedReader if mode == 'local' else NativeOfficeReader
+        assert isinstance(docs.readers['*.docx'], reader_type)
+        assert isinstance(docs.readers['*.pptx'], reader_type)
     else:
         assert '*.docx' not in docs.readers
         assert docs.readers['*.pptx'] is pdf_reader
@@ -100,6 +103,9 @@ def test_build_pdf_reader_uses_dynamic_reader_without_static_ocr_route(monkeypat
 
 
 def test_build_document_wires_readers_groups_and_embeddings(monkeypatch):
+    monkeypatch.setitem(build_document._cfg._impl, 'runtime_mode', 'cloud')
+    monkeypatch.setitem(build_document._cfg._impl, 'document_parse_profile', 'cloud')
+
     class FakeDocumentProcessor:
         def __init__(self, **kwargs):
             self.kwargs = kwargs
