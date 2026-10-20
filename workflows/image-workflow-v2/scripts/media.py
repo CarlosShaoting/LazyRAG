@@ -36,6 +36,10 @@ _SUPPORTED_RATIO_RE = re.compile(
     r'1\s*[:：]\s*1)(?!\d)',
     re.IGNORECASE,
 )
+_ASPECT_RATIO_WORD_RE = re.compile(
+    r'竖版|竖向|纵向|portrait|vertical|横版|横向|宽屏|landscape|widescreen|方图|正方形|square',
+    re.IGNORECASE,
+)
 
 _SOURCE_SIZE_TARGET_PIXELS = 1024 * 1024
 _SOURCE_SIZE_MIN_EDGE = 512
@@ -216,6 +220,8 @@ def _artifact_text(key: str) -> str:
             return data if isinstance(data, str) else json.dumps(data, ensure_ascii=False)
     if isinstance(value, str):
         return value.strip()
+    if isinstance(value, dict) and value.get('path'):
+        return Path(value['path']).read_text(encoding='utf-8').strip()
     raise ToolExecutionError(f'Workflow artifact {key!r} contains no readable text.')
 
 
@@ -225,6 +231,8 @@ def _artifact_json(key: str) -> Dict[str, Any]:
         raise ToolExecutionError(f'Required workflow artifact {key!r} is missing.')
     value = rows[-1].get('value') or {}
     data = value.get('data') if isinstance(value, dict) else value
+    if data is None and isinstance(value, dict) and value.get('path'):
+        data = Path(value['path']).read_text(encoding='utf-8')
     if isinstance(data, str):
         try:
             data = json.loads(data)
@@ -252,8 +260,17 @@ def _artifact_image_refs(*keys: str) -> List[str]:
     return refs
 
 
+def _has_explicit_aspect_ratio(request: str) -> bool:
+    text = str(request or '')
+    return bool(_SUPPORTED_RATIO_RE.search(text) or _ASPECT_RATIO_WORD_RE.search(text))
+
+
 def _requested_aspect_ratio(request: str) -> str:
-    match = _SUPPORTED_RATIO_RE.search(str(request or ''))
+    update = str(request or '').rpartition('User update (overrides conflicting launch requirements):\n')[2]
+    if update and _has_explicit_aspect_ratio(update):
+        request = update
+    matches = list(_SUPPORTED_RATIO_RE.finditer(str(request or '')))
+    match = matches[-1] if matches else None
     if match:
         return re.sub(r'\s+', '', match.group(1)).replace('：', ':')
     text = str(request or '')
@@ -270,7 +287,9 @@ def _immutable_request() -> str:
     from lazymind.chat.engine.subagent.context import require_context
 
     ctx = require_context()
-    return str((ctx.params or {}).get('user_input') or '').strip()
+    from lazymind.chat.workflow.image_request import effective_image_request
+
+    return effective_image_request(ctx.params or {})
 
 
 def _publish_generated_images(slot: str, result: Dict[str, Any], source_tool: str) -> Dict[str, Any]:
@@ -310,14 +329,22 @@ def generate_ordinary_image() -> Dict[str, Any]:
     """Generate and atomically publish the ordinary-route image.
 
     The prompt and optional references come only from bound workflow artifacts;
-    the aspect ratio comes from the immutable launch request. A failed provider
+    the aspect ratio respects bound request revisions and the current update. A failed provider
     call cannot create ``ordinary_output``.
     """
     prompt = _artifact_text('ordinary_prompt')
+    request = _immutable_request()
+    update = request.partition('User update (overrides conflicting launch requirements):\n')[2]
+    # A later approval must not undo a requirement already saved by preparation.
+    marker = 'User update (overrides conflicting launch requirements):\n'
+    ratio_request = prompt.split('\nReference evidence', 1)[0] if marker in prompt else request or prompt
+    if update:
+        prompt += '\nCurrent user requirements (override conflicting prompt details):\n' + update
+        ratio_request += '\n' + marker + update
     references = _artifact_image_refs('source_image', 'material_images')
     result = _generate_with_configured_model(
         prompt,
-        aspect_ratio=_requested_aspect_ratio(_immutable_request()),
+        aspect_ratio=_requested_aspect_ratio(ratio_request),
         urls=references or None,
     )
     return _publish_generated_images(
@@ -346,7 +373,12 @@ def generate_edit_candidate() -> Dict[str, Any]:
         f'Do not: {contract["do_not"]}',
     ))
     request = _immutable_request()
-    explicit_ratio = _SUPPORTED_RATIO_RE.search(request)
+    update = request.partition('User update (overrides conflicting launch requirements):\n')[2]
+    request = str(contract.get('user_request') or request)
+    if update:
+        prompt += '\nCurrent user requirements (preserve everything else):\n' + update
+        request += '\nUser update (overrides conflicting launch requirements):\n' + update
+    explicit_ratio = _has_explicit_aspect_ratio(request)
     aspect_ratio = _requested_aspect_ratio(request) if explicit_ratio else None
     result = _edit_with_configured_model(
         prompt,

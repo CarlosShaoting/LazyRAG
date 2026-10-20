@@ -184,6 +184,23 @@ def test_requested_aspect_ratio_is_deterministic(launch_request: str, expected: 
     assert module._requested_aspect_ratio(launch_request) == expected
 
 
+@pytest.mark.parametrize(
+    ('input_text', 'expected'),
+    [
+        ('改成 16:9', True),
+        ('改成横版', True),
+        ('make it portrait', True),
+        ('裁成正方形', True),
+        ('只把帽子改成蓝色', False),
+    ],
+)
+def test_explicit_aspect_ratio_accepts_numeric_and_natural_language(
+    input_text: str,
+    expected: bool,
+):
+    assert module._has_explicit_aspect_ratio(input_text) is expected
+
+
 def test_generate_ordinary_image_only_publishes_real_provider_file(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -281,3 +298,32 @@ def test_generate_edit_candidate_uses_contract_and_real_source(
     assert saved[0][0] == ('edit_candidate', {'path': str(generated)})
     assert saved[0][1]['internal_publish'] is True
     assert 'publisher_list_index' not in saved[0][1]
+
+
+def test_generate_edit_candidate_honors_natural_language_aspect_ratio(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured = {}
+    monkeypatch.setattr(module, '_artifact_json', lambda key: {
+        'requested_edit': 'Make the image landscape',
+        'edit_scope': 'Canvas only',
+        'preserve': 'Subject identity',
+        'do_not': 'Change the face',
+    })
+    monkeypatch.setattr(module, '_artifact_image_refs', lambda *keys: ['C:/source.png'])
+    monkeypatch.setattr(module, '_immutable_request', lambda: '把图片改成横版')
+
+    def fake_editor(prompt, urls, aspect_ratio):
+        captured.update(prompt=prompt, urls=urls, aspect_ratio=aspect_ratio)
+        return {'images': [{'local_path': 'C:/edited.png'}]}
+
+    monkeypatch.setattr(module, '_edit_with_configured_model', fake_editor)
+    monkeypatch.setattr(
+        module,
+        '_publish_generated_images',
+        lambda *args, **kwargs: {'status': 'ok'},
+    )
+
+    module.generate_edit_candidate()
+
+    assert captured['aspect_ratio'] == '16:9'
