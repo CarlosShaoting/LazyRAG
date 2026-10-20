@@ -77,6 +77,91 @@ def test_ordinary_preparer_preserves_the_immutable_request(monkeypatch) -> None:
     assert all(call[1]['internal_publish'] is True for call in calls)
 
 
+def test_edit_publisher_validates_resolved_local_source(monkeypatch, tmp_path) -> None:
+    from lazymind.chat.engine.subagent import context as context_module
+    from lazymind.chat.engine.subagent import tools as subagent_tools
+
+    source = tmp_path / 'resolved.png'
+    Image.new('RGB', (800, 600), 'blue').save(source)
+    inspected = []
+    saved = []
+    monkeypatch.setattr(
+        context_module,
+        'require_context',
+        lambda: SimpleNamespace(params={
+            'user_input': '天空变紫',
+            'remote_inputs': {'source_image': 'signed-or-staged-transport-ref'},
+        }),
+    )
+    monkeypatch.setattr(
+        image_workflow_support,
+        '_resolve_source_image_paths',
+        lambda refs: [str(source)],
+    )
+    monkeypatch.setattr(
+        image_workflow_support,
+        '_legacy_image_tools',
+        lambda: SimpleNamespace(
+            inspect_image_reference=lambda value: inspected.append(value) or {'status': 'ok'},
+        ),
+    )
+    monkeypatch.setattr(
+        subagent_tools,
+        '_save_artifact',
+        lambda *args, **kwargs: saved.append((args, kwargs)) or {'status': 'ok'},
+    )
+
+    result = image_workflow_support.publish_edit_contract(
+        '天空变紫', '天空', '其他内容', '不要改变画幅',
+    )
+
+    assert result['status'] == 'ok'
+    assert inspected == [str(source)]
+    assert [call[0][0] for call in saved] == ['authoritative_image', 'edit_contract']
+    assert saved[0][0][1] == {'path': str(source)}
+    assert all(call[1]['internal_publish'] is True for call in saved)
+
+
+def test_edit_publisher_does_not_publish_invalid_source(monkeypatch, tmp_path) -> None:
+    from lazymind.chat.engine.subagent import context as context_module
+    from lazymind.chat.engine.subagent import tools as subagent_tools
+
+    source = tmp_path / 'invalid.png'
+    source.write_bytes(b'not-an-image')
+    monkeypatch.setattr(
+        context_module,
+        'require_context',
+        lambda: SimpleNamespace(params={
+            'user_input': '天空变紫',
+            'remote_inputs': {'source_image': 'transport-ref'},
+        }),
+    )
+    monkeypatch.setattr(
+        image_workflow_support,
+        '_resolve_source_image_paths',
+        lambda refs: [str(source)],
+    )
+    monkeypatch.setattr(
+        image_workflow_support,
+        '_legacy_image_tools',
+        lambda: SimpleNamespace(
+            inspect_image_reference=lambda value: {
+                'status': 'invalid', 'reason': 'not an image',
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        subagent_tools,
+        '_save_artifact',
+        lambda *args, **kwargs: pytest.fail('invalid input must not publish artifacts'),
+    )
+
+    with pytest.raises(ToolExecutionError, match='Invalid source image'):
+        image_workflow_support.publish_edit_contract(
+            '天空变紫', '天空', '其他内容', '不要改变画幅',
+        )
+
+
 def test_anchor_sheet_resolves_remote_refs_before_opening(monkeypatch, tmp_path) -> None:
     local_paths = []
     for index in range(4):

@@ -233,6 +233,39 @@ def test_generate_ordinary_image_only_publishes_real_provider_file(
     assert saved[0][1]['publisher_list_index'] == 0
 
 
+def test_generate_ordinary_image_honors_latest_ratio_update(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured = {}
+    monkeypatch.setattr(module, '_artifact_text', lambda key: '生成 16:9 横版插画')
+    monkeypatch.setattr(module, '_artifact_image_refs', lambda *keys: [])
+    monkeypatch.setattr(
+        module,
+        '_immutable_request',
+        lambda: (
+            '生成 16:9 横版插画\n'
+            'User update (overrides conflicting launch requirements):\n改成竖版'
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        '_generate_with_configured_model',
+        lambda prompt, aspect_ratio, urls: captured.update(
+            prompt=prompt, aspect_ratio=aspect_ratio, urls=urls,
+        ) or {'images': [{'local_path': 'C:/generated.png'}]},
+    )
+    monkeypatch.setattr(
+        module,
+        '_publish_generated_images',
+        lambda *args, **kwargs: {'status': 'ok'},
+    )
+
+    module.generate_ordinary_image()
+
+    assert captured['aspect_ratio'] == '9:16'
+    assert '改成竖版' in captured['prompt']
+
+
 def test_generate_ordinary_image_cannot_publish_after_provider_failure(
     monkeypatch: pytest.MonkeyPatch,
 ):

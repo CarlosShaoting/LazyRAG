@@ -21,12 +21,14 @@ def test_package_declares_three_final_deliverable_routes():
     assert targets == {'ordinary_prepare', 'edit_prepare', 'meme_brief'}
     assert workflow['runtime']['publisher_owned_slots'] == [
         'route_plan', 'material_summary', 'ordinary_prompt',
-        'ordinary_output', 'edit_candidate',
+        'ordinary_output', 'authoritative_image', 'edit_contract', 'edit_candidate',
     ]
     assert state['steps']['classify_request']['tools'] == ['classify_image_request']
     assert state['steps']['classify_request']['terminal_tools'] == ['classify_image_request']
     assert state['steps']['ordinary_prepare']['tools'] == ['prepare_ordinary_request']
     assert state['steps']['ordinary_prepare']['terminal_tools'] == ['prepare_ordinary_request']
+    assert state['steps']['edit_prepare']['terminal_tools'] == ['publish_edit_contract']
+    assert 'publish_edit_contract' in state['steps']['edit_prepare']['tools']
 
 
 def test_ordinary_and_edit_routes_use_configured_global_media_models():
@@ -40,6 +42,7 @@ def test_ordinary_and_edit_routes_use_configured_global_media_models():
         'generate_ordinary_image',
         'generate_edit_candidate',
     }
+    assert 'publish_edit_contract' in declarations['scripts/tools.py']
     assert state['steps']['ordinary_generate']['tools'] == ['generate_ordinary_image']
     assert state['steps']['ordinary_generate']['terminal_tools'] == ['generate_ordinary_image']
     assert state['steps']['edit_candidate']['tools'] == ['generate_edit_candidate']
