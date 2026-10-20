@@ -18,6 +18,7 @@ from lazyllm.tools.rag.readers.ocrReader import DynamicPDFReader
 from lazymind.model_config import get_dynamic_role_slot_map
 from lazymind.config import EMBED_IMAGE, EMBED_INDEX_KWARGS, EMBED_KEYS, EMBED_MAIN, config as _cfg
 from lazymind.parsing.engine.readers import ImageEmbReader, VideoReader
+from lazymind.parsing.engine.readers.native_office import NativeOfficeReader
 from lazymind.parsing.engine.transform import GeneralParser, LineSplitter, NodeParser
 from lazymind.common.database.postgres import create_database_engine
 from lazymind.common.database.sqlite_proxy import install_lazyllm_sqlite_proxy
@@ -173,6 +174,13 @@ def _register_document_readers(docs: Document) -> None:
     docs.add_reader('*.pptx', pdf_reader)
     docs.add_reader('*.ppt', pdf_reader)
     docs.add_reader('*.pptm', pdf_reader)
+
+    if _runtime_mode() == 'local' or str(_cfg['document_parse_profile']).strip().lower() == 'local':
+        # Desktop has no Office-to-PDF service. Feed real DocNodes into the same
+        # block/line transforms and embedding groups as all other documents.
+        office_reader = NativeOfficeReader(presentation_reader=pdf_reader)
+        docs.add_reader('*.docx', office_reader)
+        docs.add_reader('*.pptx', office_reader)
 
     docs.add_reader('*.ipynb', IPYNBReader())
     docs.add_reader('*.epub', EpubReader())

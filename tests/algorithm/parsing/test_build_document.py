@@ -1,6 +1,33 @@
 import pytest
 
 import lazymind.parsing.service.build_document as build_document
+from lazymind.parsing.engine.readers.native_office import NativeOfficeReader
+
+
+@pytest.mark.parametrize('mode,profile,native', [
+    ('local', 'cloud', True), ('cloud', 'local', True), ('cloud', 'cloud', False),
+])
+def test_office_reader_registration_by_runtime(monkeypatch, mode, profile, native):
+    class Readers:
+        def __init__(self):
+            self.readers = {}
+
+        def add_reader(self, pattern, reader):
+            self.readers[pattern] = reader
+
+    monkeypatch.setitem(build_document._cfg._impl, 'runtime_mode', mode)
+    monkeypatch.setitem(build_document._cfg._impl, 'document_parse_profile', profile)
+    pdf_reader = object()
+    monkeypatch.setattr(build_document, '_build_pdf_reader', lambda: pdf_reader)
+    docs = Readers()
+    build_document._register_document_readers(docs)
+    assert docs.readers['*.pdf'] is pdf_reader
+    if native:
+        assert isinstance(docs.readers['*.docx'], NativeOfficeReader)
+        assert docs.readers['*.pptx'] is docs.readers['*.docx']
+    else:
+        assert '*.docx' not in docs.readers
+        assert docs.readers['*.pptx'] is pdf_reader
 
 
 def test_get_algo_server_port_prefers_algo_port(monkeypatch):

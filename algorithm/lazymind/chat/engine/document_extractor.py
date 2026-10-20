@@ -19,8 +19,8 @@ class ExtractedDocumentNode:
 class LocalDocumentReader:
     """Extract document text without loading the optional RAG runtime.
 
-    This reader intentionally owns only document decoding. Chunking, embedding,
-    indexing, and retrieval remain in the optional RAG component.
+    This reader owns document decoding, not chunking, embedding or retrieval.
+    Native Office extraction does not require an Office-to-PDF service.
     """
 
     def __call__(self, file_path: str) -> List[ExtractedDocumentNode]:
@@ -29,19 +29,32 @@ class LocalDocumentReader:
         path = Path(file_path)
         suffix = path.suffix.lower()
         route = lazyllm.globals.config['dynamic_ocr_configs'] or {}
-        if str(route.get('ocr_type') or '').lower() not in ('', 'none'):
-            return self._read_ocr(file_path)
+        ocr_type = str(route.get('ocr_type') or '').strip().lower()
         if suffix == '.pdf':
+            if ocr_type not in ('', 'none'):
+                return self._read_ocr(file_path)
             return self._read_pdf(path)
         if suffix == '.docx':
             return self._read_docx(path)
         if suffix == '.pptx':
+            # Official MinerU accepts raw presentations. Other PDF OCR readers
+            # must not receive Office bytes when desktop has no converter.
+            if ocr_type == 'mineru' and self._uses_official_mineru(route):
+                return self._read_ocr(file_path)
             return self._read_pptx(path)
         if suffix == '.doc':
             raise ValueError(
                 'Legacy .doc files cannot be decoded locally. Convert the file to .docx or PDF first.'
             )
         raise ValueError(f'Unsupported document type: {suffix or "(no extension)"}')
+
+    @staticmethod
+    def _uses_official_mineru(route: dict) -> bool:
+        from lazyllm.tools.rag.readers.ocrReader.ocr_service import OcrServiceVariant, resolve_ocr_variant
+
+        # An explicit MinerU type without a URL selects the official service,
+        # matching DynamicPDFReader._resolve_route.
+        return resolve_ocr_variant('mineru', route.get('ocr_url')) == OcrServiceVariant.ONLINE
 
     @staticmethod
     def _read_ocr(file_path: str):

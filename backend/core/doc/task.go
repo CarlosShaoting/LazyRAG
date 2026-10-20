@@ -1574,8 +1574,16 @@ func startParseTasksInternalAtLevel(r *http.Request, datasetID string, taskIDs [
 		_ = json.Unmarshal(taskRow.Ext, &submittedExt)
 		submittedExt.ProcessingLevel = processingLevel
 		taskRow.Ext = mustJSON(submittedExt)
-		if normalizeSpreadsheetDirectParse(&dExt) {
+		if normalizeSpreadsheetDirectParse(&dExt) || normalizeLocalOfficeDirectParse(&dExt, parseProfile) {
 			persistDocumentConvertState(r.Context(), datasetID, docRow.ID, dExt)
+		}
+		if parseProfile == documentParseProfileLocal && needsOfficeConvertBeforeParse(dExt, ocrConfig, parseProfile) {
+			resultsByTaskID[taskID] = StartTaskResult{
+				TaskID: taskID, DocumentID: docRow.ID, DisplayName: docRow.DisplayName,
+				Status: "FAILED", SubmitStatus: "REJECTED",
+				Message: "桌面版不支持 Office 转 PDF，请先将文件转换为 DOCX、PPTX 或 PDF 后上传。",
+			}
+			continue
 		}
 		candidate := startCandidate{task: taskRow, doc: docRow, docExt: dExt}
 		candidates = append(candidates, candidate)

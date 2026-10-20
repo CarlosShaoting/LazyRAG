@@ -255,6 +255,48 @@ def test_ocr_route_and_credentials_work_without_rag(monkeypatch):
         inject_reader_config(ocr_config={})
 
 
+@pytest.mark.parametrize('ocr_type,ocr_url', [
+    ('none', ''),
+    ('mineru', ''),
+    ('mineru', 'https://mineru.net'),
+    ('mineru', 'http://local-mineru:8000'),
+    ('paddleocr', ''),
+])
+@pytest.mark.parametrize('suffix', ['.docx', '.pptx'])
+def test_office_attachment_reader_routes_without_pdf_conversion(monkeypatch, tmp_path, ocr_type, ocr_url, suffix):
+    from docx import Document
+    from pptx import Presentation
+    from pptx.util import Inches
+    from lazyllm.tools.rag.readers.reader_config_inject import inject_reader_config
+    from lazymind.chat.engine.document_extractor import LocalDocumentReader
+
+    path = tmp_path / ('native' + suffix)
+    if suffix == '.docx':
+        document = Document()
+        document.add_paragraph('native office text')
+    else:
+        document = Presentation()
+        slide = document.slides.add_slide(document.slide_layouts[6])
+        slide.shapes.add_textbox(Inches(1), Inches(1), Inches(5), Inches(1)).text = 'native office text'
+    document.save(path)
+    calls = []
+
+    def read_ocr(file_path):
+        calls.append(file_path)
+        return [SimpleNamespace(text='official presentation OCR')]
+
+    monkeypatch.setattr(LocalDocumentReader, '_read_ocr', staticmethod(read_ocr))
+    monkeypatch.setenv('LAZYMIND_RAG_ENABLED', 'false')
+    try:
+        inject_reader_config(ocr_config={'ocr_type': ocr_type, 'ocr_url': ocr_url})
+        body = ar.read_chat_document_text(str(path))
+        official_ppt = suffix == '.pptx' and ocr_type == 'mineru' and ocr_url in ('', 'https://mineru.net')
+        assert body == ('official presentation OCR' if official_ppt else 'native office text')
+        assert calls == ([str(path)] if official_ppt else [])
+    finally:
+        inject_reader_config(ocr_config={})
+
+
 def test_reader_imports_and_pdf_parsing_do_not_load_optional_dependencies(tmp_path):
     import os
     import subprocess
