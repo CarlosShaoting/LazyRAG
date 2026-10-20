@@ -81,8 +81,10 @@ def _read_nodes(path):
             if not isinstance(source, str):
                 raise ValueError('Invalid notebook cell source')
             if source.strip():
-                nodes.append({'text': source, 'metadata': {'cell_index': index,
-                                                          'cell_type': cell.get('cell_type', '')}})
+                nodes.append({
+                    'text': source,
+                    'metadata': {'cell_index': index, 'cell_type': cell.get('cell_type', '')},
+                })
         return nodes
     readers = {'.pdf': LocalDocumentReader._read_pdf, '.docx': LocalDocumentReader._read_docx,
                '.pptx': LocalDocumentReader._read_pptx}
