@@ -1921,5 +1921,8 @@
   "2003212": {"zh-CN": "这封邮件缺少定位信息，暂时无法读取", "en-US": "This email lacks location information and cannot be read yet."},
   "2003213": {"zh-CN": "邮件位置已变化或邮件已删除，暂时无法读取", "en-US": "The email has moved or been deleted and cannot be read."},
   "2003214": {"zh-CN": "邮件读取超时，请重试", "en-US": "Reading the email timed out. Retry."},
-  "2003215": {"zh-CN": "邮件读取失败，请稍后重试", "en-US": "Unable to read the email. Retry later."}
+  "2003215": {"zh-CN": "邮件读取失败，请稍后重试", "en-US": "Unable to read the email. Retry later."},
+  "2003216": { "en-US": "Desktop does not support office conversion; upload docx, pptx or pdf instead", "zh-CN": "桌面版不支持 Office 格式转换，请改为上传 DOCX、PPTX 或 PDF 文件" },
+  "2003217": { "en-US": "Document changed; native parsing must be retried", "zh-CN": "文件已发生变化，请重新执行本地解析" },
+  "2003218": { "en-US": "Select a processing level before ingesting retained files", "zh-CN": "请先选择高于仅储存的处理级别，再对已储存文件执行入库" }
 }
