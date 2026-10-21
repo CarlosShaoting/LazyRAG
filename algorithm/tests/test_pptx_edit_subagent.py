@@ -100,3 +100,13 @@ def test_font_edit_delegates_scope_and_keeps_one_receipt(context, monkeypatch):
     assert edit.call_args.kwargs['target_font'] == 'Noto Sans SC'
     assert edit.call_args.kwargs['allow_font_download'] is True
     assert len(context.local_artifacts()) == 1
+
+
+def test_typography_batch_is_forwarded_without_dropping_false(context, monkeypatch):
+    edit = MagicMock(return_value={'status': 'ok', 'workflow_artifact': {'id': 'revision-3'}})
+    monkeypatch.setattr(pptx_edit.tools, 'edit_presentation', edit)
+    styles = [{'pages': [1], 'font_size_pt': 28, 'bold': True},
+              {'slot_ids': ['4:2'], 'bold': False, 'italic': True, 'underline': False}]
+    pptx_edit.publish_pptx_edit('hash', style_edits=styles)
+    assert edit.call_args.kwargs['style_edits'] == styles
+    assert len(context.local_artifacts()) == 1

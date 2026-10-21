@@ -678,7 +678,7 @@ ATTACHMENT_EDIT_TOOL_CONFIG = ToolConfig(
 PRESENTATION_EDIT_TOOL_CONFIG = ToolConfig(
     name='edit_presentation',
     label='编辑 PPTX',
-    description='直接编辑 PPTX 字体、配色、指定页文字和逐页演讲稿；支持当前工作流生成的 PPTX',
+    description='直接编辑 PPTX 字体、字号、粗细、斜体、下划线、文字颜色、指定页文字和演讲稿；支持当前工作流生成的 PPTX',
     tool=edit_presentation,
     module='attachment',
     appendix_system_prompt={
@@ -686,6 +686,10 @@ PRESENTATION_EDIT_TOOL_CONFIG = ToolConfig(
             '- `edit_presentation`: use this deterministic attachment tool for simple PPTX font '
             'inspection/replacement and exact palette replacement. Font replacement may target the '
             'whole deck, selected 1-based pages, titles, body text or exact inspected slot_ids. '
+            'For font size, bold, italic, underline or text color, inspect_content then '
+            'format_text with style_edits. Each entry selects pages/slot_ids/text_scope '
+            'and sets font_size_pt/bold/italic/underline/text_color; omitted fields remain '
+            'unchanged, false cancels the style. Sizes are pt. Publish all scopes together. '
             'Use prepare_font with target_font to check availability. Only if explicitly requested, '
             'set allow_font_download=true to download allowlisted open fonts into the shared library. '
             'Never download commercial fonts from unverified sites or substitute a different family. '

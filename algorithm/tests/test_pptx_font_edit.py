@@ -67,7 +67,8 @@ def test_missing_font_and_stale_hash_fail(deck, tmp_path):
     assert not out.exists()
 
 
-def test_native_font_edit_publishes_compact_receipt(deck, tmp_path, monkeypatch):
+@pytest.mark.parametrize('formatting', [False, True])
+def test_native_font_edit_publishes_compact_receipt(deck, tmp_path, monkeypatch, formatting):
     from lazymind.chat.engine.subagent import tools
     monkeypatch.setattr(tools, '_public_workflow_artifacts', lambda *a: [{
         'artifact_id': 'a1', 'revision': 3, 'draft_version': 2, 'selected': True,
@@ -76,12 +77,20 @@ def test_native_font_edit_publishes_compact_receipt(deck, tmp_path, monkeypatch)
     client = Mock()
     client.patch_artifact.return_value.result = {'artifact_id': 'a2', 'revision': 4, 'value': {'content_base64': 'HIDDEN'}}
     monkeypatch.setattr(tools, '_workflow_client', lambda: client)
-    result = tools.edit_presentation('native_pptx', 'replace_fonts', target_font='Test Font', pages=[1],
+    args = {'style_edits': [{'pages': [1], 'bold': False, 'italic': True, 'font_size_pt': 18}]} if formatting else {'target_font': 'Test Font', 'pages': [1]}
+    result = tools.edit_presentation('native_pptx', 'format_text' if formatting else 'replace_fonts', **args,
                                     source_sha256=inspect_content(deck)['sha256'], workflow_session_id='session')
-    assert result['updated_font_pages'] == [1]
+    assert result['updated_style_pages' if formatting else 'updated_font_pages'] == [1]
     assert result['workflow_artifact']['revision'] == 4
     assert 'HIDDEN' not in str(result)
     assert client.patch_artifact.call_args.kwargs['base_draft_version'] == 2
+    if formatting:
+        import base64
+        from io import BytesIO
+        payload = client.patch_artifact.call_args.args[2]['content_base64']
+        generated = Presentation(BytesIO(base64.b64decode(payload)))
+        run = generated.slides[0].shapes[-1].text_frame.paragraphs[0].runs[0]
+        assert run.font.bold is False and run.font.italic is True and run.font.size == Pt(18)
 
 
 def test_font_download_is_opt_in_and_allowlisted(monkeypatch):
@@ -91,6 +100,68 @@ def test_font_download_is_opt_in_and_allowlisted(monkeypatch):
     for name, download in [('Noto Serif SC', False), ('宋体', True), ('https://localhost/font.ttf', True)]:
         with pytest.raises(ValueError, match='不可用'):
             font_library.ensure_font(name, download)
+
+
+def test_native_format_properties_preserve_content_and_other_parts(deck, tmp_path, monkeypatch):
+    from lazymind.chat.engine.tools.file_resources import pptx_font_edit
+    info = inspect_content(deck)
+    slot = next(s['id'] for s in info['pages'][0]['slots'] if s['text'] == '正文 text')
+    monkeypatch.setattr(pptx_font_edit, 'ensure_font', lambda *a: pytest.fail('format-only must not resolve fonts'))
+    out = tmp_path / 'formatted.pptx'
+    pptx_font_edit.edit_style_batch(deck, out, info['sha256'], [{
+        'slot_ids': [slot], 'font_size_pt': 18, 'bold': False,
+        'italic': True, 'underline': True, 'text_color': '#123ABC'}])
+    run = Presentation(out).slides[0].shapes[-1].text_frame.paragraphs[0].runs[0]
+    assert run.text == '正文 text'
+    assert run.font.size == Pt(18) and run.font.bold is False
+    assert run.font.italic is True and run.font.underline is True
+    assert str(run.font.color.rgb) == '123ABC'
+    assert run.font.name is None
+    with ZipFile(deck) as before, ZipFile(out) as after:
+        for name in before.namelist():
+            if name != 'ppt/slides/slide1.xml':
+                assert before.read(name) == after.read(name), name
+
+
+def test_style_batch_handles_multiple_scopes_and_explicit_false(deck, tmp_path):
+    from lazymind.chat.engine.tools.file_resources.pptx_font_edit import edit_style_batch
+    from types import MappingProxyType
+    info = inspect_content(deck)
+    slot = next(s['id'] for s in info['pages'][1]['slots'] if s['text'] == '正文 text')
+    out = tmp_path / 'batch.pptx'
+    stats = edit_style_batch(deck, out, info['sha256'], (
+        MappingProxyType({'pages': (1,), 'text_scope': 'titles', 'font_size_pt': 24, 'bold': True}),
+        MappingProxyType({'slot_ids': (slot,), 'italic': True, 'bold': False, 'underline': False}),
+    ))
+    result = Presentation(out)
+    assert stats['updated_style_pages'] == [1, 2]
+    title = result.slides[0].shapes.title.text_frame.paragraphs[0].runs[0]
+    assert title.font.size == Pt(24) and title.font.bold is True
+    body = result.slides[1].shapes[-1].text_frame.paragraphs[0].runs[0]
+    assert body.font.italic is True and body.font.bold is False and body.font.underline is False
+    assert body.font.size == Pt(20)
+
+
+def test_style_batch_failure_is_atomic_and_size_overflow_is_blocked(deck, tmp_path):
+    from lazymind.chat.engine.tools.file_resources.pptx_font_edit import edit_style_batch
+    out = tmp_path / 'failed.pptx'
+    digest = inspect_content(deck)['sha256']
+    with pytest.raises(ValueError, match='not found'):
+        edit_style_batch(deck, out, digest, [{'pages': [1], 'italic': True}, {'slot_ids': ['2:999'], 'bold': False}])
+    assert not out.exists()
+    with pytest.raises(ValueError, match='overflow'):
+        edit_style_batch(deck, out, digest, [{'pages': [1], 'font_size_pt': 400}])
+    assert not out.exists()
+    assert inspect_content(deck)['sha256'] == digest
+
+
+@pytest.mark.parametrize('values', [{'bold': 'false'}, {'italic': 1}, {'underline': 'none'},
+    {'font_size_pt': True}, {'font_size_pt': float('nan')}, {'font_size_pt': 0},
+    {'font_size_pt': 401}, {'text_color': 'red'}, {'text_color': '#12345Z'}])
+def test_text_format_validation_rejects_invalid_values(values):
+    from lazymind.chat.engine.tools.file_resources.text_format import text_format
+    with pytest.raises(ValueError):
+        text_format(**values)
 
 
 def test_download_validates_and_registers_font_with_license(tmp_path, monkeypatch):

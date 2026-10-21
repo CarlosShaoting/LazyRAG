@@ -23,6 +23,19 @@ class SpeakerNote(TypedDict):
     text: str
 
 
+class StyleEdit(TypedDict, total=False):
+    pages: List[int]
+    slot_ids: List[str]
+    text_scope: str
+    target_font: str
+    font_size_pt: float
+    bold: bool
+    italic: bool
+    underline: bool
+    text_color: str
+    allow_download: bool
+
+
 def enforce_failure_budget(event, failures):
     """End the task after two failures of one tool, not just block its execution."""
     for item in event.get('tool_results') or []:
@@ -93,7 +106,8 @@ def publish_pptx_edit(source_sha256: str,
                       pages: Optional[List[int]] = None,
                       slot_ids: Optional[List[str]] = None,
                       text_scope: str = 'all',
-                      allow_font_download: bool = False) -> Dict[str, Any]:
+                      allow_font_download: bool = False,
+                      style_edits: Optional[List[StyleEdit]] = None) -> Dict[str, Any]:
     """Publish sparse text edits and/or notes once, then finish the task.
 
     Use the inspected source_sha256. text_edits: [{id,expected_text,text}],
@@ -106,6 +120,13 @@ def publish_pptx_edit(source_sha256: str,
     be all/titles/body (titles matches native title placeholders; use slot_ids
     for custom text-box titles). Keep font size, weight and content unchanged.
     Set allow_font_download only when user asks to download missing open fonts.
+    style_edits applies differently scoped text formatting in ONE revision, e.g.
+    [{pages:[1],text_scope:'titles',font_size_pt:28,bold:true},
+     {slot_ids:['4:3'],italic:true,underline:false,text_color:'#CC0000'}].
+    Each operation may also set target_font and allow_download. Omit a property
+    to preserve it; false explicitly cancels bold/italic/underline. PPTX sizes
+    are points (pt), never pixels. Inspect exact slots for custom titles/parts.
+    Do not regenerate text or resize boxes to satisfy a formatting-only request.
     """
     session = _session()
     ctx = require_context()
@@ -117,6 +138,7 @@ def publish_pptx_edit(source_sha256: str,
         require_all_notes=require_all_notes, workflow_session_id=session,
         target_font=target_font, pages=pages, slot_ids=slot_ids,
         text_scope=text_scope, allow_font_download=allow_font_download,
+        style_edits=style_edits,
     )
     if result.get('status') != 'ok' or not result.get('workflow_artifact'):
         raise ToolExecutionError('PPTX publication did not return a successful artifact revision')

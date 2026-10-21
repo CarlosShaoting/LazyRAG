@@ -301,6 +301,12 @@ def _native_pptx_editor(toolkit: HostWorkflowToolkit, session_id: str):
                     'For font requests pass target_font to publish_pptx_edit: omit pages for '
                     'the entire deck, pages=[1] for the first slide, exact inspected slot_ids '
                     'for a specific part or custom title. Never rewrite text to change fonts. '
+                    'For size, bold, italic, underline or text color use style_edits on '
+                    'publish_pptx_edit: each object has pages/slot_ids/text_scope and '
+                    'font_size_pt/bold/italic/underline/text_color. Omitted fields stay '
+                    'unchanged, false cancels that style. Use multiple entries for different '
+                    'ranges, publish once. Sizes are pt. Report overflow errors instead of '
+                    'silently shrinking fonts or resizing boxes. '
                     'Only set allow_font_download when the user explicitly requests download. '
                     'Report font_notice and any unmodified_complex_text_parts from the result; '
                     'never claim chart/SmartArt text was changed when it was not. '
@@ -1800,7 +1806,7 @@ def resolve_workflow_injection(
         if native_editor is not None:
             completed_followup = (
                 'The selected native_pptx supports direct revision editing. For date, title, '
-                'slide text, font (whole deck/page/selected text), or speaker-note changes, including every-page detailed speeches, '
+                'slide text, typography (font/size/bold/italic/underline/text color on whole deck/page/selected text), or speaker-note changes, including every-page detailed speeches, '
                 'MUST delegate to edit_current_pptx with the complete user instruction. '
                 'Its dedicated SubAgent performs inspection, writing and publication; '
                 'main Chat must not write the speeches or edit the file itself. Do NOT call '

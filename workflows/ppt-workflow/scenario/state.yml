@@ -1298,7 +1298,7 @@ steps:
       explain that this changes the deck-wide background capability instead of
       pretending a one-page replacement succeeded.
 
-      ### E) Font-only edit on an existing HTML deck
+      ### E) Typography edit on an existing HTML deck
       For requests such as “全部改成宋体”, “第 1 页改成宋体”, or “第 2 页标题
       改成宋体”, call ppt_find_deck and then ppt_replace_deck_fonts exactly once.
       Omit pages for the whole deck; otherwise pass the requested 1-based pages.
@@ -1307,6 +1307,12 @@ steps:
       a commercial family with another font. The tool refreshes only the changed
       previews and updates the deck-wide style contract only for whole-deck edits.
       Stop afterward; do not rerun style, outline, page HTML generation, or export.
+      The same tool supports font_size_pt, bold, italic, underline, text_color
+      (#RRGGBB); target_font may be omitted. False explicitly removes a style,
+      omitted properties are preserved. For exact text parts read addressable
+      elements with ppt_read_page_html, then ppt_edit_page_html set_style using
+      font-size/font-weight/font-style/text-decoration/color and exact el IDs.
+      Never regenerate content for these edits. HTML sizes with pt remain pt.
 
       ### F) Full deck HTML generation (default)
       Page prompts already exist from plan_page_prompts. Do NOT call ppt_init_deck,

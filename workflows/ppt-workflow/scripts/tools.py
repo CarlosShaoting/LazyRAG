@@ -68,6 +68,7 @@ from lazymind.chat.engine.subagent.tools import (
 )
 from lazymind.chat.engine.tools.multimodal import image_generator, image_editor
 from lazymind.chat.engine.tools.file_resources.presentation_edit import available_font_families
+from lazymind.chat.engine.tools.file_resources.text_format import text_format as _validate_text_format, format_css as _format_css
 from lazymind.chat.service.utils.static_file_url import (
     _upload_root,
     file_relative_path,
@@ -3612,7 +3613,8 @@ def _set_inline_styles(html: str, node: dict[str, Any], styles: Any, _font_child
     clean: dict[str, str] = {}
     for raw_name, raw_value in styles.items():
         name = _coerce_str(raw_name).lower()
-        value = _coerce_str(raw_value)
+        # CSS "none" is a meaningful reset, not a missing/null tool argument.
+        value = raw_value.strip() if isinstance(raw_value, str) else _coerce_str(raw_value)
         if not _SAFE_STYLE_PROPERTY_RE.fullmatch(name):
             raise ValueError(f'unsafe CSS property {name!r}')
         if not value or len(value) > 500 or any(ch in value for ch in '<>;'):
@@ -3621,15 +3623,24 @@ def _set_inline_styles(html: str, node: dict[str, Any], styles: Any, _font_child
             raise ValueError(f'unsafe CSS value for {name!r}')
         if name == 'font':
             raise ValueError('Use font-family and separate font-size/font-weight; font shorthand bypasses availability checks')
+        if name == 'font-size':
+            size_match = re.fullmatch(r'(\d+(?:\.\d+)?)(px|pt)(?:\s*!important)?', value, re.I)
+            if size_match:
+                points = float(size_match.group(1)) * (0.75 if size_match.group(2).lower() == 'px' else 1)
+                _validate_text_format(font_size_pt=points)
         if name == 'font-family':
             requested = re.sub(r'\s*!important\s*$', '', value, flags=re.I).strip().strip('\"\'')
             available = {f.casefold(): f for f in available_font_families()}
             if requested.casefold() not in available:
                 raise ValueError(f'字体 {requested!r} 不可用，请先安装或下载；未修改页面')
             value = json.dumps(available[requested.casefold()], ensure_ascii=False) + ' !important'
+        if name in {'font-size', 'font-weight', 'font-style', 'text-decoration', 'color'} and not value.endswith('!important'):
+            value += ' !important'
         clean[name] = value
 
-    if _font_children and 'font-family' in clean:
+    inherited_text_styles = {key: value for key, value in clean.items()
+                             if key in {'font-family', 'font-size', 'font-weight', 'font-style', 'text-decoration', 'color'}}
+    if _font_children and inherited_text_styles:
         # Override inherited and explicit descendant fonts within this selection
         # only, including a prior deck-level !important override.
         fragment = html[node['start']:node['end']]
@@ -3637,7 +3648,7 @@ def _set_inline_styles(html: str, node: dict[str, Any], styles: Any, _font_child
         for child in reversed(tree.nodes):
             if child['tag'] not in {'style', 'script'}:
                 fragment = _set_inline_styles(fragment, child,
-                    clean if child['parent'] is None else {'font-family': clean['font-family']}, False)
+                    clean if child['parent'] is None else inherited_text_styles, False)
         return html[:node['start']] + fragment + html[node['end']:]
 
     start_tag = html[node['start']:node['open_end']]
@@ -7685,16 +7696,25 @@ def _upsert_font_override(html: str, target_font: str, text_scope: str) -> str:
 
 def ppt_replace_deck_fonts(
     deck_dir: str,
-    target_font: str,
+    target_font: Optional[str] = None,
     pages: Optional[Union[str, list, int]] = None,
     text_scope: str = 'all',
     allow_font_download: bool = False,
+    font_size_pt: Optional[float] = None,
+    bold: Optional[bool] = None,
+    italic: Optional[bool] = None,
+    underline: Optional[bool] = None,
+    text_color: Optional[str] = None,
 ) -> dict:
-    """Replace fonts in generated HTML without regenerating slide content.
+    """Change typography in generated HTML without regenerating slide content.
 
     Omit pages to update the entire deck and its style_spec. Pass one or more
     1-based pages for page-local CSS only. text_scope accepts all, titles, body.
     The changed pages are republished immediately so the right preview refreshes.
+    Optional font_size_pt uses points; bold/italic/underline accept true or false
+    (false cancels that style), text_color uses #RRGGBB. Omit every property that
+    should stay unchanged. target_font is optional for formatting-only requests.
+    For a specific text part use ppt_edit_page_html with set_style on inspected el.
     """
     try:
         deck = _resolve_deck_dir(deck_dir)
@@ -7705,9 +7725,13 @@ def ppt_replace_deck_fonts(
     if scope not in {'all', 'titles', 'body'}:
         return _tool_error('ppt_replace_deck_fonts', "text_scope must be 'all', 'titles', or 'body'")
     requested = _coerce_str(target_font).strip()
-    if not requested:
-        return _tool_error('ppt_replace_deck_fonts', 'target_font is required')
-    if allow_font_download:
+    try:
+        formatting = _validate_text_format(font_size_pt, bold, italic, underline, text_color)
+    except ValueError as exc:
+        return _tool_error('ppt_replace_deck_fonts', str(exc))
+    if not requested and not formatting:
+        return _tool_error('ppt_replace_deck_fonts', 'target_font or a text formatting property is required')
+    if allow_font_download and requested:
         from lazymind.chat.engine.tools.file_resources.font_library import ensure_font
         try:
             requested = ensure_font(requested, True)
@@ -7715,7 +7739,7 @@ def ppt_replace_deck_fonts(
             return _tool_error('ppt_replace_deck_fonts', str(exc))
     installed = available_font_families()
     installed_by_name = {family.casefold(): family for family in installed}
-    if requested.casefold() not in installed_by_name:
+    if requested and requested.casefold() not in installed_by_name:
         suggestions = sorted(
             family for family in installed
             if requested.casefold() in family.casefold() or family.casefold() in requested.casefold()
@@ -7725,7 +7749,7 @@ def ppt_replace_deck_fonts(
             'ppt_replace_deck_fonts',
             f'Target font {requested!r} is not available on this system; choose or upload another font.' + suffix,
         )
-    target = installed_by_name[requested.casefold()]
+    target = installed_by_name[requested.casefold()] if requested else None
     targets = page_list if page_list is not None else _iter_page_numbers(deck)
     if not targets:
         return _tool_error('ppt_replace_deck_fonts', 'No generated HTML pages were found')
@@ -7738,11 +7762,13 @@ def ppt_replace_deck_fonts(
     original_style = style_path.read_bytes() if style_path.is_file() else None
     try:
         for page, html in originals.items():
-            updated = _upsert_font_override(html, target, scope)
+            updated = _upsert_font_override(html, target, scope) if target else html
+            if formatting:
+                updated = _apply_html_text_format(updated, _format_css(formatting), scope)
             temporary = _page_html_path(deck, page).with_suffix('.html.tmp')
             temporary.write_text(updated, encoding='utf-8')
             os.replace(temporary, _page_html_path(deck, page))
-        style_updated = page_list is None
+        style_updated = page_list is None and target is not None
         if style_updated:
             style = _read_style_spec(deck)
             typography = style.setdefault('typography', {})
@@ -7774,9 +7800,47 @@ def ppt_replace_deck_fonts(
         'target_font': target,
         'text_scope': scope,
         'pages': targets,
-        'style_spec_updated': page_list is None,
+        'style_spec_updated': style_updated,
+        'text_format': formatting,
+        'layout_notice': 'Typography changed without moving boxes; inspect the preview for overflow before export.',
         'published_count': published['published_count'],
     })
+
+
+def _apply_html_text_format(html: str, styles: dict, scope: str) -> str:
+    tree = _HtmlTree(html)
+    def is_title(node):
+        attrs = node['attrs']
+        classes = set(attrs.get('class', '').split())
+        el = attrs.get('data-el', '')
+        return (node['tag'] in {'h1', 'h2', 'h3', 'h4', 'h5', 'h6'} or
+                el == 'title' or el.endswith('-title') or
+                bool(classes & {'title', 'slide-title', 'heading', 'headline'}))
+    if scope == 'all':
+        targets = [i for i, n in enumerate(tree.nodes) if n['tag'] == 'body']
+        if not targets:
+            targets = [i for i, n in enumerate(tree.nodes) if n['parent'] is None and n['tag'] not in {'style', 'script', 'head'}]
+    elif scope == 'titles':
+        targets = [i for i, n in enumerate(tree.nodes) if is_title(n)]
+    else:
+        targets = []
+        for i, node in enumerate(tree.nodes):
+            if node['tag'] not in {'p', 'li', 'td', 'th', 'label', 'blockquote', 'span', 'div'}:
+                continue
+            parent, in_title = i, False
+            while parent is not None:
+                in_title = in_title or is_title(tree.nodes[parent])
+                parent = tree.nodes[parent]['parent']
+            # Never format a container holding a heading as body text.
+            contains_title = any(is_title(n) and node['start'] < n['start'] < node['end'] for n in tree.nodes)
+            if not in_title and not contains_title and tree.node_text(i).strip():
+                targets.append(i)
+    roots = [i for i in targets if not any(tree.nodes[j]['start'] < tree.nodes[i]['start'] < tree.nodes[j]['end'] for j in targets)]
+    if not roots:
+        raise ValueError('No text targets found for requested scope; inspect the page and select exact elements')
+    for i in sorted(roots, key=lambda i: tree.nodes[i]['start'], reverse=True):
+        html = _set_inline_styles(html, tree.nodes[i], styles)
+    return html
 
 
 def ppt_read_page_html(deck_dir: str, page: int) -> dict:
@@ -8372,7 +8436,7 @@ def _deterministic_selection_styles(
         r'(?:字体\s*(?:替换成|替换为|换成|改成|改为|设为|设置为|用)|font(?:[ -]family)?\s*(?:to|:|=))\s*[\"\“\']?([^，。；;\n\"\”\']+)',
         command, re.I,
     )
-    if font_match:
+    if font_match and not re.fullmatch(r'\d+(?:\.\d+)?\s*(?:px|pt)', font_match.group(1).strip(), re.I):
         family = font_match.group(1).strip()
         if re.search(r'下载|download', command, re.I):
             from lazymind.chat.engine.tools.file_resources.font_library import ensure_font
@@ -8387,10 +8451,28 @@ def _deterministic_selection_styles(
         if relative or explicit:
             styles[property_name] = relative or explicit or ''
 
-    if re.search(r'(?:取消加粗|不加粗|正常字重|font[\s-]*weight\s*(?:normal|400))', command, re.I):
+    if re.search(r'(?:(?:取消|不使用|不要)\s*(?:加粗|粗体)|不加粗|正常字重|(?:remove|no|without)\s+bold|font[\s-]*weight\s*(?:normal|400))', command, re.I):
         styles['font-weight'] = '400'
     elif re.search(r'(?:字体|文字|标题)?\s*(?:加粗|粗体|更粗)|font[\s-]*weight\s*(?:bold|[7-9]00)', command, re.I):
         styles['font-weight'] = '700'
+
+    if re.search(r'(?:取消|去掉|不要|不使用)\s*斜体|(?:remove|no|without)\s+italic|font[\s-]*style\s*(?:normal)', command, re.I):
+        styles['font-style'] = 'normal'
+    elif re.search(r'斜体|italic', command, re.I):
+        styles['font-style'] = 'italic'
+    if re.search(r'(?:取消|去掉|不要)\s*下划线|(?:remove|no|without)\s+underline|text-decoration\s*(?:none)', command, re.I):
+        styles['text-decoration'] = 'none'
+    elif re.search(r'下划线|underline', command, re.I):
+        styles['text-decoration'] = 'underline'
+    color_match = re.search(r'(?:文字颜色|字体颜色|文本颜色|文字改为|text[ -]?color)\s*(?:改为|改成|设为|:|=)?\s*(#[0-9a-fA-F]{6})\b', command)
+    if color_match:
+        styles['color'] = color_match.group(1).upper()
+    else:
+        named = re.search(r'(?:文字颜色|字体颜色|文本颜色|文字|标题|text[ -]?color)\s*(?:改为|改成|设为|变成|变|:|=)?\s*(红色|蓝色|黑色|白色|灰色|绿色|黄色|橙色|紫色)', command)
+        if named:
+            styles['color'] = {'红色': '#FF0000', '蓝色': '#0000FF', '黑色': '#000000',
+                               '白色': '#FFFFFF', '灰色': '#808080', '绿色': '#008000',
+                               '黄色': '#FFFF00', '橙色': '#FFA500', '紫色': '#800080'}[named.group(1)]
 
     if re.search(r'(?:文字|文本|内容|标题)\s*(?:居中|居中对齐)|text[\s-]*align\s*(?:center|居中)', command, re.I):
         styles['text-align'] = 'center'

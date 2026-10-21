@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 from urllib.parse import urlparse
@@ -1743,7 +1744,7 @@ def pptx_analyzer(filename: str, page: int = 1, turn: Optional[int] = None) -> D
 @fc_register(host_file='NONE')
 def edit_presentation(
     filename: str,
-    action: Literal['inspect', 'replace_fonts', 'replace_palette', 'inspect_content', 'edit_content', 'prepare_font'],
+    action: Literal['inspect', 'replace_fonts', 'replace_palette', 'inspect_content', 'edit_content', 'prepare_font', 'format_text'],
     source_font: Optional[str] = None,
     target_font: Optional[str] = None,
     color_map: Optional[Union[Dict[str, str], str]] = None,
@@ -1757,6 +1758,7 @@ def edit_presentation(
     workflow_session_id: Optional[str] = None,
     slot_ids: Optional[List[str]] = None,
     allow_font_download: bool = False,
+    style_edits: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Inspect or directly edit an uploaded PPTX without starting a Workflow.
 
@@ -1780,6 +1782,11 @@ def edit_presentation(
     edit_content can combine target_font with text/notes into one revision.
     prepare_font checks target_font without a file (filename may be empty).
     Only explicitly requested open-font downloads may set allow_font_download.
+    format_text (or edit_content) takes style_edits: a list of objects with
+    pages/slot_ids/text_scope plus optional target_font, font_size_pt (1-400 pt),
+    bold, italic, underline (true/false), text_color (#RRGGBB), allow_download.
+    Example: [{"pages":[1],"text_scope":"titles","font_size_pt":28,"bold":true}].
+    Omit properties to preserve them. Multiple scopes publish atomically once.
     """
     if action == 'prepare_font':
         from lazymind.chat.engine.tools.file_resources.font_library import ensure_font
@@ -1801,7 +1808,7 @@ def edit_presentation(
             raise ToolExecutionError('Expected exactly one selected native_pptx revision')
         native_artifact = selected[0]
         matched = (native_artifact.get('value') or {}).get('path', '')
-        if action not in ('inspect_content', 'edit_content', 'replace_fonts', 'inspect'):
+        if action not in ('inspect_content', 'edit_content', 'replace_fonts', 'inspect', 'format_text'):
             raise ToolExecutionError('For the selected native_pptx use content or font editing')
     else:
         matched, err = _resolve_attachment(filename, turn)
@@ -1815,7 +1822,7 @@ def edit_presentation(
     if native_artifact is not None:
         effective = matched  # The selected immutable revision is authoritative.
     normalized_action = str(action or '').strip().lower()
-    if normalized_action in ('inspect_content', 'edit_content') or (normalized_action == 'replace_fonts' and (native_artifact is not None or slot_ids is not None)):
+    if normalized_action in ('inspect_content', 'edit_content', 'format_text') or (normalized_action == 'replace_fonts' and (native_artifact is not None or slot_ids is not None)):
         from pathlib import Path
         from lazymind.chat.engine.tools.file_resources.pptx_content_edit import inspect_content, edit_content
         if normalized_action == 'inspect_content':
@@ -1844,7 +1851,17 @@ def edit_presentation(
                                         pages, slot_ids, text_scope, allow_font_download))
                 os.replace(font_output, candidate)
             if not candidate.exists():
-                raise ToolExecutionError('Provide text_edits, speaker_notes or target_font')
+                if not style_edits:
+                    raise ToolExecutionError('Provide text_edits, speaker_notes, target_font or style_edits')
+            if style_edits is not None:
+                from lazymind.chat.engine.tools.file_resources.pptx_font_edit import edit_style_batch
+                if text_edits and any(isinstance(e, Mapping) and e.get('slot_ids') for e in style_edits):
+                    raise ToolExecutionError('Inspect new slots after text replacements before styling exact slot_ids')
+                style_source = candidate if candidate.exists() else Path(effective)
+                style_hash = hashlib.sha256(style_source.read_bytes()).hexdigest() if candidate.exists() else source_sha256
+                style_output = Path(temporary) / 'styles.pptx'
+                stats.update(edit_style_batch(style_source, style_output, style_hash, style_edits))
+                os.replace(style_output, candidate)
             if native_artifact is not None:
                 import base64
                 raw = candidate.read_bytes()
@@ -1854,7 +1871,7 @@ def edit_presentation(
                     native_artifact.get('artifact_id') or native_artifact['id'], native_artifact['revision'],
                     {'storage': 'inline_base64', 'filename': 'presentation.pptx',
                      'content_base64': base64.b64encode(raw).decode(), 'size': len(raw)},
-                    content_type='file', caption='Updated presentation text and speaker notes',
+                    content_type='file', caption='Updated presentation content and text formatting',
                     base_draft_version=native_artifact.get('draft_version', 0)).result
                 # Never return the binary transport payload to a model or task card.
                 receipt = {key: published[key] for key in (

@@ -43,6 +43,66 @@ def test_clicked_unknown_font_does_not_fall_through_to_llm():
         llm.assert_not_called()
 
 
+def test_clicked_typography_changes_all_requested_properties_without_rewriting_text():
+    html = '<main><div data-el="title"><b><i><u>标题</u></i></b></div><p data-el="body">正文</p></main>'
+    tree = TOOLS._HtmlTree(html)
+    command = '字号改为 18pt，取消粗体，取消斜体，取消下划线，文字颜色改为 #123ABC'
+    ops, old, new = TOOLS._single_selection_edit_ops(command, {'el': 'title'}, tree)
+    assert old == new == '标题'
+    assert ops[0]['styles'] == {'font-size': '18pt', 'font-weight': '400',
+                               'font-style': 'normal', 'text-decoration': 'none', 'color': '#123ABC'}
+    target = TOOLS._resolve_el(tree, 'title', {})[0]
+    updated = TOOLS._set_inline_styles(html, tree.nodes[target], ops[0]['styles'])
+    assert updated.count('font-style: normal !important') == 4
+    assert updated.count('font-weight: 400 !important') == 4
+    assert '<p data-el="body">正文</p>' in updated
+    assert '18pt' in updated
+
+
+def test_deck_body_format_preserves_titles_and_unrequested_styles():
+    html = '<html><body><main><h1><span>标题</span></h1><p style="font-size:20pt;color:#123456">正文</p></main></body></html>'
+    updated = TOOLS._apply_html_text_format(html, {'font-style': 'italic'}, 'body')
+    assert '<h1><span>标题</span></h1>' in updated
+    assert 'font-size: 20pt' in updated and 'color: #123456' in updated
+    assert updated.count('font-style: italic') == 1
+
+
+def test_main_chat_html_typography_publishes_only_requested_page(tmp_path):
+    deck = tmp_path / 'deck'
+    pages = deck / 'pages'
+    pages.mkdir(parents=True)
+    html = '<html><body><h1>Title</h1><p>Body</p></body></html>'
+    for page in (1, 2):
+        (pages / f'page_{page:03}.html').write_text(html)
+    with mock.patch.object(TOOLS, '_resolve_deck_dir', return_value=deck), \
+         mock.patch.object(TOOLS, '_publish_pages_from_disk', return_value={'published_count': 1, 'failed_count': 0}) as publish:
+        result = TOOLS.ppt_replace_deck_fonts(str(deck), pages=[1], text_scope='titles',
+                                             font_size_pt=24, bold=True, italic=True, underline=False, text_color='#AA0000')
+    assert result['pages'] == [1] and result['target_font'] is None
+    updated = (pages / 'page_001.html').read_text()
+    assert 'font-size: 24pt' in updated and 'font-weight: 700' in updated
+    assert 'font-style: italic' in updated and 'text-decoration: none' in updated
+    assert '<p>Body</p>' in updated
+    assert (pages / 'page_002.html').read_text() == html
+    assert not (deck / 'style_spec.json').exists()
+    publish.assert_called_once_with(deck, [1], with_notes=True)
+
+
+def test_html_typography_publication_failure_restores_files(tmp_path):
+    import pytest
+    deck = tmp_path / 'deck'
+    pages = deck / 'pages'
+    pages.mkdir(parents=True)
+    path = pages / 'page_001.html'
+    html = '<html><body><h1>Title</h1><p>Body</p></body></html>'
+    path.write_text(html)
+    with mock.patch.object(TOOLS, '_resolve_deck_dir', return_value=deck), \
+         mock.patch.object(TOOLS, '_publish_pages_from_disk', return_value={'published_count': 0, 'failed_count': 1}):
+        with pytest.raises(ToolExecutionError, match='rolled back'):
+            TOOLS.ppt_replace_deck_fonts(str(deck), italic=True)
+    assert path.read_text() == html
+
+
 PAGE_HTML = """<!DOCTYPE html>
 <html><head><title>Old title</title></head><body>
 <div class="wrapper"><div id="bg"></div><div id="ct">
@@ -1000,7 +1060,7 @@ class PartialEditTests(unittest.TestCase):
         }])
         TOOLS._validate_local_html_edit(PAGE_HTML, edited)
         self.assertIn(
-            '<h1 data-el="title" style="font-size: 48px; color: #ffffff">',
+            '<h1 data-el="title" style="font-size: 48px !important; color: #ffffff !important">',
             edited,
         )
         self.assertEqual(len(applied), 1)
