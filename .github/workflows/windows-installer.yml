@@ -439,6 +439,10 @@ jobs:
   publish-windows-rag:
     name: Publish verified windows RAG (independent of installation tests)
     needs: build-windows-installer
+    strategy:
+      fail-fast: false
+      matrix:
+        host: [ms, hf]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -451,23 +455,33 @@ jobs:
           name: windows-rag-publication
           path: desktop/dist/python-components/windows-amd64/
       - uses: astral-sh/setup-uv@v6
-      - name: Publish Windows RAG and tag catalog to ModelScope
+      - name: Publish Windows RAG and tag catalog to MS or HF
         env:
-          MODELSCOPE_API_TOKEN: ${{ secrets.MODELSCOPE_API_TOKEN }}
+          UPLOAD_TOKEN: ${{ secrets[matrix.host == 'ms' && 'MODELSCOPE_API_TOKEN' || 'HF_TOKEN'] }}
+          MIRROR_HOST: ${{ matrix.host }}
+          HF_REPO: ${{ vars.LAZYMIND_HF_COMPONENT_REPO || 'LazyAGI/LazyMind' }}
+          HF_HUB_DISABLE_XET: "1"
           IS_RELEASE: ${{ needs.build-windows-installer.outputs.is_release }}
         run: |
           set -euo pipefail
-          if [[ -z "${MODELSCOPE_API_TOKEN:-}" ]]; then
-            if [[ "${IS_RELEASE}" == "true" ]]; then
+          if [[ -z "${UPLOAD_TOKEN:-}" ]]; then
+            if [[ "${IS_RELEASE}" == "true" && "${MIRROR_HOST}" == "ms" ]]; then
               echo "::error::MODELSCOPE_API_TOKEN is required for release RAG publication."
               exit 1
             fi
-            echo "::warning::No ModelScope token; RAG is available only in GitHub Artifacts."
+            echo "::warning::No token for ${MIRROR_HOST}; skipping RAG upload."
             exit 0
           fi
-          uv run --no-project --python 3.11 --with modelscope-hub==0.4.6 python desktop/scripts/publish-python-components.py \
+          repo="${LAZYMIND_MS_COMPONENT_REPO}"
+          if [[ "${MIRROR_HOST}" == "ms" ]]; then
+            export MODELSCOPE_API_TOKEN="${UPLOAD_TOKEN}"
+          else
+            repo="${HF_REPO}"
+            export HF_TOKEN="${UPLOAD_TOKEN}"
+          fi
+          uv run --no-project --python 3.11 --with modelscope-hub==0.4.6 --with huggingface-hub python desktop/scripts/publish-python-components.py \
             --directory desktop/dist/python-components/windows-amd64 \
-            --repo "${LAZYMIND_MS_COMPONENT_REPO}"
+            --host "${MIRROR_HOST}" --repo "${repo}"
           echo 'RAG uploaded to its existing path; public download SHA-256 verified.' >> "${GITHUB_STEP_SUMMARY}"
 
   test-windows-installer:

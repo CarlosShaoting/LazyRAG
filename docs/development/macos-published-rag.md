@@ -17,6 +17,8 @@
 
 ### 安装包镜像与下载时序
 
+Windows RAG 同样使用 MS/HF 独立 matrix 上传，沿用上述 token、仓库变量和 `RAG/tags/<tag>/` 路径。开发构建缺少对应 token 时跳过该源；Windows release 缺少 MS 主源 token 时发布失败，HF 缺少 token 时仅跳过镜像。两源均上传后下载回验，安装测试不等待上传。此规则替代上文“Windows 发布规则不变”的说明。
+
 构建先上传 GitHub installer Artifact 并展示下载链接，构建结束后安装测试、RAG 发布、安装包镜像三个分支并行；安装测试不依赖任何镜像 job。MS/HF 安装包分别使用独立 matrix job，互不取消。镜像失败仍会显示 job 错误，但不影响已生成的 Artifact 和安装测试；缺少对应 token 时警告并跳过该安装包镜像。GitHub draft release 仍沿用既有平台 workflow 完成后的汇总规则。
 
 只为安装包新增 **`Realease/`**（保留约定拼写），不移动 RAG。MS 使用 `MODELSCOPE_API_TOKEN`、`LAZYMIND_MS_COMPONENT_REPO`（默认 `CarlosShaoting/lazymind-cst`）；HF 使用 `HF_TOKEN`、`LAZYMIND_HF_COMPONENT_REPO`（默认 `LazyAGI/LazyMind`）。目录内只保存原名 `.exe`/`.dmg`，不额外生成或上传 `.sha256` 文件；SHA 仅在 CI 摘要中展示，RAG 完整性校验不变。Mac 开发包保留 `.unnotarized.dmg` 文件名。

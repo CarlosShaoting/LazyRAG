@@ -48,6 +48,10 @@ test("RAG publication uses ModelScope without advertising an unpublished HF mirr
     assert.match(workflow, /LAZYMIND_MS_COMPONENT_REPO: \$\{\{ vars\.LAZYMIND_MS_COMPONENT_REPO \|\| 'CarlosShaoting\/lazymind-cst' \}\}/);
     const rag = workflow.split(/\n  publish-(?:macos|windows)-rag:/)[1].split(/\n  test-/)[0];
     assert.doesNotMatch(rag, /Realease/);
+    assert.match(rag, /host: \[ms, hf\]/);
+    assert.match(rag, /fail-fast: false/);
+    assert.match(rag, /secrets\[matrix.host/);
+    assert.match(rag, /--host "\$\{MIRROR_HOST\}"/);
     if (filename === "macos-installer.yml") {
       assert.match(rag, /host: \[ms, hf\]/);
       assert.match(rag, /signing_mode=adhoc/);
