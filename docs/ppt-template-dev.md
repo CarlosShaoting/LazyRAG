@@ -470,6 +470,12 @@ API 依据：[GitHub PR 列表接口](https://docs.github.com/en/rest/pulls/pull
 - 本轮 298 项回归测试及 10 项子用例通过：验证字体格式实际写入、显式 false、不同页/槽的原子批量编辑、错误参数拒绝、字号溢出拒绝、CAS 发布与短回执、HTML 点击嵌套样式取消、主 Chat 指定页样式修改及发布失败恢复，并回归子任务运行器与模拟模型工作流。没有将自动化检查等同于真实模型和 PowerPoint 视觉验收。
 - 未做：原生 PPTX 点击交互、图片内文字、图表/SmartArt 额外 XML 部件的格式修改、精准字形排版引擎。原生 PPTX 仍通过 Chat 修改并下载查看。当前本地数据库已应用其他分支迁移，PPT 分支缺对应迁移文件，服务启动仍被阻塞；本功能没有更改数据库或绕过迁移校验。
 
+### 8.26 跨分支本地迁移兼容（2026-10-21）
+
+- 从 `cst/fix_rag_comp` 原样同步 4 组已存在的开发迁移：document_directories、document_folders、task_execution_timing、document_directories_control，以及相关回归测试。保持原版本号和 SQL，不删除本地已应用记录，不回滚用户数据库。
+- 同步已有 v0.3 汇总迁移 up/down，保持最终 schema 与完整开发迁移路径一致；不增加新的汇总版本，也不合并其他分支的业务代码。
+- `go test ./migrations -count=1` 通过，覆盖 SQLite 升级、回滚、数据保留与汇总/开发路径一致性。PostgreSQL 用例因未配置 `MIGRATION_TEST_POSTGRES_DSN` 跳过，本机 Docker 未运行；不能将本轮结果视为 PostgreSQL 实机验收。
+
 ## 9. 最终未完成需求清单
 
 面板调整（2026-10-19）：移除独立的“PPTX 文件”tab，native_pptx 文件 slot 合并到最终“幻灯片”tab，保留现有查看/下载入口，不增加执行步骤。本次按要求不重启服务。
