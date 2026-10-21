@@ -19,7 +19,7 @@
 
 构建先上传 GitHub installer Artifact 并展示下载链接，构建结束后安装测试、RAG 发布、安装包镜像三个分支并行；安装测试不依赖任何镜像 job。MS/HF 安装包分别使用独立 matrix job，互不取消。镜像失败仍会显示 job 错误，但不影响已生成的 Artifact 和安装测试；缺少对应 token 时警告并跳过该安装包镜像。GitHub draft release 仍沿用既有平台 workflow 完成后的汇总规则。
 
-只为安装包新增 **`Realease/`**（保留约定拼写），不移动 RAG。MS 使用 `MODELSCOPE_API_TOKEN`、`LAZYMIND_MS_COMPONENT_REPO`（默认 `CarlosShaoting/lazymind-cst`）；HF 使用 `HF_TOKEN`、`LAZYMIND_HF_COMPONENT_REPO`（默认 `LazyAGI/LazyMind`）。目录内保存原名 `.exe`/`.dmg` 和各自 `.sha256`，不同构建不共用易覆盖的校验清单。Mac 开发包保留 `.unnotarized.dmg` 文件名。
+只为安装包新增 **`Realease/`**（保留约定拼写），不移动 RAG。MS 使用 `MODELSCOPE_API_TOKEN`、`LAZYMIND_MS_COMPONENT_REPO`（默认 `CarlosShaoting/lazymind-cst`）；HF 使用 `HF_TOKEN`、`LAZYMIND_HF_COMPONENT_REPO`（默认 `LazyAGI/LazyMind`）。目录内只保存原名 `.exe`/`.dmg`，不额外生成或上传 `.sha256` 文件；SHA 仅在 CI 摘要中展示，RAG 完整性校验不变。Mac 开发包保留 `.unnotarized.dmg` 文件名。
 
 注意：安装包可以先下载测试普通功能，但首次在线安装 RAG 仍须等独立 RAG 发布 job 成功；在线 JSON 未就绪时不会绕过校验。CI 的本地配套 RAG 测试不代表云端发布成功，云端结果须看发布 job。
 

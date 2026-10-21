@@ -4,7 +4,6 @@ import argparse
 import hashlib
 import os
 from pathlib import Path
-import tempfile
 
 
 def publish(installer, host, repo, token, api=None):
@@ -27,14 +26,10 @@ def publish(installer, host, repo, token, api=None):
         else:
             from huggingface_hub import HfApi
             api = HfApi(token=token)
-    with tempfile.TemporaryDirectory(prefix='installer-checksum-') as temporary:
-        checksum = Path(temporary) / (installer.name + '.sha256')
-        checksum.write_text(f'{digest.hexdigest()}  {installer.name}\n', encoding='utf-8')
-        for source in (installer, checksum):
-            api.upload_file(repo_id=repo, repo_type='dataset', path_or_fileobj=str(source),
-                            path_in_repo=f'Realease/{source.name}',
-                            revision='master' if host == 'ms' else 'main',
-                            commit_message=f'Mirror installer {source.name}')
+    api.upload_file(repo_id=repo, repo_type='dataset', path_or_fileobj=str(installer),
+                    path_in_repo=f'Realease/{installer.name}',
+                    revision='master' if host == 'ms' else 'main',
+                    commit_message=f'Mirror installer {installer.name}')
     base = (f'https://modelscope.cn/datasets/{repo}/resolve/master/' if host == 'ms'
             else f'https://huggingface.co/datasets/{repo}/resolve/main/')
     from urllib.parse import quote

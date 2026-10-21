@@ -1,5 +1,4 @@
 """Installer mirrors must not write into RAG or change the downloaded bytes."""
-import hashlib
 import importlib.util
 from pathlib import Path
 import tempfile
@@ -13,7 +12,7 @@ spec.loader.exec_module(mirror)
 
 
 class InstallerMirrorTests(unittest.TestCase):
-    def test_hosts_upload_exact_artifact_and_per_file_checksum_to_realease(self):
+    def test_hosts_upload_only_exact_installer_to_realease(self):
         for host, branch in [('ms', 'master'), ('hf', 'main')]:
             for suffix in ('.exe', '.dmg'):
                 with self.subTest(host=host, suffix=suffix), tempfile.TemporaryDirectory() as tmp:
@@ -25,11 +24,9 @@ class InstallerMirrorTests(unittest.TestCase):
                     api.upload_file.side_effect = lambda **kw: uploads.append((kw, Path(kw['path_or_fileobj']).read_bytes()))
                     with patch.dict(mirror.os.environ, {'GITHUB_STEP_SUMMARY': str(Path(tmp) / 'summary')}):
                         mirror.publish(installer, host, 'owner/repo', 'fixture-token', api=api)
-                    self.assertEqual(len(uploads), 2)
+                    self.assertEqual(len(uploads), 1)
                     self.assertEqual(uploads[0][1], content)
                     self.assertEqual(uploads[0][0]['path_in_repo'], 'Realease/' + installer.name)
-                    self.assertEqual(uploads[1][0]['path_in_repo'], 'Realease/' + installer.name + '.sha256')
-                    self.assertEqual(uploads[1][1].decode(), f'{hashlib.sha256(content).hexdigest()}  {installer.name}\n')
                     for args, _ in uploads:
                         self.assertEqual(args['revision'], branch)
                         self.assertEqual(args['repo_type'], 'dataset')
@@ -50,7 +47,7 @@ class InstallerMirrorTests(unittest.TestCase):
                     mirror.publish(path, 'hf', 'owner/repo', 'fixture-token', api=api)
             api.upload_file.assert_not_called()
 
-    def test_failed_installer_upload_does_not_publish_checksum(self):
+    def test_failed_installer_upload_is_reported(self):
         with tempfile.TemporaryDirectory() as tmp:
             installer = Path(tmp) / 'LazyMind.dmg'
             installer.write_bytes(b'fixture')

@@ -76,7 +76,7 @@ test("Installer mirrors and RAG publication cannot block artifact download or in
     const mirror = workflow.split(`  mirror-${platform}-installer:`)[1].split(`  publish-${platform}-rag:`)[0];
     assert.match(mirror, /host: \[ms, hf\]/);
     assert.match(mirror, /fail-fast: false/);
-    assert.match(mirror, /Upload installer and checksum to Realease/);
+    assert.match(mirror, /Upload installer to Realease/);
     assert.match(mirror, /secrets\[matrix.host/);
     if (platform === "macos") assert.match(testJob, /--bundle-dir rag-under-test\/darwin-arm64/);
   }

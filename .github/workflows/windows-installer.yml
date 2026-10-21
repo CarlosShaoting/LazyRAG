@@ -411,7 +411,7 @@ jobs:
           name: ${{ needs.build-windows-installer.outputs.artifact_name }}
           path: installer-mirror
       - uses: astral-sh/setup-uv@v6
-      - name: Upload installer and checksum to Realease
+      - name: Upload installer to Realease
         env:
           UPLOAD_TOKEN: ${{ secrets[matrix.host == 'ms' && 'MODELSCOPE_API_TOKEN' || 'HF_TOKEN'] }}
           MIRROR_HOST: ${{ matrix.host }}
