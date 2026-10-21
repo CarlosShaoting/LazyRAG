@@ -8,6 +8,9 @@ on:
         required: false
         type: string
     secrets:
+      HF_TOKEN:
+        description: "Hugging Face dataset write token for installer mirrors"
+        required: false
       MODELSCOPE_API_TOKEN:
         description: "ModelScope dataset write token for RAG publication"
         required: false
@@ -54,6 +57,7 @@ jobs:
       artifact_name: ${{ steps.package.outputs.artifact_name }}
       release_tag: ${{ steps.release.outputs.release_tag }}
       installer_sha256: ${{ steps.package.outputs.installer_sha256 }}
+      is_release: ${{ steps.release.outputs.is_tag }}
 
     steps:
       - name: Checkout
@@ -330,23 +334,13 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Publish Windows RAG and tag catalog to ModelScope
-        shell: pwsh
-        env:
-          MODELSCOPE_API_TOKEN: ${{ secrets.MODELSCOPE_API_TOKEN }}
-          IS_RELEASE: ${{ steps.release.outputs.is_tag }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if (-not $env:MODELSCOPE_API_TOKEN) {
-            if ($env:IS_RELEASE -eq 'true') { throw 'MODELSCOPE_API_TOKEN is required for release RAG publication' }
-            Write-Host '::notice::MODELSCOPE_API_TOKEN is not configured; RAG artifacts retained but not published to ModelScope.'
-            exit 0
-          }
-          uv run --no-project --python 3.11 --with modelscope-hub==0.4.6 python desktop/scripts/publish-python-components.py `
-            --directory desktop/dist/python-components/windows-amd64 `
-            --repo $env:LAZYMIND_MS_COMPONENT_REPO
-          if ($LASTEXITCODE -ne 0) { throw 'ModelScope RAG publication or download verification failed' }
-          'Published Windows RAG ZIP and tag catalog to ModelScope; downloaded SHA-256 verified.' | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+      - name: Upload Windows RAG publication bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-rag-publication
+          path: desktop/dist/python-components/windows-amd64/
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Upload Windows RAG catalog and verification reports
         if: ${{ always() }}
@@ -396,6 +390,85 @@ jobs:
 
           [Download the original RAG ZIP]($env:RAG_ARTIFACT_URL)
           "@ | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+
+  mirror-windows-installer:
+    name: Mirror windows installer to ${{ matrix.host }} (non-blocking)
+    needs: build-windows-installer
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        host: [ms, hf]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.git_ref || github.ref }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.build-windows-installer.outputs.artifact_name }}
+          path: installer-mirror
+      - uses: astral-sh/setup-uv@v6
+      - name: Upload installer and checksum to Realease
+        env:
+          UPLOAD_TOKEN: ${{ secrets[matrix.host == 'ms' && 'MODELSCOPE_API_TOKEN' || 'HF_TOKEN'] }}
+          MIRROR_HOST: ${{ matrix.host }}
+          MS_REPO: ${{ vars.LAZYMIND_MS_COMPONENT_REPO || 'CarlosShaoting/lazymind-cst' }}
+          HF_REPO: ${{ vars.LAZYMIND_HF_COMPONENT_REPO || 'LazyAGI/LazyMind' }}
+          INSTALLER_NAME: ${{ needs.build-windows-installer.outputs.artifact_name }}
+          HF_HUB_DISABLE_XET: "1"
+        run: |
+          set -euo pipefail
+          if [[ -z "${UPLOAD_TOKEN:-}" ]]; then
+            echo "::warning::${MIRROR_HOST} token missing; installer remains available in GitHub Artifacts."
+            exit 0
+          fi
+          if [[ "${MIRROR_HOST}" == "ms" ]]; then
+            repo="${MS_REPO}"
+            sdk="modelscope-hub==0.4.6"
+          else
+            repo="${HF_REPO}"
+            sdk="huggingface-hub"
+          fi
+          uv run --no-project --python 3.11 --with "${sdk}" python desktop/scripts/publish-installer-mirror.py \
+            --host "${MIRROR_HOST}" --repo "${repo}" \
+            --file "installer-mirror/${INSTALLER_NAME}"
+
+  publish-windows-rag:
+    name: Publish verified windows RAG (independent of installation tests)
+    needs: build-windows-installer
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.git_ref || github.ref }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: windows-rag-publication
+          path: desktop/dist/python-components/windows-amd64/
+      - uses: astral-sh/setup-uv@v6
+      - name: Publish Windows RAG and tag catalog to ModelScope
+        env:
+          MODELSCOPE_API_TOKEN: ${{ secrets.MODELSCOPE_API_TOKEN }}
+          IS_RELEASE: ${{ needs.build-windows-installer.outputs.is_release }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${MODELSCOPE_API_TOKEN:-}" ]]; then
+            if [[ "${IS_RELEASE}" == "true" ]]; then
+              echo "::error::MODELSCOPE_API_TOKEN is required for release RAG publication."
+              exit 1
+            fi
+            echo "::warning::No ModelScope token; RAG is available only in GitHub Artifacts."
+            exit 0
+          fi
+          uv run --no-project --python 3.11 --with modelscope-hub==0.4.6 python desktop/scripts/publish-python-components.py \
+            --directory desktop/dist/python-components/windows-amd64 \
+            --repo "${LAZYMIND_MS_COMPONENT_REPO}"
+          echo 'RAG uploaded to its existing path; public download SHA-256 verified.' >> "${GITHUB_STEP_SUMMARY}"
 
   test-windows-installer:
     name: Install, verify, and uninstall (${{ matrix.os }})
