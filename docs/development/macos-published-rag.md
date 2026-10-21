@@ -1,5 +1,22 @@
 # Mac ARM64 固定复用已发布 RAG 组件
 
+## 当前正式发布流程（2026-10-21）
+
+以下替代下文历史记录中的“正式包固定复用旧 ZIP”流程。Developer ID 构建必须重新生成与宿主配套的组件；未签名/ad-hoc 开发模式不作为正式组件发布。
+
+1. macOS CI 使用同一个 Developer ID 给宿主 Python 和所有 RAG Mach-O 文件签名并取得时间戳，然后拆分 ZIP，最后生成 revision、SHA-256、大小及清单。不能在生成 SHA 后再改 ZIP/签名。
+2. 本地分包验证检查每个原生文件签名有效、Team ID 与宿主相同，并执行基础导入、RAG overlay 导入和 Milvus 持久化验证。上传前再次从 ZIP 解压检查签名，最终 DMG 测试还会从在线清单下载验证。
+3. 正式 macOS release（现有规则：`LazyAGI/LazyMind` 的版本 tag）自动发布到 ModelScope。CI 需要 `mac_dev` 环境中的原有 Apple 签名/公证 secrets，以及具备目标数据集写权限的 `MODELSCOPE_API_TOKEN`；缺失即失败。`LAZYMIND_MS_COMPONENT_REPO` GitHub variable 默认 `CarlosShaoting/lazymind-cst`。非正式 Mac CI 仍生成 ad-hoc 测试产物，不上传 ModelScope。Windows 使用相同发布脚本，release tag 必须有 token，开发构建未配置时只保留附件。
+4. 发布目录为数据集 `master/RAG/tags/<tag>/`，包含 ZIP、`SHA256SUMS`、`python-components.json`。这里的 tag 是组件兼容通道，不是 Git release tag；首次取本次组件 revision，后续兼容性重签修复保留该 tag。先上传 ZIP 和校验文件，再上传 JSON，最后从公开 URL 下载回验；失败则阻止 installer 发布。当前不发布/声明 HF fallback。
+5. 客户端只在安装时请求内置 `catalogUrl` 对应的 HTTPS JSON，以在线 revision、SHA、大小、文件名和 URL 为准；内置值仅作初始显示及旧格式兼容，不要求新 SHA 等于旧值。平台、架构、CPython ABI、基础 fingerprint 和依赖版本集合必须与客户端相同，下载仍严格校验 SHA、大小、manifest 和真实导入。在线清单失败时不静默退回过时校验值。
+6. 成功后将实际 descriptor 与 `.ready` 安装状态保存到用户 runtime，后续启动离线复用；不会启动时联网或自动替换正在使用的组件。重新签名导致 revision 变化时新装使用新 revision。旧客户端没有在线清单支持，仍需升级客户端；只覆盖云端旧 ZIP 无法修复旧客户端。
+
+对同一 tag 做兼容修复时，先验证新包与该客户端宿主 Team ID 一致，上传新文件名的 ZIP，再更新该 tag 的 JSON（保留 tag 和 catalogUrl，可更新 revision/SHA/大小/文件名）。不允许跨基础环境、依赖版本或 CPU 架构替换。在线 JSON 依赖 HTTPS 和受控数据集写权限，不是独立数字签名；token 应限制到发布账户/仓库。
+
+本次收到的 `lazymind-python-rag-darwin-arm64-cp311-df40b6dcc4170480.zip`：65,532,733 字节，SHA-256 `50cb5a7970ca427b406b317eb729d30f03499fb416b8c9d5c28c3f6c9870e172`；108 个原生文件签名已核验为 `UZ37FB2A8Y`，仅适用于同 Team ID、ARM64、CPython 3.11、fingerprint `772bd8a61a0a297c2b4f69d036893b806f69efa5c62a9e02d7a98bfd9e655fe0` 的客户端。本次未代为上传该交接包，也未将其未发布地址替换为仓库固定清单。
+
+## 历史固定包实现
+
 日期：2026-09-23。基于 origin/cst/installer_opt 的 fa6e7094，沿用当天 Windows 固定发布包方案，替换 Mac ARM64 每次动态生成 ZIP 的流程。
 
 ## 固定资源与配套环境

@@ -48,8 +48,8 @@ class DependencyGroupsTests(unittest.TestCase):
             self.assertFalse(names & {'numpy', 'shared', 'core-child'})
 
     def test_default_host_matches_existing_ffmpeg_modelscope_host(self):
-        self.assertIn(components.DEFAULT_BASE_URL, (ROOT / 'backend/core/systemdeps/ffmpeg.go').read_text())
-        self.assertTrue(components.DEFAULT_BASE_URL.endswith('/resolve/master/'))
+        self.assertIn(components.DEFAULT_BASE_URL.removesuffix('RAG/'), (ROOT / 'backend/core/systemdeps/ffmpeg.go').read_text())
+        self.assertTrue(components.DEFAULT_BASE_URL.endswith('/resolve/master/RAG/'))
 
     def test_refuses_removing_a_core_requirement(self):
         deps = {name: Distribution(name) for name in set.union(*components.SEEDS.values())}
@@ -104,6 +104,11 @@ class DependencyGroupsTests(unittest.TestCase):
                     self.assertFalse(any('bin/' in n or '..' in n for n in bundle.namelist()))
                     self.assertFalse(base_packages & manifest['packages'].keys())
                 self.assertTrue(item['url'].startswith('https://cdn.example/components/'))
+                self.assertEqual(item['tag'], item['revision'])
+                base = f'https://cdn.example/components/tags/{item["tag"]}/'
+                self.assertEqual(item['catalogUrl'], base + 'python-components.json')
+                self.assertEqual(item['url'], base + item['filename'])
+                self.assertNotIn('fallbackUrl', item)
 
 
 if __name__ == '__main__':

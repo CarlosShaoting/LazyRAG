@@ -114,3 +114,43 @@ func TestLocalRAGFlagDisablesKnowledgeProcessesAndEnvironment(t *testing.T) {
 		t.Fatal(env)
 	}
 }
+
+func TestPythonComponentOnlineReceiptSurvivesOfflineRestart(t *testing.T) {
+	paths := RuntimePaths{ResourcesRoot: t.TempDir(), RuntimeRoot: t.TempDir()}
+	pinned := pythonComponent{ID: "rag", Revision: strings.Repeat("a", 64), Tag: strings.Repeat("a", 64),
+		SHA256: strings.Repeat("b", 64), BaseFingerprint: strings.Repeat("c", 64),
+		Platform: runtime.GOOS, Arch: runtime.GOARCH, PythonABI: "cp311", Packages: map[string]string{"orjson": "3.11.3"},
+		CatalogURL: "https://offline.invalid/python-components.json"}
+	catalog := pythonComponentCatalog{SchemaVersion: 1, Platform: runtime.GOOS, Arch: runtime.GOARCH, Components: map[string]pythonComponent{"rag": pinned}}
+	write := func(path string, value any) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		data, _ := json.Marshal(value)
+		if err := os.WriteFile(path, data, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(paths.ResourcesRoot, "config/python-components.json"), catalog)
+	selected := pinned
+	selected.Revision, selected.SHA256 = strings.Repeat("d", 64), strings.Repeat("e", 64)
+	dir := filepath.Join(paths.RuntimeRoot, "deps/python-components/rag", selected.Revision)
+	if err := os.MkdirAll(filepath.Join(dir, "site-packages"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	write(filepath.Join(dir, "bundle-manifest.json"), selected)
+	if err := os.WriteFile(filepath.Join(dir, ".ready"), []byte(selected.SHA256), 0644); err != nil {
+		t.Fatal(err)
+	}
+	receipt := filepath.Join(filepath.Dir(dir), "catalog-"+pinned.Tag+".json")
+	write(receipt, selected)
+	if sites := pythonComponentSites(paths); len(sites) != 1 || sites[0] != filepath.Join(dir, "site-packages") {
+		t.Fatalf("receipt not reused: %v", sites)
+	}
+	selected.BaseFingerprint = strings.Repeat("f", 64)
+	write(receipt, selected)
+	if sites := pythonComponentSites(paths); len(sites) != 0 {
+		t.Fatal("accepted incompatible receipt")
+	}
+}

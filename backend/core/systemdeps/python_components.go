@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"runtime"
 	"strings"
@@ -35,6 +36,8 @@ type PythonComponent struct {
 	SizeBytes       int64             `json:"sizeBytes"`
 	UnpackedBytes   int64             `json:"unpackedBytes"`
 	Packages        map[string]string `json:"packages"`
+	CatalogURL      string            `json:"catalogUrl,omitempty"`
+	Tag             string            `json:"tag,omitempty"`
 }
 
 type pythonCatalog struct {
@@ -90,6 +93,14 @@ func loadPythonCatalog() (*pythonCatalog, error) {
 			entry.SizeBytes <= 0 || entry.UnpackedBytes <= 0 {
 			return nil, fmt.Errorf("invalid Python dependency descriptor: %s", id)
 		}
+		if entry.CatalogURL != "" {
+			if !pythonComponentDigest.MatchString(entry.Tag) || validateAssetURL(entry.CatalogURL) != nil {
+				return nil, errors.New("invalid Python component tag/catalog URL")
+			}
+			if root, err := RuntimeRootFromEnv(); err == nil {
+				catalog.Components[id] = installedPythonDescriptor(root, entry)
+			}
+		}
 	}
 	return &catalog, nil
 }
@@ -109,7 +120,8 @@ func validatePythonComponent(dir string, entry PythonComponent) error {
 	}
 	if installed.ID != entry.ID || installed.Revision != entry.Revision ||
 		installed.BaseFingerprint != entry.BaseFingerprint || installed.Platform != entry.Platform ||
-		installed.Arch != entry.Arch || installed.PythonABI != entry.PythonABI {
+		installed.Arch != entry.Arch || installed.PythonABI != entry.PythonABI ||
+		!reflect.DeepEqual(installed.Packages, entry.Packages) {
 		return errors.New("dependency bundle is incompatible with this app version/platform")
 	}
 	if info, err := os.Stat(filepath.Join(dir, "site-packages")); err != nil || !info.IsDir() {
@@ -246,6 +258,14 @@ func installPythonComponent(ctx context.Context, root string, entry PythonCompon
 		appLog.Logger.Info().Str("component", entry.ID).Str("revision", entry.Revision).Msg("python_component.install.reused")
 		return nil
 	}
+	if entry.CatalogURL != "" {
+		var err error
+		entry, err = resolvePythonDescriptor(ctx, &http.Client{Timeout: 30 * time.Second}, entry)
+		if err != nil {
+			return err
+		}
+		address = entry.URL
+	}
 	deps := filepath.Join(root, "deps", "python-components")
 	if err := os.MkdirAll(deps, 0o755); err != nil {
 		return err
@@ -299,6 +319,9 @@ func installPythonComponent(ctx context.Context, root string, entry PythonCompon
 	if err := os.Rename(payload, target); err != nil {
 		_ = os.Rename(backup, target)
 		return err
+	}
+	if entry.CatalogURL != "" {
+		return savePythonDescriptor(root, entry)
 	}
 	return nil
 }
@@ -389,6 +412,7 @@ func InstallPythonComponent(w http.ResponseWriter, r *http.Request) {
 		common.ReplyErr(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	catalog.Components[request.ID] = installedPythonDescriptor(root, entry)
 	status := pythonComponentStatus(root, catalog, request.ID)
 	status.Installing = false
 	common.ReplyOK(w, status)

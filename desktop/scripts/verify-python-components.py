@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import signal
 import site
 import socket
@@ -50,9 +51,9 @@ def signed_team_id(binary):
     return team
 
 
-def verify_macos_team_id(overlay):
+def verify_macos_team_id(overlay, python=None):
     require(sys.platform == 'darwin', 'macOS signature verification requires native macOS')
-    expected = signed_team_id(Path(sys.executable).resolve())
+    expected = signed_team_id(Path(python or sys.executable).resolve())
     magics = {bytes.fromhex(value) for value in (
         'feedface', 'feedfacf', 'cefaedfe', 'cffaedfe',
         'cafebabe', 'bebafeca', 'cafebabf', 'bfbafeca')}
@@ -205,6 +206,39 @@ def check_archive(archive, entry):
     require(digest.hexdigest() == entry['sha256'], 'ZIP SHA-256 does not match catalog')
 
 
+def resolve_catalog_entry(entry):
+    address = entry.get('catalogUrl')
+    if not address:
+        return entry
+    parsed = urlparse(address)
+    require(parsed.scheme == 'https' and parsed.hostname and not parsed.username
+            and not parsed.password and not parsed.fragment, 'Catalog URL must use HTTPS without credentials')
+    require(re.fullmatch(r'[a-f0-9]{64}', entry.get('tag', '')), 'Invalid component tag')
+    with build_opener(HTTPSRedirects()).open(address, timeout=30) as response:
+        data = response.read(1024 * 1024 + 1)
+    require(len(data) <= 1024 * 1024, 'Catalog exceeds 1 MiB')
+    catalog = json.loads(data)
+    require(catalog.get('schemaVersion') == 1, 'Unsupported online catalog schema')
+    require(catalog.get('platform') == entry['platform'] and catalog.get('arch') == entry['arch'],
+            'Online catalog platform/architecture mismatch')
+    resolved = catalog['components'][entry['id']]
+    for key in ('id', 'platform', 'arch', 'pythonAbi', 'baseFingerprint', 'packages'):
+        require(resolved.get(key) == entry.get(key), f'Online catalog incompatible: {key}')
+    require(not resolved.get('tag') or resolved['tag'] == entry['tag'], 'Online catalog tag mismatch')
+    for key in ('revision', 'sha256'):
+        require(re.fullmatch(r'[a-f0-9]{64}', resolved.get(key, '')), f'Invalid online {key}')
+    for key in ('sizeBytes', 'unpackedBytes'):
+        require(type(resolved.get(key)) is int and resolved[key] > 0, f'Invalid online {key}')
+    filename = resolved.get('filename', '')
+    require(filename not in ('', '.', '..') and Path(filename).name == filename
+            and not any(c in filename for c in '\\:'), 'Unsafe online ZIP filename')
+    for url in (resolved.get('url', ''), resolved.get('fallbackUrl') or resolved.get('url', '')):
+        parsed = urlparse(url)
+        require(parsed.scheme == 'https' and parsed.hostname and not parsed.username
+                and not parsed.password and not parsed.fragment, 'Invalid online ZIP URL')
+    return {**resolved, 'tag': entry['tag'], 'catalogUrl': address}
+
+
 def acquire_bundle(entry, directory, bundle_dir):
     if bundle_dir:
         archive = bundle_dir / entry['filename']
@@ -337,6 +371,9 @@ def main():
                           source=str(args.bundle_dir) if args.bundle_dir else entry['url'])
             return entry
         entry = check('runtime compatibility', preflight)
+        if not args.bundle_dir and entry.get('catalogUrl'):
+            entry = check('online tag catalog', lambda: resolve_catalog_entry(entry))
+            report.update(filename=entry['filename'], sha256=entry['sha256'], source=entry['url'])
         if args.require_windows_milvus_patch:
             require(target_platform == 'windows', 'Windows patch verification requires native Windows')
         base_args = ['--runtime', str(args.runtime.resolve())]

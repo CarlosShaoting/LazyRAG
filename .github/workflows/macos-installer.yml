@@ -8,8 +8,8 @@ on:
         required: false
         type: string
     secrets:
-      HF_TOKEN:
-        description: "Hugging Face write token used to publish optional Python components"
+      MODELSCOPE_API_TOKEN:
+        description: "ModelScope dataset write token for RAG publication"
         required: false
       MAC_CSC_LINK:
         required: false
@@ -51,8 +51,8 @@ env:
   LAZYMIND_DESKTOP_DEFER_HISTORY: "true"
   LAZYMIND_DESKTOP_DEFER_PYTHON: "true"
   LAZYMIND_DESKTOP_REBUILD_PYTHON_COMPONENTS: "true"
-  LAZYMIND_PYTHON_COMPONENT_BASE_URL: ${{ vars.LAZYMIND_PYTHON_COMPONENT_BASE_URL || 'https://huggingface.co/datasets/LazyAGI/LazyMind/resolve/main/RAG/' }}
-  LAZYMIND_HF_COMPONENT_REPO: ${{ vars.LAZYMIND_HF_COMPONENT_REPO || 'LazyAGI/LazyMind' }}
+  LAZYMIND_PYTHON_COMPONENT_BASE_URL: ${{ format('https://modelscope.cn/datasets/{0}/resolve/master/RAG/', vars.LAZYMIND_MS_COMPONENT_REPO || 'CarlosShaoting/lazymind-cst') }}
+  LAZYMIND_MS_COMPONENT_REPO: ${{ vars.LAZYMIND_MS_COMPONENT_REPO || 'CarlosShaoting/lazymind-cst' }}
   LAZYMIND_DESKTOP_SHARE_PYTHON: "false"
   LAZYMIND_DESKTOP_PRUNE_PYTHON: "true"
 
@@ -211,11 +211,12 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          MODELSCOPE_API_TOKEN: ${{ secrets.MODELSCOPE_API_TOKEN }}
         run: |
           set -euo pipefail
 
           missing=()
-          for variable in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+          for variable in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID MODELSCOPE_API_TOKEN; do
             if [[ -z "${!variable:-}" ]]; then
               missing+=("${variable}")
             fi
@@ -641,38 +642,17 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Publish macOS RAG component to Hugging Face
+      - name: Publish signed macOS RAG and tag catalog to ModelScope
+        if: steps.release.outputs.official_release == 'true'
         env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          # The Xet write-token endpoint can reject otherwise valid uploads. RAG
-          # bundles are ordinary files, so use the stable HTTP/LFS upload path.
-          HF_HUB_DISABLE_XET: "1"
+          MODELSCOPE_API_TOKEN: ${{ secrets.MODELSCOPE_API_TOKEN }}
         run: |
           set -euo pipefail
-          if [[ -z "${HF_TOKEN:-}" ]]; then
-            if [[ "${{ steps.release.outputs.official_release }}" == "true" ]]; then
-              echo "::error::Official releases require HF_TOKEN to publish the paired signed RAG bundle."
-              exit 1
-            fi
-            echo "::notice::HF_TOKEN is not configured; the macOS RAG component was packaged but not published."
-            exit 0
-          fi
-          component_dir="desktop/dist/python-components/darwin-arm64"
-          read -r filename expected_sha < <(python3 - "${component_dir}/python-components.json" <<'PY'
-          import json
-          import sys
-          rag = json.load(open(sys.argv[1], encoding='utf-8'))['components']['rag']
-          print(rag['filename'], rag['sha256'])
-          PY
-          )
-          component_path="${component_dir}/${filename}"
-          actual_sha="$(shasum -a 256 "${component_path}" | awk '{print $1}')"
-          test "${actual_sha}" = "${expected_sha}"
-          uvx --from huggingface-hub hf upload \
-            "${LAZYMIND_HF_COMPONENT_REPO}" "${component_path}" "RAG/${filename}" \
-            --repo-type dataset --revision main \
-            --commit-message "Publish macOS RAG component ${filename}" --quiet
-          echo "Published ${filename} to Hugging Face dataset ${LAZYMIND_HF_COMPONENT_REPO}." >> "${GITHUB_STEP_SUMMARY}"
+          uv run --no-project --python 3.11 --with modelscope-hub==0.4.6 python desktop/scripts/publish-python-components.py \
+            --directory desktop/dist/python-components/darwin-arm64 \
+            --repo "${LAZYMIND_MS_COMPONENT_REPO}" \
+            --python "${GITHUB_WORKSPACE}/desktop/dist/mac-arm64/LazyMind.app/Contents/Resources/runtime/deps/python/algorithm/bin/python"
+          echo 'Published signed macOS RAG ZIP and tag catalog to ModelScope; downloaded SHA-256 verified.' >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Upload PDF font and final runtime reports
         if: always()

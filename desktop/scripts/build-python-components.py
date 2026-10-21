@@ -102,8 +102,7 @@ def distribution_files(dist, site):
     return result
 
 
-DEFAULT_BASE_URL = 'https://modelscope.cn/datasets/CarlosShaoting/lazymind-cst/resolve/master/'
-DEFAULT_FALLBACK_BASE_URL = 'https://huggingface.co/datasets/LazyAGI/LazyMind/resolve/main/RAG/'
+DEFAULT_BASE_URL = 'https://modelscope.cn/datasets/CarlosShaoting/lazymind-cst/resolve/master/RAG/'
 
 
 def split(runtime, output, base_url=DEFAULT_BASE_URL, slim_providers=False):
@@ -175,9 +174,15 @@ def split(runtime, output, base_url=DEFAULT_BASE_URL, slim_providers=False):
         catalog['components'][component] = {
             **manifest, 'filename': filename, 'sha256': digest(archive.read_bytes()),
             'sizeBytes': archive.stat().st_size, 'unpackedBytes': sum(p.stat().st_size for p in paths),
-            'url': base_url.rstrip('/') + '/' + filename if base_url else '',
-            'fallbackUrl': DEFAULT_FALLBACK_BASE_URL + filename,
         }
+        # Pin a channel, not the ZIP checksum. A re-signed replacement can publish
+        # a new revision/SHA into this channel while retaining base compatibility.
+        entry = catalog['components'][component]
+        entry['tag'] = manifest['revision']
+        tag_path = 'tags/' + entry['tag'] + '/'
+        entry['url'] = base_url.rstrip('/') + '/' + tag_path + filename
+        entry['catalogUrl'] = base_url.rstrip('/') + '/' + tag_path + 'python-components.json'
+        # Only advertise a mirror after publishing there; MS is the default host.
         planned[component] = paths
     # Do not remove anything until all complete, verifiable archives exist.
     for paths in planned.values():
