@@ -2,12 +2,12 @@
 
 ## 当前正式发布流程（2026-10-21）
 
-以下替代下文历史记录中的“正式包固定复用旧 ZIP”流程。Developer ID 构建必须重新生成与宿主配套的组件；未签名/ad-hoc 开发模式不作为正式组件发布。
+以下替代下文历史记录中的“正式包固定复用旧 ZIP”流程。Developer ID 和 ad-hoc CI 构建均重新生成与宿主配套的组件；ad-hoc 可以上传测试依赖，但不代表正式签名或公证。
 
 1. macOS CI 使用同一个 Developer ID 给宿主 Python 和所有 RAG Mach-O 文件签名并取得时间戳，然后拆分 ZIP，最后生成 revision、SHA-256、大小及清单。不能在生成 SHA 后再改 ZIP/签名。
 2. 本地分包验证检查每个原生文件签名有效、Team ID 与宿主相同，并执行基础导入、RAG overlay 导入和 Milvus 持久化验证。独立发布 job 上传前再次从 ZIP 解压检查签名；最终 DMG 安装测试下载同次构建的 RAG Artifact 验证，不依赖云端发布完成。云端回验留在发布 job。
-3. 正式 macOS release（现有规则：`LazyAGI/LazyMind` 的版本 tag）自动发布 RAG 到 ModelScope。构建需要 `mac_dev` 环境中的原有 Apple 签名/公证 secrets；独立 RAG 发布 job 需要具备目标数据集写权限的 `MODELSCOPE_API_TOKEN`，缺失仅使发布 job 失败，不阻止构建产物下载或安装测试。`LAZYMIND_MS_COMPONENT_REPO` GitHub variable 默认 `CarlosShaoting/lazymind-cst`。非正式 Mac CI 仍生成 ad-hoc 测试产物，不发布正式 RAG。Windows 使用相同发布脚本，release tag 发布必须有 token，开发构建未配置时只保留附件。
-4. RAG 发布目录保持为数据集 `master/RAG/tags/<tag>/`，包含 ZIP、`SHA256SUMS`、`python-components.json`。这里的 tag 是组件兼容通道，不是 Git release tag；首次取本次组件 revision，后续兼容性重签修复保留该 tag。先上传 ZIP 和校验文件，再上传 JSON，最后从公开 URL 下载回验；失败则发布 job 报错，GitHub installer Artifact 仍可下载。RAG 当前不发布/声明 HF fallback。
+3. macOS 正式和 ad-hoc 构建均通过独立 matrix job 发布 RAG 到 MS/HF，互不取消。正式构建仍需要 `mac_dev` 的 Apple 签名/公证 secrets；发布使用 `MODELSCOPE_API_TOKEN` / `HF_TOKEN`，仓库变量为 `LAZYMIND_MS_COMPONENT_REPO`（默认 `CarlosShaoting/lazymind-cst`）/ `LAZYMIND_HF_COMPONENT_REPO`（默认 `LazyAGI/LazyMind`）。fork 必须配置具有目标写权限的 token，或把变量改为自己的数据集。缺少 token 时警告跳过，唯正式版 MS 主源缺少 token 时失败。Windows 发布规则不变。
+4. RAG 目录不变：MS `master/RAG/tags/<tag>/`，HF `main/RAG/tags/<tag>/`，包含 ZIP、`SHA256SUMS`、`python-components.json`。Mac 文件名包含 `cp311-adhoc-` 或 `cp311-developer-id-`，签名模式参与 revision 计算，开发包和正式包不会共用初始通道。先签名再分包，先上传 ZIP/校验文件再上传 JSON，最后从各自主机公开 URL 下载回验。HF 使用指向自己的镜像清单，不修改客户端内置的 MS 主源清单，也不提前声明可能上传失败的 HF fallback。
 5. 客户端只在安装时请求内置 `catalogUrl` 对应的 HTTPS JSON，以在线 revision、SHA、大小、文件名和 URL 为准；内置值仅作初始显示及旧格式兼容，不要求新 SHA 等于旧值。平台、架构、CPython ABI、基础 fingerprint 和依赖版本集合必须与客户端相同，下载仍严格校验 SHA、大小、manifest 和真实导入。在线清单失败时不静默退回过时校验值。
 6. 成功后将实际 descriptor 与 `.ready` 安装状态保存到用户 runtime，后续启动离线复用；不会启动时联网或自动替换正在使用的组件。重新签名导致 revision 变化时新装使用新 revision。旧客户端没有在线清单支持，仍需升级客户端；只覆盖云端旧 ZIP 无法修复旧客户端。
 

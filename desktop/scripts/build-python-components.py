@@ -157,11 +157,18 @@ def split(runtime, output, base_url=DEFAULT_BASE_URL, slim_providers=False):
         if any(not owners[path] <= names for path in paths):
             raise RuntimeError(f'{component} shares distribution files with core or another component')
         manifest = {**identity, 'id': component, 'packages': {name: full_versions[name] for name in sorted(names)}}
+        signing_label = ''
+        if identity['platform'] == 'darwin':
+            mode = os.environ.get('LAZYMIND_DESKTOP_SIGNING_MODE', 'adhoc')
+            if mode not in ('adhoc', 'developer-id', 'none'):
+                raise ValueError('Invalid Mac signing mode')
+            manifest['signingMode'] = mode
+            signing_label = mode + '-'
         contents = {str(p.relative_to(site)).replace('\\', '/'): digest(p.read_bytes()) for p in paths}
         manifest['revision'] = digest(encoded({'manifest': manifest, 'files': contents}))
         filename = (
             f'lazymind-{platform_label}-{identity["arch"]}-{component}-'
-            f'{identity["pythonAbi"]}-{build_time}-{manifest["revision"][:16]}.zip'
+            f'{identity["pythonAbi"]}-{signing_label}{build_time}-{manifest["revision"][:16]}.zip'
         )
         archive = output / filename
         with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=9) as bundle:

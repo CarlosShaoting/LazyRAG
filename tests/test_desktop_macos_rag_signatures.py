@@ -13,6 +13,18 @@ spec.loader.exec_module(verify)
 
 
 class MacRAGSignaturesTests(unittest.TestCase):
+    def test_adhoc_requires_actual_adhoc_signature_not_just_missing_team(self):
+        for signature, accepted in [('Signature=adhoc\nTeamIdentifier=not set\n', True),
+                                    ('TeamIdentifier=not set\n', False),
+                                    ('Signature=adhoc\nTeamIdentifier=TEAM_A\n', False)]:
+            with self.subTest(signature=signature), patch.object(verify.subprocess, 'run', return_value=
+                    subprocess.CompletedProcess([], 0, '', signature)):
+                if accepted:
+                    self.assertEqual(verify.signed_team_id(Path('python'), adhoc=True), 'adhoc')
+                else:
+                    with self.assertRaisesRegex(RuntimeError, 'Expected ad-hoc'):
+                        verify.signed_team_id(Path('python'), adhoc=True)
+
     def test_signature_requires_a_real_team(self):
         for team in ('', 'TeamIdentifier=not set\n'):
             with self.subTest(team=team), patch.object(verify.subprocess, 'run', return_value=

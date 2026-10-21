@@ -93,8 +93,10 @@ class DependencyGroupsTests(unittest.TestCase):
                 self.assertRegex(
                     item['filename'],
                     r'^lazymind-(?:mac|win|linux)-[a-z0-9]+-rag-cp\d+-'
-                    r'\d{8}T\d{6}Z-[0-9a-f]{16}\.zip$',
+                    r'(?:(?:adhoc|developer-id|none)-)?\d{8}T\d{6}Z-[0-9a-f]{16}\.zip$',
                 )
+                if item['platform'] == 'darwin':
+                    self.assertIn('-' + item['signingMode'] + '-', item['filename'])
                 archive = Path(temp) / 'output' / item['filename']
                 self.assertEqual(components.digest(archive.read_bytes()), item['sha256'])
                 with zipfile.ZipFile(archive) as bundle:

@@ -838,7 +838,11 @@ jobs:
   publish-macos-rag:
     name: Publish verified macos RAG (independent of installation tests)
     needs: build-macos-installer
-    if: needs.build-macos-installer.outputs.official_release == 'true'
+    if: needs.build-macos-installer.outputs.installer_available == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        host: [ms, hf]
     environment: mac_dev
     runs-on: macos-15
     timeout-minutes: 45
@@ -856,22 +860,39 @@ jobs:
           name: ${{ needs.build-macos-installer.outputs.installer_artifact_name }}
           path: installer-for-signatures
       - uses: astral-sh/setup-uv@v6
-      - name: Publish signed macOS RAG and tag catalog to ModelScope
+      - name: Publish labelled macOS RAG and tag catalog
         env:
-          MODELSCOPE_API_TOKEN: ${{ secrets.MODELSCOPE_API_TOKEN }}
+          UPLOAD_TOKEN: ${{ secrets[matrix.host == 'ms' && 'MODELSCOPE_API_TOKEN' || 'HF_TOKEN'] }}
+          MIRROR_HOST: ${{ matrix.host }}
+          HF_REPO: ${{ vars.LAZYMIND_HF_COMPONENT_REPO || 'LazyAGI/LazyMind' }}
+          HF_HUB_DISABLE_XET: "1"
+          OFFICIAL_RELEASE: ${{ needs.build-macos-installer.outputs.official_release }}
           INSTALLER_NAME: ${{ needs.build-macos-installer.outputs.installer_artifact_name }}
         run: |
           set -euo pipefail
-          if [[ -z "${MODELSCOPE_API_TOKEN:-}" ]]; then
-            echo "::error::MODELSCOPE_API_TOKEN is required for signed RAG publication."
-            exit 1
+          if [[ -z "${UPLOAD_TOKEN:-}" ]]; then
+            if [[ "${OFFICIAL_RELEASE}" == "true" && "${MIRROR_HOST}" == "ms" ]]; then
+              echo "::error::MODELSCOPE_API_TOKEN is required for signed RAG publication."
+              exit 1
+            fi
+            echo "::warning::No token for ${MIRROR_HOST}; skipping RAG upload."
+            exit 0
+          fi
+          signing_mode=adhoc
+          if [[ "${OFFICIAL_RELEASE}" == "true" ]]; then signing_mode=developer-id; fi
+          repo="${LAZYMIND_MS_COMPONENT_REPO}"
+          if [[ "${MIRROR_HOST}" == "ms" ]]; then
+            export MODELSCOPE_API_TOKEN="${UPLOAD_TOKEN}"
+          else
+            repo="${HF_REPO}"
+            export HF_TOKEN="${UPLOAD_TOKEN}"
           fi
           mount_dir="$(mktemp -d "${RUNNER_TEMP}/rag-signatures.XXXXXX")"
           hdiutil attach "installer-for-signatures/${INSTALLER_NAME}" -readonly -nobrowse -mountpoint "${mount_dir}"
           trap 'hdiutil detach "${mount_dir}" >/dev/null 2>&1 || true' EXIT
-          uv run --no-project --python 3.11 --with modelscope-hub==0.4.6 python desktop/scripts/publish-python-components.py \
+          uv run --no-project --python 3.11 --with modelscope-hub==0.4.6 --with huggingface-hub python desktop/scripts/publish-python-components.py \
             --directory desktop/dist/python-components/darwin-arm64 \
-            --repo "${LAZYMIND_MS_COMPONENT_REPO}" \
+            --host "${MIRROR_HOST}" --repo "${repo}" --signing-mode "${signing_mode}" \
             --python "${mount_dir}/LazyMind.app/Contents/Resources/runtime/deps/python/algorithm/bin/python"
           echo 'RAG uploaded to its existing path; public download SHA-256 verified.' >> "${GITHUB_STEP_SUMMARY}"
 
@@ -925,27 +946,29 @@ jobs:
           fi
 
       - name: Download paired RAG for installation testing
-        if: needs.build-macos-installer.outputs.official_release == 'true'
         uses: actions/download-artifact@v8
         with:
           name: macos-rag-components-${{ github.run_id }}
           path: rag-under-test
 
       - name: Verify paired RAG with installed signed Python
-        if: needs.build-macos-installer.outputs.official_release == 'true'
         env:
           INSTALLED_APP: ${{ steps.install.outputs.app }}
         run: |
           set -euo pipefail
           runtime="${INSTALLED_APP}/Contents/Resources/runtime"
+          signature_args=()
+          if [[ "${{ needs.build-macos-installer.outputs.official_release }}" == "true" ]]; then
+            signature_args+=(--require-macos-team-id)
+          fi
           "${runtime}/deps/python/algorithm/bin/python" -I -B desktop/scripts/verify-python-components.py \
             --runtime "${runtime}" \
             --bundle-dir rag-under-test/darwin-arm64 \
-            --require-macos-team-id \
+            "${signature_args[@]}" \
             --report "${RUNNER_TEMP}/installed-rag-verification/report.json"
 
       - name: Upload installed RAG verification reports
-        if: always() && needs.build-macos-installer.outputs.official_release == 'true'
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: macos-installed-rag-verification

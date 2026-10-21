@@ -301,6 +301,12 @@ async function signAndStageEmbeddedRuntime(context) {
     return;
   }
 
+  // Sign optional native libraries before splitting them out of the application.
+  if (macSigningMode === "adhoc") {
+    for (const binary of collectRuntimeMachOBinaries(runtimeRoot)) {
+      await codesignWithRetry(["--force", "--sign", "-", "--timestamp=none", binary], binary);
+    }
+  }
   await splitPythonComponents(runtimeRoot);
   if (macSigningMode === "none") return;
 

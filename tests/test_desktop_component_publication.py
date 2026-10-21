@@ -71,6 +71,41 @@ class OnlineCatalogTests(unittest.TestCase):
 
 
 class PublicationTests(unittest.TestCase):
+    def test_hf_uses_main_and_verifies_its_own_catalog_without_changing_local_catalog(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            entry = self.fixture(root)
+            original = (root / 'python-components.json').read_bytes()
+            api = Mock()
+            with patch.object(verify, 'resolve_catalog_entry', side_effect=lambda value: value) as resolve, \
+                    patch.object(verify, 'acquire_bundle'):
+                publish.publish(root, 'test/mirror', api=api, host='hf')
+            self.assertTrue(resolve.call_args.args[0]['catalogUrl'].startswith(
+                'https://huggingface.co/datasets/test/mirror/resolve/main/RAG/tags/'))
+            self.assertEqual((root / 'python-components.json').read_bytes(), original)
+            self.assertEqual(api.upload_file.call_count, 3)
+            for call in api.upload_file.call_args_list:
+                self.assertEqual(call.kwargs['revision'], 'main')
+
+    def test_adhoc_requires_label_and_checks_actual_signatures(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            entry = self.fixture(root, 'darwin')
+            api = Mock()
+            with self.assertRaisesRegex(RuntimeError, 'labelled'):
+                publish.publish(root, 'test/repo', python=Path('/python'), api=api, signing_mode='adhoc')
+            api.upload_file.assert_not_called()
+            old = entry['filename']
+            entry.update(filename='rag-adhoc-test.zip', signingMode='adhoc')
+            entry['url'] = entry['url'].replace(old, entry['filename'])
+            (root / old).rename(root / entry['filename'])
+            (root / 'python-components.json').write_text(json.dumps(catalog_for(entry)))
+            with patch.object(verify, 'verify_macos_team_id') as signatures, \
+                    patch.object(verify, 'resolve_catalog_entry', return_value=entry), \
+                    patch.object(verify, 'acquire_bundle'):
+                publish.publish(root, 'test/repo', python=Path('/python'), api=api, signing_mode='adhoc')
+            self.assertEqual(signatures.call_args.kwargs, {'adhoc': True})
+
     def fixture(self, directory, platform='windows'):
         entry = entry_fixture()
         entry['platform'] = platform

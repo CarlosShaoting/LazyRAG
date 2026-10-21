@@ -40,20 +40,24 @@ class HTTPSRedirects(HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def signed_team_id(binary):
+def signed_team_id(binary, adhoc=False):
     subprocess.run(['/usr/bin/codesign', '--verify', '--strict', str(binary)],
                    check=True, capture_output=True, text=True)
     result = subprocess.run(['/usr/bin/codesign', '-dv', '--verbose=4', str(binary)],
                             check=True, capture_output=True, text=True)
     team = next((line.split('=', 1)[1].strip() for line in result.stderr.splitlines()
                  if line.startswith('TeamIdentifier=')), '')
+    if adhoc:
+        require('Signature=adhoc' in result.stderr and team in ('', 'not set'),
+                f'Expected ad-hoc signature: {binary}')
+        return 'adhoc'
     require(team and team != 'not set', f'Missing signing TeamIdentifier: {binary}')
     return team
 
 
-def verify_macos_team_id(overlay, python=None):
+def verify_macos_team_id(overlay, python=None, adhoc=False):
     require(sys.platform == 'darwin', 'macOS signature verification requires native macOS')
-    expected = signed_team_id(Path(python or sys.executable).resolve())
+    expected = signed_team_id(Path(python or sys.executable).resolve(), adhoc=adhoc)
     magics = {bytes.fromhex(value) for value in (
         'feedface', 'feedfacf', 'cefaedfe', 'cffaedfe',
         'cafebabe', 'bebafeca', 'cafebabf', 'bfbafeca')}
@@ -64,7 +68,7 @@ def verify_macos_team_id(overlay, python=None):
         with binary.open('rb') as stream:
             if stream.read(4) not in magics:
                 continue
-        actual = signed_team_id(binary)
+        actual = signed_team_id(binary, adhoc=adhoc)
         require(actual == expected,
                 f'RAG signing TeamIdentifier mismatch: {binary}: {actual}, Python: {expected}')
         checked += 1

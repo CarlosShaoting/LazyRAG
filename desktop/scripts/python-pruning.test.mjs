@@ -47,7 +47,12 @@ test("RAG publication uses ModelScope without advertising an unpublished HF mirr
     const workflow = readFileSync(path.join(root, ".github/workflows", filename), "utf8");
     assert.match(workflow, /LAZYMIND_MS_COMPONENT_REPO: \$\{\{ vars\.LAZYMIND_MS_COMPONENT_REPO \|\| 'CarlosShaoting\/lazymind-cst' \}\}/);
     const rag = workflow.split(/\n  publish-(?:macos|windows)-rag:/)[1].split(/\n  test-/)[0];
-    assert.doesNotMatch(rag, /HF_TOKEN|hf upload|Realease/);
+    assert.doesNotMatch(rag, /Realease/);
+    if (filename === "macos-installer.yml") {
+      assert.match(rag, /host: \[ms, hf\]/);
+      assert.match(rag, /signing_mode=adhoc/);
+      assert.doesNotMatch(rag.split('    steps:')[0], /official_release == 'true'/);
+    }
   }
 });
 
@@ -60,7 +65,7 @@ test("RAG publishes tag metadata to ModelScope and verifies Mac signatures befor
     assert.match(workflow, /--directory desktop\/dist\/python-components\//);
   }
   const mac = readFileSync(path.join(root, ".github/workflows/macos-installer.yml"), "utf8");
-  assert.match(mac, /publish-macos-rag:[\s\S]*if: needs\.build-macos-installer\.outputs\.official_release == 'true'[\s\S]*--python/);
+  assert.match(mac, /publish-macos-rag:[\s\S]*installer_available == 'true'[\s\S]*--python/);
   assert.match(mac, /--require-macos-team-id/);
 });
 
