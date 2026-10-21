@@ -429,7 +429,7 @@ Mac ARM64 已发布含 gRPC 的 RAG 组件：`lazymind-python-rag-darwin-arm64-c
 
 当前分支集成 PR #778，远端 Skill ZIP 不再进入 installer。构建以 `--catalog-only --frozen-lockfile` 生成预览目录；Skill 安装/使用请求才获取实际包。
 
-精选图片/HTML 使用 `desktop/featured-assets.json` 固定清单：46 个案例 ZIP、MS 主源和 HF 备用源、ZIP 及逐文件 SHA-256。`stage-featured-assets.py` 校验编译素材与发布清单一致，生成小封面缩略图后移出完整素材。素材变化时构建失败，必须显式重新发布对应资源，不能静默使用旧包。
+精选图片/HTML 使用 `desktop/featured-assets.json` 固定清单：46 个案例 ZIP、MS 主源和 HF 备用源、ZIP 及逐文件 SHA-256。`stage-featured-assets.py` 校验编译素材与发布清单一致，生成小封面缩略图后移出已发布完整素材。已发布素材变化时构建仍失败，必须显式重新发布，不能静默使用旧包。桌面构建启用 `--bundle-unpublished`：上游新增且尚无发布条目的案例保留完整本地素材，并在 `downloads.json` 的 `local` 中记录逐文件 SHA/大小；不生成未发布 URL，也不改云端清单。新案例正式发布后自动恢复远程分包。
 
 发布步骤：先用 `builtin-skill-bundle --catalog-only --frozen-lockfile` 生成完整 featured 目录，再运行 `stage-featured-assets.py <runtime> --publish <zip-output>`，上传输出 ZIP 到 HF 数据集 `featured-assets/` 目录，保留文件名，提交更新后的清单。正常构建不带 `--publish`，无需下载案例 ZIP。HTTP `/showcase-assets/` 在 desktop 通过 Core 提供缩略图或按案例缓存的资源；其他环境仍由原静态路由处理。
 
