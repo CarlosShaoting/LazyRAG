@@ -1302,7 +1302,9 @@ steps:
       For requests such as “全部改成宋体”, “第 1 页改成宋体”, or “第 2 页标题
       改成宋体”, call ppt_find_deck and then ppt_replace_deck_fonts exactly once.
       Omit pages for the whole deck; otherwise pass the requested 1-based pages.
-      Use text_scope=all, titles, or body. The tool refreshes only the changed
+      Use text_scope=all, titles, or body. Set allow_font_download=true only when
+      the user explicitly asks to download a missing open font; never substitute
+      a commercial family with another font. The tool refreshes only the changed
       previews and updates the deck-wide style contract only for whole-deck edits.
       Stop afterward; do not rerun style, outline, page HTML generation, or export.
 

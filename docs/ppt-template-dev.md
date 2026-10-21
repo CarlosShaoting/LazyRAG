@@ -451,6 +451,15 @@ API 依据：[GitHub PR 列表接口](https://docs.github.com/en/rest/pulls/pull
 - 修复测试会话手动恢复时将 `chat_histories.run_terminal` 写为 TEXT 导致的 JSON.RawMessage 扫描错误：备份数据库后将该行恢复为 BLOB。该错误不是迁移脚本失败。
 - 增加大文件编码过滤、源数据不变、嵌套 JSON 与 data URL 回归测试。
 
+### 8.24 Chat 字体编辑补齐（2026-10-21）
+
+- 已有工作流的原生 PPTX：主 Chat 委派同一个 `pptx_edit` 子任务，`publish_pptx_edit` 增加 target_font/pages/slot_ids/text_scope 参数。支持整套、第一页等指定页、指定文字槽（含普通文本框、组合内文字和表格单元格）；自定义标题通过 inspect 返回的文字和 shape 信息定位，不猜 ID。修改前校验源哈希，发布时沿用 revision/draft_version，并输出短回执，不返回 Base64，不回退生成步骤。
+- 普通上传 PPTX：继续使用 edit_presentation；补充 prepare_font、指定文字槽，以及当前 native_pptx 的 replace_fonts 路径。字号、粗细、内容、段落和位置不主动变化。文字替换会改变槽索引，因此同一次调用不接受文字替换与指定槽字体混用，要求重新检查后再改字体。
+- HTML 点击输入编辑：识别“字体换成宋体”等指令，确定性设置选中元素及其子元素字体；检查模型规划的 font-family，字体不存在时不落盘。整页/整套换字体清理此前局部字体覆盖，避免看似成功但没有生效。仍复用现有预览、确认和版本流程。
+- 字体资源复用本地统一字体库。已安装时直接使用；用户明确要求下载时，允许从 Google Fonts 官方仓库下载 Noto Sans SC / Noto Serif SC，校验家族和嵌入权限、保留 OFL 文件、限制大小且拒绝重定向。不接受模型任意 URL，不把宋体静默替换为 Noto。来源：[Noto Sans SC](https://github.com/google/fonts/tree/main/ofl/notosanssc)、[Noto Serif SC](https://github.com/google/fonts/tree/main/ofl/notoserifsc)。仍保留未来云存储 TODO。
+- 180 项局部回归及 10 项子用例通过，覆盖整套/单页/标题/槽位、非目标 ZIP 部件保持、字号粗细和文字不变、缺失字体/错误 ID/过期哈希拒绝、CAS 发布、短回执，以及 HTML 点击局部范围和未知字体失败；模拟下载验证实际字体解析、许可保存和本地缓存复用。修正已有单页重试测试遗漏的 edit_instruction 空参数断言，未改变该生成逻辑。尚未进行真实模型对话和 PowerPoint 视觉验收。
+- 边界：原生 PPTX 网页仍不提供点击对象编辑，只支持 Chat 指定页和内容后下载；“点击后打字”指现有 HTML 预览入口。图片内文字不能换字体；图表/SmartArt 额外部件的局部字体范围、自动溢出修复和原生字体嵌入未实现，不承诺客户端没有字体也能一致渲染。
+
 ## 9. 最终未完成需求清单
 
 面板调整（2026-10-19）：移除独立的“PPTX 文件”tab，native_pptx 文件 slot 合并到最终“幻灯片”tab，保留现有查看/下载入口，不增加执行步骤。本次按要求不重启服务。

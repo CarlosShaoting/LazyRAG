@@ -1743,7 +1743,7 @@ def pptx_analyzer(filename: str, page: int = 1, turn: Optional[int] = None) -> D
 @fc_register(host_file='NONE')
 def edit_presentation(
     filename: str,
-    action: Literal['inspect', 'replace_fonts', 'replace_palette', 'inspect_content', 'edit_content'],
+    action: Literal['inspect', 'replace_fonts', 'replace_palette', 'inspect_content', 'edit_content', 'prepare_font'],
     source_font: Optional[str] = None,
     target_font: Optional[str] = None,
     color_map: Optional[Union[Dict[str, str], str]] = None,
@@ -1755,6 +1755,8 @@ def edit_presentation(
     speaker_notes: Optional[List[Dict[str, Any]]] = None,
     require_all_notes: bool = False,
     workflow_session_id: Optional[str] = None,
+    slot_ids: Optional[List[str]] = None,
+    allow_font_download: bool = False,
 ) -> Dict[str, Any]:
     """Inspect or directly edit an uploaded PPTX without starting a Workflow.
 
@@ -1773,7 +1775,18 @@ def edit_presentation(
     Detailed speeches belong in speaker notes, not visible slide text. Preserve
     facts, explain each page in natural speech with transitions, not a short stub.
     The same tool edits ordinary uploaded PPTX files using their filename.
+    For font-only edits use replace_fonts; exact inspected slot_ids select text
+    runs/table cells, pages select slides. For native_pptx provide source_sha256.
+    edit_content can combine target_font with text/notes into one revision.
+    prepare_font checks target_font without a file (filename may be empty).
+    Only explicitly requested open-font downloads may set allow_font_download.
     """
+    if action == 'prepare_font':
+        from lazymind.chat.engine.tools.file_resources.font_library import ensure_font
+        try:
+            return {'status': 'ok', 'target_font': ensure_font(target_font, allow_font_download)}
+        except (ValueError, OSError) as exc:
+            raise ToolExecutionError(str(exc)) from exc
     native_artifact = None
     if filename == 'native_pptx':
         import lazyllm
@@ -1788,8 +1801,8 @@ def edit_presentation(
             raise ToolExecutionError('Expected exactly one selected native_pptx revision')
         native_artifact = selected[0]
         matched = (native_artifact.get('value') or {}).get('path', '')
-        if action not in ('inspect_content', 'edit_content'):
-            raise ToolExecutionError('For the selected native_pptx use inspect_content or edit_content')
+        if action not in ('inspect_content', 'edit_content', 'replace_fonts', 'inspect'):
+            raise ToolExecutionError('For the selected native_pptx use content or font editing')
     else:
         matched, err = _resolve_attachment(filename, turn)
         if err:
@@ -1802,7 +1815,7 @@ def edit_presentation(
     if native_artifact is not None:
         effective = matched  # The selected immutable revision is authoritative.
     normalized_action = str(action or '').strip().lower()
-    if normalized_action in ('inspect_content', 'edit_content'):
+    if normalized_action in ('inspect_content', 'edit_content') or (normalized_action == 'replace_fonts' and (native_artifact is not None or slot_ids is not None)):
         from pathlib import Path
         from lazymind.chat.engine.tools.file_resources.pptx_content_edit import inspect_content, edit_content
         if normalized_action == 'inspect_content':
@@ -1810,10 +1823,28 @@ def edit_presentation(
             return {'status': 'ok', **inspect_content(effective, selected_pages)}
         if not source_sha256:
             raise ToolExecutionError('Inspect current content first and provide source_sha256')
+        if source_font and target_font:
+            raise ToolExecutionError('Scoped native font editing requires exact selected slots, not a source_font filter')
         os.makedirs(draft.root, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix='content-', dir=draft.root) as temporary:
             candidate = Path(temporary) / 'presentation.pptx'
-            stats = edit_content(effective, candidate, source_sha256, text_edits, speaker_notes, require_all_notes)
+            stats = {}
+            if text_edits or speaker_notes:
+                stats = edit_content(effective, candidate, source_sha256, text_edits, speaker_notes, require_all_notes)
+            if target_font:
+                from lazymind.chat.engine.tools.file_resources.pptx_font_edit import edit_fonts
+                # Slot indices belong to the inspected source. Do not apply stale
+                # indices after replacing text (which can add/remove runs).
+                if text_edits and slot_ids:
+                    raise ToolExecutionError('Apply slot font edits separately from text replacements; inspect the new revision first')
+                font_source = candidate if candidate.exists() else Path(effective)
+                font_hash = hashlib.sha256(font_source.read_bytes()).hexdigest() if candidate.exists() else source_sha256
+                font_output = Path(temporary) / 'fonts.pptx'
+                stats.update(edit_fonts(font_source, font_output, font_hash, target_font,
+                                        pages, slot_ids, text_scope, allow_font_download))
+                os.replace(font_output, candidate)
+            if not candidate.exists():
+                raise ToolExecutionError('Provide text_edits, speaker_notes or target_font')
             if native_artifact is not None:
                 import base64
                 raw = candidate.read_bytes()
@@ -1834,6 +1865,7 @@ def edit_presentation(
                 os.replace(candidate, draft.draft_path)
                 artifact = _publish_attachment_edit(draft, source_tool='edit_presentation')
         return {'status': 'ok', **stats, **artifact,
+                'representation': 'native_pptx', 'generation_status': 'completed',
                 'message': 'PPTX edited and published. Stop; no regeneration or post-generation inspection is required.'}
     if normalized_action == 'inspect':
         try:
@@ -1846,6 +1878,10 @@ def edit_presentation(
         requested = str(target_font or '').strip()
         if not requested:
             raise ToolExecutionError('target_font is required for replace_fonts')
+        if allow_font_download:
+            from lazymind.chat.engine.tools.file_resources.font_library import ensure_font
+            requested = ensure_font(requested, True)
+            installed = available_font_families()
         installed_by_name = {family.casefold(): family for family in installed}
         if requested.casefold() not in installed_by_name:
             suggestions = sorted(

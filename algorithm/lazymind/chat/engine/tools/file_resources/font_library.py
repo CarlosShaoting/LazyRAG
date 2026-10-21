@@ -15,6 +15,55 @@ import re
 import uuid
 
 
+# Deliberately no model-supplied URLs: these families are distributed under OFL.
+DOWNLOAD_FONTS = {
+    'Noto Sans SC': 'notosanssc/NotoSansSC%5Bwght%5D.ttf',
+    'Noto Serif SC': 'notoserifsc/NotoSerifSC%5Bwght%5D.ttf',
+}
+
+
+def ensure_font(family: str, allow_download: bool = False) -> str:
+    """Resolve an installed family, optionally acquire an allowlisted OFL font."""
+    from .presentation_edit import available_font_families
+    requested = str(family or '').strip()
+    available = {name.casefold(): name for name in available_font_families()}
+    if requested.casefold() in available:
+        return available[requested.casefold()]
+    canonical = next((name for name in DOWNLOAD_FONTS if name.casefold() == requested.casefold()), None)
+    if not allow_download or canonical is None:
+        raise ValueError(f'字体 {requested!r} 不可用。请提供合法字体文件或选择已安装字体。'
+                         f'可按明确请求下载的开源字体：{", ".join(DOWNLOAD_FONTS)}。不会自动替换字体。')
+    import tempfile
+    import httpx
+    relative = DOWNLOAD_FONTS[canonical]
+    base = 'https://raw.githubusercontent.com/google/fonts/main/ofl/'
+    with tempfile.TemporaryDirectory(prefix='lazymind-font-') as folder:
+        source = Path(folder) / 'font.ttf'
+        # Bound downloads; redirects to arbitrary hosts are deliberately disabled.
+        with httpx.Client(timeout=60, follow_redirects=False) as client:
+            license_response = client.get(base + relative.split('/')[0] + '/OFL.txt')
+            license_response.raise_for_status()
+            if 'SIL OPEN FONT LICENSE' not in license_response.text:
+                raise ValueError('Font license could not be verified')
+            with client.stream('GET', base + relative) as response:
+                response.raise_for_status()
+                size = 0
+                with source.open('wb') as stream:
+                    for chunk in response.iter_bytes():
+                        size += len(chunk)
+                        if size > 40 * 1024 * 1024:
+                            raise ValueError('Font download exceeds 40 MiB')
+                        stream.write(chunk)
+        from fontTools.ttLib import TTFont
+        with TTFont(source) as font:
+            names = {n.toUnicode().casefold() for n in font['name'].names if n.nameID in {1, 16}}
+            if canonical.casefold() not in names or int(getattr(font.get('OS/2'), 'fsType', 0)) & (2 | 512):
+                raise ValueError('Downloaded font family or embedding permission mismatch')
+        record = register_font(source)
+        (font_library_root() / (record['id'] + '.OFL.txt')).write_text(license_response.text, encoding='utf-8')
+    return canonical
+
+
 def font_library_root() -> Path:
     # TODO: replace this local storage boundary with cloud object storage plus
     # a local cache. Keep content-hash font IDs and catalog metadata unchanged.

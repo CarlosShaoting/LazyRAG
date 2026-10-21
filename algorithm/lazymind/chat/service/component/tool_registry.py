@@ -685,7 +685,11 @@ PRESENTATION_EDIT_TOOL_CONFIG = ToolConfig(
         'tool_policy': (
             '- `edit_presentation`: use this deterministic attachment tool for simple PPTX font '
             'inspection/replacement and exact palette replacement. Font replacement may target the '
-            'whole deck, selected 1-based pages, titles, or body text. Do not start the PPT generation '
+            'whole deck, selected 1-based pages, titles, body text or exact inspected slot_ids. '
+            'Use prepare_font with target_font to check availability. Only if explicitly requested, '
+            'set allow_font_download=true to download allowlisted open fonts into the shared library. '
+            'Never download commercial fonts from unverified sites or substitute a different family. '
+            'Do not start the PPT generation '
             'Workflow for these operations. Inspect first when font availability is unknown. A missing '
             'target font is an error and must never be silently replaced with a default. Applied edits '
             'publish a new editable PPTX revision and keep the original upload unchanged.'

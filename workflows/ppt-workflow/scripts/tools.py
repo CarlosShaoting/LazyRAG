@@ -48,6 +48,7 @@ from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, wait
 from datetime import datetime, timedelta, timezone
 from html import escape as _html_escape
+from html import unescape as _html_unescape
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, List, NoReturn, Optional, Union
@@ -3604,7 +3605,7 @@ def _sync_doc_title(html: str, old: str, new: str, applied: list[str]) -> str:
     return html[:match.start()] + match.group(1) + new + match.group(3) + html[match.end():]
 
 
-def _set_inline_styles(html: str, node: dict[str, Any], styles: Any) -> str:
+def _set_inline_styles(html: str, node: dict[str, Any], styles: Any, _font_children: bool = True) -> str:
     """Merge a constrained style map into one selected element's start tag."""
     if not isinstance(styles, dict) or not styles:
         raise ValueError('set_style requires a non-empty styles object')
@@ -3618,13 +3619,32 @@ def _set_inline_styles(html: str, node: dict[str, Any], styles: Any) -> str:
             raise ValueError(f'unsafe CSS value for {name!r}')
         if _UNSAFE_STYLE_VALUE_RE.search(value):
             raise ValueError(f'unsafe CSS value for {name!r}')
+        if name == 'font':
+            raise ValueError('Use font-family and separate font-size/font-weight; font shorthand bypasses availability checks')
+        if name == 'font-family':
+            requested = re.sub(r'\s*!important\s*$', '', value, flags=re.I).strip().strip('\"\'')
+            available = {f.casefold(): f for f in available_font_families()}
+            if requested.casefold() not in available:
+                raise ValueError(f'字体 {requested!r} 不可用，请先安装或下载；未修改页面')
+            value = json.dumps(available[requested.casefold()], ensure_ascii=False) + ' !important'
         clean[name] = value
+
+    if _font_children and 'font-family' in clean:
+        # Override inherited and explicit descendant fonts within this selection
+        # only, including a prior deck-level !important override.
+        fragment = html[node['start']:node['end']]
+        tree = _HtmlTree(fragment)
+        for child in reversed(tree.nodes):
+            if child['tag'] not in {'style', 'script'}:
+                fragment = _set_inline_styles(fragment, child,
+                    clean if child['parent'] is None else {'font-family': clean['font-family']}, False)
+        return html[:node['start']] + fragment + html[node['end']:]
 
     start_tag = html[node['start']:node['open_end']]
     style_match = re.search(r'\sstyle\s*=\s*(["\'])(.*?)\1', start_tag, re.I | re.S)
     declarations: dict[str, str] = {}
     if style_match:
-        for part in style_match.group(2).split(';'):
+        for part in _html_unescape(style_match.group(2)).split(';'):
             if ':' not in part:
                 continue
             key, value = part.split(':', 1)
@@ -7642,6 +7662,13 @@ def _font_override_css(target_font: str, text_scope: str) -> str:
 
 
 def _upsert_font_override(html: str, target_font: str, text_scope: str) -> str:
+    if text_scope == 'all':
+        # A later whole-page/deck request supersedes earlier clicked overrides.
+        html = re.sub(r'<style\b[^>]*\bid=["\']lazymind-font-override-(?:titles|body)["\'][^>]*>[\s\S]*?</style>', '', html, flags=re.I)
+        def clear_inline_family(match):
+            value = re.sub(r'(^|;)\s*font-family\s*:[^;]*', r'\1', _html_unescape(match.group(2)), flags=re.I)
+            return ' style=' + match.group(1) + _html_escape(value, quote=True) + match.group(1)
+        html = re.sub(r'\sstyle\s*=\s*(["\'])(.*?)\1', clear_inline_family, html, flags=re.I | re.S)
     style_id = f'lazymind-font-override-{text_scope}'
     block = f'<style id="{style_id}">\n{_font_override_css(target_font, text_scope)}\n</style>'
     pattern = re.compile(
@@ -7649,7 +7676,7 @@ def _upsert_font_override(html: str, target_font: str, text_scope: str) -> str:
         re.IGNORECASE,
     )
     if pattern.search(html):
-        return pattern.sub(block, html, count=1)
+        return pattern.sub(lambda _: block, html, count=1)
     head_close = re.search(r'</head\s*>', html, re.IGNORECASE)
     if head_close:
         return html[:head_close.start()] + block + '\n' + html[head_close.start():]
@@ -7661,6 +7688,7 @@ def ppt_replace_deck_fonts(
     target_font: str,
     pages: Optional[Union[str, list, int]] = None,
     text_scope: str = 'all',
+    allow_font_download: bool = False,
 ) -> dict:
     """Replace fonts in generated HTML without regenerating slide content.
 
@@ -7679,6 +7707,12 @@ def ppt_replace_deck_fonts(
     requested = _coerce_str(target_font).strip()
     if not requested:
         return _tool_error('ppt_replace_deck_fonts', 'target_font is required')
+    if allow_font_download:
+        from lazymind.chat.engine.tools.file_resources.font_library import ensure_font
+        try:
+            requested = ensure_font(requested, True)
+        except Exception as exc:
+            return _tool_error('ppt_replace_deck_fonts', str(exc))
     installed = available_font_families()
     installed_by_name = {family.casefold(): family for family in installed}
     if requested.casefold() not in installed_by_name:
@@ -8334,6 +8368,19 @@ def _deterministic_selection_styles(
 ) -> dict[str, str]:
     """Translate common local-polish phrases without an LLM round trip."""
     styles: dict[str, str] = {}
+    font_match = re.search(
+        r'(?:字体\s*(?:替换成|替换为|换成|改成|改为|设为|设置为|用)|font(?:[ -]family)?\s*(?:to|:|=))\s*[\"\“\']?([^，。；;\n\"\”\']+)',
+        command, re.I,
+    )
+    if font_match:
+        family = font_match.group(1).strip()
+        if re.search(r'下载|download', command, re.I):
+            from lazymind.chat.engine.tools.file_resources.font_library import ensure_font
+            family = ensure_font(family, True)
+        available = {f.casefold(): f for f in available_font_families()}
+        if family.casefold() not in available:
+            raise ValueError(f'字体 {family!r} 不可用，请先安装或下载；未修改页面')
+        styles['font-family'] = json.dumps(available[family.casefold()], ensure_ascii=False)
     for property_name, context in _CSS_SIZE_CONTEXTS.items():
         relative = _relative_style_value(command, selection, property_name, context)
         explicit = None if relative else _explicit_style_value(command, property_name, context)

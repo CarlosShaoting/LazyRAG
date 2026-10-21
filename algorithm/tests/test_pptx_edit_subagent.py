@@ -89,3 +89,14 @@ def test_publish_tool_schema_is_buildable():
     from lazyllm.tools.agent.toolsManager import ModuleTool
     tool = ModuleTool(apply_func=pptx_edit.publish_pptx_edit, schema_func=pptx_edit.publish_pptx_edit)
     assert tool is not None
+
+
+def test_font_edit_delegates_scope_and_keeps_one_receipt(context, monkeypatch):
+    edit = MagicMock(return_value={'status': 'ok', 'workflow_artifact': {'id': 'revision-2'}})
+    monkeypatch.setattr(pptx_edit.tools, 'edit_presentation', edit)
+    pptx_edit.publish_pptx_edit('hash', target_font='Noto Sans SC', pages=[1], slot_ids=['1:2'], allow_font_download=True)
+    assert edit.call_args.kwargs['pages'] == [1]
+    assert edit.call_args.kwargs['slot_ids'] == ['1:2']
+    assert edit.call_args.kwargs['target_font'] == 'Noto Sans SC'
+    assert edit.call_args.kwargs['allow_font_download'] is True
+    assert len(context.local_artifacts()) == 1

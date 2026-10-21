@@ -15,6 +15,34 @@ assert SPEC.loader is not None
 SPEC.loader.exec_module(TOOLS)
 
 
+def test_clicked_font_edit_is_local_and_preserves_nested_text():
+    html = '<main><div data-el="title"><span style="font-family:Old">标题</span><b>重点</b></div><p data-el="body">不修改</p></main>'
+    with mock.patch.object(TOOLS, 'available_font_families', return_value={'宋体'}):
+        tree = TOOLS._HtmlTree(html)
+        ops, old, new = TOOLS._single_selection_edit_ops('字体换成宋体', {'el': 'title'}, tree)
+        assert old == new
+        assert ops[0]['styles']['font-family'] == '"宋体"'
+        target = TOOLS._resolve_el(tree, 'title', {})[0]
+        updated = TOOLS._set_inline_styles(html, tree.nodes[target], ops[0]['styles'])
+        assert updated.count('宋体') == 3
+        assert updated.count('!important') == 3
+        assert '<p data-el="body">不修改</p>' in updated
+        assert '标题' in updated and '重点' in updated
+        replaced = TOOLS._upsert_font_override(updated, 'Arial', 'all')
+        assert '宋体' not in replaced
+        assert 'font-family: "Arial" !important' in replaced
+
+
+def test_clicked_unknown_font_does_not_fall_through_to_llm():
+    import pytest
+    with mock.patch.object(TOOLS, 'available_font_families', return_value={'Arial'}), \
+            mock.patch.object(TOOLS, '_agent_llm_call') as llm:
+        with pytest.raises(ValueError, match='不可用'):
+            TOOLS._single_selection_edit_ops('字体改为不存在字体', {'el': 'title'},
+                                            TOOLS._HtmlTree('<h1 data-el="title">标题</h1>'))
+        llm.assert_not_called()
+
+
 PAGE_HTML = """<!DOCTYPE html>
 <html><head><title>Old title</title></head><body>
 <div class="wrapper"><div id="bg"></div><div id="ct">
@@ -1608,6 +1636,7 @@ class DeferredStyleDispatchTests(unittest.TestCase):
             1,
             'Edited content',
             llm_call=TOOLS._agent_llm_call,
+            edit_instruction='',
         )
         mc.set_llm_impl.assert_not_called()
         mc.set_vlm_impl.assert_not_called()

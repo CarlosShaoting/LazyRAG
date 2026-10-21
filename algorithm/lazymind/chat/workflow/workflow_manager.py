@@ -286,7 +286,7 @@ def _native_pptx_editor(toolkit: HostWorkflowToolkit, session_id: str):
             raise ValueError('A complete edit instruction is required')
         from lazymind.chat.engine.tools.subagent_chat_tools import create_subagent
         return create_subagent(
-            agent_type='pptx_edit', title='PPTX 内容与讲稿编辑',
+            agent_type='pptx_edit', title='PPTX 内容、字体与讲稿编辑',
             objective=instruction,
             params={
                 '_pptx_edit_session_id': session_id,
@@ -298,6 +298,12 @@ def _native_pptx_editor(toolkit: HostWorkflowToolkit, session_id: str):
                     'Edit the selected native PPTX only. Inspect it first. Reuse saved '
                     'material_summary and requirement_analysis when needed; never search '
                     'or regenerate. Preserve all unspecified slide content and formatting. '
+                    'For font requests pass target_font to publish_pptx_edit: omit pages for '
+                    'the entire deck, pages=[1] for the first slide, exact inspected slot_ids '
+                    'for a specific part or custom title. Never rewrite text to change fonts. '
+                    'Only set allow_font_download when the user explicitly requests download. '
+                    'Report font_notice and any unmodified_complex_text_parts from the result; '
+                    'never claim chart/SmartArt text was changed when it was not. '
                     'Write requested detailed page-specific speeches in speaker notes, '
                     'not visible slide text; do not invent facts. For every-page notes '
                     'set require_all_notes=true. Publish exactly once then stop. If the '
@@ -1794,7 +1800,7 @@ def resolve_workflow_injection(
         if native_editor is not None:
             completed_followup = (
                 'The selected native_pptx supports direct revision editing. For date, title, '
-                'slide text or speaker-note changes, including every-page detailed speeches, '
+                'slide text, font (whole deck/page/selected text), or speaker-note changes, including every-page detailed speeches, '
                 'MUST delegate to edit_current_pptx with the complete user instruction. '
                 'Its dedicated SubAgent performs inspection, writing and publication; '
                 'main Chat must not write the speeches or edit the file itself. Do NOT call '

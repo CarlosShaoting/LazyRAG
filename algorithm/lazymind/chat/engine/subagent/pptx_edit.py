@@ -61,7 +61,9 @@ def inspect_current_pptx(page: int = 1) -> Dict[str, Any]:
     return {'source_sha256': result['sha256'], 'slide_count': result['slide_count'],
             'pages': [{'page': p['page'],
                        'next_page': p['page'] + 1 if p['page'] < result['slide_count'] else None,
-                       'slots': [{'id': s['id'], 'text': s['text']} for s in p['slots']],
+                       'slots': [{'id': s['id'], 'text': s['text'],
+                                  **{k: s[k] for k in ('shape_name', 'shape_id') if s.get(k) is not None}}
+                                 for s in p['slots']],
                        'speaker_notes': p['speaker_notes']} for p in result['pages']]}
 
 
@@ -86,7 +88,12 @@ def read_pptx_edit_material(slot: str = 'material_summary') -> Dict[str, Any]:
 def publish_pptx_edit(source_sha256: str,
                       text_edits: Optional[List[TextEdit]] = None,
                       speaker_notes: Optional[List[SpeakerNote]] = None,
-                      require_all_notes: bool = False) -> Dict[str, Any]:
+                      require_all_notes: bool = False,
+                      target_font: Optional[str] = None,
+                      pages: Optional[List[int]] = None,
+                      slot_ids: Optional[List[str]] = None,
+                      text_scope: str = 'all',
+                      allow_font_download: bool = False) -> Dict[str, Any]:
     """Publish sparse text edits and/or notes once, then finish the task.
 
     Use the inspected source_sha256. text_edits: [{id,expected_text,text}],
@@ -94,6 +101,11 @@ def publish_pptx_edit(source_sha256: str,
     editable text slot on that page. Never guess IDs; ambiguous text is rejected.
     speaker_notes: [{page,text}] with 1-based pages. Set require_all_notes=true
     for every-page speeches. Preserve all unspecified text, formatting and notes.
+    For font edits set target_font: omit pages/slot_ids for all slides, pages=[1]
+    for page one, or exact inspected slot_ids for selected text. text_scope can
+    be all/titles/body (titles matches native title placeholders; use slot_ids
+    for custom text-box titles). Keep font size, weight and content unchanged.
+    Set allow_font_download only when user asks to download missing open fonts.
     """
     session = _session()
     ctx = require_context()
@@ -103,6 +115,8 @@ def publish_pptx_edit(source_sha256: str,
         'native_pptx', 'edit_content', source_sha256=source_sha256,
         text_edits=text_edits, speaker_notes=speaker_notes,
         require_all_notes=require_all_notes, workflow_session_id=session,
+        target_font=target_font, pages=pages, slot_ids=slot_ids,
+        text_scope=text_scope, allow_font_download=allow_font_download,
     )
     if result.get('status') != 'ok' or not result.get('workflow_artifact'):
         raise ToolExecutionError('PPTX publication did not return a successful artifact revision')
