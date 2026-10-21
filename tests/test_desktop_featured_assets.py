@@ -41,7 +41,11 @@ class FeaturedAssetsEncodingTests(unittest.TestCase):
                 else:
                     with self.assertRaisesRegex(ValueError, 'Featured assets changed'):
                         featured.stage(root, published)
-                    featured.stage(root, published, bundle_unpublished=True)
+                    messages = io.StringIO()
+                    with contextlib.redirect_stdout(messages):
+                        featured.stage(root, published, bundle_unpublished=True)
+                    self.assertIn('::warning::Featured assets not published for new-case/1', messages.getvalue())
+                    self.assertIn('non-blocking', messages.getvalue())
                     downloads = json.loads((assets.parent / 'downloads.json').read_text())
                     self.assertEqual(downloads['bundles'], {})
                     self.assertEqual(downloads['local']['demo.html'],

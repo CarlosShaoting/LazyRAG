@@ -90,7 +90,8 @@ def stage(runtime, published, output=None, quiet=False, bundle_unpublished=False
                         target.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copyfile(assets / name, target)
                         result['local'][name] = record
-                    print(f'Bundling unpublished featured assets locally: {key}')
+                    print(f'::warning::Featured assets not published for {key}; '
+                          'bundling verified local assets instead (non-blocking).')
                     continue
                 if not entry or entry['filename'] != filename or entry['files'] != files:
                     raise ValueError(f'Featured assets changed: publish a new bundle for {key}')
