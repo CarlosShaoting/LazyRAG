@@ -480,11 +480,14 @@ class HostWorkflowToolkit:
 
     def patch_artifact(self, artifact_id: str, base_revision: int, value: Any,
                        content_type: str = 'json', caption: str = '',
-                       command_id: str = '') -> Dict[str, Any]:
+                       command_id: str = '',
+                       base_draft_version: Optional[int] = None) -> Dict[str, Any]:
         """Create a new selected Artifact revision without overwriting history."""
         resolved_command_id = command_id or str(uuid.uuid4())
         result = self._client().patch_artifact(
-            artifact_id, base_revision, value, content_type, caption, resolved_command_id).result
+            artifact_id, base_revision, value, content_type, caption, resolved_command_id,
+            base_draft_version,
+        ).result
         return {**result, 'command_id': resolved_command_id}
 
     def delete_artifact(self, artifact_id: str, base_revision: int,

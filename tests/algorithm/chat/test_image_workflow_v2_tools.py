@@ -53,6 +53,30 @@ def test_route_classifier_publishes_exact_final_deliverable(
     assert calls[0][1]['internal_publish'] is True
 
 
+def test_route_classifier_reports_the_bound_source_image(monkeypatch) -> None:
+    from lazymind.chat.engine.subagent import context as context_module
+    from lazymind.chat.engine.subagent import tools as subagent_tools
+
+    monkeypatch.setattr(
+        context_module,
+        'require_context',
+        lambda: SimpleNamespace(params={
+            'user_input': '只把这张照片的背景改成浅蓝色。',
+            'remote_inputs': {'source_image': 'signed-input-resource'},
+        }),
+    )
+    monkeypatch.setattr(
+        subagent_tools,
+        '_save_artifact',
+        lambda *args, **kwargs: {'status': 'ok'},
+    )
+
+    result = image_workflow_support.classify_image_request()
+
+    assert result['route_plan']['route'] == 'edit'
+    assert result['route_plan']['has_upload'] is True
+
+
 def test_ordinary_preparer_preserves_the_immutable_request(monkeypatch) -> None:
     from lazymind.chat.engine.subagent import context as context_module
     from lazymind.chat.engine.subagent import tools as subagent_tools
@@ -102,7 +126,7 @@ def test_edit_publisher_validates_resolved_local_source(monkeypatch, tmp_path) -
         image_workflow_support,
         '_legacy_image_tools',
         lambda: SimpleNamespace(
-            inspect_image_reference=lambda value: inspected.append(value) or {'status': 'ok'},
+            validate_image_ref=lambda value: inspected.append(value) or 'status: ok',
         ),
     )
     monkeypatch.setattr(
@@ -145,9 +169,7 @@ def test_edit_publisher_does_not_publish_invalid_source(monkeypatch, tmp_path) -
         image_workflow_support,
         '_legacy_image_tools',
         lambda: SimpleNamespace(
-            inspect_image_reference=lambda value: {
-                'status': 'invalid', 'reason': 'not an image',
-            },
+            validate_image_ref=lambda value: 'status: invalid\nreason: not an image',
         ),
     )
     monkeypatch.setattr(
@@ -220,7 +242,7 @@ def _approved_brief(captions: list[str]) -> dict:
         'requested_count': len(captions),
         'planned_count': len(captions),
         'count_status': 'compliant',
-        'allowed_count': 5,
+        'allowed_count': 6,
         'requires_count_decision': False,
         'brief_status': 'approved',
         'cost_profile': 'standard',
@@ -277,12 +299,43 @@ def test_meme_brief_accepts_declared_empty_cost_profile() -> None:
     assert result['valid'] is True
 
 
+def test_meme_brief_accepts_six_dynamic_states() -> None:
+    captions = ['开心', '你好', '疑问', '害羞', '生气', '再见']
+    request = '请生成6个动态表情，分别是“开心”、“你好”、“疑问”、“害羞”、“生气”、“再见”。'
+
+    result = image_workflow_support.validate_meme_brief_data(
+        _approved_brief(captions), request,
+    )
+
+    assert result['valid'] is True
+    assert result['requested_count'] == 6
+    assert result['planned_count'] == 6
+    assert result['state_count'] == 6
+
+
 def test_meme_brief_rejects_reordered_explicit_captions() -> None:
     request = '覆盖“开心啦”、“疑惑啦”、“惊讶啦”、“害羞啦”、“生气啦”这5个场景。'
     brief = _approved_brief(['疑惑啦', '开心啦', '惊讶啦', '害羞啦', '生气啦'])
 
     with pytest.raises(ToolExecutionError, match='preserve the launch request verbatim and in order'):
         image_workflow_support.validate_meme_brief_data(brief, request)
+
+
+def test_meme_brief_review_update_overrides_conflicting_launch_caption() -> None:
+    request = (
+        '生成1个静态表情包，文案“收到”，动作为点头。\n\n'
+        'User update (overrides conflicting launch requirements):\n'
+        '把文案改成“马上来”，动作改为举手回应；仍然只做1个静态表情。'
+    )
+    brief = _approved_brief(['马上来'])
+    brief['delivery_mode'] = 'static'
+    brief['allowed_count'] = 12
+
+    result = image_workflow_support.validate_meme_brief_data(brief, request)
+
+    assert result['valid'] is True
+    assert result['explicit_request_count'] == 1
+    assert result['captions_preserved'] is True
 
 
 def test_meme_brief_publisher_uses_immutable_context_request(monkeypatch) -> None:
@@ -306,8 +359,46 @@ def test_meme_brief_publisher_uses_immutable_context_request(monkeypatch) -> Non
     result = image_workflow_support.save_validated_meme_brief(brief)
 
     assert result['validation']['explicit_request_count'] == 4
-    assert calls[0][0][:2] == ('meme_brief_data', brief)
+    assert calls[0][0][0] == 'meme_brief_data'
+    assert calls[0][0][1]['states'] == [
+        {**state, 'caption_review_status': 'approved'} for state in brief['states']
+    ]
     assert calls[0][1]['internal_publish'] is True
+
+
+def test_meme_brief_publisher_applies_runtime_review_feedback(monkeypatch) -> None:
+    from lazymind.chat.engine.subagent import context as context_module
+    from lazymind.chat.engine.subagent import tools as subagent_tools
+
+    launch = '生成1个静态表情包，文案“收到”，动作为点头。'
+    correction = (
+        'Recovery request for this rerun only: '
+        '把文案改成“马上来”，动作改为举手回应；仍然只做1个静态表情。'
+    )
+    brief = _approved_brief(['马上来'])
+    brief['delivery_mode'] = 'static'
+    brief['allowed_count'] = 12
+    calls = []
+    monkeypatch.setattr(
+        context_module,
+        'require_context',
+        lambda: SimpleNamespace(params={
+            'launch_user_input': launch,
+            'user_input': launch,
+            'retry_hint': correction,
+        }),
+    )
+    monkeypatch.setattr(
+        subagent_tools,
+        '_save_artifact',
+        lambda *args, **kwargs: calls.append((args, kwargs)) or {'status': 'ok'},
+    )
+
+    result = image_workflow_support.save_validated_meme_brief(brief)
+
+    assert result['validation']['explicit_request_count'] == 1
+    assert result['validation']['captions_preserved'] is True
+    assert calls[0][0][1]['states'][0]['caption'] == '马上来'
 
 
 def test_meme_brief_direct_execution_is_auto_approved(monkeypatch) -> None:
@@ -340,6 +431,42 @@ def test_meme_brief_direct_execution_is_auto_approved(monkeypatch) -> None:
 
     saved_brief = calls[0][0][1]
     assert result['auto_approved'] is True
+    assert saved_brief['caption_review_status'] == 'approved'
+    assert saved_brief['brief_status'] == 'approved'
+    assert saved_brief['states'][0]['caption_review_status'] == 'approved'
+
+
+def test_compliant_meme_brief_is_ready_for_native_checkpoint(monkeypatch) -> None:
+    from lazymind.chat.engine.subagent import context as context_module
+    from lazymind.chat.engine.subagent import tools as subagent_tools
+
+    request = '生成1个静态表情包。'
+    brief = _approved_brief(['开心啦'])
+    brief.update({
+        'delivery_mode': 'static',
+        'allowed_count': 12,
+        'caption_source': 'proposed',
+        'caption_review_status': 'pending',
+        'brief_status': 'blocked',
+    })
+    brief['states'][0]['caption_review_status'] = 'pending'
+    calls = []
+    monkeypatch.setattr(
+        context_module,
+        'require_context',
+        lambda: SimpleNamespace(params={'user_input': request}),
+    )
+    monkeypatch.setattr(
+        subagent_tools,
+        '_save_artifact',
+        lambda *args, **kwargs: calls.append((args, kwargs)) or {'status': 'ok'},
+    )
+
+    result = image_workflow_support.save_validated_meme_brief(brief)
+
+    saved_brief = calls[0][0][1]
+    assert result['auto_approved'] is False
+    assert result['checkpoint_ready'] is True
     assert saved_brief['caption_review_status'] == 'approved'
     assert saved_brief['brief_status'] == 'approved'
     assert saved_brief['states'][0]['caption_review_status'] == 'approved'

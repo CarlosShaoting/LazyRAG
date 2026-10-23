@@ -571,6 +571,38 @@ func TestBundledWorkflowsCompileForRuntime(t *testing.T) {
 	}
 }
 
+func TestCompilePreservesHumanApprovalRerunGuidance(t *testing.T) {
+	workflow := `id: approval-rerun-test
+slots:
+  - {id: draft}
+steps:
+  - {id: review}
+`
+	state := `start_route: all
+steps:
+  review:
+    mode: human
+    rerun_when: The user rejects the draft or requests a correction.
+    outputs: [draft]
+transitions:
+  __start__: [{to: review}]
+  review: [{to: __end__}]
+`
+	compiled := Compile(workflow, state, "scenario", ProfileRuntimeLoad)
+	if !compiled.Valid || compiled.Graph == nil {
+		t.Fatalf("diagnostics=%v", compiled.Diagnostics)
+	}
+	node := compiled.Graph.Nodes["review"]
+	if node.Mode != "human" || node.RerunWhen != "The user rejects the draft or requests a correction." {
+		t.Fatalf("human rerun contract was not compiled: %+v", node)
+	}
+	projection := Project(compiled.Graph, RuntimeSnapshot{})
+	projected := projection.Nodes["review"]
+	if !projected.RequiresApproval || projected.RerunWhen != node.RerunWhen {
+		t.Fatalf("human rerun contract was not projected: %+v", projected)
+	}
+}
+
 func TestCompilePreservesMaterialRuntimeMetadata(t *testing.T) {
 	workflow := `id: cardinality-test
 slots:

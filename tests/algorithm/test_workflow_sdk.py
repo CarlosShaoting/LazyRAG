@@ -124,6 +124,33 @@ def test_core_error_details_survive_sdk_and_mcp():
     assert error['details']['suggestion'] == 'Use a new key'
 
 
+def test_transition_result_error_envelope_preserves_state_conflict():
+    from lazymind.workflow_sdk import WorkflowClient, WorkflowClientError
+
+    transport = MagicMock()
+    transport.get.return_value = MagicMock(status_code=409, json=lambda: {
+        'contract_version': 'workflow.v1',
+        'ok': True,
+        'result': {
+            'accepted': False,
+            'state_version': 8,
+            'error': {
+                'code': 'STATE_VERSION_CONFLICT',
+                'message': 'plugin session state changed',
+                'retryable': True,
+                'details': {'expected': 7, 'actual': 8},
+            },
+        },
+    })
+
+    with pytest.raises(WorkflowClientError) as error:
+        WorkflowClient('http://core/api/core', transport=transport).get_state('session-1')
+
+    assert error.value.code == 'STATE_VERSION_CONFLICT'
+    assert error.value.retryable is True
+    assert error.value.details == {'expected': 7, 'actual': 8}
+
+
 def test_uncertain_submission_returns_retry_key():
     from lazymind.workflow_sdk import WorkflowClient, WorkflowClientError
     transport = MagicMock()
@@ -523,6 +550,29 @@ def test_sdk_delete_artifact_creates_public_tombstone_request():
     assert call.kwargs['json'] == {'base_revision': 2, 'command_id': 'cmd-delete'}
 
 
+def test_sdk_patch_artifact_preserves_draft_version_concurrency_token():
+    transport = MagicMock()
+    transport.patch.return_value = MagicMock(
+        status_code=200,
+        json=lambda: {'ok': True, 'data': {'artifact_id': 'a2', 'revision': 3}},
+    )
+    from lazymind.workflow_sdk import WorkflowClient
+
+    result = WorkflowClient(
+        'http://core/api/core', 'u1', transport=transport,
+    ).patch_artifact(
+        'a2', 2, {'status': 'approved'}, command_id='cmd-patch',
+        base_draft_version=5,
+    )
+
+    assert result.result['revision'] == 3
+    call = transport.patch.call_args
+    assert call.args[0].endswith('/workflow-artifacts/a2')
+    assert call.kwargs['json']['base_revision'] == 2
+    assert call.kwargs['json']['base_draft_version'] == 5
+    assert call.kwargs['json']['command_id'] == 'cmd-patch'
+
+
 def test_sdk_reads_durable_slot_order():
     transport = MagicMock()
     transport.get.return_value = MagicMock(
@@ -563,3 +613,25 @@ def test_advance_inherits_parent_agentic_snapshot_only_when_host_provides_it():
             assert restored['enable_tool_retrieval'] is enabled
             assert restored['thinking_depth'] == thinking_depth
             assert payload['_thinking_depth'] == thinking_depth
+
+
+def test_advance_inherits_current_conversation_model_roles():
+    import httpx
+    from lazymind.workflow_sdk import AdvanceRequest, StepCommand, WorkflowClient
+
+    transport = MagicMock()
+    transport.post.return_value = httpx.Response(200, json={'result': {}})
+    selected = {
+        'llm': {'source': 'siliconflow', 'model': 'deepseek-ai/DeepSeek-V3'},
+        'image_generator': {'source': 'doubao', 'model': 'seedream'},
+    }
+    client = WorkflowClient(
+        'http://core', 'user', transport=transport, llm_config=selected,
+    )
+
+    client.advance(AdvanceRequest(
+        session_id='s', expected_state_version=1,
+        steps=[StepCommand(step_id='step')],
+    ))
+
+    assert transport.post.call_args.kwargs['json']['llm_config'] == selected

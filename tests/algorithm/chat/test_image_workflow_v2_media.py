@@ -233,6 +233,32 @@ def test_generate_ordinary_image_only_publishes_real_provider_file(
     assert saved[0][1]['publisher_list_index'] == 0
 
 
+def test_media_request_applies_runtime_retry_feedback(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from lazymind.chat.engine.subagent import context as context_module
+
+    launch = '生成一张1:1的极简蓝色圆形图标。'
+    correction = (
+        'Recovery request for this rerun only: '
+        '改成一张1:1的极简橙色方形图标，其他设置不变。'
+    )
+    monkeypatch.setattr(
+        context_module,
+        'require_context',
+        lambda: SimpleNamespace(params={
+            'user_input': launch,
+            'retry_hint': correction,
+        }),
+    )
+
+    request = module._immutable_request()
+
+    assert request.startswith(launch)
+    assert 'User update (overrides conflicting launch requirements):' in request
+    assert correction in request
+
+
 def test_generate_ordinary_image_honors_latest_ratio_update(
     monkeypatch: pytest.MonkeyPatch,
 ):

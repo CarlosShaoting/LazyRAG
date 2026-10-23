@@ -289,7 +289,23 @@ def _immutable_request() -> str:
     ctx = require_context()
     from lazymind.chat.workflow.image_request import effective_image_request
 
-    return effective_image_request(ctx.params or {})
+    params = ctx.params or {}
+    request = effective_image_request(params)
+    marker = 'User update (overrides conflicting launch requirements):\n'
+    if marker in request:
+        return request
+
+    # Human corrections are transported by Core as a runtime retry hint and
+    # are not guaranteed to be duplicated into current_user_input.  The media
+    # boundary must receive that feedback too; otherwise a rerun can create a
+    # different file while still using the rejected prompt.
+    retry_hint = str(params.get('retry_hint') or '').strip()
+    if not retry_hint:
+        return request
+    launch = str(params.get('launch_user_input') or '').strip() or request
+    if not launch:
+        return retry_hint
+    return f'{launch}\n\n{marker}{retry_hint}'
 
 
 def _publish_generated_images(slot: str, result: Dict[str, Any], source_tool: str) -> Dict[str, Any]:

@@ -197,6 +197,30 @@ def _positive_int(value: Any) -> Optional[int]:
     return None
 
 
+def _effective_meme_review_request(params: dict[str, Any]) -> str:
+    """Return the launch request amended by the current trusted review feedback.
+
+    A human-step retry is transported by Core as ``retry_hint``.  It is not
+    necessarily copied into ``current_user_input``, so ``effective_image_request``
+    alone can still describe only the original launch request during a rerun.
+    Prefer an already-materialized user update; otherwise apply the runtime retry
+    hint as the latest requirements for this attempt.
+    """
+    request = effective_image_request(params)
+    marker = 'User update (overrides conflicting launch requirements):\n'
+    if marker in request:
+        return request
+
+    retry_hint = str(params.get('retry_hint') or '').strip()
+    if not retry_hint:
+        return request
+
+    launch = str(params.get('launch_user_input') or '').strip() or request
+    if not launch:
+        return retry_hint
+    return f'{launch}\n\n{marker}{retry_hint}'
+
+
 def classify_image_request() -> dict[str, Any]:
     """Classify the immutable launch request and publish ``route_plan``.
 
@@ -217,9 +241,11 @@ def classify_image_request() -> dict[str, Any]:
         raise ToolExecutionError('The immutable workflow launch request is empty')
 
     deliverable_text = _NEGATED_EDIT_RE.sub(' ', _NEGATED_MEME_RE.sub(' ', request))
-    has_upload = bool(_EXISTING_SOURCE_RE.search(request)) and bool(
-        re.search(r'(?:上传|uploaded|附件|attachment)', request, re.IGNORECASE)
-    )
+    # Report the authoritative Runtime binding, not whether the user's prose
+    # happened to contain words such as "uploaded". Natural requests commonly
+    # say "这张照片", and the sole current-turn image is already bound by
+    # the Host before this classifier runs.
+    has_upload = bool(_bound_image_refs('source_image'))
     needs_external_material = bool(_EXTERNAL_MATERIAL_RE.search(request))
     if _MEME_FINAL_RE.search(deliverable_text):
         route = 'meme'
@@ -269,6 +295,21 @@ def _bound_image_refs(key: str) -> list[str]:
     return refs
 
 
+def _validate_image_reference(ref: str) -> dict[str, Any]:
+    """Normalize the legacy validator's stable text contract for V2 callers."""
+    raw = _legacy_image_tools().validate_image_ref(ref)
+    if isinstance(raw, dict):
+        return raw
+    parsed: dict[str, Any] = {}
+    for line in str(raw or '').splitlines():
+        key, separator, value = line.partition(':')
+        if separator:
+            parsed[key.strip()] = value.strip()
+    if parsed.get('status') not in {'ok', 'invalid'}:
+        return {'status': 'invalid', 'reason': 'validation returned an invalid result'}
+    return parsed
+
+
 def publish_edit_contract(requested_edit: str, edit_scope: str, preserve: str,
                           do_not: str, source_url: Optional[str] = None) -> dict[str, Any]:
     """Validate and publish the exact source binding and complete edit contract.
@@ -298,7 +339,7 @@ def publish_edit_contract(requested_edit: str, edit_scope: str, preserve: str,
     # Resolve/stage that binding first, then inspect the complete local file.
     # Probing the transport reference can observe a range response or an input
     # while it is still being staged and incorrectly report Truncated File Read.
-    validation = _legacy_image_tools().inspect_image_reference(paths[0])
+    validation = _validate_image_reference(paths[0])
     if validation.get('status') != 'ok':
         raise ToolExecutionError(f'Invalid source image: {validation.get("reason", "validation failed")}')
     from lazymind.chat.engine.subagent.context import require_context
@@ -375,7 +416,7 @@ def _ordinary_reference_materials(
                 continue
             try:
                 ref = str(item['local_path'])
-                if _legacy_image_tools().inspect_image_reference(ref).get('status') == 'ok':
+                if _validate_image_reference(ref).get('status') == 'ok':
                     references.append(ref)
                 else:
                     outcomes.append({
@@ -492,12 +533,13 @@ def validate_meme_brief_data(
     meme_brief_data: Any,
     user_input: str,
 ) -> dict[str, Any]:
-    """Validate a meme brief against its structure and immutable launch request.
+    """Validate a meme brief against its structure and effective user request.
 
-    The launch request is authoritative for an explicit pack count and for an
-    unambiguous ordered caption list. This closes the gap where a model-produced
-    brief could silently reduce a four-state request to two states while still
-    satisfying the generic "JSON artifact exists" check.
+    The launch request is authoritative until the user supplies explicit review
+    feedback.  On a human-step rerun that trusted update overrides conflicting
+    launch requirements, while unchanged count/caption requirements still fall
+    back to the launch request.  This closes both silent state reduction and the
+    inverse failure where a valid human correction could never be saved.
     """
     if not isinstance(meme_brief_data, dict):
         raise ToolExecutionError('meme_brief_data must be a JSON object, not text or a list')
@@ -543,7 +585,7 @@ def validate_meme_brief_data(
     if planned_count is None:
         errors.append('planned_count must be a positive integer')
 
-    expected_limit = 5 if delivery_mode == 'dynamic' else 12 if delivery_mode == 'static' else None
+    expected_limit = 6 if delivery_mode == 'dynamic' else 12 if delivery_mode == 'static' else None
     if expected_limit is not None and allowed_count != expected_limit:
         errors.append(f'allowed_count must be {expected_limit} for {delivery_mode} delivery')
 
@@ -652,8 +694,9 @@ def validate_meme_brief_data(
 def save_validated_meme_brief(meme_brief_data: dict[str, Any]) -> dict[str, Any]:
     """Validate and save the only authoritative meme brief for this Attempt.
 
-    The original Workflow launch request is read from the trusted SubAgent
-    context, so callers cannot lower the expected count supplied by the user.
+    The effective request is built from trusted SubAgent context.  The original
+    launch request remains authoritative unless the current human-step retry
+    explicitly overrides it.
 
     Args:
         meme_brief_data: Complete Meme Brief JSON object.
@@ -665,20 +708,25 @@ def save_validated_meme_brief(meme_brief_data: dict[str, Any]) -> dict[str, Any]
     from lazymind.chat.engine.subagent.tools import _save_artifact
 
     ctx = require_context()
-    original_request = effective_image_request(ctx.params or {})
+    original_request = _effective_meme_review_request(ctx.params or {})
     normalized_brief = dict(meme_brief_data)
     normalized_brief['states'] = [
         dict(state) if isinstance(state, dict) else state
         for state in (meme_brief_data.get('states') or [])
     ]
     auto_approved = bool(_MEME_DIRECT_EXECUTION_RE.search(original_request))
-    if auto_approved:
-        count_status = str(normalized_brief.get('count_status') or '').strip().lower()
-        requires_decision = normalized_brief.get('requires_count_decision')
-        if count_status != 'compliant' or requires_decision is not False:
-            raise ToolExecutionError(
-                'Direct execution cannot auto-approve an over-limit or unresolved meme brief.'
-            )
+    count_status = str(normalized_brief.get('count_status') or '').strip().lower()
+    requires_decision = normalized_brief.get('requires_count_decision')
+    checkpoint_ready = count_status == 'compliant' and requires_decision is False
+    if auto_approved and not checkpoint_ready:
+        raise ToolExecutionError(
+            'Direct execution cannot auto-approve an over-limit or unresolved meme brief.'
+        )
+    if checkpoint_ready:
+        # The human Workflow node is the authoritative review checkpoint. Mark
+        # its structurally valid proposal ready before publishing so confirming
+        # the native checkpoint can advance without a second model-dependent
+        # artifact rewrite. Revisions still rerun this human node first.
         normalized_brief['caption_review_status'] = 'approved'
         normalized_brief['brief_status'] = 'approved'
         for state in normalized_brief['states']:
@@ -699,6 +747,7 @@ def save_validated_meme_brief(meme_brief_data: dict[str, Any]) -> dict[str, Any]
         'status': 'ok',
         'validation': validation,
         'auto_approved': auto_approved,
+        'checkpoint_ready': checkpoint_ready,
         'artifact': saved,
     }
 

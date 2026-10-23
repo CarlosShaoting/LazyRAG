@@ -68,3 +68,36 @@ func TestRequestUserID(t *testing.T) {
 		t.Fatalf("got %q, want 0", got)
 	}
 }
+
+func TestApplyWorkflowChatModelOverrideKeepsOwnerCredential(t *testing.T) {
+	config := map[string]any{
+		"llm": map[string]any{
+			"source": "siliconflow", "model": "deepseek-ai/DeepSeek-R1",
+			"base_url": "https://api.siliconflow.cn/v1/", "api_key": "SECRET",
+		},
+	}
+	got := applyWorkflowChatModelOverride(config, map[string]any{
+		"workflow_chat_model_override": map[string]any{
+			"source": "SiliconFlow", "model": "deepseek-ai/DeepSeek-V3",
+		},
+	})
+	role := got["llm"].(map[string]any)
+	if role["model"] != "deepseek-ai/DeepSeek-V3" || role["api_key"] != "SECRET" {
+		t.Fatalf("merged role = %#v", role)
+	}
+	if config["llm"].(map[string]any)["model"] != "deepseek-ai/DeepSeek-R1" {
+		t.Fatal("base config was mutated")
+	}
+}
+
+func TestApplyWorkflowChatModelOverrideRejectsAnotherProvider(t *testing.T) {
+	config := map[string]any{
+		"llm": map[string]any{"source": "siliconflow", "model": "default", "api_key": "SECRET"},
+	}
+	got := applyWorkflowChatModelOverride(config, map[string]any{
+		"workflow_chat_model_override": map[string]any{"source": "other", "model": "forged"},
+	})
+	if got["llm"].(map[string]any)["model"] != "default" {
+		t.Fatalf("cross-provider override was applied: %#v", got)
+	}
+}

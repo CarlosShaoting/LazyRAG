@@ -25,6 +25,26 @@ when_to_use: >
 
 runtime:
   publisher_owned_slots: [route_plan, material_summary, ordinary_prompt, ordinary_output, authoritative_image, edit_contract, edit_candidate]
+  completed_edit_routing: |
+    For a correction to a completed image-workflow-v2 Session, keep the
+    existing Session and choose the exact rewindable owner of the selected
+    branch. Never call a Workflow trigger and never start a replacement
+    Session.
+    - When ordinary_generate is an effective completed step, every request to
+      revise or regenerate the ordinary image rewinds to ordinary_generate.
+      The current user correction is the authoritative retry feedback; do not
+      rewind ordinary_prepare merely to rewrite its historical prompt.
+    - When edit_candidate is an effective completed step, every request to
+      revise or regenerate the edited image rewinds to edit_candidate so the
+      authoritative source remains unchanged.
+    - For a completed meme branch, wording, state, action, count, delivery-mode,
+      or communication-intent corrections rewind to meme_brief; character or
+      eye/mouth anchor corrections rewind to build_identity_anchors; static
+      pose or composition corrections rewind to render_static; static caption
+      placement corrections rewind to caption_static; dynamic key-image pose
+      or composition corrections rewind to render_keyframes; video motion
+      corrections rewind to render_dynamic. Select only a step present in the
+      current rewindable_steps list.
 
 tool_scripts:
   - path: scripts/media.py
@@ -99,6 +119,14 @@ slots:
   - {id: pack_review, label: Final Pack Review, type: json, cardinality: single}
 
 ui:
+  slots:
+    canonical_character_image: {widgetType: image-gallery, readOnly: true}
+    character_identity_prompt: {widgetType: text-markdown, readOnly: true}
+    face_anchor_grid: {widgetType: image-gallery, readOnly: true}
+    hero_no_text: {widgetType: image-gallery, readOnly: true, itemLayout: grid, gridMaxCols: 6, itemWidth: 112, itemHeight: 104}
+    master_keyframes: {widgetType: image-gallery, readOnly: true, itemLayout: grid, gridMaxCols: 5, itemWidth: 112, itemHeight: 104}
+    canary_video: {widgetType: media-preview, readOnly: true, itemHeight: 104}
+    remaining_videos: {widgetType: media-gallery, readOnly: true, itemLayout: grid, gridMaxCols: 4, itemWidth: 140, itemHeight: 104}
   tabs:
     - id: plan
       label: Plan
@@ -123,7 +151,6 @@ ui:
         - {id: authoritative_image}
         - {id: canonical_character_image}
         - {id: character_identity_prompt}
-        - {id: face_anchor_images}
         - {id: face_anchor_grid}
       composite_behavior: {hide_empty_columns: true, empty_column_scope: selected}
     - id: production
@@ -143,8 +170,7 @@ ui:
         - {id: edit_candidate}
         - {id: static_final}
         - {id: gif_output}
-        - {id: pack_review}
-      composite_layout: [ordinary_output, edit_candidate, static_final, gif_output, pack_review]
+      composite_layout: [ordinary_output, edit_candidate, static_final, gif_output]
       composite_behavior: {hide_empty_columns: true, empty_column_scope: selected}
 
 i18n:
