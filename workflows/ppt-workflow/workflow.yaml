@@ -298,26 +298,31 @@ steps:
 
 slots:
   - id: native_pptx
+    user_visible: true
     label: PPTX 文件
     type: file
     cardinality: single
   - id: presentation_scenario
+    user_visible: false
     label: Presentation Scenario
     type: text
     cardinality: single
     exposed: false
   - id: academic_brief
+    user_visible: true
     label: 科研内容分析
     type: text
     cardinality: single
     summary_max_chars: 2000
   - id: requirement_analysis
+    user_visible: true
     label: Requirement Analysis
     type: text
     cardinality: single
     summary_max_chars: 600
 
   - id: ppt_capability_requirements
+    user_visible: false
     label: PPT Capability Requirements
     type: text
     cardinality: single
@@ -325,6 +330,7 @@ slots:
     summary_max_chars: 80
 
   - id: style_flow
+    user_visible: false
     label: Style Flow
     type: text
     cardinality: single
@@ -332,6 +338,7 @@ slots:
     summary_max_chars: 40
 
   - id: generation_mode
+    user_visible: false
     label: Generation Mode
     type: text
     cardinality: single
@@ -339,6 +346,7 @@ slots:
     summary_max_chars: 40
 
   - id: template_mode
+    user_visible: false
     label: Template Mode
     type: text
     cardinality: single
@@ -346,6 +354,7 @@ slots:
     summary_max_chars: 80
 
   - id: template_pptx
+    user_visible: false
     label: PPTX Template
     exposed: false
     type: file
@@ -355,6 +364,7 @@ slots:
     allow_manual_add: true
 
   - id: template_profile
+    user_visible: false
     label: Template Profile
     type: json
     cardinality: single
@@ -362,12 +372,14 @@ slots:
     summary_max_chars: 1200
 
   - id: template_content_brief
+    user_visible: false
     label: Template Content Requirements
     type: json
     cardinality: single
     exposed: true
 
   - id: generate_background_images
+    user_visible: false
     label: Generate Background Images
     type: text
     cardinality: single
@@ -375,6 +387,7 @@ slots:
     summary_max_chars: 40
 
   - id: skip_style_choices
+    user_visible: false
     label: Skip Style Choices
     type: text
     cardinality: single
@@ -382,6 +395,7 @@ slots:
     summary_max_chars: 40
 
   - id: skip_background_images
+    user_visible: false
     label: Skip AI Backgrounds
     type: text
     cardinality: single
@@ -389,6 +403,7 @@ slots:
     summary_max_chars: 40
 
   - id: skip_material_collection
+    user_visible: false
     label: Skip Material Collection
     type: text
     cardinality: single
@@ -396,6 +411,7 @@ slots:
     summary_max_chars: 40
 
   - id: uploaded_materials
+    user_visible: false
     label: Uploaded Materials
     exposed: false
     type: file
@@ -406,12 +422,14 @@ slots:
     allow_manual_add: true
 
   - id: material_summary
+    user_visible: true
     label: Material Summary
     type: text
     cardinality: single
     summary_max_chars: 700
 
   - id: material_images
+    user_visible: false
     label: Material Images
     exposed: false
     type: image
@@ -419,24 +437,28 @@ slots:
     ordered: true
 
   - id: style_previews
+    user_visible: true
     label: Style Previews
     type: text
     cardinality: single
     summary_max_chars: 500
 
   - id: style_selection
+    user_visible: true
     label: Selected Style
     type: text
     cardinality: single
     summary_max_chars: 80
 
   - id: background_images
+    user_visible: false
     label: AI Background Images
     type: image
     cardinality: list
     ordered: true
 
   - id: background_prompts
+    user_visible: false
     label: AI Background Prompts
     type: text
     cardinality: list
@@ -444,6 +466,7 @@ slots:
     summary_max_chars: 1200
 
   - id: slide_outline
+    user_visible: false
     label: Page Prompt
     type: text
     cardinality: list
@@ -451,12 +474,14 @@ slots:
     summary_max_chars: 900
 
   - id: deck_outline
+    user_visible: true
     label: Deck Outline
     type: text
     cardinality: single
     summary_max_chars: 1600
 
   - id: preview_html
+    user_visible: true
     label: Slide
     type: text
     cardinality: list
@@ -464,6 +489,7 @@ slots:
     summary_max_chars: 500
 
   - id: preview_notes
+    user_visible: true
     label: Speaker Notes
     type: text
     cardinality: list

@@ -97,6 +97,11 @@ func Compile(workflowYAML, stateYAML, scenario string, profile Profile) CompileR
 			result.Diagnostics = append(result.Diagnostics, materialDiag("E_MATERIAL_DUPLICATE", "error", fmt.Sprintf("workflow.yaml.slots[%d].id", i), id, "material id is duplicated: "+id))
 		}
 		knownMaterials[id] = true
+		if value, present := slot["user_visible"]; present {
+			if _, ok := value.(bool); !ok {
+				result.Diagnostics = append(result.Diagnostics, materialDiag("E_USER_VISIBLE_INVALID", "error", fmt.Sprintf("workflow.yaml.slots[%d].user_visible", i), id, "user_visible must be a boolean"))
+			}
+		}
 		if materialType := strings.ToLower(scalar(slot["type"])); materialType != "" {
 			graph.MaterialTypes[id] = materialType
 		}

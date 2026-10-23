@@ -923,3 +923,24 @@ func TestImageWorkflowDirectEditReadyWithoutGeneratedBase(t *testing.T) {
 		t.Fatalf("generation must be pruned: %#v", projection.Nodes["generate_image"])
 	}
 }
+
+func TestCompileUserVisibilityDoesNotChangeExecution(t *testing.T) {
+	for _, value := range []string{"true", "false"} {
+		result := Compile(strings.Replace(validWorkflow, "{id: final}", "{id: final, user_visible: "+value+"}", 1), validState, "", ProfilePublish)
+		if !result.Valid || len(result.Graph.Nodes["f"].Outputs) != 1 || result.Graph.Nodes["f"].Outputs[0] != "final" {
+			t.Fatalf("visibility changed execution: %#v", result)
+		}
+	}
+	for _, value := range []string{`"false"`, "null", "1", "[]"} {
+		result := Compile(strings.Replace(validWorkflow, "{id: final}", "{id: final, user_visible: "+value+"}", 1), validState, "", ProfilePublish)
+		found := false
+		for _, diagnostic := range result.Diagnostics {
+			if diagnostic.Code == "E_USER_VISIBLE_INVALID" {
+				found = true
+			}
+		}
+		if result.Valid || !found {
+			t.Fatalf("invalid visibility accepted: %s %#v", value, result.Diagnostics)
+		}
+	}
+}
