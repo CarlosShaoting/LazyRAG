@@ -154,6 +154,24 @@ PR #7 之后的实际运行暴露出以下问题：
 
 该改动仅发生在后端把 Workflow binding/静态 URL 解析为可读本地文件的阶段，不改变聊天消息结构、前端路由或主页面渲染协议。WorkflowPanel 的展示变化在独立组件中按 `workflow_id === image-workflow-v2` 限定，并有前端回归测试覆盖。
 
+### 8.3 “review 一下 static file URL 处理逻辑”
+
+绝对 `http://` / `https://` 地址只有在 URL path 以 `/static-files/` 开头时才会转入本地上传目录解析；这里不发起网络请求，也不信任 URL host。这样浏览器侧的 `http://localhost:<port>/static-files/...` 签名地址可以在容器内复用共享文件，而不会错误访问容器自身的 localhost。
+
+解析仍统一经过 `_resolve_upload_relative_path`：先 URL decode 并规范化分隔符，再拒绝空段、`.`、`..`，最后用 `candidate.relative_to(root)` 保证结果位于上传根目录。回归测试覆盖 localhost 绝对 URL、明文 `..`、百分号编码 `..` 和反斜杠穿越；其他外部 URL 不会被当成本地文件。
+
+### 8.4 “review image_request.py 的影响范围”
+
+该帮助文件没有接入通用 Chat 消息渲染或普通对话 prompt。当前调用点仅位于 `workflows/image-workflow-v2/scripts/tools.py` 和 `media.py`，用于区分不可变启动需求、纯控制消息和后续真实修改意见。
+
+函数无存储和网络副作用：只有与完整正则匹配的“继续/确认/重试”等短消息会被视为控制消息，其他输入按 update 合并；相关分类、比例覆盖和审批继续场景由 V2 工具测试覆盖。因此影响范围限定在生图 V2 的需求解释。
+
+### 8.5 “推理强度为什么在这个 PR 实现”
+
+这是执行稳定性修复，而不是新增模型策略。WorkflowManager 已从当前会话配置构造 WorkflowClient；如果不透传 `thinking_depth`，工作流子步骤可能回到 SDK 默认值，与发起任务的会话设置不一致。该差异会直接影响 `classify_request`、方案生成和审查步骤的表现。
+
+字段是可选且有白名单的：仅 `low`、`medium`、`high`、`max` 被发送；调用方未设置时不改变原 payload。它不选择 Provider、模型或凭据。独立 SDK 测试覆盖未设置、关闭工具检索及不同推理强度组合。如维护者希望进一步拆分，该改动可单独摘出，但保留在本 PR 能保证修复后的工作流沿用发起会话的完整执行配置。
+
 ## 9. 兼容性与风险边界
 
 - 无数据库迁移；
