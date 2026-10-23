@@ -17,6 +17,8 @@ class BuiltinSkillLineEndingTests(unittest.TestCase):
             fixtures = {
                 'skills/search/personal-document-search/SKILL.md': b'# Skill\n\nBody\n',
                 'skills/search/personal-document-search/references/source-routing.md': b'# Routing\n\nBody\n',
+                'skills/featured/photo-to-gongbi/skill/SKILL.md': b'# Gongbi\n\nBody\n',
+                'skills/featured/photo-to-gongbi/skill/scripts/crop_image.py': b'print("crop")\n',
             }
             for name, data in fixtures.items():
                 path = root / name
