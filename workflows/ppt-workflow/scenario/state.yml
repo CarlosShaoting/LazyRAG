@@ -183,7 +183,9 @@ steps:
       - AI background generation: record exactly enabled or disabled from the
         startup answer. This is independent from foreground material images.
       - Style flow is an internal route, not a user confirmation mode: record
-        auto for uploaded templates or 快速生成, otherwise preview_choice for 完整生成 so the full path creates
+        auto when the user declines previews (e.g. 不需要看风格 / 跳过风格),
+        for uploaded templates, or for 快速生成. This explicit opt-out overrides
+        完整生成. Otherwise use preview_choice for 完整生成 so the full path creates
         three candidates and automatically continues with the recommended one.
       - Generation mode: record exactly quick for 快速生成, or full for
         完整生成，耗时较长.
@@ -206,7 +208,8 @@ steps:
         )
         save_artifact(
           key='style_flow', content_type='text',
-          value='auto' for 快速生成 or an uploaded template, otherwise 'preview_choice',
+          value='auto' when previews are declined, for 快速生成, or for an uploaded template;
+                otherwise 'preview_choice',
         )
         save_artifact(
           key='generation_mode', content_type='text',
@@ -220,7 +223,7 @@ steps:
           key='generate_background_images', content_type='text',
           value='enabled' only if no template is used and AI backgrounds are enabled, otherwise 'disabled',
         )
-        For 快速生成 or an uploaded template, save:
+        Whenever style_flow is auto (including explicit preview opt-out), save:
           save_artifact(key='skip_style_choices', content_type='text', value='skip')
         When and only when AI background generation is disabled, also save:
           save_artifact(
@@ -301,7 +304,8 @@ steps:
       explicit visual constraints, structure, constraints, and assumptions.
       ppt_capability_requirements must be exactly AI_BACKGROUND_IMAGES: enabled
       or AI_BACKGROUND_IMAGES: disabled. style_flow must be auto for quick mode
-      or preview_choice for full mode without a template. Uploaded templates always use auto.
+      or explicit preview opt-out, even in full mode. Only full mode without a template
+      or preview opt-out uses preview_choice. Uploaded templates always use auto.
       generation_mode must be exactly quick or full, and template_mode must be
       exactly none or upload.
       Uploaded templates require style_flow=auto, disabled backgrounds and both
@@ -776,7 +780,7 @@ steps:
       ppt_build_outline for a whole-slide insertion.
 
       Call ppt_find_deck at most once. If no deck exists, omit deck_dir and let
-      ppt_build_outline initialize it and recover missing full-mode previews.
+      ppt_build_outline initialize it and use auto styling without previews.
       Never repeatedly search for a deck that has not been created.
       When AI backgrounds were enabled OR style_flow is preview_choice, first
       call ppt_find_deck to locate the already prepared deck. Then call ppt_build_outline

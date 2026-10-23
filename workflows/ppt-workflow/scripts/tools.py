@@ -6226,7 +6226,7 @@ def ppt_init_deck(
         scene (str): Presentation scene.
         style_hint (str): Optional visual style guidance.
         ppt_mode (str): Deprecated compatibility field; derived from style_flow.
-        style_flow (str): User-owned choice: auto or preview_choice.
+        style_flow (str): Internal route: auto when previews are skipped; preview_choice only with saved previews.
         key_points_json (str): JSON array string like '["a","b"]', or omit.
         key_points (str or list): Alias for key_points_json; the canonical field takes precedence.
         generate_background_images (bool): Persist the user's explicit opt-in
@@ -6745,24 +6745,17 @@ def ppt_prepare_style(
         deck = _resolve_deck_dir(resolved)
 
     selection = _style_selection_id(style_selection)
-    if flow == 'preview_choice':
-        # A dynamic workflow can reach outline before choose_style. Recover the
-        # full-mode prerequisite on the same deck instead of asking for a choice
-        # from previews that do not exist. Never replace a saved user selection.
-        if not _style_samples_are_ready(deck) and not _style_spec_is_ready(deck, selection or 'A'):
-            choices = ppt_prepare_style_choices(
-                user_query=user_query, page_count=page_count, topic=topic,
-                role=role, audience=audience, scene=scene, style_hint=style_hint,
-                key_points_json=key_points_json,
-                generate_background_images=generate_background_images,
-                deck_dir=resolved,
-            )
-            if _tool_failed(choices):
-                return _tool_error('ppt_prepare_style',
-                                   f'style previews failed: {_tool_fail_reason(choices)}')
-            selection = selection or _style_selection_id(
-                _tool_payload(choices).get('default_selection'))
+    if flow == 'preview_choice' and not _style_samples_are_ready(deck):
+        # Skipped previews must not become an outline prerequisite. Old sessions
+        # can retain preview_choice after bypassing choose_style; render directly
+        # from the authored style hint instead of manufacturing candidate decks.
+        pack, flow = _persist_deck_style_flow(deck, 'auto')
+        init_payload['ppt_mode'] = pack.get('ppt_mode')
+        selection = ''
+    elif flow == 'preview_choice':
         selection = selection or 'A'
+    else:
+        selection = ''
     stages: list[dict[str, Any]] = []
     preflight = ppt_run_stage(resolved, stage='preflight')
     if _tool_failed(preflight):
@@ -6828,7 +6821,7 @@ def ppt_build_outline(
         scene (str): Presentation scene.
         style_hint (str): Optional visual style guidance.
         ppt_mode (str): Deprecated compatibility field; derived from style_flow.
-        style_flow (str): User-owned choice: auto or preview_choice.
+        style_flow (str): Internal route: auto when previews are skipped; preview_choice only with saved previews.
         style_selection (str): A, B, or C for preview_choice.
         key_points_json (str): JSON array string like '["a","b"]', or omit.
         generate_background_images (bool): True only when the startup AI

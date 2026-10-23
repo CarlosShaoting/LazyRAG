@@ -344,7 +344,7 @@ class StyleFlowCombinationTest(unittest.TestCase):
                         ],
                     )
 
-    def test_missing_full_mode_previews_are_recovered_on_same_deck(self):
+    def test_skipped_previews_do_not_require_candidates_or_selection(self):
         for requested in (None, 'B'):
             with self.subTest(selection=requested), tempfile.TemporaryDirectory() as temp:
                 deck = self._prepared_deck(Path(temp), 'preview_choice', False, 0)
@@ -359,10 +359,12 @@ class StyleFlowCombinationTest(unittest.TestCase):
                         deck_dir=str(deck), style_flow='preview_choice',
                         style_selection=requested, generate_background_images=False,
                     )
-                self.assertEqual(result['style_selection'], requested or 'A')
-                self.assertEqual(choices.call_args.kwargs['deck_dir'], str(deck.resolve()))
-                self.assertFalse(choices.call_args.kwargs['generate_background_images'])
-                self.assertEqual(stage.call_args.kwargs['sample'], requested or 'A')
+                self.assertEqual(result['style_flow'], 'auto')
+                self.assertIsNone(result['style_selection'])
+                choices.assert_not_called()
+                self.assertIsNone(stage.call_args.kwargs['sample'])
+                pack = json.loads((deck / 'task_pack.json').read_text())
+                self.assertEqual(pack['params']['style_flow'], 'auto')
 
     def test_legacy_standard_without_samples_recovers_as_auto(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
