@@ -1738,13 +1738,16 @@ def pptx_analyzer(filename: str, page: int = 1, turn: Optional[int] = None) -> D
     except ValueError as exc:
         raise ToolExecutionError(str(exc)) from None
     except Exception as exc:
-        raise ToolExecutionError(f'Native PPTX analysis failed ({type(exc).__name__}); no PDF fallback was attempted.') from None
+        raise ToolExecutionError(
+            f'Native PPTX analysis failed ({type(exc).__name__}); no PDF fallback was attempted.') from None
 
 
 @fc_register(host_file='NONE')
 def edit_presentation(
     filename: str,
-    action: Literal['inspect', 'replace_fonts', 'replace_palette', 'inspect_content', 'edit_content', 'prepare_font', 'format_text'],
+    action: Literal[
+        'inspect', 'replace_fonts', 'replace_palette', 'inspect_content', 'edit_content', 'prepare_font', 'format_text'
+    ],
     source_font: Optional[str] = None,
     target_font: Optional[str] = None,
     color_map: Optional[Union[Dict[str, str], str]] = None,
@@ -1801,7 +1804,8 @@ def edit_presentation(
         runtime = cfg.get('workflow_runtime') or {}
         session_id = workflow_session_id or cfg.get('workflow_session_id') or runtime.get('session_id')
         if not session_id:
-            raise ToolExecutionError('Use the active workflow_session_id from runtime context; do not use the original template.')
+            raise ToolExecutionError(
+                'Use the active workflow_session_id from runtime context; do not use the original template.')
         selected = [a for a in _public_workflow_artifacts(session_id, 'native_pptx')
                     if a.get('selected') and a.get('validity') == 'effective' and not a.get('deleted')]
         if len(selected) != 1:
@@ -1822,7 +1826,8 @@ def edit_presentation(
     if native_artifact is not None:
         effective = matched  # The selected immutable revision is authoritative.
     normalized_action = str(action or '').strip().lower()
-    if normalized_action in ('inspect_content', 'edit_content', 'format_text') or (normalized_action == 'replace_fonts' and (native_artifact is not None or slot_ids is not None)):
+    if normalized_action in ('inspect_content', 'edit_content', 'format_text') or (
+            normalized_action == 'replace_fonts' and (native_artifact is not None or slot_ids is not None)):
         from pathlib import Path
         from lazymind.chat.engine.tools.file_resources.pptx_content_edit import inspect_content, edit_content
         if normalized_action == 'inspect_content':
@@ -1831,7 +1836,8 @@ def edit_presentation(
         if not source_sha256:
             raise ToolExecutionError('Inspect current content first and provide source_sha256')
         if source_font and target_font:
-            raise ToolExecutionError('Scoped native font editing requires exact selected slots, not a source_font filter')
+            raise ToolExecutionError(
+                'Scoped native font editing requires exact selected slots, not a source_font filter')
         os.makedirs(draft.root, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix='content-', dir=draft.root) as temporary:
             candidate = Path(temporary) / 'presentation.pptx'
@@ -1843,7 +1849,8 @@ def edit_presentation(
                 # Slot indices belong to the inspected source. Do not apply stale
                 # indices after replacing text (which can add/remove runs).
                 if text_edits and slot_ids:
-                    raise ToolExecutionError('Apply slot font edits separately from text replacements; inspect the new revision first')
+                    raise ToolExecutionError(
+                        'Apply slot font edits separately from text replacements; inspect the new revision first')
                 font_source = candidate if candidate.exists() else Path(effective)
                 font_hash = hashlib.sha256(font_source.read_bytes()).hexdigest() if candidate.exists() else source_sha256
                 font_output = Path(temporary) / 'fonts.pptx'
@@ -1858,7 +1865,8 @@ def edit_presentation(
                 if text_edits and any(isinstance(e, Mapping) and e.get('slot_ids') for e in style_edits):
                     raise ToolExecutionError('Inspect new slots after text replacements before styling exact slot_ids')
                 style_source = candidate if candidate.exists() else Path(effective)
-                style_hash = hashlib.sha256(style_source.read_bytes()).hexdigest() if candidate.exists() else source_sha256
+                style_hash = hashlib.sha256(
+                    style_source.read_bytes()).hexdigest() if candidate.exists() else source_sha256
                 style_output = Path(temporary) / 'styles.pptx'
                 stats.update(edit_style_batch(style_source, style_output, style_hash, style_edits))
                 os.replace(style_output, candidate)

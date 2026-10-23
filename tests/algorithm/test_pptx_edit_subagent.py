@@ -31,7 +31,7 @@ def test_publish_receipt_only_after_success(context, monkeypatch):
     monkeypatch.setattr(pptx_edit.tools, 'edit_presentation', edit)
     edit.return_value = {'sha256': 'hash', 'slide_count': 1,
                          'pages': [{'page': 1, 'slots': [{'id': '1:5', 'text': 'date', 'run_style': {}}],
-                                    'speaker_notes': '', 'layout_checks': ['large']} ]}
+                                    'speaker_notes': '', 'layout_checks': ['large']}]}
     view = pptx_edit.inspect_current_pptx()
     assert view['source_sha256'] == 'hash'
     assert view['pages'][0]['slots'] == [{'id': '1:5', 'text': 'date'}]
@@ -94,7 +94,12 @@ def test_publish_tool_schema_is_buildable():
 def test_font_edit_delegates_scope_and_keeps_one_receipt(context, monkeypatch):
     edit = MagicMock(return_value={'status': 'ok', 'workflow_artifact': {'id': 'revision-2'}})
     monkeypatch.setattr(pptx_edit.tools, 'edit_presentation', edit)
-    pptx_edit.publish_pptx_edit('hash', target_font='Noto Sans SC', pages=[1], slot_ids=['1:2'], allow_font_download=True)
+    pptx_edit.publish_pptx_edit(
+        'hash',
+        target_font='Noto Sans SC',
+        pages=[1],
+        slot_ids=['1:2'],
+        allow_font_download=True)
     assert edit.call_args.kwargs['pages'] == [1]
     assert edit.call_args.kwargs['slot_ids'] == ['1:2']
     assert edit.call_args.kwargs['target_font'] == 'Noto Sans SC'

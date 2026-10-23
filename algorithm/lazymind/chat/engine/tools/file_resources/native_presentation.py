@@ -34,14 +34,14 @@ def build_native_pptx(slides: list[dict], output: Path, template: Path | None = 
         title = slide.shapes.title
         if title is None:
             title = slide.shapes.add_textbox(int(prs.slide_width * .06), int(prs.slide_height * .05),
-                                           int(prs.slide_width * .88), int(prs.slide_height * .13))
+                                             int(prs.slide_width * .88), int(prs.slide_height * .13))
         title.text = spec['title']
         body = next((ph for ph in slide.placeholders
                      if ph.placeholder_format.type in body_types and ph.has_text_frame), None)
         if body is None:
             fallback_count += 1
             body = slide.shapes.add_textbox(int(prs.slide_width * .06), int(prs.slide_height * .23),
-                                          int(prs.slide_width * .88), int(prs.slide_height * .67))
+                                            int(prs.slide_width * .88), int(prs.slide_height * .67))
         frame = body.text_frame
         frame.clear()
         frame.word_wrap = True

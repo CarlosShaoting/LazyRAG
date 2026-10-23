@@ -67,8 +67,8 @@ def ensure_font(family: str, allow_download: bool = False) -> str:
 def font_library_root() -> Path:
     # TODO: replace this local storage boundary with cloud object storage plus
     # a local cache. Keep content-hash font IDs and catalog metadata unchanged.
-    return Path(os.environ.get('LAZYMIND_FONT_DIR') or
-                Path.home() / '.local/share/lazymind/fonts').expanduser().resolve()
+    return Path(os.environ.get('LAZYMIND_FONT_DIR')
+                or Path.home() / '.local/share/lazymind/fonts').expanduser().resolve()
 
 
 def register_font(source: str | Path) -> dict:

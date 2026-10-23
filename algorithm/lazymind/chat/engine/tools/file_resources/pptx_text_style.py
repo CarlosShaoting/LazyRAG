@@ -18,14 +18,20 @@ def paragraph_defaults(data, name, shape, paragraph):
     level = int(ppr.get('lvl', '0')) + 1 if ppr is not None else 1
     ph = shape.find('p:nvSpPr/p:nvPr/p:ph', NS)
     kind = ph.get('type', 'obj') if ph is not None else 'other'
-    category = 'titleStyle' if kind in ('title', 'ctrTitle') else 'bodyStyle' if kind in ('body', 'obj') else 'otherStyle'
+    category = 'titleStyle' if kind in (
+        'title', 'ctrTitle') else 'bodyStyle' if kind in (
+        'body', 'obj') else 'otherStyle'
     defaults = [ppr]
     for item in (shape, inherited, ancestor):
         if item is not None:
             defaults.append(item.find(f'p:txBody/a:lstStyle/a:lvl{level}pPr', NS))
     if master is not None:
         defaults.append(master.find(f'p:txStyles/p:{category}/a:lvl{level}pPr', NS))
-    presentation = etree.fromstring(data['ppt/presentation.xml'], etree.XMLParser(resolve_entities=False, no_network=True))
+    presentation = etree.fromstring(
+        data['ppt/presentation.xml'],
+        etree.XMLParser(
+            resolve_entities=False,
+            no_network=True))
     defaults.append(presentation.find(f'p:defaultTextStyle/a:lvl{level}pPr', NS))
     _, theme = _related(data, master_name, 'theme') if master_name else (None, None)
     return [p for p in defaults if p is not None], theme
@@ -70,7 +76,8 @@ def materialize_paragraph(data, name, shape, paragraph):
             ppr.append(deepcopy(chosen))
     order = ['lnSpc', 'spcBef', 'spcAft', 'buClrTx', 'buClr', 'buSzTx', 'buSzPct', 'buSzPts',
              'buFontTx', 'buFont', 'buNone', 'buAutoNum', 'buChar', 'buBlip', 'tabLst', 'defRPr', 'extLst']
-    ppr[:] = sorted(ppr, key=lambda n: order.index(etree.QName(n).localname) if etree.QName(n).localname in order else len(order))
+    ppr[:] = sorted(ppr, key=lambda n: order.index(etree.QName(n).localname)
+                    if etree.QName(n).localname in order else len(order))
     families = set()
     for run in paragraph.findall('a:r', NS):
         rp = run.find('a:rPr', NS)
@@ -86,7 +93,13 @@ def materialize_paragraph(data, name, shape, paragraph):
                     rp.set(key, value)
         for script in ('latin', 'ea', 'cs'):
             target = rp.find('a:' + script, NS)
-            source = next((s.find('a:' + script, NS) for s in sources if s is not None and s.find('a:' + script, NS) is not None), None)
+            source = next(
+                (s.find(
+                    'a:' + script,
+                    NS) for s in sources if s is not None and s.find(
+                    'a:' + script,
+                    NS) is not None),
+                None)
             value = source.get('typeface', '') if source is not None else ''
             if not value:
                 value = '+mn-' + {'latin': 'lt', 'ea': 'ea', 'cs': 'cs'}[script]
@@ -100,7 +113,8 @@ def materialize_paragraph(data, name, shape, paragraph):
         order_r = ['ln', 'noFill', 'solidFill', 'gradFill', 'blipFill', 'pattFill', 'grpFill', 'effectLst',
                    'effectDag', 'highlight', 'uLnTx', 'uLn', 'uFillTx', 'uFill', 'latin', 'ea', 'cs', 'sym',
                    'hlinkClick', 'hlinkMouseOver', 'rtl', 'extLst']
-        rp[:] = sorted(rp, key=lambda n: order_r.index(etree.QName(n).localname) if etree.QName(n).localname in order_r else len(order_r))
+        rp[:] = sorted(rp, key=lambda n: order_r.index(etree.QName(n).localname)
+                       if etree.QName(n).localname in order_r else len(order_r))
     return families
 
 

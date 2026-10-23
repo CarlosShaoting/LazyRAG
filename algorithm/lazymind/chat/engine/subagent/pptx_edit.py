@@ -51,7 +51,8 @@ def enforce_failure_budget(event, failures):
         failed = not isinstance(result, dict) or result.get('ok') is False or result.get('status') == 'error'
         failures[name] = failures.get(name, 0) + 1 if failed else 0
         if failures[name] >= 2:
-            raise ToolExecutionError(f'{name} failed twice; editing stopped without further retries. Original PPTX is retained.')
+            raise ToolExecutionError(
+                f'{name} failed twice; editing stopped without further retries. Original PPTX is retained.')
 
 
 def _session() -> str:

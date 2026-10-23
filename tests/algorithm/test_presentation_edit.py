@@ -8,7 +8,7 @@ import zipfile
 
 
 MODULE_PATH = (
-    Path(__file__).resolve().parents[1]
+    Path(__file__).resolve().parents[2] / 'algorithm'
     / 'lazymind/chat/engine/tools/file_resources/presentation_edit.py'
 )
 SPEC = importlib.util.spec_from_file_location('presentation_edit_test_module', MODULE_PATH)
@@ -34,7 +34,8 @@ def write_test_pptx(path: Path) -> None:
         archive.writestr(
             'ppt/theme/theme1.xml',
             '''<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
-                 <a:themeElements><a:fontScheme name="Test"><a:majorFont><a:latin typeface="Old Font"/></a:majorFont></a:fontScheme></a:themeElements>
+                 <a:themeElements><a:fontScheme name="Test"><a:majorFont><a:latin typeface="Old Font"/></a:majorFont>
+                 </a:fontScheme></a:themeElements>
                </a:theme>''',
         )
 
@@ -43,9 +44,11 @@ def write_scoped_test_pptx(path: Path) -> None:
     slide = '''<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
       xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree>
       <p:sp><p:nvSpPr><p:cNvPr id="2" name="Title 1"/><p:cNvSpPr/><p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr>
-        <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr><a:latin typeface="Old Font"/></a:rPr><a:t>Title</a:t></a:r></a:p></p:txBody></p:sp>
+        <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr><a:latin typeface="Old Font"/></a:rPr>
+        <a:t>Title</a:t></a:r></a:p></p:txBody></p:sp>
       <p:sp><p:nvSpPr><p:cNvPr id="3" name="Content 2"/><p:cNvSpPr/><p:nvPr><p:ph type="body"/></p:nvPr></p:nvSpPr>
-        <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr><a:latin typeface="Old Font"/></a:rPr><a:t>Body</a:t></a:r></a:p></p:txBody></p:sp>
+        <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr><a:latin typeface="Old Font"/></a:rPr>
+        <a:t>Body</a:t></a:r></a:p></p:txBody></p:sp>
       </p:spTree></p:cSld></p:sld>'''
     with zipfile.ZipFile(path, 'w') as archive:
         archive.writestr('[Content_Types].xml', '<Types/>')
@@ -56,12 +59,17 @@ def write_scoped_test_pptx(path: Path) -> None:
         </p:presentation>''')
         archive.writestr('ppt/_rels/presentation.xml.rels', '''<Relationships
           xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-          <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>
-          <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide2.xml"/>
+          <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide"
+            Target="slides/slide1.xml"/>
+          <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide"
+            Target="slides/slide2.xml"/>
         </Relationships>''')
         archive.writestr('ppt/slides/slide1.xml', slide)
         archive.writestr('ppt/slides/slide2.xml', slide)
-        archive.writestr('ppt/theme/theme1.xml', '<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:latin typeface="Old Font"/></a:theme>')
+        archive.writestr(
+            'ppt/theme/theme1.xml',
+            '<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+            '<a:latin typeface="Old Font"/></a:theme>')
 
 
 class PresentationEditTests(unittest.TestCase):

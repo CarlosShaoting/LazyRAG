@@ -37,12 +37,12 @@ def edit_fonts(source, output, source_sha256, target_font=None, pages=None,
     if any(p > len(slides) for p in selected):
         raise ValueError('Font edit page exceeds slide count')
     if slot_ids is not None and (not isinstance(slot_ids, (list, tuple)) or not slot_ids
-                               or any(not isinstance(s, str) for s in slot_ids)):
+                                 or any(not isinstance(s, str) for s in slot_ids)):
         raise ValueError('slot_ids must be a non-empty list of exact inspected IDs')
     requested = set(slot_ids or [])
     targets = []
     found = set()
-    for page, (name, root) in enumerate(slides, 1):
+    for page, (_name, root) in enumerate(slides, 1):
         if page not in selected:
             continue
         for node, slot in _slots(root, page):
@@ -80,7 +80,8 @@ def edit_fonts(source, output, source_sha256, target_font=None, pages=None,
             properties.set('u', 'sng' if formatting['underline'] else 'none')
         if 'text_color' in formatting:
             for child in list(properties):
-                if etree.QName(child).localname in {'noFill', 'solidFill', 'gradFill', 'blipFill', 'pattFill', 'grpFill'}:
+                if etree.QName(child).localname in {'noFill', 'solidFill',
+                                                    'gradFill', 'blipFill', 'pattFill', 'grpFill'}:
                     properties.remove(child)
             fill = etree.Element('{%s}solidFill' % NS['a'])
             etree.SubElement(fill, '{%s}srgbClr' % NS['a'], val=formatting['text_color'][1:])
@@ -102,18 +103,20 @@ def edit_fonts(source, output, source_sha256, target_font=None, pages=None,
         for report in inspect_layout(data, name, root, page):
             previous = before.get((page, report['shape_id']), {})
             if report['status'] == 'overflow' and (
-                previous.get('status') != 'overflow' or
-                report.get('estimated_height_pt', 0) > previous.get('estimated_height_pt', 0) + 1
+                previous.get('status') != 'overflow'
+                or report.get('estimated_height_pt', 0) > previous.get('estimated_height_pt', 0) + 1
             ):
                 raise ValueError(f'Page {page}, shape {report["shape_id"]}: formatting would overflow; '
-                                 'choose a smaller font size or explicitly request layout changes. No version published.')
+                                 'choose a smaller font size or explicitly request layout changes. '
+                                 'No version published.')
             if report['status'] in {'overflow', 'unknown'}:
                 warnings.append({key: report[key] for key in ('page', 'shape_id', 'status', 'reason') if key in report})
         data[name] = etree.tostring(root, xml_declaration=True, encoding='UTF-8', standalone=True)
     with ZipFile(output, 'w', compression=ZIP_DEFLATED) as archive:
         for info in infos:
             archive.writestr(info, data[info.filename])
-    complex_parts = [name for name in data if name.startswith(('ppt/charts/', 'ppt/diagrams/')) and name.endswith('.xml')]
+    complex_parts = [name for name in data if name.startswith(
+        ('ppt/charts/', 'ppt/diagrams/')) and name.endswith('.xml')]
     return {'target_font': family, 'slide_count': len(slides), 'updated_font_pages': sorted(changed),
             'updated_font_slots': len(targets), 'original_unchanged': True,
             'text_format': formatting, 'layout_warnings': warnings,

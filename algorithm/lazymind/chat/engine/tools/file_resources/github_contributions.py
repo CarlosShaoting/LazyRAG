@@ -104,9 +104,9 @@ def public_api(method, path, **kwargs):
         if response.status_code != 200:
             error = ValueError('GitHub public read failed')
             headers = getattr(response, 'headers', {})
-            error.code = ('GITHUB_RATE_LIMITED' if response.status_code == 429 or
-                          (response.status_code == 403 and
-                           (headers.get('X-RateLimit-Remaining') == '0' or headers.get('Retry-After')))
+            error.code = ('GITHUB_RATE_LIMITED' if response.status_code == 429
+                          or (response.status_code == 403
+                              and (headers.get('X-RateLimit-Remaining') == '0' or headers.get('Retry-After')))
                           else 'GITHUB_PERMISSION_DENIED' if response.status_code == 403
                           else 'GITHUB_TARGET_NOT_FOUND' if response.status_code == 404
                           else 'GITHUB_READ_FAILED')
@@ -129,7 +129,9 @@ def connected_api():
     import lazyllm
     from lazyllm.tools.fs import GitHubRepoFS
     if not (lazyllm.globals.config['dynamic_fs_auth'] or {}).get('github'):
-        raise ValueError('GitHub connection unavailable. Enable an authorized GitHub connection in settings; never paste a token into chat.')
+        raise ValueError(
+            'GitHub connection unavailable. Enable an authorized GitHub connection in settings; '
+            'never paste a token into chat.')
     # Dynamic auth is resolved in this request's LazyLLM session, not persisted
     # in a workflow artifact or a module/global client.
     return GitHubRepoFS(dynamic_auth=True, skip_instance_cache=True)._api
@@ -201,9 +203,9 @@ def collect_page(cache_dir: Path, scope: dict, page: int = 1, *, api=None) -> di
             temporary = cache_dir / f'{uuid.uuid4().hex}.tmp'
             temporary.write_text(encoded, encoding='utf-8')
             temporary.replace(target)
-        records.append({k: v for k, v in record.items() if k not in {'description', 'scope'}} |
-                       {'source_id': source_id, 'description_chars': len(body),
-                        'empty_description': not body.strip()})
+        records.append({k: v for k, v in record.items() if k not in {'description', 'scope'}}
+                       | {'source_id': source_id, 'description_chars': len(body),
+                          'empty_description': not body.strip()})
     next_page = page + 1 if len(raw) == 100 and not older else None
     result = {'scope': scope, 'page': page, 'records': records,
               'scanned_count': len(raw), 'next_page': next_page,

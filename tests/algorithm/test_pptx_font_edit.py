@@ -45,12 +45,15 @@ def test_font_scope_preserves_unselected_parts(deck, tmp_path, scope):
         assert run.font.size == Pt(20) and run.font.bold is True
     with ZipFile(deck) as before, ZipFile(out) as after:
         for name in before.namelist():
-            if name not in ({'ppt/slides/slide1.xml', 'ppt/slides/slide2.xml'} if scope == 'all' else {'ppt/slides/slide1.xml'}):
+            if name not in ({'ppt/slides/slide1.xml', 'ppt/slides/slide2.xml'}
+                            if scope == 'all' else {'ppt/slides/slide1.xml'}):
                 assert before.read(name) == after.read(name), name
-    assert result.slides[0].shapes[-1].text_frame.paragraphs[0].runs[0].font.name == (None if scope == 'title' else 'Test Font')
+    assert result.slides[0].shapes[-1].text_frame.paragraphs[0].runs[0].font.name == (
+        None if scope == 'title' else 'Test Font')
 
 
-@pytest.mark.parametrize('kwargs', [{'pages': [99]}, {'pages': [1.5]}, {'slot_ids': ['1:999']}, {'slot_ids': []}, {'text_scope': 'guess'}])
+@pytest.mark.parametrize('kwargs', [{'pages': [99]}, {'pages': [1.5]},
+                         {'slot_ids': ['1:999']}, {'slot_ids': []}, {'text_scope': 'guess'}])
 def test_invalid_scope_never_publishes(deck, tmp_path, kwargs):
     out = tmp_path / 'invalid.pptx'
     with pytest.raises(ValueError):
@@ -73,13 +76,21 @@ def test_native_font_edit_publishes_compact_receipt(deck, tmp_path, monkeypatch,
     monkeypatch.setattr(tools, '_public_workflow_artifacts', lambda *a: [{
         'artifact_id': 'a1', 'revision': 3, 'draft_version': 2, 'selected': True,
         'validity': 'effective', 'value': {'path': str(deck)}}])
-    monkeypatch.setattr(tools.AttachmentEditDraft, 'for_current_conversation', lambda p: SimpleNamespace(root=str(tmp_path), effective_path=p))
+    monkeypatch.setattr(
+        tools.AttachmentEditDraft,
+        'for_current_conversation',
+        lambda p: SimpleNamespace(
+            root=str(tmp_path),
+            effective_path=p))
     client = Mock()
-    client.patch_artifact.return_value.result = {'artifact_id': 'a2', 'revision': 4, 'value': {'content_base64': 'HIDDEN'}}
+    client.patch_artifact.return_value.result = {
+        'artifact_id': 'a2', 'revision': 4, 'value': {
+            'content_base64': 'HIDDEN'}}
     monkeypatch.setattr(tools, '_workflow_client', lambda: client)
-    args = {'style_edits': [{'pages': [1], 'bold': False, 'italic': True, 'font_size_pt': 18}]} if formatting else {'target_font': 'Test Font', 'pages': [1]}
+    args = {'style_edits': [{'pages': [1], 'bold': False, 'italic': True, 'font_size_pt': 18}]
+            } if formatting else {'target_font': 'Test Font', 'pages': [1]}
     result = tools.edit_presentation('native_pptx', 'format_text' if formatting else 'replace_fonts', **args,
-                                    source_sha256=inspect_content(deck)['sha256'], workflow_session_id='session')
+                                     source_sha256=inspect_content(deck)['sha256'], workflow_session_id='session')
     assert result['updated_style_pages' if formatting else 'updated_font_pages'] == [1]
     assert result['workflow_artifact']['revision'] == 4
     assert 'HIDDEN' not in str(result)
@@ -156,8 +167,8 @@ def test_style_batch_failure_is_atomic_and_size_overflow_is_blocked(deck, tmp_pa
 
 
 @pytest.mark.parametrize('values', [{'bold': 'false'}, {'italic': 1}, {'underline': 'none'},
-    {'font_size_pt': True}, {'font_size_pt': float('nan')}, {'font_size_pt': 0},
-    {'font_size_pt': 401}, {'text_color': 'red'}, {'text_color': '#12345Z'}])
+                                    {'font_size_pt': True}, {'font_size_pt': float('nan')}, {'font_size_pt': 0},
+                                    {'font_size_pt': 401}, {'text_color': 'red'}, {'text_color': '#12345Z'}])
 def test_text_format_validation_rejects_invalid_values(values):
     from lazymind.chat.engine.tools.file_resources.text_format import text_format
     with pytest.raises(ValueError):
@@ -188,6 +199,7 @@ def test_download_validates_and_registers_font_with_license(tmp_path, monkeypatc
     monkeypatch.setattr(presentation_edit, 'available_font_families',
                         lambda: {f['family'] for f in font_library.local_fonts()})
     response = SimpleNamespace(raise_for_status=lambda: None, iter_bytes=lambda: iter([payload]))
+
     @contextmanager
     def stream(*args):
         yield response

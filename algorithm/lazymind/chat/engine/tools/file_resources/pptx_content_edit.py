@@ -26,7 +26,8 @@ def inspect_content(source, pages=None):
         _, notes = _related(loaded[1], loaded[2][page - 1][0], 'notesSlide')
         body = _notes_body(notes) if notes is not None else None
         info.pop('quality_contract', None)
-        info['speaker_notes'] = '\n'.join(''.join(p.itertext()) for p in body.findall('a:p', NS)) if body is not None else ''
+        info['speaker_notes'] = '\n'.join(''.join(p.itertext())
+                                          for p in body.findall('a:p', NS)) if body is not None else ''
         results.append(info)
     return {'sha256': hashlib.sha256(source.read_bytes()).hexdigest(), 'slide_count': len(loaded[2]),
             'pages': results, 'instruction': 'Edit this generated deck, not the original template. '
@@ -85,17 +86,20 @@ def edit_content(source, output, source_sha256, text_edits=None, speaker_notes=N
     infos, data, slides = _load(source)
     text_edits = [] if text_edits is None else text_edits
     speaker_notes = [] if speaker_notes is None else speaker_notes
-    if not isinstance(text_edits, (list, tuple)) or not isinstance(speaker_notes, (list, tuple)) or not (text_edits or speaker_notes):
+    if not isinstance(text_edits, (list, tuple)) or not isinstance(
+            speaker_notes, (list, tuple)) or not (text_edits or speaker_notes):
         raise ValueError('Provide text_edits and/or speaker_notes lists')
     notes = {}
     for item in speaker_notes:
         if not isinstance(item, Mapping) or type(item.get('page')) is not int or not 1 <= item['page'] <= len(slides):
             raise ValueError('Invalid notes page')
         page, text = item['page'], item.get('text')
-        if page in notes or not isinstance(text, str) or len(text) > 50000 or any(ord(c) < 32 and c not in '\t\r\n' for c in text):
+        if page in notes or not isinstance(text, str) or len(
+                text) > 50000 or any(ord(c) < 32 and c not in '\t\r\n' for c in text):
             raise ValueError('Duplicate page or invalid notes text (maximum 50000 characters per page)')
         notes[page] = text
-    if require_all_notes and (set(notes) != set(range(1, len(slides) + 1)) or any(not s.strip() for s in notes.values())):
+    if require_all_notes and (set(notes) != set(range(1, len(slides) + 1))
+                              or any(not s.strip() for s in notes.values())):
         raise ValueError('Every slide needs non-empty speaker notes')
     changed_pages = []
     if text_edits:
@@ -112,14 +116,19 @@ def edit_content(source, output, source_sha256, text_edits=None, speaker_notes=N
                 matches = [s['id'] for s in slots.values()
                            if s['id'].startswith(f'{page}:') and s['text'] == item.get('expected_text')]
                 if len(matches) != 1:
-                    raise ValueError(f'Page {page}: original text matches {len(matches)} slots; inspect this page and use an exact slot id')
+                    raise ValueError(
+                        f'Page {page}: original text matches {len(matches)} slots; '
+                        'inspect this page and use an exact slot id')
                 slot_id = matches[0]
             if not isinstance(slot_id, str) or slot_id not in slots:
                 raise ValueError(f'Unknown text slot {slot_id!r}; inspect the target page and copy its exact id')
             if slot_id in replacements:
                 raise ValueError(f'Duplicate text slot {slot_id!r}; submit only one edit per slot')
             replacements[slot_id] = {**item, 'id': slot_id, 'action': 'replace'}
-        edits = [replacements.get(s['id'], {'id': s['id'], 'expected_text': s['text'], 'action': 'keep'}) for s in slots.values()]
+        edits = [
+            replacements.get(
+                s['id'], {
+                    'id': s['id'], 'expected_text': s['text'], 'action': 'keep'}) for s in slots.values()]
         # Reuse the established hash/text guards and pre-publication fit checks.
         with tempfile.TemporaryDirectory(prefix='pptx-content-') as temporary:
             candidate = Path(temporary) / 'text.pptx'
@@ -136,17 +145,29 @@ def edit_content(source, output, source_sha256, text_edits=None, speaker_notes=N
             note_name = f'ppt/notesSlides/notesSlide{index}.xml'
             root = _new_notes()
             rel_name = posixpath.join(posixpath.dirname(slide_name), '_rels', posixpath.basename(slide_name) + '.rels')
-            rels = _xml(data[rel_name]) if rel_name in data else etree.Element('{%s}Relationships' % REL, nsmap={None: REL})
+            rels = (
+                _xml(data[rel_name]) if rel_name in data
+                else etree.Element('{%s}Relationships' % REL, nsmap={None: REL})
+            )
             rid = 1
             while any(r.get('Id') == f'rId{rid}' for r in rels):
                 rid += 1
-            etree.SubElement(rels, '{%s}Relationship' % REL, Id=f'rId{rid}', Type=OFFICE + 'notesSlide', Target=f'../notesSlides/notesSlide{index}.xml')
+            etree.SubElement(
+                rels, '{%s}Relationship' % REL, Id=f'rId{rid}', Type=OFFICE + 'notesSlide',
+                Target=f'../notesSlides/notesSlide{index}.xml',
+            )
             data[rel_name] = _serialized(rels)
             nr = etree.Element('{%s}Relationships' % REL, nsmap={None: REL})
-            etree.SubElement(nr, '{%s}Relationship' % REL, Id='rId1', Type=OFFICE + 'slide', Target=posixpath.relpath(slide_name, 'ppt/notesSlides'))
+            etree.SubElement(
+                nr, '{%s}Relationship' % REL, Id='rId1', Type=OFFICE + 'slide',
+                Target=posixpath.relpath(slide_name, 'ppt/notesSlides'),
+            )
             master_name, _ = _related(data, 'ppt/presentation.xml', 'notesMaster')
             if master_name:
-                etree.SubElement(nr, '{%s}Relationship' % REL, Id='rId2', Type=OFFICE + 'notesMaster', Target=posixpath.relpath(master_name, 'ppt/notesSlides'))
+                etree.SubElement(
+                    nr, '{%s}Relationship' % REL, Id='rId2', Type=OFFICE + 'notesMaster',
+                    Target=posixpath.relpath(master_name, 'ppt/notesSlides'),
+                )
             data[f'ppt/notesSlides/_rels/notesSlide{index}.xml.rels'] = _serialized(nr)
             types = _xml(data['[Content_Types].xml'])
             etree.SubElement(types, '{%s}Override' % CT, PartName='/' + note_name,

@@ -1,4 +1,3 @@
-from pathlib import Path
 from zipfile import ZipFile
 import hashlib
 from types import SimpleNamespace
@@ -37,7 +36,8 @@ def test_notes_and_date_preserve_other_slides_and_source(deck, tmp_path):
     assert [s.notes_slide.notes_text_frame.text for s in result.slides] == [n['text'] for n in notes]
     with ZipFile(deck) as before, ZipFile(output) as after:
         for name in before.namelist():
-            if name.startswith(('ppt/slideMasters/', 'ppt/slideLayouts/', 'ppt/theme/', 'ppt/media/')) or name == 'ppt/slides/slide2.xml':
+            if name.startswith(('ppt/slideMasters/', 'ppt/slideLayouts/', 'ppt/theme/',
+                               'ppt/media/')) or name == 'ppt/slides/slide2.xml':
                 assert before.read(name) == after.read(name), name
 
 
@@ -76,8 +76,9 @@ def test_notes_only_keeps_every_slide_xml_and_repeated_edit(deck, tmp_path):
 
 
 @pytest.mark.parametrize('notes,all_pages', [([{'page': 3, 'text': 'x'}], False),
-    ([{'page': 1, 'text': 'x'}], True), ([{'page': 1, 'text': 'x'}, {'page': 1, 'text': 'y'}], False),
-    ([{'page': 1, 'text': ''}, {'page': 2, 'text': 'x'}], True)])
+                                             ([{'page': 1, 'text': 'x'}], True), ([
+                                                 {'page': 1, 'text': 'x'}, {'page': 1, 'text': 'y'}], False),
+                                             ([{'page': 1, 'text': ''}, {'page': 2, 'text': 'x'}], True)])
 def test_bad_notes_rejected_without_output(deck, tmp_path, notes, all_pages):
     output = tmp_path / 'bad.pptx'
     with pytest.raises(ValueError):
@@ -112,7 +113,7 @@ def test_generated_deck_tool_publishes_selected_revision_with_cas(deck, tmp_path
     monkeypatch.setattr(tools, '_workflow_client', lambda: client)
     info = tools.edit_presentation('native_pptx', 'inspect_content', workflow_session_id='session')
     result = tools.edit_presentation('native_pptx', 'edit_content', workflow_session_id='session',
-        source_sha256=info['sha256'], speaker_notes=[{'page': 2, 'text': 'Detailed notes'}])
+                                     source_sha256=info['sha256'], speaker_notes=[{'page': 2, 'text': 'Detailed notes'}])
     args, kwargs = client.patch_artifact.call_args
     assert args[:2] == ('revision-5', 5)
     assert kwargs['base_draft_version'] == 2

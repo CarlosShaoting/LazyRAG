@@ -19,7 +19,7 @@ from __future__ import annotations
 from lazyllm.tools import fc_register
 
 import uuid
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 from lazyllm.tools.agent import ToolExecutionError
 from lazyllm.tools.agent.base import _write_agent_data

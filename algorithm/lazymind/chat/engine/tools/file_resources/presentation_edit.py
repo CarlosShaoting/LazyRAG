@@ -8,7 +8,6 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
-import tempfile
 from typing import Any
 from xml.etree import ElementTree as ET
 import zipfile
@@ -322,7 +321,8 @@ def rewrite_pptx(
                 raw = incoming.read(info.filename)
                 changed = False
                 slide_match = re.fullmatch(r'ppt/slides/slide(\d+)\.xml', info.filename)
-                scoped_font_edit = bool(normalized_target_font and (selected_pages is not None or normalized_scope != 'all'))
+                scoped_font_edit = bool(normalized_target_font and (
+                    selected_pages is not None or normalized_scope != 'all'))
                 selected_slide = bool(slide_match and info.filename in selected_slide_parts)
                 should_parse = (
                     info.filename.startswith('ppt/')
@@ -354,7 +354,8 @@ def rewrite_pptx(
                             if local in _FONT_TAGS and normalized_target_font and not scoped_font_edit:
                                 current = node.attrib.get('typeface', '')
                                 if (
-                                    (not normalized_source_font or current.casefold() == normalized_source_font.casefold())
+                                    (not normalized_source_font
+                                     or current.casefold() == normalized_source_font.casefold())
                                     and current != normalized_target_font
                                 ):
                                     node.set('typeface', normalized_target_font)

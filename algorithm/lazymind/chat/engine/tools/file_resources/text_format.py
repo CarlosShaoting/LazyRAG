@@ -27,8 +27,8 @@ def format_css(values):
     if 'font_size_pt' in values:
         result['font-size'] = f'{values["font_size_pt"]:g}pt'
     for key, css, yes, no in (('bold', 'font-weight', '700', '400'),
-                            ('italic', 'font-style', 'italic', 'normal'),
-                            ('underline', 'text-decoration', 'underline', 'none')):
+                              ('italic', 'font-style', 'italic', 'normal'),
+                              ('underline', 'text-decoration', 'underline', 'none')):
         if key in values:
             result[css] = yes if values[key] else no
     if 'text_color' in values:

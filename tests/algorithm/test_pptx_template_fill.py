@@ -7,8 +7,8 @@ from zipfile import ZipFile
 from pptx import Presentation
 from pptx.util import Pt
 
-spec = importlib.util.spec_from_file_location('pptx_template_fill', Path(__file__).parents[1] /
-    'lazymind/chat/engine/tools/file_resources/pptx_template_fill.py')
+spec = importlib.util.spec_from_file_location('pptx_template_fill', (Path(__file__).parents[2] / 'algorithm')
+                                              / 'lazymind/chat/engine/tools/file_resources/pptx_template_fill.py')
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
@@ -131,8 +131,8 @@ class TemplateFillTests(unittest.TestCase):
         p.add_run().text = ' suffix'
         prs.save(self.source)
         pages = [module.inspect_template(self.source, i) for i in (1, 2)]
-        edits = [{'id': s['id'], 'expected_text': s['text'], 'action': 'replace' if s['text'] == 'Sample achievement' else 'keep',
-                  'text': 'First\nSecond'} for page in pages for s in page['slots']]
+        edits = [{'id': s['id'], 'expected_text': s['text'], 'action': 'replace' if s['text']
+                  == 'Sample achievement' else 'keep', 'text': 'First\nSecond'} for page in pages for s in page['slots']]
         module.fill_template(self.source, self.output, pages[0]['sha256'], edits)
         p = Presentation(self.output).slides[0].placeholders[1].text_frame.paragraphs
         self.assertEqual(len(p), 1)
@@ -152,8 +152,10 @@ class TemplateFillTests(unittest.TestCase):
     def test_unavailable_fonts_are_disclosed_without_substitution(self):
         from unittest.mock import patch
         from lazymind.chat.engine.tools.file_resources.pptx_text_style import font_availability
-        with patch('lazymind.chat.engine.tools.file_resources.pptx_text_style._installed_fonts', return_value=frozenset()), \
-             patch('lazymind.chat.engine.tools.file_resources.font_library.local_fonts', return_value=[]):
+        with patch(
+            'lazymind.chat.engine.tools.file_resources.pptx_text_style._installed_fonts', return_value=frozenset()
+        ), \
+                patch('lazymind.chat.engine.tools.file_resources.font_library.local_fonts', return_value=[]):
             result = font_availability({'Missing Template Font'})
         self.assertEqual(result['unavailable_locally'], ['Missing Template Font'])
         self.assertFalse(result['substitution_applied'])

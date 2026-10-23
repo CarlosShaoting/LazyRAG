@@ -5,8 +5,8 @@ import unittest
 
 from pptx import Presentation
 
-spec = importlib.util.spec_from_file_location('native_presentation', Path(__file__).parents[1] /
-    'lazymind/chat/engine/tools/file_resources/native_presentation.py')
+spec = importlib.util.spec_from_file_location('native_presentation', (Path(__file__).parents[2] / 'algorithm')
+                                              / 'lazymind/chat/engine/tools/file_resources/native_presentation.py')
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
