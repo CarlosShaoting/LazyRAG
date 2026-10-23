@@ -50,16 +50,13 @@ runtime:
   completed_actions:
   - name: edit_current_pptx
     requires_slot: native_pptx
-    description: 'Delegate current native PPTX edits to a dedicated SubAgent.
-  
-  
-      Pass the user''s complete edit instruction, including preservation constraints.
-  
+    description: |-
+      Delegate current native PPTX edits to a dedicated SubAgent.
+
+      Pass the user's complete edit instruction, including preservation constraints.
       The SubAgent inspects current content, writes text/notes and publishes a new
-  
       artifact revision. Do not write speeches or edit files in main Chat, and do
-  
-      not rewind any Workflow step. Report the task result and stop.'
+      not rewind any Workflow step. Report the task result and stop.
     agent_type: pptx_edit
     title: PPTX 内容、字体与讲稿编辑
     session_params:
@@ -71,33 +68,34 @@ runtime:
       - publish_pptx_edit
       output_slot_types:
         pptx_edit_receipt: json
-      instruction: 'Edit the selected native PPTX only. Inspect it first. Reuse saved material_summary and
-        requirement_analysis when needed; never search or regenerate. Preserve all unspecified slide content
-        and formatting. For font requests pass target_font to publish_pptx_edit: omit pages for the entire
-        deck, pages=[1] for the first slide, exact inspected slot_ids for a specific part or custom title.
-        Never rewrite text to change fonts. For size, bold, italic, underline or text color use style_edits
-        on publish_pptx_edit: each object has pages/slot_ids/text_scope and font_size_pt/bold/italic/underline/text_color.
-        Omitted fields stay unchanged, false cancels that style. Use multiple entries for different ranges,
-        publish once. Sizes are pt. Report overflow errors instead of silently shrinking fonts or resizing
-        boxes. Only set allow_font_download when the user explicitly requests download. Report font_notice
-        and any unmodified_complex_text_parts from the result; never claim chart/SmartArt text was changed
-        when it was not. Write requested detailed page-specific speeches in speaker notes, not visible slide
+      instruction: >-
+        Edit the selected native PPTX only. Inspect it first. Reuse saved material_summary and requirement_analysis
+        when needed; never search or regenerate. Preserve all unspecified slide content and formatting.
+        For font requests pass target_font to publish_pptx_edit: omit pages for the entire deck, pages=[1]
+        for the first slide, exact inspected slot_ids for a specific part or custom title. Never rewrite
+        text to change fonts. For size, bold, italic, underline or text color use style_edits on publish_pptx_edit:
+        each object has pages/slot_ids/text_scope and font_size_pt/bold/italic/underline/text_color. Omitted
+        fields stay unchanged, false cancels that style. Use multiple entries for different ranges, publish
+        once. Sizes are pt. Report overflow errors instead of silently shrinking fonts or resizing boxes.
+        Only set allow_font_download when the user explicitly requests download. Report font_notice and
+        any unmodified_complex_text_parts from the result; never claim chart/SmartArt text was changed when
+        it was not. Write requested detailed page-specific speeches in speaker notes, not visible slide
         text; do not invent facts. For every-page notes set require_all_notes=true. Publish exactly once
-        then stop. If the requested edit is unsupported or overflows, report the limitation.'
+        then stop. If the requested edit is unsupported or overflows, report the limitation.
     output_slots:
     - pptx_edit_receipt
     tools:
     - inspect_current_pptx
     - read_pptx_edit_material
     - publish_pptx_edit
-    routing: For date, title, slide text, typography (font/size/bold/italic/underline/text color on whole
-      deck/page/selected text), or speaker-note changes on the selected native_pptx, including every-page
-      detailed speeches, MUST delegate to edit_current_pptx with the complete user instruction. Its dedicated
-      SubAgent performs inspection, writing and publication; main Chat must not write speeches or edit the
-      file itself. Do NOT call advance_step, rewind, generate_ppt or another Workflow for these edits. Publish
-      once and stop; the Session remains completed. If unsupported or overflowing, report the limitation.
-      Only an explicit user request to regenerate/restructure the deck uses the ordinary completed-edit
-      step routing.
+    routing: >-
+      For date, title, slide text, typography (font/size/bold/italic/underline/text color on whole deck/page/selected
+      text), or speaker-note changes on the selected native_pptx, including every-page detailed speeches,
+      MUST delegate to edit_current_pptx with the complete user instruction. Its dedicated SubAgent performs
+      inspection, writing and publication; main Chat must not write speeches or edit the file itself. Do
+      NOT call advance_step, rewind, generate_ppt or another Workflow for these edits. Publish once and
+      stop; the Session remains completed. If unsupported or overflowing, report the limitation. Only an
+      explicit user request to regenerate/restructure the deck uses the ordinary completed-edit step routing.
   completed_edit_step: generate_ppt
   completed_edit_routing: |
     For an explicit request to revise a completed deck, infer the earliest
