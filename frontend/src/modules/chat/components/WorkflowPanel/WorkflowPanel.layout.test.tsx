@@ -173,7 +173,7 @@ describe('shared workflow compact layout', () => {
     expect(screen.getByRole('heading', { name: '最终产物' })).toBeVisible();
     expect(within(screen.getByRole('tabpanel', { name: '最终结果' }))
       .getByRole('heading', { name: '最终产物' })).toBeVisible();
-    expect(screen.queryByText('正文 ordinary_output')).not.toBeInTheDocument();
+    expect(screen.getAllByText('正文 ordinary_output')).toHaveLength(1);
 
     fireEvent.click(screen.getByRole('tab', { name: '方案' }));
     expect(screen.queryByRole('heading', { name: '最终产物' })).not.toBeInTheDocument();

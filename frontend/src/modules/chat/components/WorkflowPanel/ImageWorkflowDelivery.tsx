@@ -227,6 +227,8 @@ export function ImageWorkflowDelivery({ session }: { session: WorkflowSession })
                 <SlotDownloadContext.Provider value={false}>
                   <SlotRenderer
                     slot={artifact.slot}
+                    sessionId={session.session_id}
+                    slotId={artifact.slot.slot}
                     cardMode
                     readOnly
                     hideImageMutationActions
