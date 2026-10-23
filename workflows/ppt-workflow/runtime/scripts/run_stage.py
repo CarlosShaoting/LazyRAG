@@ -2063,6 +2063,16 @@ def cmd_page_html_from_brief(
     if not brief_text:
         return _fail(f'page-html brief p{page_no}: empty brief', page_no=page_no)
 
+    if (deck / 'complete_page_prompts.json').is_file():
+        return _write_page_html_from_query(
+            deck, page_no, brief_text,
+            page_plan={'page_no': page_no, 'slots': []},
+            inherited_image=None,
+            background_image=_resolve_background_image(deck, page_no),
+            prompt_mode='complete-page-prompt', language='',
+            llm_call=llm_call, edit_instruction=edit_instruction,
+        )
+
     style = _load_deck_style(deck)
     outline = _load_json(deck / 'outline.json')
     plan = _load_json(deck / 'asset_plan.json')
@@ -2121,7 +2131,8 @@ def _write_page_html_from_query(
     if not rewritten_query:
         return _fail(f'page-html p{page_no}: empty query', page_no=page_no)
 
-    if not (background_image or {}).get('local_path') and not edit_instruction:
+    if (prompt_mode != 'complete-page-prompt'
+            and not (background_image or {}).get('local_path') and not edit_instruction):
         rewritten_query += (
             '\n\nNO AI BACKGROUND IMAGE: No generated raster backdrop is supplied. '
             'This does not disable visual design. Apply the deck art direction with editable '
@@ -2158,7 +2169,7 @@ def _write_page_html_from_query(
         )
     else:
         lang_hint = 'Target language for all visible text: English (en).'
-    if 'Target language for all visible text:' not in rewritten_query:
+    if prompt_mode != 'complete-page-prompt' and 'Target language for all visible text:' not in rewritten_query:
         rewritten_query = f'{lang_hint}\n\n{rewritten_query}'
 
     query_path = deck / 'pages' / f'page_{page_no:03d}.query.txt'

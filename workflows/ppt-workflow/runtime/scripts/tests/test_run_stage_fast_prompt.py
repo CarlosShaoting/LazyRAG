@@ -167,7 +167,12 @@ class StyleRenderingRecipeTest(unittest.TestCase):
             state['transitions']['generate_backgrounds'],
             [{'to': 'build_outline'}],
         )
-        self.assertEqual(state['transitions']['build_outline'], [{'to': 'plan_page_prompts'}])
+        self.assertEqual([edge['to'] for edge in state['transitions']['build_outline']],
+                         ['generate_ppt', 'plan_page_prompts'])
+        self.assertIn('quick', state['transitions']['build_outline'][0]['when'])
+        generate_inputs = {i['material']: i for i in state['steps']['generate_ppt']['inputs']}
+        self.assertFalse(generate_inputs['slide_outline']['required'])
+        self.assertIn('deck_outline', generate_inputs)
         self.assertEqual(state['transitions']['plan_page_prompts'], [{'to': 'generate_ppt'}])
         slots = {slot['id']: slot for slot in workflow['slots']}
         self.assertEqual(slots['deck_outline']['cardinality'], 'single')
@@ -189,7 +194,7 @@ class StyleRenderingRecipeTest(unittest.TestCase):
             workflow['runtime']['completed_edit_routing'],
         )
         self.assertIn(
-            "ppt_publish_outline(deck_dir, pages=[N], insert_before=N)",
+            "ppt_publish_outline(pages=[N], insert_before=N)",
             state['steps']['plan_page_prompts']['prompt'],
         )
 
@@ -331,6 +336,25 @@ class OutlineReferenceImageRepairTest(unittest.TestCase):
 
 
 class PagePromptModeTest(unittest.TestCase):
+    def test_complete_prompt_reaches_html_model_verbatim_without_replanning(self):
+        html = ("<!DOCTYPE html><html><body><div class='wrapper'><div id='bg'></div>"
+                "<div id='ct'>春节快乐</div></div></body></html>")
+        prompt = '用简体中文生成 1280x720 HTML。标题春节快乐，红金配色，大字，左右习俗插画，无 AI 底图。'
+        with tempfile.TemporaryDirectory() as temp:
+            deck = self._deck(Path(temp))
+            (deck / 'complete_page_prompts.json').write_text('{"version":1}')
+            # Complete prompts do not need the old style/outline rewrite inputs.
+            (deck / 'outline.json').unlink()
+            with patch.object(run_stage, 'llm', return_value=html) as model, \
+                 patch.object(run_stage, '_build_brief_page_query') as rewrite, \
+                 patch.object(run_stage, '_load_deck_style') as style:
+                self.assertEqual(run_stage.cmd_page_html_from_brief(deck, 1, prompt), 0)
+            self.assertEqual(model.call_args.args[1], prompt)
+            self.assertEqual(model.call_count, 1)
+            rewrite.assert_not_called()
+            style.assert_not_called()
+            self.assertEqual((deck / 'pages/page_001.query.txt').read_text(), prompt)
+
     def test_editable_brief_retains_internal_page_design_without_restoring_old_copy(self) -> None:
         html = ("<!DOCTYPE html><html><body><div class='wrapper'><div id='bg'></div>"
                 "<div id='ct'>完成</div></div></body></html>")

@@ -2706,6 +2706,9 @@ def _publish_text_page_briefs(
             deleted = _delete_ui_slot_item('slide_outline', position)
             if _tool_failed(deleted):
                 raise ValueError('Cannot remove stale page brief')
+    if pages is None or (deck / 'complete_page_prompts.json').is_file():
+        (deck / 'complete_page_prompts.json').write_text(
+            json.dumps({'version': 1, 'mode': 'direct'}), encoding='utf-8')
     return {'published_count': len(published), 'published': published, 'failed_count': 0}
 
 
@@ -2715,8 +2718,29 @@ def _prepare_deferred_outline(deck: Path) -> dict[str, Any]:
         items = _selected_slide_outline_items()
     except Exception as exc:
         return {'status': 'failed', 'reason': f'Cannot read approved page briefs: {exc}'}
-    if not items or any(not brief.strip() for _, brief in items):
-        return {'status': 'failed', 'reason': 'No approved slide_outline pages available'}
+    complete = (deck / 'complete_page_prompts.json').is_file()
+    if complete:
+        if not items or any(not brief.strip() for _, brief in items):
+            return {'status': 'failed', 'reason': 'Complete page prompts are missing; resume plan_page_prompts'}
+        # Only build an execution index. The approved prompts go directly to the
+        # HTML model; no content-outline or prompt-writing model call is needed.
+        index = {'pages': [
+            {'page_no': number, 'title': brief.splitlines()[0].lstrip('# ').strip()[:120],
+             'page_kind': 'content'}
+            for number, (_, brief) in enumerate(items, 1)
+        ]}
+        (deck / 'outline.json').write_text(json.dumps(index, ensure_ascii=False), encoding='utf-8')
+        _sync_task_pack_page_count(deck, len(items))
+        return {'status': 'direct', 'page_count': len(items)}
+    if not items:
+        # Quick mode can bypass the editable prompt step. Preserve its generation
+        # path by deriving internal content from the approved deck outline.
+        text, _ = _resolve_artifact_text(require_context(), 'deck_outline')
+        if not text or not str(text).strip():
+            return {'status': 'failed', 'reason': 'No deck outline or page prompts available'}
+        items = list(enumerate(_split_text_outline(str(text)), 1))
+    if any(not brief.strip() for _, brief in items):
+        return {'status': 'failed', 'reason': 'Empty slide_outline page'}
     approved = '\n\n'.join(f'Page {n}:\n{brief}' for n, (_, brief) in enumerate(items, 1))
     (deck / 'approved_outline.md').write_text(approved, encoding='utf-8')
     _sync_task_pack_page_count(deck, len(items))
@@ -4204,6 +4228,8 @@ def _batch_page_html_publish_progressive(
         return {'status': 'failed', 'error': 'no pages in outline matching range', 'stage': 'page-html'}
 
     briefs = _load_slide_outline_briefs(page_nos)
+    if (deck / 'complete_page_prompts.json').is_file() and any(not briefs.get(n) for n in page_nos):
+        return {'status': 'failed', 'error': 'Complete page prompts are missing; resume plan_page_prompts'}
     # Keep accepting legacy concurrency arguments, but never overlap page calls.
     workers = 1
     results: dict[int, dict[str, Any]] = {}
@@ -4544,7 +4570,8 @@ def _run_stage_inprocess(
     try:
         # Resolve the shared visual contract once, before launching page workers.
         # Existing decks and retries reuse it; a style failure leaves the outline intact.
-        if stage_name in ('page-html', 'batch-page-html'):
+        if (stage_name in ('page-html', 'batch-page-html')
+                and not (deck / 'complete_page_prompts.json').is_file()):
             style_code, style_payload = rs._capture_cmd(
                 rs.cmd_ensure_style,
                 deck,

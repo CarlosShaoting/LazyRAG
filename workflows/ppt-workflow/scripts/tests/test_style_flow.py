@@ -401,6 +401,31 @@ class StyleFlowCombinationTest(unittest.TestCase):
             self.assertEqual(result['published_count'], 1)
             self.assertEqual(publish.call_args.kwargs['value'], prompt)
 
+    def test_complete_prompts_skip_structure_generation_but_quick_mode_keeps_it(self):
+        for complete in (True, False):
+            with self.subTest(complete=complete), tempfile.TemporaryDirectory() as temp:
+                deck = Path(temp)
+                (deck / 'task_pack.json').write_text('{"params":{"page_count":1}}')
+                (deck / 'info_pack.json').write_text('{}')
+                if complete:
+                    (deck / 'complete_page_prompts.json').write_text('{"version":1}')
+                def stage(_deck, *, stage):
+                    if stage == 'content-outline':
+                        (deck / 'outline.json').write_text('{"pages":[{"page_no":1}]}')
+                    return {'status': 'ok'}
+                with mock.patch.object(TOOLS, '_selected_slide_outline_items',
+                                       return_value=[(0, '完整提示词，红金配色')] if complete else []), \
+                     mock.patch.object(TOOLS, '_resolve_artifact_text', return_value=('## 春节\n习俗', 'text')), \
+                     mock.patch.object(TOOLS, 'ppt_run_stage', side_effect=stage) as generate:
+                    result = TOOLS._prepare_deferred_outline(deck)
+                if complete:
+                    self.assertEqual(result['status'], 'direct')
+                    generate.assert_not_called()
+                else:
+                    self.assertEqual(result['status'], 'ok')
+                    self.assertEqual([c.kwargs['stage'] for c in generate.call_args_list],
+                                     ['preflight', 'content-outline'])
+
     def test_legacy_standard_without_samples_recovers_as_auto(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             deck = Path(temp)

@@ -62,7 +62,10 @@ transitions:
     - to: build_outline
 
   build_outline:
+    - to: generate_ppt
+      when: generation_mode is exactly quick and template_mode is none.
     - to: plan_page_prompts
+      when: generation_mode is not quick or template_mode is upload.
 
   plan_page_prompts:
     - to: generate_ppt
@@ -896,6 +899,16 @@ steps:
       - typography, emphasis and colors consistent with the user's style;
       - 16:9 HTML rendering and relevant restrictions, including no AI background
         image when disabled. Preserve supplied image references; invent no data.
+      Each prompt must be self-contained: include audience, visible language,
+      canvas 1280x720, exact approved copy, concrete composition, shared palette
+      and font choices, asset URLs/paths and their placements, enabled/disabled
+      AI-background policy, and the instruction to return one complete HTML
+      document without explanations. Inline all needed context; never refer to
+      "the outline above", "the previous slide" or an unseen style file. Use a
+      consistent deck-wide theme across prompts. For supplied backgrounds specify
+      the exact background image reference. For foreground assets specify exact
+      sources; no fabricated images or data. The prompt itself is sent directly
+      to the HTML model, including subsequent user edits.
       Make the design specific to that slide. For example, a children's festive
       slide needs readable short copy, cheerful illustration subjects and their
       placement, not just a list of Spring Festival customs.
@@ -905,7 +918,8 @@ steps:
       for a deck or invent task_ref. If the tool reports a missing bound deck,
       stop and report that build_outline must be resumed.
       These editable prompts become slide_outline and guide subsequent HTML
-      generation. Internal outline JSON remains deferred until generate_ppt.
+      generation. Generate only builds a page execution index; it must not ask
+      another model to rewrite these prompts into an internal content outline.
 
       Incremental insertion: when the current request added one whole slide at
       position N, call
@@ -1125,7 +1139,10 @@ steps:
       Existing editable AI-background prompts, if any:
       {{background_prompts}}
 
-      Per-page generation prompts already published (and possibly edited by the user):
+      Approved deck outline (used when quick mode bypasses page-prompt planning):
+      {{deck_outline}}
+
+      Per-page generation prompts, when already published (possibly edited by the user):
       {{slide_outline}}
 
       Original user request:
@@ -1337,7 +1354,8 @@ steps:
       Never regenerate content for these edits. HTML sizes with pt remain pt.
 
       ### F) Full deck HTML generation (default)
-      Page prompts already exist from plan_page_prompts. Do NOT call ppt_init_deck,
+      Page prompts may exist from plan_page_prompts; quick mode can skip that step.
+      Do NOT call ppt_init_deck,
       stage=style, or stage=outline again.
 
       Call ONE tool exactly once:
@@ -1345,11 +1363,14 @@ steps:
           — omit deck_dir to auto-find; or pass deck_dir from earlier results.
           — Generate ALL requested pages sequentially, one page at a time.
             Never run page-generation tools in parallel or reduce the deck to one page.
-          — Internally: approved text → internal outline → asset-plan → shared style → batch-page-html
-            (converts current edited briefs without changing approved content;
-             reuses unchanged structure and style on retries)
-            (uses each slide_outline brief, including Outline-tab edits;
-             auto-publishes preview_html + notes).
+          — If complete per-page prompts were published, pass each current
+            slide_outline directly to the HTML model, including user edits.
+            Do not write, rewrite, expand or regenerate prompts in generate_ppt;
+            do not rerun content-outline or style generation for this path.
+          — If quick mode skipped prompt planning, preserve the existing
+            outline/style/prompt preparation path before rendering HTML.
+            The tool detects this from persisted complete-prompt metadata.
+          — Both paths auto-publish preview_html + notes.
 
       If generation fails, report its error and stop immediately. Do not call
       ppt_generate_pages again, switch to ppt_run_stage, or regenerate missing
@@ -1412,7 +1433,9 @@ steps:
       - material: background_prompts
         required: false
       - material: slide_outline
-        required: true
+        required: false
+      - material: deck_outline
+        required: false
       - material: generation_mode
         required: true
       - material: template_mode
