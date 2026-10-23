@@ -36,6 +36,11 @@ def _import_stubs() -> dict[str, types.ModuleType]:
         'lazymind.chat.engine.tools.file_resources.presentation_edit'
     )
     presentation_edit.available_font_families = lambda: {'Arial', 'SimSun', '宋体'}
+    format_spec = importlib.util.spec_from_file_location(
+        'ppt_test_text_format', Path(__file__).resolve().parents[4] /
+        'algorithm/lazymind/chat/engine/tools/file_resources/text_format.py')
+    text_format = importlib.util.module_from_spec(format_spec)
+    format_spec.loader.exec_module(text_format)
     static_file = types.ModuleType('lazymind.chat.service.utils.static_file_url')
     static_file._upload_root = lambda: Path(tempfile.gettempdir())
     static_file.file_relative_path = lambda value: value
@@ -63,6 +68,7 @@ def _import_stubs() -> dict[str, types.ModuleType]:
             'lazymind.chat.engine.tools.file_resources'
         ),
         'lazymind.chat.engine.tools.file_resources.presentation_edit': presentation_edit,
+        'lazymind.chat.engine.tools.file_resources.text_format': text_format,
         'lazymind.chat.service': types.ModuleType('lazymind.chat.service'),
         'lazymind.chat.service.utils': types.ModuleType('lazymind.chat.service.utils'),
         'lazymind.chat.service.utils.static_file_url': static_file,
@@ -337,6 +343,26 @@ class StyleFlowCombinationTest(unittest.TestCase):
                             ('content-outline', None),
                         ],
                     )
+
+    def test_missing_full_mode_previews_are_recovered_on_same_deck(self):
+        for requested in (None, 'B'):
+            with self.subTest(selection=requested), tempfile.TemporaryDirectory() as temp:
+                deck = self._prepared_deck(Path(temp), 'preview_choice', False, 0)
+                (deck / 'style_samples.json').unlink()
+                with mock.patch.object(TOOLS, '_resolve_deck_dir', return_value=deck), \
+                     mock.patch.object(TOOLS, 'ppt_prepare_style_choices', return_value={
+                         'status': 'ok', 'default_selection': 'A',
+                     }) as choices, \
+                     mock.patch.object(TOOLS, 'ppt_run_stage', return_value={'status': 'ok'}) as stage:
+                    result = TOOLS.ppt_prepare_style(
+                        user_query='儿童春节，一页，不看风格，不生成背景图',
+                        deck_dir=str(deck), style_flow='preview_choice',
+                        style_selection=requested, generate_background_images=False,
+                    )
+                self.assertEqual(result['style_selection'], requested or 'A')
+                self.assertEqual(choices.call_args.kwargs['deck_dir'], str(deck.resolve()))
+                self.assertFalse(choices.call_args.kwargs['generate_background_images'])
+                self.assertEqual(stage.call_args.kwargs['sample'], requested or 'A')
 
     def test_legacy_standard_without_samples_recovers_as_auto(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

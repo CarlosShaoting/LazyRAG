@@ -775,6 +775,9 @@ steps:
       Stop after that one insertion publication call. Never call
       ppt_build_outline for a whole-slide insertion.
 
+      Call ppt_find_deck at most once. If no deck exists, omit deck_dir and let
+      ppt_build_outline initialize it and recover missing full-mode previews.
+      Never repeatedly search for a deck that has not been created.
       When AI backgrounds were enabled OR style_flow is preview_choice, first
       call ppt_find_deck to locate the already prepared deck. Then call ppt_build_outline
       once with its deck_dir:

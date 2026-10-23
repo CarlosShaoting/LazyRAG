@@ -6635,7 +6635,7 @@ def ppt_prepare_style_choices(
     generate_background_images: Union[bool, str, None] = False,
     deck_dir: Optional[str] = None,
 ) -> dict:
-    """Create and publish exactly three style previews for human A/B/C choice."""
+    """Create three style previews and publish the recommended default selection."""
     resolved = _coerce_str(deck_dir)
     if resolved:
         try:
@@ -6745,10 +6745,24 @@ def ppt_prepare_style(
         deck = _resolve_deck_dir(resolved)
 
     selection = _style_selection_id(style_selection)
-    if flow == 'preview_choice' and not selection:
-        return _tool_error(
-            'ppt_prepare_style', '请在三套风格预览中选择 A、B 或 C 后再继续。',
-        )
+    if flow == 'preview_choice':
+        # A dynamic workflow can reach outline before choose_style. Recover the
+        # full-mode prerequisite on the same deck instead of asking for a choice
+        # from previews that do not exist. Never replace a saved user selection.
+        if not _style_samples_are_ready(deck) and not _style_spec_is_ready(deck, selection or 'A'):
+            choices = ppt_prepare_style_choices(
+                user_query=user_query, page_count=page_count, topic=topic,
+                role=role, audience=audience, scene=scene, style_hint=style_hint,
+                key_points_json=key_points_json,
+                generate_background_images=generate_background_images,
+                deck_dir=resolved,
+            )
+            if _tool_failed(choices):
+                return _tool_error('ppt_prepare_style',
+                                   f'style previews failed: {_tool_fail_reason(choices)}')
+            selection = selection or _style_selection_id(
+                _tool_payload(choices).get('default_selection'))
+        selection = selection or 'A'
     stages: list[dict[str, Any]] = []
     preflight = ppt_run_stage(resolved, stage='preflight')
     if _tool_failed(preflight):
