@@ -2666,7 +2666,9 @@ def _publish_text_outline(deck: Path, markdown: str) -> dict[str, Any]:
             'chars': len(markdown), 'error': _tool_fail_reason(saved) if _tool_failed(saved) else None}
 
 
-def _publish_text_page_briefs(deck: Path, pages: Optional[list[int]]) -> dict[str, Any]:
+def _publish_text_page_briefs(
+    deck: Path, pages: Optional[list[int]], page_prompts: Optional[Union[str, list]] = None,
+) -> dict[str, Any]:
     ctx = require_context()
     text, _ = _resolve_artifact_text(ctx, 'deck_outline')
     # Fail explicitly on an unreadable approved artifact rather than silently
@@ -2676,15 +2678,24 @@ def _publish_text_page_briefs(deck: Path, pages: Optional[list[int]]) -> dict[st
     briefs = _split_text_outline(str(text))
     order = _ui_slot_order_list('slide_outline')
     targets = pages if pages is not None else list(range(1, len(briefs) + 1))
-    published = []
-    for number in targets:
+    prompts = json.loads(page_prompts) if isinstance(page_prompts, str) else page_prompts
+    if not isinstance(prompts, list) or len(prompts) != len(targets):
+        raise ValueError('Provide page_prompts: one authored visual generation prompt per target page; '
+                         'do not copy deck_outline')
+    for number, prompt in zip(targets, prompts):
         if number < 1 or number > len(briefs):
             raise ValueError(f'Page {number} outside approved outline')
-        brief = briefs[number - 1]
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValueError(f'Page {number} needs a non-empty generation prompt')
+        if re.sub(r'\s+', '', prompt) == re.sub(r'\s+', '', briefs[number - 1]):
+            raise ValueError(f'Page {number} copies the outline; add concrete layout, visuals and typography')
+    published = []
+    for number, prompt in zip(targets, prompts):
+        brief = prompt.strip()
         saved = _publish_ordered_ppt_artifact(
             slot='slide_outline', page_no=number, value=brief,
             content_type='text', source_tool='ppt_publish_outline',
-            caption=brief.splitlines()[0].lstrip('# ').strip(),
+            caption=briefs[number - 1].splitlines()[0].lstrip('# ').strip(),
             order_list=order, expected_total=len(briefs),
         )
         if _tool_failed(saved):
@@ -7569,6 +7580,7 @@ def ppt_publish_outline(
     deck_dir: Optional[str] = None,
     pages: Optional[Union[str, list, int]] = None,
     insert_before: Optional[int] = None,
+    page_prompts: Optional[Union[str, list]] = None,
 ) -> dict:
     """Publish outline.json pages into slide_outline list artifacts for the UI.
 
@@ -7579,6 +7591,10 @@ def ppt_publish_outline(
     Args:
         deck_dir (str): Optional absolute deck directory. Omit to use the deck
             already bound to this workflow; no find-deck call is needed.
+        page_prompts: Required for text outlines: array of authored per-page visual
+            generation instructions in target-page order, or its JSON string.
+            Include content, composition, visual elements, typography and constraints.
+            Copying outline sections is not accepted.
         pages: Optional 1-based page filter. Omit = all outline pages.
         insert_before: For an incremental whole-slide insertion, the one page
             position to insert into the UI list while preserving later items.
@@ -7617,7 +7633,7 @@ def ppt_publish_outline(
                 'insert_before requires pages to contain exactly the same one position',
             )
         if (deck / 'outline_draft.md').exists() and not insertion:
-            result = _publish_text_page_briefs(deck, page_list)
+            result = _publish_text_page_briefs(deck, page_list, page_prompts)
         else:
             result = _publish_slide_outlines_from_disk(
                 deck, page_list, insert_before=insertion or None,

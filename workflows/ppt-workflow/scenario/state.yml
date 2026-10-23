@@ -885,15 +885,27 @@ steps:
 
       {{runtime_instruction}}
 
-      Call ppt_publish_outline exactly once with {} (omit deck_dir). The tool
-      reads the deck bound by build_outline automatically. Do not search for a
-      deck, invent task_ref, or pass a topic/title as a path. If the tool reports
-      a missing bound deck, stop and report that build_outline must be resumed;
-      repeated searches cannot create it.
-      For a new workflow it splits the current approved Markdown into
-      aligned editable slide_outline items without generating internal JSON.
-      Existing structured decks remain supported. Treat those items as per-page PPT HTML
-      generation prompts, not as the deck-level outline.
+      Author a distinct, executable visual generation prompt for EACH slide.
+      Preserve its approved facts, numbers and intended message. Expand the outline
+      into concrete design instructions; do not copy the outline or merely rename
+      its headings. Each prompt must specify:
+      - exact visible title and short body copy, appropriate for the audience;
+      - composition: placement, grouping, hierarchy and whitespace;
+      - actual visual elements: subject-specific icons/illustrations or supplied
+        images, and a chart type/axes only when supported by real source data;
+      - typography, emphasis and colors consistent with the user's style;
+      - 16:9 HTML rendering and relevant restrictions, including no AI background
+        image when disabled. Preserve supplied image references; invent no data.
+      Make the design specific to that slide. For example, a children's festive
+      slide needs readable short copy, cheerful illustration subjects and their
+      placement, not just a list of Spring Festival customs.
+
+      Call ppt_publish_outline once with page_prompts=[<prompt for each slide>].
+      Omit deck_dir: the tool reads the bound deck automatically. Do not search
+      for a deck or invent task_ref. If the tool reports a missing bound deck,
+      stop and report that build_outline must be resumed.
+      These editable prompts become slide_outline and guide subsequent HTML
+      generation. Internal outline JSON remains deferred until generate_ppt.
 
       Incremental insertion: when the current request added one whole slide at
       position N, call

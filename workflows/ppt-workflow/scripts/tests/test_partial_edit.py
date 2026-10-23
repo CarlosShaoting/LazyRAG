@@ -1841,8 +1841,10 @@ class DeferredTextOutlineTest(unittest.TestCase):
                 mock.patch.object(TOOLS, '_ui_slot_order_list', return_value=[]),
                 mock.patch.object(TOOLS, '_publish_ordered_ppt_artifact', return_value={'ok': True}) as publish,
             ):
-                result = TOOLS._publish_text_page_briefs(deck, None)
+                result = TOOLS._publish_text_page_briefs(
+                    deck, None, ['用户删改后内容；标题置顶，主体左右图文，关键字加粗。'])
             self.assertEqual(result['published_count'], 1)
+            self.assertEqual(publish.call_args.kwargs['caption'], '用户新标题')
             self.assertIn('用户删改后内容', publish.call_args.kwargs['value'])
             self.assertNotIn('原始内容', publish.call_args.kwargs['value'])
 

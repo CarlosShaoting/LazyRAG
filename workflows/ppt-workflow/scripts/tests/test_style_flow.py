@@ -374,9 +374,9 @@ class StyleFlowCombinationTest(unittest.TestCase):
                  mock.patch.object(TOOLS, 'ppt_find_deck') as find, \
                  mock.patch.object(TOOLS, '_publish_text_page_briefs',
                                    return_value={'published_count': 1}) as publish:
-                result = TOOLS.ppt_publish_outline()
+                result = TOOLS.ppt_publish_outline(page_prompts=['红金配色，标题置顶，左右习俗插画，正文大字'])
             self.assertEqual(result['published_count'], 1)
-            publish.assert_called_once_with(deck, None)
+            publish.assert_called_once_with(deck, None, ['红金配色，标题置顶，左右习俗插画，正文大字'])
             find.assert_not_called()
 
     def test_publish_outline_reports_missing_binding_without_search(self):
@@ -385,6 +385,21 @@ class StyleFlowCombinationTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'No deck is bound'):
                 TOOLS.ppt_publish_outline()
             find.assert_not_called()
+
+    def test_page_prompt_publisher_requires_authored_prompts_before_writing(self):
+        outline = '## 春节习俗\n贴春联、吃年夜饭'
+        prompt = '标题“春节快乐”置顶，红金配色；左侧春联插画，右侧年夜饭插画；短句大字，无 AI 底图。'
+        with tempfile.TemporaryDirectory() as temp, \
+             mock.patch.object(TOOLS, '_resolve_artifact_text', return_value=(outline, 'text')), \
+             mock.patch.object(TOOLS, '_ui_slot_order_list', return_value=[]), \
+             mock.patch.object(TOOLS, '_publish_ordered_ppt_artifact', return_value={'status': 'ok'}) as publish:
+            for invalid in (None, [], [outline], ['']):
+                with self.subTest(prompts=invalid), self.assertRaises(ValueError):
+                    TOOLS._publish_text_page_briefs(Path(temp), None, invalid)
+            publish.assert_not_called()
+            result = TOOLS._publish_text_page_briefs(Path(temp), None, [prompt])
+            self.assertEqual(result['published_count'], 1)
+            self.assertEqual(publish.call_args.kwargs['value'], prompt)
 
     def test_legacy_standard_without_samples_recovers_as_auto(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
