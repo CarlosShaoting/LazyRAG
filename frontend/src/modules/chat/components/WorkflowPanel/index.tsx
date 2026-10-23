@@ -85,10 +85,54 @@ import {
   filterPresentCompositeItems,
   findAlignedCompositeRevision,
 } from './compositeArtifactLayout';
+import { ImageWorkflowDelivery, shouldShowImageWorkflowDelivery } from './ImageWorkflowDelivery';
+import { ArtifactSourceVisibilityContext } from './ArtifactSourceButton';
 import './WorkflowPanel.scss';
 
 const EMPTY_TASK_CENTER_TASKS: SubAgentTask[] = [];
 const WORKFLOW_FOLLOW_MODE_STORAGE_PREFIX = 'lazymind:workflow-follow-mode:';
+const IMAGE_WORKFLOW_PRESENTATION_WIDGETS: Record<string, NonNullable<SlotDef['widget']>> = {
+  canonical_character_image: { widgetType: 'image-gallery', readOnly: true },
+  character_identity_prompt: { widgetType: 'text-markdown', readOnly: true },
+  face_anchor_grid: { widgetType: 'image-gallery', readOnly: true },
+  hero_no_text: {
+    widgetType: 'image-gallery', readOnly: true, itemLayout: 'grid',
+    gridMaxCols: 6, itemWidth: 112, itemHeight: 104,
+  },
+  master_keyframes: {
+    widgetType: 'image-gallery', readOnly: true, itemLayout: 'grid',
+    gridMaxCols: 5, itemWidth: 112, itemHeight: 104,
+  },
+  canary_video: { widgetType: 'media-preview', readOnly: true, itemHeight: 104 },
+  remaining_videos: {
+    widgetType: 'media-gallery', readOnly: true, itemLayout: 'grid',
+    gridMaxCols: 4, itemWidth: 140, itemHeight: 104,
+  },
+};
+
+/**
+ * Old sessions retain the UI snapshot that existed when they were created.
+ * Normalize Image Workflow V2 presentation here so both old and new meme
+ * sessions use the compact, de-duplicated review layout.
+ */
+function resolveImageWorkflowPresentationSlots(
+  session: WorkflowSession,
+  tab: TabDef,
+  slotDefs: SlotDef[],
+): SlotDef[] {
+  if (session.workflow_id !== 'image-workflow-v2') return slotDefs;
+  const hiddenSlots = tab.id === 'character'
+    ? new Set(['face_anchor_images'])
+    : tab.id === 'result'
+      ? new Set(['pack_review'])
+      : new Set<string>();
+  const visible = slotDefs.filter((slotDef) => !hiddenSlots.has(slotDef.id));
+  if (tab.id !== 'character' && tab.id !== 'production') return visible;
+  return visible.map((slotDef) => {
+    const widget = IMAGE_WORKFLOW_PRESENTATION_WIDGETS[slotDef.id];
+    return widget ? { ...slotDef, widget: { ...slotDef.widget, ...widget } } : slotDef;
+  });
+}
 
 /** Parse a JSON intent context string and return the text field, or '' if empty/invalid. */
 function parseIntentText(raw?: string): string {
@@ -1417,8 +1461,10 @@ function NamedTabSlot({
   const { t } = useTranslation();
   const compactEmptyStates = React.useContext(CompactWorkflowEmptyStatesContext);
   const slotLabel = slotDef.label ?? slotDef.id;
-  const isImageList = slotDef.type === 'image' && slotDef.cardinality === 'list';
-  const isDraggable = Boolean(slotDef.ordered) && !readOnly;
+  const isMediaList = slotDef.cardinality === 'list'
+    && (slotDef.type === 'image' || slotDef.widget?.itemLayout === 'grid');
+  const effectiveReadOnly = Boolean(readOnly || slotDef.widget?.readOnly);
+  const isDraggable = Boolean(slotDef.ordered) && !effectiveReadOnly;
   const [nativeCollapsed, setContentCollapsed] = useState(slotDef.widget?.collapsed === true);
   const collapseWhenEmpty = compactEmptyStates && slotDef.widget?.collapseWhenEmpty !== false;
   const [externalCollapsed, toggleExternalCollapsed] = useSlotCollapse(
@@ -1428,6 +1474,9 @@ function NamedTabSlot({
   const prefersFullGridRow = slotDef.widget?.itemLayout === 'grid'
     || (slotDef.widget?.itemWidth ?? 0) >= 600
     || slotDef.widget?.collapsed === true;
+  const namedSlotStyle = typeof slotDef.widget?.itemHeight === 'number'
+    ? { '--workflow-image-item-height': `${slotDef.widget.itemHeight}px` } as React.CSSProperties
+    : undefined;
   const isWriterDocument = slotDef.widget?.widgetType === 'writer-document';
   const showStream = Boolean(artifactStream && (
     revisions.length === 0 || artifactStream.state === 'streaming'
@@ -1442,7 +1491,7 @@ function NamedTabSlot({
     >
       <span>{compactEmptyStates ? t(workflowEmptyStateKey(session, slotStepId)) : '—'}</span>
     </div>
-  ) : isImageList ? (
+  ) : isMediaList ? (
     <SortableImageList
       revisions={revisions}
       session={session}
@@ -1451,8 +1500,8 @@ function NamedTabSlot({
       onRefresh={onRefresh}
       onReference={onReference}
       onFocusSortOrder={onFocusSortOrder}
-      onAddItem={readOnly ? undefined : onAddItem}
-      readOnly={readOnly}
+      onAddItem={effectiveReadOnly ? undefined : onAddItem}
+      readOnly={effectiveReadOnly}
     />
   ) : (
     revisions.map((rev) => (
@@ -1477,14 +1526,17 @@ function NamedTabSlot({
           revisionCount={rev.revision_count}
           onRefresh={onRefresh}
           onReference={onReference}
-          readOnly={readOnly}
+          readOnly={effectiveReadOnly}
         />
       </div>
     ))
   );
 
   return (
-    <div className={`workflow-panel__named-slot${prefersFullGridRow ? ' workflow-panel__named-slot--full-grid-row' : ''}${isWriterDocument ? ' workflow-panel__named-slot--writer-document' : ''}`}>
+    <div
+      className={`workflow-panel__named-slot${prefersFullGridRow ? ' workflow-panel__named-slot--full-grid-row' : ''}${isWriterDocument ? ' workflow-panel__named-slot--writer-document' : ''}`}
+      style={namedSlotStyle}
+    >
       {(!hideLabel || collapseWhenEmpty) && <div className='workflow-panel__slot-heading'>
         {(slotDef.label || slotDef.id) && (
           <span className='workflow-panel__slot-label'>{slotLabel}</span>
@@ -1577,7 +1629,11 @@ function TabSlotGrid({
       tasks,
     )));
   };
-  const visibleSlots = resolveVisibleSlots(resolvePreferredStructuredSlotDefs(tab, session));
+  const visibleSlots = resolveImageWorkflowPresentationSlots(
+    session,
+    tab,
+    resolveVisibleSlots(resolvePreferredStructuredSlotDefs(tab, session)),
+  );
   const allHidden = visibleSlots.length === 0 || Boolean(tab.composite_behavior?.hide_empty_columns)
     && visibleSlots.every(def => getTabSlotRevisions(session, tab, def.id).length === 0
       && !findWriterArtifactStream(session, getTabStepId(tab), def.id, tasks));
@@ -2024,6 +2080,7 @@ export function WorkflowPanel({
   const hasTabs = tabs.length > 0;
   const visibleActiveTabIdx = resolveWorkflowActiveTabIndex(tabs, activeTabId);
   const runtimeTabIdx = hasTabs ? resolveWorkflowRealTabIndex(session, tabs) : -1;
+  const imageDeliveryVisible = shouldShowImageWorkflowDelivery(session);
   const showActions =
     session.status === 'waiting' ||
     session.status === 'active' ||
@@ -2256,6 +2313,7 @@ export function WorkflowPanel({
 
   const panel = (
     <CompactWorkflowEmptyStatesContext.Provider value={externalPresentation?.compactEmptyStates === true}>
+    <ArtifactSourceVisibilityContext.Provider value={session.workflow_id !== 'image-workflow-v2'}>
     <SlotEditingContext.Provider value={{
       setEditing: handleSlotEditingChange,
       registerFlush,
@@ -2449,6 +2507,7 @@ export function WorkflowPanel({
             tabs.map((tab, idx) => {
               const preview = externalPresentation && !anySlotEditing ? executionPreview(session, tab, activities) : session;
               const previewing = preview !== session;
+              const hideLegacyImageResult = imageDeliveryVisible && tab.id === 'result';
               return <div
                 key={tab.id}
                 id={`workflow-tab-panel-${tab.id}`}
@@ -2458,22 +2517,27 @@ export function WorkflowPanel({
               >
                 <WorkflowPanelTabActiveContext.Provider value={idx === visibleActiveTabIdx}>
                 <SlotDownloadContext.Provider value={!previewing && workflowTabAllowsDownload(tab, idx, tabs.length)}>
-                  {previewing && <div className="workflow-panel__preview-label" role="status">{t('chat.workflowGeneratingPreview')}</div>}
-                  <TabSlotGrid
-                    tab={executionPreviewTab(tab, session, preview)}
-                    session={preview}
-                    readOnly={previewing}
-                    tasks={taskCenterTasks}
-                    onRefresh={refresh}
-                    onReference={onReference}
-                    onFocusSortOrder={handleFocusSortOrder}
-                  />
+                  {hideLegacyImageResult && <ImageWorkflowDelivery session={session} />}
+                  {!hideLegacyImageResult && <>
+                    {previewing && <div className="workflow-panel__preview-label" role="status">{t('chat.workflowGeneratingPreview')}</div>}
+                    <TabSlotGrid
+                      tab={executionPreviewTab(tab, session, preview)}
+                      session={preview}
+                      readOnly={previewing}
+                      tasks={taskCenterTasks}
+                      onRefresh={refresh}
+                      onReference={onReference}
+                      onFocusSortOrder={handleFocusSortOrder}
+                    />
+                  </>}
                 </SlotDownloadContext.Provider>
                 </WorkflowPanelTabActiveContext.Provider>
               </div>;
             })
           ) : session.workflow_id === 'product_solution_delivery' ? (
             <div className='workflow-panel__empty' role='status'>{t('chat.workflowWaitingForResults')}</div>
+          ) : imageDeliveryVisible ? (
+            <ImageWorkflowDelivery session={session} />
           ) : (
             <AutoSlotGrid
               session={session}
@@ -2672,6 +2736,7 @@ export function WorkflowPanel({
       />
     )}
     </SlotEditingContext.Provider>
+    </ArtifactSourceVisibilityContext.Provider>
     </CompactWorkflowEmptyStatesContext.Provider>
   );
 
