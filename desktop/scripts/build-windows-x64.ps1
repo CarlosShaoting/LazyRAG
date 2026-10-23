@@ -338,13 +338,7 @@ function Materialize-OfflineSkills {
         '--frozen-lockfile',
         '--catalog-only'
     )
-    try {
-        Invoke-NativeWithRetry 'Builtin Skill catalog preparation' 'go.exe' $arguments (Join-Path $repoRoot 'backend\core')
-        Invoke-Native (Join-Path $runtimeRoot 'deps\python\algorithm\Scripts\python.exe') @((Join-Path $repoRoot 'desktop\scripts\stage-featured-assets.py'), $runtimeRoot, '--quiet', '--bundle-unpublished')
-    } catch {
-        Write-Warning "Skill catalog or asset preparation failed: $($_.Exception.Message). Packaging without builtin and featured Skills."
-        Invoke-Native 'node.exe' @((Join-Path $repoRoot 'desktop\scripts\stage-skill-fallback.mjs'), $runtimeRoot)
-    }
+    Invoke-NativeWithRetry 'Builtin Skill catalog preparation' 'go.exe' $arguments (Join-Path $repoRoot 'backend\core')
 }
 
 function New-DeferredPythonRuntimeStage {
@@ -414,6 +408,7 @@ function Finalize-Desktop([ValidateSet('zip', 'installer')][string]$PackageKind 
     Invoke-Native 'node.exe' @((Join-Path $repoRoot 'desktop\scripts\stage-pdf-font.mjs'), $runtimeRoot)
     Write-Host '==> Materializing locked Skill previews and featured catalog'
     Materialize-OfflineSkills
+    Invoke-Native (Join-Path $runtimeRoot 'deps\python\algorithm\Scripts\python.exe') @((Join-Path $repoRoot 'desktop\scripts\stage-featured-assets.py'), $runtimeRoot, '--quiet', '--bundle-unpublished')
     Write-Host '==> Preparing workflow example metadata (download during warmup by default)'
     Invoke-Native 'node.exe' @(
         (Join-Path $repoRoot 'desktop\scripts\stage-history-injection-package.mjs'),
