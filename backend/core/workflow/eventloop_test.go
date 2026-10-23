@@ -497,6 +497,121 @@ func TestOnSubAgentDone_ExplicitNoHandOffWaitsForChatAgent(t *testing.T) {
 	}
 }
 
+func TestOnSubAgentDone_ReviewRequiredOverridesMissingHandOff(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	graphHash, graphSchemaVersion := seedEventLoopRevision(t, db, "revision-review-required")
+	if _, err := CreateSession(ctx, db.DB, CreateSessionInput{
+		SessionID: "ps-review-required", ConversationID: "conv-review-required", WorkflowID: "image-workflow",
+		WorkflowRevisionID: "revision-review-required", GraphHash: graphHash, GraphSchemaVersion: graphSchemaVersion,
+	}); err != nil {
+		t.Fatalf("session: %v", err)
+	}
+	step, err := CreateSessionStep(ctx, db.DB, "ps-review-required", "analyze_subject", "task-review-required", 1)
+	if err != nil {
+		t.Fatalf("step: %v", err)
+	}
+	if err := db.Model(step).Update("review_required", true).Error; err != nil {
+		t.Fatal(err)
+	}
+	var persisted orm.WorkflowSessionStep
+	if err := db.First(&persisted, "id = ?", step.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !persisted.ReviewRequired {
+		t.Fatal("review_required was not persisted")
+	}
+
+	handOff := false
+	pctx := &WorkflowChatContext{
+		SessionID: "ps-review-required", WorkflowID: "image-workflow", StepID: "analyze_subject",
+		ConvID: "conv-review-required", WorkflowMode: "auto", HandOff: &handOff,
+	}
+	var gotEvent string
+	var gotReason any
+	OnSubAgentDone(ctx, db.DB, nil, "task-review-required", subagent.StatusSucceeded, "review this result",
+		func(eventType string, payload map[string]any) {
+			gotEvent = eventType
+			gotReason = payload["reason"]
+		}, pctx)
+
+	if gotEvent != "step_waiting" || gotReason != "approval_required" {
+		t.Fatalf("required review auto-advanced: event=%q reason=%v", gotEvent, gotReason)
+	}
+	session, err := GetSession(ctx, db.DB, "ps-review-required")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.Status != SessionStatusWaiting {
+		t.Fatalf("required review session status=%q, want waiting", session.Status)
+	}
+}
+
+func TestOnSubAgentDone_TerminalReviewRequiredOverridesGraphCompletion(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	if err := db.AutoMigrate(
+		&orm.WorkflowRevision{},
+		&orm.WorkflowRouteDecision{},
+		&orm.WorkflowInputBinding{},
+		&orm.WorkflowAttemptInputBinding{},
+	); err != nil {
+		t.Fatalf("migrate workflow runtime tables: %v", err)
+	}
+	graph := graphengine.CompiledStateGraph{
+		SchemaVersion: graphengine.SchemaVersion,
+		GraphHash:     "terminal-review-graph",
+		StartRoute:    "review",
+		Nodes: map[string]graphengine.CompiledNode{
+			"review": {ID: "review", Label: "Review", Mode: "human"},
+		},
+		ControlEdges: []graphengine.CompiledEdge{{From: "__start__", To: "review"}},
+	}
+	if err := db.Create(&orm.WorkflowRevision{
+		ID: "revision-terminal-review", WorkflowResourceID: "resource-terminal-review", RevisionNo: 1,
+		CompiledGraph: graph.JSON(), GraphHash: graph.GraphHash,
+		GraphSchemaVersion: graph.SchemaVersion, CreatedAt: time.Now().UTC(),
+	}).Error; err != nil {
+		t.Fatalf("create workflow revision: %v", err)
+	}
+	if _, err := CreateSession(ctx, db.DB, CreateSessionInput{
+		SessionID: "ps-terminal-review", ConversationID: "conv-terminal-review", WorkflowID: "image-workflow",
+		WorkflowRevisionID: "revision-terminal-review", GraphHash: graph.GraphHash, GraphSchemaVersion: graph.SchemaVersion,
+	}); err != nil {
+		t.Fatalf("session: %v", err)
+	}
+	step, err := CreateSessionStep(ctx, db.DB, "ps-terminal-review", "review", "task-terminal-review", 1)
+	if err != nil {
+		t.Fatalf("step: %v", err)
+	}
+	if err := db.Model(step).Update("review_required", true).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	pctx := &WorkflowChatContext{
+		SessionID: "ps-terminal-review", WorkflowID: "image-workflow", StepID: "review",
+		ConvID: "conv-terminal-review", WorkflowMode: "dynamic",
+	}
+	var gotEvent string
+	var gotReason any
+	OnSubAgentDone(ctx, db.DB, nil, "task-terminal-review", subagent.StatusSucceeded, "review this result",
+		func(eventType string, payload map[string]any) {
+			gotEvent = eventType
+			gotReason = payload["reason"]
+		}, pctx)
+
+	if gotEvent != "step_waiting" || gotReason != "approval_required" {
+		t.Fatalf("terminal review was reported complete: event=%q reason=%v", gotEvent, gotReason)
+	}
+	session, err := GetSession(ctx, db.DB, "ps-terminal-review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.Status != SessionStatusWaiting {
+		t.Fatalf("terminal review session status=%q, want waiting", session.Status)
+	}
+}
+
 func TestOnSubAgentDone_Interrupted_SetsWaiting(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()

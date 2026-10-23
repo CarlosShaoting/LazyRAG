@@ -16,6 +16,48 @@ import pytest
 import lazymind.chat.engine.subagent.runner as runner_mod
 
 
+def _image_v2_context(tmp_path, step_id: str, remote_inputs: dict):
+    from lazymind.chat.engine.subagent.context import SubAgentContext
+
+    return SubAgentContext(
+        task_id=f'task-{step_id}',
+        conversation_id='conv-image-v2',
+        agent_type='workflow_step',
+        objective='test image workflow cardinality',
+        params={
+            'workflow_id': 'image-workflow-v2',
+            'step_id': step_id,
+            'remote_inputs': remote_inputs,
+        },
+        workspace_path=str(tmp_path),
+        input_slots=list(remote_inputs),
+        output_slots=[],
+        db=None,
+        emit=lambda _event: None,
+    )
+
+
+def test_image_v2_progressive_step_rejects_partial_pack(tmp_path):
+    ctx = _image_v2_context(
+        tmp_path, 'render_static',
+        {'static_plan': [{'state_id': 'one'}, {'state_id': 'two'}]},
+    )
+    ctx.record_local_artifact('hero_no_text', 'image', {'path': 'one.png'}, 1)
+
+    assert runner_mod._workflow_step_output_errors(ctx) == [
+        'render_static requires exactly 2 hero_no_text item(s), but this attempt saved 1'
+    ]
+
+
+def test_image_v2_one_state_dynamic_pack_needs_no_remaining_video(tmp_path):
+    ctx = _image_v2_context(
+        tmp_path, 'render_dynamic',
+        {'dynamic_plan': [{'state_id': 'only'}]},
+    )
+
+    assert runner_mod._workflow_step_output_errors(ctx) == []
+
+
 def test_workflow_script_tool_is_loaded_from_pinned_revision():
     source = 'def create_list_fixtures():\n    return ["one", "two"]\n'
     response = MagicMock()
@@ -359,6 +401,43 @@ def test_subagent_plan_preserves_extension_params_without_structured_duplicates(
     assert 'must never ask the user a question' in role_section.content
     assert 'Never emit a fenced Markdown block with the language `editable`' in role_section.content
     assert all(section.section_id != 'editable_writing' for section in plan.prompt.sections)
+
+
+def test_render_static_plan_requires_each_image_to_be_saved_progressively(tmp_path):
+    from lazymind.chat.engine.subagent.context import SubAgentContext
+
+    ctx = SubAgentContext(
+        task_id='task-progressive-static',
+        conversation_id='conv-1',
+        agent_type='workflow_step',
+        objective='render every planned meme state',
+        params={
+            'step_id': 'render_static',
+            'required_output_artifact_keys': ['hero_no_text'],
+        },
+        workspace_path=str(tmp_path),
+        input_slots=['static_plan'],
+        output_slots=['hero_no_text'],
+        db=None,
+        emit=lambda _event: None,
+    )
+
+    plan = runner_mod._build_subagent_plan(
+        ctx,
+        None,
+        tools=[],
+        tool_prompt_appendices={},
+    )
+    output_contract = next(
+        section.content for section in plan.prompt.sections
+        if section.section_id == 'subagent_output_contract'
+    )
+
+    assert 'Mandatory progressive all-state render' in output_contract
+    assert 'immediately call save_artifacts with exactly one hero_no_text entry' in output_contract
+    assert 'Do not wait for the remaining images before saving' in output_contract
+    assert 'finish only after every planned state has been attempted' in output_contract
+    assert 'Only then call save_artifacts once' not in output_contract
 
 
 def test_subagent_plan_uses_200_rounds_in_max_mode(tmp_path):

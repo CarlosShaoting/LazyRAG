@@ -1,10 +1,20 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import i18n from '@/i18n';
-import { ArtifactSourceButton } from './ArtifactSourceButton';
+import { ArtifactSourceButton, ArtifactSourceVisibilityContext } from './ArtifactSourceButton';
 
 beforeEach(async () => { await i18n.changeLanguage('zh-CN'); });
 afterEach(() => vi.unstubAllGlobals());
+
+it('can be suppressed for presentation-only workflow panels', () => {
+  render(
+    <ArtifactSourceVisibilityContext.Provider value={false}>
+      <ArtifactSourceButton value='internal prompt' />
+    </ArtifactSourceVisibilityContext.Provider>,
+  );
+
+  expect(screen.queryByRole('button')).not.toBeInTheDocument();
+});
 
 it.each([
   ['Markdown', '# 标题\n\n7. 第一项\n8. 第二项\n'],

@@ -11,7 +11,10 @@ import requests
 from lazyllm import AutoModel
 from lazyllm.components.formatter import decode_query_with_filepaths
 from lazyllm.tools.agent import ToolExecutionError
-from lazymind.chat.engine.tools.host_file_resolution import stage_input_file
+from lazymind.chat.engine.tools.host_file_resolution import (
+    resolve_workflow_media_binding,
+    stage_input_file,
+)
 
 from lazymind.chat.service.utils import register_image_url, resolve_local_image_path
 from lazymind.chat.service.utils.static_file_url import (
@@ -36,7 +39,7 @@ def _image_url_registry() -> dict[str, Any]:
 
 
 def resolve_tool_image_path(path_or_ref: str) -> str:
-    raw = str(path_or_ref or '').strip()
+    raw = resolve_workflow_media_binding(path_or_ref)
     if not raw:
         return ''
     if os.path.isabs(raw) and not raw.startswith(('/static-files/', '/var/lib/lazymind/uploads/')):

@@ -841,6 +841,7 @@ def _build_subagent_plan(
                 content_kind='instruction',
             )
     publisher_owned_outputs = _publisher_owns_outputs(ctx)
+    workflow_step_id = str(ctx.params.get('step_id') or '').strip()
     if ctx.params.get('required_output_artifact_keys') is not None:
         required_keys = _coerce_str_list(ctx.params.get('required_output_artifact_keys'))
     elif str(ctx.agent_type or '') == 'workflow_step':
@@ -856,11 +857,18 @@ def _build_subagent_plan(
             'After the package publisher tool succeeds, stop and return a short summary.'
         )
     elif required_keys:
+        save_strategy = (
+            ' For render_static, save each successful hero_no_text image immediately '
+            'using the incremental contract below.'
+            if workflow_step_id == 'render_static'
+            else ' When there are multiple outputs, use one save_artifacts call containing '
+            'every output entry.'
+        )
         output_lines.append(
             'Required output artifacts: '
             + ', '.join(required_keys)
-            + '. Save every required key before finishing. When there are multiple outputs, '
-            'use one save_artifacts call containing every output entry.'
+            + '. Save every required key before finishing.'
+            + save_strategy
         )
     else:
         output_lines.append(
@@ -872,6 +880,51 @@ def _build_subagent_plan(
         output_lines.append(
             'Optional output artifact keys: ' + ', '.join(optional_keys)
         )
+    if not publisher_owned_outputs and workflow_step_id == 'render_static':
+        output_lines.append(
+            '## Mandatory progressive all-state render\n'
+            'Read the complete static_plan list before the first media call. Attempt every '
+            'planned state exactly once with image_editor, in list order. A successful image '
+            'for one state is an intermediate result, not permission to finish the step. After '
+            'each successful image_editor result, immediately call save_artifacts with exactly '
+            'one hero_no_text entry for that image and omit sort_order so it appends in list '
+            'order. Do not wait for the remaining images before saving. After that save succeeds, '
+            'continue with the next unattempted state until no planned state remains. A partial '
+            'save never ends the step; finish only after every planned state has been attempted.'
+        )
+    elif not publisher_owned_outputs and workflow_step_id == 'render_keyframes':
+        output_lines.append(
+            '## Mandatory progressive key-frame render\n'
+            'Read the complete dynamic_plan before the first media call. Generate every state '
+            'in order. After each successful image_editor result, immediately call '
+            'save_artifacts with exactly one master_keyframes entry, then continue with the '
+            'next state. A save is intermediate and never ends the step.'
+        )
+    elif not publisher_owned_outputs and workflow_step_id == 'render_dynamic':
+        output_lines.append(
+            '## Mandatory progressive video render\n'
+            'Generate every non-canary state in dynamic_plan. After each successful '
+            'video_generator result, immediately call save_artifacts with exactly one '
+            'remaining_videos entry, then continue. A save is intermediate and never ends '
+            'the step. For a one-state pack, generate nothing and finish normally.'
+        )
+    elif not publisher_owned_outputs and workflow_step_id == 'caption_dynamic':
+        output_lines.append(
+            '## Mandatory progressive GIF delivery\n'
+            'Convert every approved video in state order. After each successful '
+            'meme_video_to_captioned_gif result, immediately call save_artifacts with exactly '
+            'one gif_output entry, then continue. A save is intermediate and never ends the step.'
+        )
+    elif not publisher_owned_outputs and workflow_step_id == 'caption_static':
+        output_lines.append(
+            '## Mandatory all-image caption batch\n'
+            'Read the complete hero_no_text list before inspecting the first image. Process '
+            'every input image in list order. One completed caption is an intermediate result, '
+            'not permission to finish the step. Continue until every input image has been '
+            'inspected and captioned (or intentionally preserved for no_text mode). Only then '
+            'call save_artifacts once, with one static_final entry for every successful input '
+            'in the same order. Never call save_artifacts while an input image is unprocessed.'
+        )
     if not publisher_owned_outputs:
         output_lines.append(
             '## Exact save_artifacts call shape\n'
@@ -880,8 +933,9 @@ def _build_subagent_plan(
             '"content_type":"text","caption":"<optional label>"}]}\n'
             'The payload field MUST be named value. Never use content, data, body, or text '
             'as a replacement for value. key and value are required inside EVERY artifacts item.\n'
-            'For multiple outputs, put all entries in the same artifacts array. Do not make a '
-            'small test/placeholder save before saving the real output.'
+            'Except for the render_static progressive contract above, put multiple outputs in '
+            'the same artifacts array. Do not make a small test/placeholder save before saving '
+            'the real output.'
         )
         output_lines.append(
             '## Overwrite vs. Append for list slots\n'
@@ -941,12 +995,21 @@ def _build_subagent_plan(
     # Public runner extension point, but product-only: None preserves the
     # upstream round, retry, tool-discovery and tool-limit path exactly.
     product_policy = policy_for(ctx.params)
+    progressive_save_steps = {
+        'render_static', 'render_keyframes', 'render_dynamic', 'caption_dynamic',
+    }
+    stop_tools = terminal_tool_names & available_tool_names
+    if workflow_step_id in progressive_save_steps:
+        # These steps deliberately publish one list item at a time. Treating
+        # save_artifacts as terminal would stop after the first image, video, or
+        # GIF and incorrectly satisfy the key-only completeness check.
+        stop_tools.discard('save_artifacts')
     return AgentRunPlan(
         role=AgentRole.SUBAGENT,
         prompt=builder.build(),
         history=history,
         tools=tools,
-        stop_tools=sorted(terminal_tool_names & available_tool_names),
+        stop_tools=sorted(stop_tools),
         force_summarize_context=ctx.objective,
         execution_options=AgentExecutionOptions(
             workspace=ctx.workspace_path or None,
@@ -1050,6 +1113,60 @@ def _commit_prompt_only_text_output(
     })
     LOG.info('[SubAgent] committed prompt-only output key=%r for task=%s', key, ctx.task_id)
     return True
+
+
+def _workflow_step_output_errors(ctx: SubAgentContext) -> List[str]:
+    """Validate Image V2 list cardinality after progressive publication.
+
+    Required-output checks are key based, which is insufficient for a pack: one
+    saved image must not make a six-image step succeed. Keep this validation
+    narrow to the Image V2 multi-item steps and skip partial retries, whose
+    accepted items live in earlier attempts by design.
+    """
+    params = ctx.params or {}
+    workflow_id = str(
+        params.get('workflow_id') or params.get('workflow_ref') or '',
+    ).removeprefix('builtin:')
+    if workflow_id != 'image-workflow-v2':
+        return []
+    if params.get('partial_indices'):
+        return []
+
+    step_id = str(params.get('step_id') or '').strip()
+    contracts = {
+        'build_identity_anchors': ('face_anchor_images', None, 4),
+        'render_static': ('hero_no_text', 'static_plan', None),
+        'caption_static': ('static_final', 'hero_no_text', None),
+        'render_keyframes': ('master_keyframes', 'dynamic_plan', None),
+        'render_dynamic': ('remaining_videos', 'dynamic_plan', -1),
+        'caption_dynamic': ('gif_output', 'dynamic_plan', None),
+    }
+    contract = contracts.get(step_id)
+    if not contract:
+        return []
+    output_key, input_key, fixed = contract
+
+    actual = len(ctx.local_artifacts(keys=[output_key]))
+    if fixed is not None and input_key is None:
+        expected = fixed
+    else:
+        remote_inputs = params.get('remote_inputs') or {}
+        raw = remote_inputs.get(input_key) if isinstance(remote_inputs, dict) else None
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except ValueError:
+                raw = None
+        if isinstance(raw, dict) and isinstance(raw.get('data'), list):
+            raw = raw['data']
+        expected = len(raw) if isinstance(raw, list) else None
+        if expected is not None and fixed == -1:
+            expected = max(0, expected - 1)
+    if expected is None or actual == expected:
+        return []
+    return [
+        f'{step_id} requires exactly {expected} {output_key} item(s), but this attempt saved {actual}'
+    ]
 
 
 def _persist_step(
@@ -1661,10 +1778,15 @@ async def run_subagent_stream(
                 yield _sse(ev)
             saved = set(ctx.saved_keys())
         missing = [k for k in required_output_keys if k not in saved]
-        if missing:
+        output_errors = _workflow_step_output_errors(ctx)
+        if missing or output_errors:
             if effective_agent_type == 'workflow_step':
                 cost = round(time.time() - start_time, 3)
-                message = f'缺少必需产出素材: {", ".join(missing)}'
+                details = []
+                if missing:
+                    details.append(f'缺少必需产出素材: {", ".join(missing)}')
+                details.extend(output_errors)
+                message = '；'.join(details)
                 yield _sse({'type': 'error', 'task_id': task_id, 'status': 'failed',
                             'summary': message, 'message': message, 'cost': cost})
                 yield 'data: [DONE]\n\n'

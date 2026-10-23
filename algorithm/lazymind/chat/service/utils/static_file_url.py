@@ -3,7 +3,7 @@ import hmac
 import os
 import time
 from pathlib import Path
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urlsplit
 
 from lazymind.config import config as _cfg
 
@@ -100,6 +100,10 @@ def local_path_from_static_file_url(path_or_url: str) -> str:
     if not raw:
         return ''
     root = Path(_upload_root()).resolve()
+    if raw.startswith(('http://', 'https://')):
+        url_path = urlsplit(raw).path
+        if url_path.startswith('/static-files/'):
+            raw = url_path
     if raw.startswith('/static-files/'):
         path_only = raw.split('?', 1)[0]
         rel_encoded = path_only[len('/static-files/'):].lstrip('/')

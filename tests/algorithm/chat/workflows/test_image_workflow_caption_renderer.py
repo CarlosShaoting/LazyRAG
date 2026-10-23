@@ -123,6 +123,30 @@ def test_caption_renderer_changes_only_pixels_inside_layout_box(tmp_path, monkey
     assert output.crop((60, 225, 340, 279)).tobytes() != original.crop((60, 225, 340, 279)).tobytes()
 
 
+def test_caption_renderer_resolves_absolute_localhost_static_url_locally(
+    tmp_path, monkeypatch, latin_font,
+):
+    tools = _load_tools()
+    monkeypatch.setattr(tools, '_LATIN_FONT_CANDIDATES', (latin_font,))
+    upload_root = tmp_path / 'uploads'
+    source = upload_root / 'ai_generated' / 'source.png'
+    source.parent.mkdir(parents=True)
+    Image.new('RGB', (400, 300), '#BBD7E8').save(source)
+    monkeypatch.setenv('LAZYMIND_SHARED_UPLOAD_DIR', str(upload_root))
+
+    def unexpected_http(*_args, **_kwargs):
+        raise AssertionError('localhost static artifacts must be opened from the shared upload root')
+
+    monkeypatch.setattr(tools.requests, 'get', unexpected_http)
+    result = tools.meme_add_caption(
+        'http://localhost/static-files/ai_generated/source.png',
+        'WOOF',
+    )
+
+    assert result['success'] is True
+    assert Path(result['local_path']).is_file()
+
+
 def test_caption_renderer_applies_caption_to_every_gif_frame(tmp_path, monkeypatch, latin_font):
     tools = _load_tools()
     monkeypatch.setattr(tools, '_LATIN_FONT_CANDIDATES', (latin_font,))

@@ -643,6 +643,12 @@ func launchWorkflowAttempt(
 	if params.UserID != "" {
 		rawParamsMap["user_id"] = params.UserID
 	}
+	if override := workflowChatModelOverride(llmConfig); len(override) > 0 {
+		// Keep only the non-secret chat-model identity in the Host-private task
+		// snapshot. The Executor resolves credentials from the task owner at run
+		// time; API keys never enter the public Attempt context or outbox payload.
+		rawParamsMap["workflow_chat_model_override"] = override
+	}
 	rawParamsMap, err = localworkspace.RebuildSubagentParams(ctx, db, userID, convID,
 		localworkspace.StripUntrustedWorkspaceMetadata(rawParamsMap))
 	if err != nil {
@@ -709,6 +715,22 @@ func launchWorkflowAttempt(
 	return sessionID, task.ID, false, nil
 }
 
+func workflowChatModelOverride(config map[string]any) map[string]string {
+	role, ok := config["llm"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	source, _ := role["source"].(string)
+	model, _ := role["model"].(string)
+	source = strings.TrimSpace(source)
+	model = strings.TrimSpace(model)
+	if source == "" || model == "" || len(source) > 128 || len(model) > 256 ||
+		strings.ContainsAny(source+model, "\r\n\x00") {
+		return nil
+	}
+	return map[string]string{"source": source, "model": model}
+}
+
 func enqueueWorkflowAttemptRunner(ctx context.Context, db *gorm.DB, request subagent.RunRequest) error {
 	return enqueueCanonicalAttempt(ctx, db, request)
 }
@@ -727,10 +749,10 @@ func OnSubAgentDone(
 	pctx *WorkflowChatContext,
 ) {
 	_ = UpdateStepStatus(ctx, db, taskID, status)
+	finishedStep, _ := GetStepByTaskID(ctx, db, taskID)
 	// A user stop is authoritative even when an executor's late failure callback
 	// loses the step update race. Do not feed that callback to the retry driver.
-	if step, err := GetStepByTaskID(ctx, db, taskID); err == nil && step != nil &&
-		step.Status == StepStatusInterrupted && step.TerminalCode == "WORKFLOW_STOPPED" {
+	if finishedStep != nil && finishedStep.Status == StepStatusInterrupted && finishedStep.TerminalCode == "WORKFLOW_STOPPED" {
 		return
 	}
 	stepFailed := status != subagent.StatusSucceeded && status != subagent.StatusInterrupted
@@ -810,6 +832,22 @@ func OnSubAgentDone(
 		}
 	}
 
+	// A native human checkpoint must win over terminal graph completion. A
+	// terminal human node has no outgoing edge, so the projector can mark the
+	// graph completed as soon as its Attempt succeeds. The artifact is still a
+	// review candidate, though: keep the Session waiting until the user accepts
+	// it or explicitly rewinds it with corrections.
+	if pctx.HostedTaskID == "" && status == subagent.StatusSucceeded && finishedStep != nil && finishedStep.ReviewRequired {
+		_ = UpdateSessionStatus(ctx, db, pctx.SessionID, SessionStatusWaiting)
+		onSSE("step_waiting", map[string]any{
+			"session_id": pctx.SessionID,
+			"step_id":    pctx.StepID,
+			"reason":     "approval_required",
+		})
+		go OnSubAgentDoneSnapshot(context.Background(), db, pctx)
+		return
+	}
+
 	if sessionCompleted {
 		_ = taskcenter.UpdateTaskStatusBySession(ctx, db, pctx.SessionID, "succeeded")
 		clearGeneratingChatStatus(ctx, stateStore, pctx.ConvID)
@@ -846,7 +884,6 @@ func OnSubAgentDone(
 		}
 		return
 	}
-
 	handOff := true // legacy tasks only had the hand-off advancement tool by default
 	if pctx.HandOff != nil {
 		handOff = *pctx.HandOff
@@ -1018,7 +1055,11 @@ func triggerNextChatTurn(
 		reqBody["conversation"] = map[string]any{"search_config": searchConfig}
 	}
 	body, _ := json.Marshal(reqBody)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	// A single image-workflow turn can legitimately include four identity
+	// anchors or several videos. Keep the synthetic host turn alive for the same
+	// upper bound as a SubAgent run instead of cancelling healthy media work at
+	// ten minutes.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, coreURL, bytes.NewReader(body))
 	if err != nil {

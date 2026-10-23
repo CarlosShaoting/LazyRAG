@@ -89,6 +89,7 @@ func InternalGetExecutionSpec(w http.ResponseWriter, r *http.Request) {
 		common.ReplyErr(w, "model config unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	config = applyWorkflowChatModelOverride(config, params)
 	var runtimeParams struct {
 		Capabilities []string `json:"capabilities"`
 		LegacyTools  []string `json:"legacy_tools"`
@@ -127,6 +128,39 @@ func InternalGetExecutionSpec(w http.ResponseWriter, r *http.Request) {
 	common.ReplyOK(w, map[string]any{"task": privateTask, "params": params,
 		"steps": stepDTOs, "create_user_id": task.CreateUserID, "llm_config": config,
 		"tool_config": toolConfig, "user_env_vars": userEnvVars, "workspace_path": task.WorkspacePath})
+}
+
+func applyWorkflowChatModelOverride(config, params map[string]any) map[string]any {
+	rawOverride, ok := params["workflow_chat_model_override"].(map[string]any)
+	if !ok {
+		return config
+	}
+	source, _ := rawOverride["source"].(string)
+	model, _ := rawOverride["model"].(string)
+	source = strings.TrimSpace(source)
+	model = strings.TrimSpace(model)
+	baseRole, ok := config["llm"].(map[string]any)
+	if !ok || source == "" || model == "" || len(model) > 256 ||
+		strings.ContainsAny(source+model, "\r\n\x00") {
+		return config
+	}
+	baseSource, _ := baseRole["source"].(string)
+	if !strings.EqualFold(strings.TrimSpace(baseSource), source) {
+		// Never reuse one provider's credential for a caller-supplied endpoint or
+		// provider. Cross-provider selections keep the owner's configured default.
+		return config
+	}
+	mergedConfig := make(map[string]any, len(config))
+	for key, value := range config {
+		mergedConfig[key] = value
+	}
+	mergedRole := make(map[string]any, len(baseRole))
+	for key, value := range baseRole {
+		mergedRole[key] = value
+	}
+	mergedRole["model"] = model
+	mergedConfig["llm"] = mergedRole
+	return mergedConfig
 }
 
 func workflowToolConfigCapabilities(capabilities, legacyTools []string) []string {

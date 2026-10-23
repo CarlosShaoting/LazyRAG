@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import tempfile
 import unittest
 from unittest import mock
 
@@ -76,6 +77,26 @@ class ImageWorkflowSearchValidationTests(unittest.TestCase):
         self.assertEqual(result, (response.url, 1600, 1200, 'JPEG'))
         self.assertGreater(max(inspected_sizes), self.tools._PROBE_BYTES)
         self.assertTrue(response.closed)
+
+    def test_local_probe_reads_past_first_eight_kib_when_metadata_is_large(self):
+        inspected_sizes = []
+
+        def dimensions(data: bytes):
+            inspected_sizes.append(len(data))
+            if len(data) <= self.tools._PROBE_BYTES:
+                raise OSError('Truncated File Read')
+            return 1600, 1200, 'JPEG'
+
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / 'large-metadata.jpg'
+            source.write_bytes(b'\xff\xd8' + b'0' * (40 * 1024))
+            with mock.patch.object(
+                self.tools, '_probe_image_dimensions', side_effect=dimensions,
+            ):
+                result = self.tools._probe_local_image(str(source))
+
+            self.assertEqual(result, (str(source.resolve()), 1600, 1200, 'JPEG'))
+        self.assertGreater(max(inspected_sizes), self.tools._PROBE_BYTES)
 
     def test_batch_search_validates_every_exact_url_and_reports_factual_counts(self):
         urls = [

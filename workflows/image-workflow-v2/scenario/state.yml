@@ -48,6 +48,8 @@ steps:
       describe, or advance the next step yourself.
     tools: [classify_image_request]
     terminal_tools: [classify_image_request]
+    inputs:
+      - {material: source_image, required: false}
     outputs: [{material: route_plan, required: true}]
     acceptance_criteria: route_plan contains exactly one supported route, a rationale, and delivery_mode=static|dynamic|unspecified for meme or not_applicable otherwise; after it is saved, the workflow engine selects the sole matching transition.
 
@@ -55,11 +57,15 @@ steps:
     label: Prepare Ordinary Image
     prompt: |
       Call prepare_ordinary_request exactly once with no arguments. The package
-      tool reads the immutable launch request and atomically publishes a factual
-      material_summary plus an ordinary_prompt that preserves every requested
+      tool reads the effective user request and publishes a factual
+      material_summary after retrieving any requested web/knowledge-base references,
+      plus an ordinary_prompt that preserves every requested
       subject, composition, style, ratio, and text constraint. Do not call
       save_artifacts or rewrite either output yourself. Stop immediately after
-      the tool succeeds.
+      the tool succeeds. KB and web retrieval are independent: a failed or empty
+      source is recorded in retrieval_results and the material summary, not a
+      failure of this step. Retain successful references from other sources.
+      Never claim a failed source supplied evidence.
     tools: [prepare_ordinary_request]
     terminal_tools: [prepare_ordinary_request]
     inputs:
@@ -76,9 +82,10 @@ steps:
     prompt: |
       Call generate_ordinary_image exactly once with no arguments. The package
       tool reads the approved prompt and optional references, derives the ratio
-      from the immutable launch request, calls Baoyu with Seedream 5.0, verifies
-      the returned local file, and publishes ordinary_output atomically. Do not
-      call save_artifacts, retry, switch providers, or synthesize an image URL.
+      from the immutable launch request, calls the globally configured LazyMind
+      image-generator role (or image-editor role when references are supplied),
+      verifies the returned local file, and publishes ordinary_output atomically.
+      Do not call save_artifacts, retry, switch providers, or synthesize an image URL.
       Stop immediately after the tool succeeds.
     terminal_tools: [generate_ordinary_image]
     tools: [generate_ordinary_image]
@@ -93,27 +100,18 @@ steps:
   edit_prepare:
     label: Prepare Local Edit
     prompt: |
-      Build the local-edit contract from the user's exact request in
-      {{user_input}}. Locate exactly one authoritative source image from the user
-      upload or the explicitly requested search. When source_image is present,
-      inspect and validate that material using the literal material key
-      "source_image". The runtime copies the exact uploaded source to
-      authoritative_image automatically: never copy, transcribe, reconstruct, or
-      save the resolved temporary path shown in Workflow Material Bindings.
-      Save only edit_contract JSON with four required fields: requested_edit,
-      edit_scope, preserve, do_not. The scope must be the smallest sufficient
-      region. Preserve all unrequested content, identity, framing, lighting,
-      style, geometry, text, and background. Never claim that edit instructions
-      are missing when {{user_input}} contains them, and never guess an ambiguous
-      change. For an uploaded source, call save_artifacts once with exactly one
-      top-level argument, artifacts, containing a single item with key, value,
-      and content_type=json. Do not pass sort_order, caption, or any artifact
-      field as a top-level argument. If no upload exists and the user explicitly requested search,
-      validate the selected direct image URL, then save authoritative_image and
-      edit_contract together in one save_artifacts call. Stop immediately after
-      the successful save.
-    terminal_tools: [save_artifacts]
-    tools: [web_search, image_search_and_validate, validate_image_ref, multimodal]
+      Build the local-edit contract from the user's request in {{user_input}}.
+      Inspect the bound source_image. When an upload exists, do not pass or copy
+      a source path: publish_edit_contract reads the exact current input binding.
+      When no upload exists and search was explicitly requested, search and
+      validate one direct image URL and pass it as source_url.
+      Call publish_edit_contract with requested_edit, edit_scope, preserve and
+      do_not. Use the smallest sufficient edit scope and preserve all unrequested
+      content, identity, framing, lighting, style, geometry and text. The tool
+      validates the source and publishes both authoritative_image and edit_contract.
+      Do not call save_artifacts. Stop after the publisher succeeds.
+    terminal_tools: [publish_edit_contract]
+    tools: [web_search, image_search_and_validate, validate_image_ref, multimodal, publish_edit_contract]
     inputs:
       - {material: route_plan, required: true}
       - {material: source_image, required: false}
@@ -128,9 +126,9 @@ steps:
     rerun_when: The user rejects the candidate and explicitly chooses a same-model retry or another configured model with more precise edit instructions.
     prompt: |
       Call generate_edit_candidate exactly once with no arguments. The package
-      tool reads the authoritative image and complete edit contract, calls Baoyu
-      with Seedream 5.0, verifies the returned local file, and publishes the new
-      edit_candidate atomically without overwriting the source. Do not call
+      tool reads the authoritative image and complete edit contract, calls the
+      globally configured LazyMind image-editor role, verifies the returned local
+      file, and publishes the new edit_candidate atomically without overwriting the source. Do not call
       save_artifacts, retry, switch providers, or synthesize an image URL. Stop
       for visual user approval after the tool succeeds. On rejection, record the
       user's explicit choice and rewind this step.
@@ -174,9 +172,9 @@ steps:
         "caption_source": "provided",
         "caption_review_status": "approved",
         "character_source": "uploaded_image",
-        "requested_count": 5,
-        "allowed_count": 5,
-        "planned_count": 5,
+        "requested_count": 3,
+        "allowed_count": 6,
+        "planned_count": 3,
         "count_status": "compliant",
         "requires_count_decision": false,
         "brief_status": "approved",
@@ -188,19 +186,46 @@ steps:
             "action": "角色面对镜头开心跳起并挥动双手",
             "caption_source": "provided",
             "caption_review_status": "approved"
+          },
+          {
+            "state": "hello",
+            "caption": "嗨~",
+            "communication_purpose": "用于轻松友好地打招呼",
+            "action": "角色面对镜头微笑并挥手",
+            "caption_source": "provided",
+            "caption_review_status": "approved"
+          },
+          {
+            "state": "question",
+            "caption": "嗯？",
+            "communication_purpose": "表达疑问并等待对方解释",
+            "action": "角色歪头并睁大眼睛",
+            "caption_source": "provided",
+            "caption_review_status": "approved"
           }
         ],
         "cost_profile": {}
       }
 
-      Replace the example state list with the complete ordered request; do not
-      copy the example as a one-state result. First copy every caption supplied
+      The example is structural only. Never copy its count, state names, captions,
+      or actions. Replace the example state list with the complete ordered request.
+      Immediately before the terminal tool call, perform this mandatory consistency
+      check: requested_count must equal the exact count in the immutable launch
+      request; len(states) must equal requested_count; and, for a compliant request,
+      planned_count must also equal requested_count. If any check fails, rebuild the
+      complete object before calling the tool. First copy every caption supplied
       by the user directly from {{user_input}} in the same order and language.
       Preserve each supplied caption verbatim: never translate, romanize,
       normalize, paraphrase, or replace it with an English state label. If exact
       captions were present in the launch request, use caption_source=provided and
       caption_review_status=approved at the top level and on every state.
       If delivery mode is missing, ask instead of guessing; never plan both.
+
+      If the immutable launch request explicitly says the generated scheme is
+      already approved, requests direct execution, or says no further
+      confirmation is needed, preserve the generated proposal and pass it to
+      save_validated_meme_brief. The validator owns the deterministic approval
+      normalization; do not second-guess or delay that terminal call.
 
       For dynamic delivery, default caption_mode to caption unless the user
       explicitly requests no text. When the user already supplied exact captions,
@@ -227,7 +252,7 @@ steps:
       treat that as approval of the supplied scheme: use caption_source=provided,
       caption_review_status=approved, and preserve the supplied items verbatim.
 
-      The static limit is 12 and the dynamic limit is 5.
+      The static limit is 12 and the dynamic limit is 6.
       When requested_count exceeds its mode limit, preserve the exact request,
       set planned_count to the limit, count_status=over_limit,
       requires_count_decision=true, and decision_options exactly to reduce the
@@ -261,20 +286,14 @@ steps:
     label: Preflight Media Runtime
     mode: auto
     prompt: |
-      Execute only this deterministic preflight step. Do not inspect workflow
-      history, choose or advance another step, or discuss downstream generation.
-      First require meme_brief_data.brief_status=approved,
-      caption_review_status=approved, count_status=compliant, and
-      requires_count_decision=false. Then immediately call
-      image_media_preflight exactly once with require_image_editing=true,
-      require_video=true only when delivery_mode is dynamic, and
-      require_caption=true unless caption_mode is no_text. When ready is true,
-      immediately save the exact tool result as preflight_report. If the brief,
-      captions, or count are unresolved, or ready is false, stop
-      without calling any paid media tool.
-      Never retry, rewind, or call a workflow control tool.
-    terminal_tools: [save_artifacts]
-    tools: [image_media_preflight]
+      Call run_and_save_meme_preflight exactly once with no arguments. The tool
+      reads the authoritative meme_brief_data, rejects an unapproved or
+      over-limit brief, checks every required media capability, requires
+      ready=true, and publishes preflight_report atomically. Do not call
+      image_media_preflight or save_artifacts separately. Do not return prose,
+      retry, rewind, or call a workflow control tool.
+    terminal_tools: [run_and_save_meme_preflight]
+    tools: [run_and_save_meme_preflight]
     inputs: [{material: meme_brief_data, required: true}]
     outputs: [{material: preflight_report, required: true}]
     acceptance_criteria: preflight_report.ready is true; otherwise the workflow fails closed before paid calls.
@@ -336,14 +355,28 @@ steps:
       props, gestures, or any other expression change unless visibly required by
       the requested eye/mouth state.
       Each call must return one image only; never combine multiple states inside an
-      editor output and do not retry a call.
+      editor output. Retry the same call once only when the provider reports a
+      transient timeout, 429, or 5xx error; never retry a permanent capability or
+      validation error.
 
       Save the four distinct editor outputs to face_anchor_images in the required
       order. Call compose_character_anchor_sheet exactly once with those four
       outputs in the same order and the labels Open eyes / closed mouth, Open eyes
       / open mouth, Closed eyes / closed mouth, Closed eyes / open mouth. Save its
-      returned local_path as face_anchor_grid. Save character_identity_prompt,
-      face_anchor_images, and face_anchor_grid together, then stop. When rerunning
+      returned local_path as face_anchor_grid.
+
+      Call save_artifacts exactly once and only after every required value exists.
+      Its artifacts argument must be a non-empty list containing exactly: one
+      character_identity_prompt item with content_type="text"; four separate
+      face_anchor_images items, each with one local image path and
+      content_type="image", in the required order; and one face_anchor_grid item
+      with its single local_path and content_type="image". Never use
+      content_type="file_list", never put multiple paths in one value, never pass
+      an empty artifacts list, and never add unsupported fields such as sort_order.
+      If the proposed payload violates any of these rules, rebuild it locally
+      before the first tool call rather than attempting a failing save. Save
+      character_identity_prompt, face_anchor_images, and face_anchor_grid together,
+      then stop. When rerunning
       after rejection, apply the user's latest anchor corrections without changing
       accepted identity traits. After saving, the approval handoff must ask in
       Chinese: “锚点图已生成，请查看参考图和2×2嘴眼锚点图。是否继续生成静态表情图？如需调整，请直接告诉我需要修改的锚点要求。”
@@ -444,9 +477,11 @@ steps:
       as the sole source image. Never call image_generator and never render from
       text alone. Preserve the exact coat
       pattern, palette, facial proportions, line style, and body proportions.
-      Save only successful text-free results to hero_no_text in state order. Do
-      not automatically retry and never substitute an input image for a failed
-      output.
+      Immediately after each successful call, save exactly that one result to
+      hero_no_text before generating the next state. Retry the same state once only
+      for a transient timeout, 429, or 5xx error. Never substitute an input image
+      for a failed output and never finish until every planned state has either
+      produced its saved result or returned a permanent error.
     tools: [image_editor]
     terminal_tools: [save_artifacts]
     inputs:
@@ -532,10 +567,11 @@ steps:
       states, fills and highlights, interior details, relative geometry, colors,
       and line style as the canonical source. State differences must be conveyed
       only by body pose, head angle, limb gesture, and minimum scene interaction.
-      Save exactly one successful tool output per
-      state to master_keyframes in state order, with caption
-      <state_id>/key-image. Do not automatically retry and never substitute an
-      input image for a failed output. When rerunning after rejection, regenerate
+      Immediately after each successful call, save exactly that one tool output
+      to master_keyframes in state order, with caption <state_id>/key-image, before
+      generating the next state. Retry the same state once only for a transient
+      timeout, 429, or 5xx error. Never substitute an input image for a failed
+      output. When rerunning after rejection, regenerate
       only the rejected state images and keep accepted state images unchanged.
       After saving, the approval handoff must ask in Chinese: “静态表情图已生成，请在图片制作页查看全部图片。是否继续制作视频？如需调整，请直接告诉我需要重做的表情和修改要求。”
     tools: [image_editor]
@@ -567,8 +603,9 @@ steps:
       clean loop. Animate the action without reinterpreting appearance.
       Do not create or require any additional still images.
       Save the video as canary_video and its state id as canary_state_id. Do not
-      automatically retry or switch models. The complete set of videos is reviewed
-      together at the next human checkpoint.
+      switch models. Retry the same canary once only for a transient timeout, 429,
+      or 5xx error; never retry a permanent capability or validation error. The
+      complete set of videos is reviewed together at the next human checkpoint.
     tools: [video_generator]
     terminal_tools: [save_artifacts]
     inputs:
@@ -584,11 +621,14 @@ steps:
     label: Render Remaining Videos
     mode: human
     rerun_when: The user rejects one or more videos or supplies corrected motion requirements. Target the earliest video-producing step for each rejected state, regenerate only those videos from their approved static key images using the latest user feedback, and preserve accepted videos unchanged.
-    skip_if: {material: skip_remaining_dynamic}
     prompt: |
       Read canary_state_id first. After canary generation, generate exactly one
       video only for every state whose state_id is different from canary_state_id.
       Never submit the canary state again in this step.
+      If there are no remaining states, do not call video_generator. Save no
+      placeholder remaining_videos artifact and stop normally for human approval
+      of the canary as the complete one-state video set. This checkpoint must not be
+      skipped merely because the pack contains one state.
       Start immediately by emitting independent video_generator calls for the next
       batch of at most three states. After that batch returns, save each successful
       result once in state order, then immediately generate the next batch until no
@@ -613,7 +653,9 @@ steps:
       canary. When rerunning after rejection, use the latest user correction and
       regenerate only the rejected states; if the rejected state is the canary,
       rewind video_canary first so its replacement is saved in canary_video.
-      Preserve all accepted videos unchanged. Do not automatically retry failures.
+      Preserve all accepted videos unchanged. Immediately save each successful
+      video before starting the next batch. Retry the same state once only for a
+      transient timeout, 429, or 5xx error.
       Never invent, guess, or save placeholder video paths. Save only successful
       video_generator outputs returned by this task.
       Do not discuss batching choices before calling the tools. After all videos
@@ -626,7 +668,7 @@ steps:
       - {material: canary_video, required: true}
       - {material: canary_state_id, required: true}
       - {material: best_performances, required: true}
-    outputs: [{material: remaining_videos, required: true}]
+    outputs: [{material: remaining_videos, required: false}]
     acceptance_criteria: The canary and every remaining state have exactly one ordered video matching dynamic_plan, and the user explicitly approves the complete video set before GIF conversion can continue.
 
   caption_dynamic:
@@ -645,7 +687,8 @@ steps:
       the current SubAgent workspace inputs directory before calling
       meme_video_to_captioned_gif. Never pass a /static-files/ URL, a signed URL
       with query parameters, or a bare filename. Save only each successful
-      meme_video_to_captioned_gif local_path to gif_output. The runtime rejects raw
+      meme_video_to_captioned_gif local_path to gif_output immediately before
+      processing the next state. The runtime rejects raw
       or uncaptioned GIFs. Never translate, romanize, paraphrase, or omit captions.
     tools: [meme_video_to_captioned_gif]
     terminal_tools: [save_artifacts]
@@ -662,6 +705,24 @@ steps:
     mode: auto
     prompt: |
       Perform one whole-pack review of the available static_final or gif_output.
+      Use the canonical_character_image materialized in the current SubAgent
+      workspace inputs directory as the identity reference. Resolve and inspect
+      its real absolute local file path; never pass an artifact key, signed URL,
+      or bare material name to a multimodal tool.
+      Inspect the canonical identity reference exactly once, then inspect each
+      delivered static_final or gif_output item exactly once in original state
+      order. Reuse every successful inspection result for the final review and
+      never re-inspect an image merely to ask a stricter or differently worded
+      question. A repeated call is allowed only when the preceding call for that
+      same image failed with a transient provider error.
+      All required inputs are already materialized in the current workspace.
+      Never call get_artifact, find_artifact, or any other artifact inventory
+      helper in this step. After the fixed inspection set is complete, call
+      save_artifacts exactly once with pack_review and stop.
+      Inspect inputs strictly one image at a time: wait for each multimodal call
+      to finish before starting the next one. If a call fails with a transient
+      provider 5xx error, retry that same image up to two times before recording
+      it as an inspection failure. Never fan out concurrent multimodal calls.
       Check identity, state readability, action uniqueness, prop/environment
       causality, caption accuracy and safety, and obvious media defects. Save
       pack_review JSON with overall_status, passed_state_ids, and failed_units.
@@ -674,6 +735,7 @@ steps:
     tools: [multimodal]
     terminal_tools: [save_artifacts]
     inputs:
+      - {material: canonical_character_image, required: true}
       - {material: static_final, required: false}
       - {material: gif_output, required: false}
       - {material: meme_brief_data, required: true}

@@ -82,6 +82,131 @@ beforeEach(async () => {
 afterEach(cleanup);
 
 describe('shared workflow compact layout', () => {
+  it('renders ordered production media as a readonly grid without an add control', async () => {
+    fixture.ui = { name: 'AI 图片生产 V2', tabs: [{
+      id: 'production', step_id: 'render_static', label: '图片制作', layout: 'grid', slots: [{
+        id: 'hero_no_text', label: '无文字主画面', type: 'image', cardinality: 'list', ordered: true,
+      }],
+    }] };
+    fixture.session = {
+      ...fixture.session,
+      workflow_id: 'image-workflow-v2',
+      status: 'waiting',
+      current_step_id: 'render_static',
+      slots: [0].map((list_index) => ({
+        slot_id: 'hero_no_text', slot: 'hero_no_text', step_id: 'render_static', selected: true,
+        revision: 1, list_index, sort_order: list_index + 1, artifact_value: { path: `hero-${list_index}.png` },
+      })) as WorkflowSession['slots'],
+    };
+
+    const view = render(<WorkflowPanel conversationId='layout-test' />);
+
+    await waitFor(() => expect(view.container.querySelector('.workflow-panel__image-list--grid')).toBeInTheDocument());
+    expect(screen.getAllByText('正文 hero_no_text')).toHaveLength(1);
+    fixture.session = {
+      ...fixture.session,
+      slots: [0, 1].map((list_index) => ({
+        slot_id: 'hero_no_text', slot: 'hero_no_text', step_id: 'render_static', selected: true,
+        revision: 1, list_index, sort_order: list_index + 1, artifact_value: { path: `hero-${list_index}.png` },
+      })) as WorkflowSession['slots'],
+    };
+    view.rerender(<WorkflowPanel conversationId='layout-test' />);
+    await waitFor(() => expect(screen.getAllByText('正文 hero_no_text')).toHaveLength(2));
+    expect(view.container.querySelector('.workflow-panel__image-list')).not.toHaveClass('workflow-panel__image-list--sortable');
+    expect(screen.queryByRole('button', { name: 'chat.workflowAddAttachment' })).not.toBeInTheDocument();
+  });
+
+  it('removes the individual anchor list from old Image Workflow V2 UI snapshots', async () => {
+    fixture.ui = { name: 'AI 图片生产 V2', tabs: [{
+      id: 'character', step_id: 'build_identity_anchors', label: '角色', layout: 'grid', slots: [
+        { id: 'canonical_character_image', label: '标准角色', type: 'image' },
+        { id: 'character_identity_prompt', label: '角色提示词', type: 'text' },
+        { id: 'face_anchor_images', label: '嘴眼锚定图', type: 'image', cardinality: 'list', ordered: true },
+        { id: 'face_anchor_grid', label: '2×2 嘴眼锚定图', type: 'image' },
+      ],
+    }] };
+    fixture.session = {
+      ...fixture.session,
+      workflow_id: 'image-workflow-v2',
+      status: 'waiting',
+      current_step_id: 'build_identity_anchors',
+      slots: [
+        { slot_id: 'canonical_character_image', slot: 'canonical_character_image', step_id: 'build_identity_anchors', selected: true, revision: 1, artifact_value: { path: 'character.png' } },
+        { slot_id: 'character_identity_prompt', slot: 'character_identity_prompt', step_id: 'build_identity_anchors', selected: true, revision: 1, artifact_value: { text: 'identity' } },
+        { slot_id: 'face_anchor_images', slot: 'face_anchor_images', step_id: 'build_identity_anchors', selected: true, revision: 1, list_index: 0, artifact_value: { path: 'anchor.png' } },
+        { slot_id: 'face_anchor_grid', slot: 'face_anchor_grid', step_id: 'build_identity_anchors', selected: true, revision: 1, artifact_value: { path: 'grid.png' } },
+      ] as WorkflowSession['slots'],
+    };
+
+    render(<WorkflowPanel conversationId='layout-test' />);
+
+    await waitFor(() => expect(screen.getByText('正文 canonical_character_image')).toBeVisible());
+    expect(screen.getByText('正文 character_identity_prompt')).toBeVisible();
+    expect(screen.getByText('正文 face_anchor_grid')).toBeVisible();
+    expect(screen.queryByText('正文 face_anchor_images')).not.toBeInTheDocument();
+  });
+
+  it('shows final delivery only on the result tab after Image Workflow V2 completes', async () => {
+    fixture.ui = { name: 'AI 图片生产 V2', tabs: [
+      { id: 'plan', label: '方案', layout: 'list', slots: [
+        { id: 'route_plan', label: '任务方案', type: 'json' },
+      ] },
+      { id: 'result', label: '最终结果', layout: 'list', slots: [
+        { id: 'ordinary_output', label: '普通生图结果', type: 'image' },
+      ] },
+    ] };
+    fixture.session = {
+      ...fixture.session,
+      workflow_id: 'image-workflow-v2',
+      status: 'completed',
+      slots: [
+        { slot_id: 'route_plan', slot: 'route_plan', selected: true, revision: 1,
+          artifact_value: { data: { route: 'ordinary' } } },
+        { slot_id: 'ordinary_output', slot: 'ordinary_output', selected: true, revision: 1,
+          artifact_value: { path: 'final.png' } },
+      ] as WorkflowSession['slots'],
+    };
+
+    render(<WorkflowPanel conversationId='layout-test' />);
+
+    fireEvent.click(await screen.findByRole('tab', { name: '最终结果' }));
+    expect(screen.getByRole('heading', { name: '最终产物' })).toBeVisible();
+    expect(within(screen.getByRole('tabpanel', { name: '最终结果' }))
+      .getByRole('heading', { name: '最终产物' })).toBeVisible();
+    expect(screen.getAllByText('正文 ordinary_output')).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole('tab', { name: '方案' }));
+    expect(screen.queryByRole('heading', { name: '最终产物' })).not.toBeInTheDocument();
+    expect(screen.getByText('正文 route_plan')).toBeVisible();
+  });
+
+  it('keeps candidate image previews visible before Image Workflow V2 completes', async () => {
+    fixture.ui = { name: 'AI 图片生产 V2', tabs: [{
+      id: 'result', step_id: 'edit_candidate', label: '最终结果', layout: 'list', slots: [
+        { id: 'edit_candidate', label: '编辑候选图', type: 'image' },
+        { id: 'pack_review', label: 'Final Pack Review', type: 'json' },
+      ],
+    }] };
+    fixture.session = {
+      ...fixture.session,
+      workflow_id: 'image-workflow-v2',
+      status: 'waiting',
+      current_step_id: 'edit_candidate',
+      slots: [
+        { slot_id: 'edit_candidate', slot: 'edit_candidate', selected: true, revision: 1,
+          artifact_value: { path: 'candidate.png' } },
+        { slot_id: 'pack_review', slot: 'pack_review', selected: true, revision: 1,
+          artifact_value: { data: { failed_units: ['candidate'] } } },
+      ] as WorkflowSession['slots'],
+    };
+
+    render(<WorkflowPanel conversationId='layout-test' />);
+
+    await waitFor(() => expect(screen.getByText('正文 edit_candidate')).toBeVisible());
+    expect(screen.queryByText('正文 pack_review')).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: '最终产物' })).not.toBeInTheDocument();
+  });
+
   it.each(['native', 'codex'] as const)('follows steps until the user selects a tab on %s', async surface => {
     const props = surface === 'codex' ? { embedded: true, externalPresentation: { activities: {}, compactEmptyStates: false } } : {};
     fixture.session = { ...fixture.session, status: 'active', current_step_id: 'prepare' };

@@ -48,6 +48,7 @@ type rawStep struct {
 	Outputs           any
 	SkipIf            any
 	Prompt            string
+	RerunWhen         string `yaml:"rerun_when"`
 	Acceptance        any
 	Capabilities      any
 	Tools             any
@@ -146,6 +147,7 @@ func Compile(workflowYAML, stateYAML, scenario string, profile Profile) CompileR
 			result.Diagnostics = append(result.Diagnostics, nodeDiag("E_WORKFLOW_STEP_MISSING", "error", "workflow.yaml.steps", id, "state step is not declared in workflow.yaml"))
 		}
 		node := CompiledNode{ID: id, Label: step.Label, Route: step.Route, Prompt: step.Prompt,
+			RerunWhen:  strings.TrimSpace(step.RerunWhen),
 			Acceptance: stringList(step.Acceptance), Capabilities: stringList(step.Capabilities),
 			LegacyTools: stringList(step.Tools), TerminalTools: stringList(step.TerminalTools),
 			ToolsOnly: step.ToolsOnly, TerminalToolsOnly: step.TerminalToolsOnly,
@@ -612,7 +614,7 @@ func decodeRawStep(id string, raw map[string]any) rawStep {
 	return rawStep{ID: id, Label: scalar(raw["label"]), Route: scalar(raw["route"]),
 		Inputs: raw["inputs"], InputExpression: raw["input_expression"], OptionalInputs: raw["optional_inputs"],
 		Outputs: raw["outputs"], SkipIf: firstNonNil(raw["skip_if"], raw["skipif"]),
-		Prompt: scalar(raw["prompt"]), Acceptance: raw["acceptance_criteria"],
+		Prompt: scalar(raw["prompt"]), RerunWhen: scalar(raw["rerun_when"]), Acceptance: raw["acceptance_criteria"],
 		Capabilities: raw["capabilities"], Tools: raw["tools"], TerminalTools: raw["terminal_tools"],
 		ToolsOnly: boolValue(raw["tools_only"]), TerminalToolsOnly: boolValue(raw["terminal_tools_only"]),
 		StreamHeartbeat: boolValue(raw["stream_heartbeat"]), Mode: scalar(raw["mode"])}
