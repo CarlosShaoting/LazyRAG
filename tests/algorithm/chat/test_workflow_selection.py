@@ -816,6 +816,12 @@ def test_active_workflow_forwards_current_edit_request_and_focus_to_step():
     assert 'sort order 2' in command.runtime_instruction
 
 
+def _ppt_completed_action_policy():
+    from pathlib import Path
+    import yaml
+    return yaml.safe_load(Path('workflows/ppt-workflow/workflow.yaml').read_text())['runtime']
+
+
 def test_completed_native_deck_exposes_scoped_editor_despite_old_rerun_policy():
     toolkit = MagicMock()
     toolkit.list_artifacts.return_value = {'artifacts': [
@@ -836,7 +842,7 @@ def test_completed_native_deck_exposes_scoped_editor_despite_old_rerun_policy():
             conversation_id='conversation-1', current_query='修改日期并写每页讲稿',
             workflow_catalog=[{'workflow_ref': 'builtin:deck-workflow',
                                'workflow_id': 'deck-workflow',
-                               'runtime': {'completed_edit_step': 'generate_ppt'}}],
+                               'runtime': _ppt_completed_action_policy()}],
         )
         # This is in workflow_tools, which survive ChatService's bound isolation.
         editor = _tool(contribution, 'edit_current_pptx')
@@ -858,13 +864,14 @@ def test_completed_native_deck_exposes_scoped_editor_despite_old_rerun_policy():
 
 
 def test_native_editor_rejects_stale_or_ambiguous_selection():
-    from lazymind.chat.workflow.workflow_manager import _native_pptx_editor
+    from lazymind.chat.workflow.completed_actions import load_completed_actions
     toolkit = MagicMock()
     for rows in ([], [{'slot': 'native_pptx', 'validity': 'stale'}],
                  [{'slot': 'native_pptx', 'selected': False}],
                  [{'slot': 'native_pptx'}, {'slot': 'native_pptx'}]):
         toolkit.list_artifacts.return_value = {'artifacts': rows}
-        assert _native_pptx_editor(toolkit, 'session-1') is None
+        assert load_completed_actions(toolkit, 'session-1', _ppt_completed_action_policy(),
+                                      register=lambda f: f) == []
 
 
 def test_async_workflow_initialization_allows_core_callback_and_preserves_session():
@@ -901,6 +908,9 @@ def test_async_workflow_initialization_allows_core_callback_and_preserves_sessio
             contribution = await asyncio.wait_for(resolve_workflow_injection_async(
                 {'session_id': 'session-1', 'workflow_id': 'deck-workflow'},
                 conversation_id='conversation-1', current_query='修改日期',
+                workflow_catalog=[{'workflow_ref': 'builtin:deck-workflow',
+                                   'workflow_id': 'deck-workflow',
+                                   'runtime': _ppt_completed_action_policy()}],
             ), timeout=3)
             assert _tool(contribution, 'edit_current_pptx')
             assert callbacks == ['inspected']
@@ -1269,3 +1279,28 @@ def test_rerun_turn_preserves_session_intent_for_downstream_steps(query, handoff
             assert 'result' in command.runtime_instruction
             if is_rerun:
                 assert query in command.runtime_instruction
+
+
+def test_completed_actions_are_opt_in_and_domain_neutral():
+    from lazymind.chat.workflow.completed_actions import load_completed_actions
+    toolkit = MagicMock()
+    assert load_completed_actions(toolkit, 'session-1', {}, register=lambda f: f) == []
+    toolkit.list_artifacts.assert_not_called()
+    toolkit.list_artifacts.return_value = {'artifacts': [
+        {'slot': 'invoice', 'selected': True, 'validity': 'effective'},
+    ]}
+    policy = {'completed_actions': [{
+        'name': 'correct_invoice', 'requires_slot': 'invoice',
+        'description': 'Correct the selected invoice.', 'agent_type': 'invoice_edit',
+        'title': 'Invoice edit', 'routing': 'Use correct_invoice to correct an invoice.',
+        'session_params': ['source_session'], 'params': {'tools_only': True},
+        'tools': ['inspect_invoice', 'publish_invoice'], 'output_slots': ['receipt'],
+    }]}
+    actions = load_completed_actions(toolkit, 'session-1', policy, register=lambda f: f)
+    assert len(actions) == 1
+    assert actions[0].tool.__name__ == 'correct_invoice'
+    with patch('lazymind.chat.engine.tools.subagent_chat_tools.create_subagent') as create:
+        actions[0].tool('Correct the billing address')
+        assert create.call_args.kwargs['params']['source_session'] == 'session-1'
+        assert create.call_args.kwargs['tools'] == ['inspect_invoice', 'publish_invoice']
+    assert 'source_session' not in policy['completed_actions'][0]['params']

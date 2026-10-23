@@ -18,6 +18,7 @@ import lazyllm
 from lazyllm.tools import fc_register
 from lazyllm.tools.agent.tool_runtime import HostFileAccess, _get_tool_runtime_metadata
 
+from lazymind.chat.workflow.completed_actions import load_completed_actions
 from lazymind.chat.engine.tools.intent_writer import enable_workflow_intent_scopes
 from lazymind.chat.engine.tools.artifact_output import artifact_output
 from lazymind.workflow_sdk import AdvanceRequest, StepCommand, WorkflowClient, WorkflowClientError
@@ -261,66 +262,6 @@ def _artifact_by_handle(toolkit: HostWorkflowToolkit, session_id: str,
             ]},
         )
     return matches[0]
-
-
-def _native_pptx_editor(toolkit: HostWorkflowToolkit, session_id: str):
-    """Expose a scoped CAS editor, never arbitrary file access, for a selected deck."""
-    rows = toolkit.list_artifacts(session_id).get('artifacts') or []
-    matches = [row for row in rows if isinstance(row, dict)
-               and row.get('slot') == 'native_pptx'
-               and row.get('selected', True) and not row.get('deleted')
-               and row.get('validity', 'effective') == 'effective']
-    if len(matches) != 1:
-        return None
-
-    @_register_host_file('NONE' if _trusted_workflow_toolkit(toolkit) else 'UNDECLARED')
-    def edit_current_pptx(instruction: str) -> Dict[str, Any]:
-        """Delegate current native PPTX edits to a dedicated SubAgent.
-
-        Pass the user's complete edit instruction, including preservation constraints.
-        The SubAgent inspects current content, writes text/notes and publishes a new
-        artifact revision. Do not write speeches or edit files in main Chat, and do
-        not rewind any Workflow step. Report the task result and stop.
-        """
-        if not instruction.strip():
-            raise ValueError('A complete edit instruction is required')
-        from lazymind.chat.engine.tools.subagent_chat_tools import create_subagent
-        return create_subagent(
-            agent_type='pptx_edit', title='PPTX 内容、字体与讲稿编辑',
-            objective=instruction,
-            params={
-                '_pptx_edit_session_id': session_id,
-                'session_id': session_id,
-                'tools_only': True,
-                'terminal_tools': ['publish_pptx_edit'],
-                'output_slot_types': {'pptx_edit_receipt': 'json'},
-                'instruction': (
-                    'Edit the selected native PPTX only. Inspect it first. Reuse saved '
-                    'material_summary and requirement_analysis when needed; never search '
-                    'or regenerate. Preserve all unspecified slide content and formatting. '
-                    'For font requests pass target_font to publish_pptx_edit: omit pages for '
-                    'the entire deck, pages=[1] for the first slide, exact inspected slot_ids '
-                    'for a specific part or custom title. Never rewrite text to change fonts. '
-                    'For size, bold, italic, underline or text color use style_edits on '
-                    'publish_pptx_edit: each object has pages/slot_ids/text_scope and '
-                    'font_size_pt/bold/italic/underline/text_color. Omitted fields stay '
-                    'unchanged, false cancels that style. Use multiple entries for different '
-                    'ranges, publish once. Sizes are pt. Report overflow errors instead of '
-                    'silently shrinking fonts or resizing boxes. '
-                    'Only set allow_font_download when the user explicitly requests download. '
-                    'Report font_notice and any unmodified_complex_text_parts from the result; '
-                    'never claim chart/SmartArt text was changed when it was not. '
-                    'Write requested detailed page-specific speeches in speaker notes, '
-                    'not visible slide text; do not invent facts. For every-page notes '
-                    'set require_all_notes=true. Publish exactly once then stop. If the '
-                    'requested edit is unsupported or overflows, report the limitation.'
-                ),
-            },
-            output_slots=['pptx_edit_receipt'],
-            tools=['inspect_current_pptx', 'read_pptx_edit_material', 'publish_pptx_edit'],
-        )
-
-    return edit_current_pptx
 
 
 def _compact_model_frontier(result: Dict[str, Any]) -> Dict[str, Any]:
@@ -1757,11 +1698,13 @@ def resolve_workflow_injection(
             if isinstance(projection.get('projection'), dict) else {}
         )
         completed_followup = ''
-        native_editor = None
+        completed_actions = []
         if session_projection.get('completed'):
-            native_editor = _native_pptx_editor(toolkit, session_id)
-            if native_editor is not None:
-                tools.append(native_editor)
+            completed_actions = load_completed_actions(
+                toolkit, session_id, runtime_policy,
+                register=_register_host_file('NONE' if _trusted_workflow_toolkit(toolkit) else 'UNDECLARED'),
+            )
+            tools.extend(action.tool for action in completed_actions)
             completed_followup = (
                 'A completed Session is not immutable. When the current user query asks to '
                 'revise, delete, fix, or regenerate an existing Workflow output, do not '
@@ -1803,18 +1746,12 @@ def resolve_workflow_injection(
                         'owns the existing artifacts and publishes their new revisions; never '
                         'paste replacement content into chat as a substitute. '
                     )
-        if native_editor is not None:
+        if completed_actions:
             completed_followup = (
-                'The selected native_pptx supports direct revision editing. For date, title, '
-                'slide text, typography (font/size/bold/italic/underline/text color on whole deck/page/selected text), or speaker-note changes, including every-page detailed speeches, '
-                'MUST delegate to edit_current_pptx with the complete user instruction. '
-                'Its dedicated SubAgent performs inspection, writing and publication; '
-                'main Chat must not write the speeches or edit the file itself. Do NOT call '
-                'advance_step, rewind, generate_ppt or another Workflow for these edits. '
-                'Publish once and stop; the Session remains completed. If an edit cannot fit '
-                'or is unsupported, explain the limitation instead of regenerating. '
-                'Only an explicit user request to regenerate/restructure the deck uses '
-                'the following step routing rules:\n' + completed_followup
+                'This Workflow declares scoped completed-output actions. Their declared '
+                'routing takes precedence over fallback step routing:\n'
+                + '\n'.join(action.routing for action in completed_actions)
+                + '\n' + completed_followup
             )
         runtime_context = (
             '## Workflow Runtime [AUTHORITATIVE]\n'
@@ -1847,9 +1784,9 @@ def resolve_workflow_injection(
             + completed_followup
             + '\n'
             + 'Artifact-mutation guard: when the user asks to change an Artifact already '
-            + ('owned by this Workflow, direct text/notes edits through edit_current_pptx '
-               'are an authorized exception to this guard. For other changes to artifacts '
-               if native_editor is not None else '')
+            + ('owned by this Workflow, the declared scoped completed-output actions '
+               'are an authorized exception to this guard within their declared routing. '
+               'For other changes to artifacts ' if completed_actions else '')
             + 'owned by this active Workflow, including inserting, replacing, moving, or '
             + 'deleting an image in the current document, rerun the earliest owning Workflow '
             + 'step. Do not bypass the Workflow with generic file, image, artifact, or SubAgent '
@@ -1861,7 +1798,7 @@ def resolve_workflow_injection(
             # Ready frontier must be returned to the same ChatAgent turn so a
             # user-requested continuous run can keep advancing.  Only the
             # explicit hand-off variant transfers ownership and ends the turn.
-            tools, ['advance_step_and_hand_off', *(['edit_current_pptx'] if native_editor is not None else [])],
+            tools, ['advance_step_and_hand_off', *[action.tool.__name__ for action in completed_actions]],
             patch, runtime_context, runtime_policy, bind_successor,
         )
 
