@@ -1727,11 +1727,14 @@ async def run_subagent_stream(
             return
 
         summary = _result_summary(final_result, required_output_keys)
-        # Uncontracted ordinary tasks and final reports of trouble need review.
-        # Otherwise satisfied contracts, including Workflow rules, are sufficient.
+        # Uncontracted ordinary tasks still require model-based completion review.
+        # TODO(completion-review): Restore keyword-triggered review only after handling
+        # negation/context. "不视为检索失败" matched "失败" and falsely failed a
+        # collect_materials task whose required material_summary was already saved.
+        # Keep required-artifact validation and model verdict handling unchanged.
         if (
             (effective_agent_type != 'workflow_step' and not required_output_keys)
-            or _COMPLETION_CONCERN.search(str(final_result or ''))
+            # or _COMPLETION_CONCERN.search(str(final_result or ''))
         ):
             is_ok, summary, failure_phase = await _evaluate_completion_async(
                 llm=llm,
