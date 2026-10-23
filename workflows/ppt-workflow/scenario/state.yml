@@ -885,15 +885,19 @@ steps:
 
       {{runtime_instruction}}
 
-      First call ppt_find_deck, then call ppt_publish_outline once with that
-      deck_dir. For a new workflow it splits the current approved Markdown into
+      Call ppt_publish_outline exactly once with {} (omit deck_dir). The tool
+      reads the deck bound by build_outline automatically. Do not search for a
+      deck, invent task_ref, or pass a topic/title as a path. If the tool reports
+      a missing bound deck, stop and report that build_outline must be resumed;
+      repeated searches cannot create it.
+      For a new workflow it splits the current approved Markdown into
       aligned editable slide_outline items without generating internal JSON.
       Existing structured decks remain supported. Treat those items as per-page PPT HTML
       generation prompts, not as the deck-level outline.
 
       Incremental insertion: when the current request added one whole slide at
       position N, call
-        ppt_publish_outline(deck_dir, pages=[N], insert_before=N)
+        ppt_publish_outline(pages=[N], insert_before=N)
       so only one new composite page-prompt card is inserted. Never republish or
       rewrite the prompts after N. The prompt body is position-independent and
       must not contain a page number; its visual position is owned by sort_order.
@@ -901,7 +905,6 @@ steps:
       Stop immediately after publishing. Do not call ppt_build_outline,
       ppt_generate_pages, page-html, or save_artifacts.
     tools:
-      - ppt_find_deck
       - ppt_publish_outline
     inputs:
       - material: deck_outline

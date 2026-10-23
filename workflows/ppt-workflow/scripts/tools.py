@@ -6330,6 +6330,9 @@ def ppt_init_deck(
 def ppt_find_deck() -> dict:
     """Find the newest deck of this conversation, including earlier step tasks.
 
+    This tool takes NO arguments: call with {}. Never pass task_ref, a topic,
+    a task title, or a deck ID. Do not retry argument errors with different names.
+
     Call this at the start of any edit of an existing deck. Decks are shared
     across the conversation's step tasks, so a deck built by an earlier
     generate_ppt run is found here.
@@ -7563,7 +7566,7 @@ def ppt_delete_page(deck_dir: str, page: int) -> dict:
 
 
 def ppt_publish_outline(
-    deck_dir: str,
+    deck_dir: Optional[str] = None,
     pages: Optional[Union[str, list, int]] = None,
     insert_before: Optional[int] = None,
 ) -> dict:
@@ -7574,7 +7577,8 @@ def ppt_publish_outline(
     human edits in the Outline tab — when building HTML.
 
     Args:
-        deck_dir (str): Absolute deck directory from ppt_init_deck / ppt_find_deck.
+        deck_dir (str): Optional absolute deck directory. Omit to use the deck
+            already bound to this workflow; no find-deck call is needed.
         pages: Optional 1-based page filter. Omit = all outline pages.
         insert_before: For an incremental whole-slide insertion, the one page
             position to insert into the UI list while preserving later items.
@@ -7583,7 +7587,16 @@ def ppt_publish_outline(
         published_count and per-page titles (no full brief bodies).
     """
     try:
-        deck = _resolve_deck_dir(deck_dir)
+        if _coerce_str(deck_dir).strip():
+            deck = _resolve_deck_dir(deck_dir)
+        else:
+            deck = _bound_workflow_deck()
+            if deck is None:
+                return _tool_error(
+                    'ppt_publish_outline',
+                    'No deck is bound to this workflow. Resume build_outline once; '
+                    'do not search by task_ref or repeatedly retry this step.',
+                )
     except FileNotFoundError as exc:
         return _tool_error('ppt_publish_outline', str(exc))
     try:

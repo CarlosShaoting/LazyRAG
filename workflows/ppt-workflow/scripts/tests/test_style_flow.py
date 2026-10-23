@@ -366,6 +366,26 @@ class StyleFlowCombinationTest(unittest.TestCase):
                 pack = json.loads((deck / 'task_pack.json').read_text())
                 self.assertEqual(pack['params']['style_flow'], 'auto')
 
+    def test_publish_outline_uses_bound_deck_without_find(self):
+        with tempfile.TemporaryDirectory() as temp:
+            deck = Path(temp)
+            (deck / 'outline_draft.md').write_text('## 春节习俗\n贴春联')
+            with mock.patch.object(TOOLS, '_bound_workflow_deck', return_value=deck), \
+                 mock.patch.object(TOOLS, 'ppt_find_deck') as find, \
+                 mock.patch.object(TOOLS, '_publish_text_page_briefs',
+                                   return_value={'published_count': 1}) as publish:
+                result = TOOLS.ppt_publish_outline()
+            self.assertEqual(result['published_count'], 1)
+            publish.assert_called_once_with(deck, None)
+            find.assert_not_called()
+
+    def test_publish_outline_reports_missing_binding_without_search(self):
+        with mock.patch.object(TOOLS, '_bound_workflow_deck', return_value=None), \
+             mock.patch.object(TOOLS, 'ppt_find_deck') as find:
+            with self.assertRaisesRegex(RuntimeError, 'No deck is bound'):
+                TOOLS.ppt_publish_outline()
+            find.assert_not_called()
+
     def test_legacy_standard_without_samples_recovers_as_auto(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             deck = Path(temp)
