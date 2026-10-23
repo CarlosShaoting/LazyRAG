@@ -1,223 +1,213 @@
-# 生图 V2：全局媒体模型适配与稳定性修复说明
+# 生图 V2：全局模型适配、交互补全与交付体验修复说明
 
-> 文档状态：PR 提交前合并审查版
+> 文档状态：PR #9 提交前合并审查版
 >
-> 目标仓库：`CarlosShaoting/LazyRAG`
->
-> 目标分支：`workflow_dev`
+> 目标仓库/分支：`CarlosShaoting/LazyRAG:workflow_dev`
 >
 > 对比基线：`5b586402a21a638b29f37bec21ed5b0f0491466d`
 >
 > 关联历史 PR：`CarlosShaoting/LazyRAG#7`
 >
-> 审查日期：2026-10-20
+> 审查日期：2026-10-23
 
 ## 1. 一分钟结论
 
-这是一组针对现有 `image-workflow-v2` 的修复，不新增第四条业务分支，也不改变用户的工作流入口。
+本次是在 PR #7 引入的 `image-workflow-v2` 基础上做闭环修复，不新增业务入口，也不改变三条既有路线：普通生图、图片局部编辑、表情包制作。
 
-本 PR 主要解决两类问题：
+改动集中在四个目标：
 
-1. 修复工作流在图片绑定、静态表情包批量处理、产物发布和子步骤推理配置上的不稳定行为；
-2. 移除普通生图和图片局部编辑对 Seedream 5.0、火山方舟 Key 及工作流级环境变量的硬编码，改为复用 LazyMind 已配置的全局媒体模型。
+1. 普通生图和局部编辑不再写死 Seedream/火山 Key，统一使用 LazyMind 已配置的全局媒体模型；
+2. 将方案、角色、图片制作阶段的人工确认真正接入执行链路，支持用户提出修改后定向重跑；
+3. 静态和动态表情包按单张产物逐步发布，并校验计划数量，避免“首张成功即整批完成”；
+4. 重整 WorkflowPanel：去除重复预览，保留历史节点内容，增加清晰的最终产物区、单项下载与整包下载。
 
-合并后，用户只需在 LazyMind 模型设置中配置 `image_generator` / `image_editor`；工作流不再自行指定 Provider、模型名称或读取 `ARK_API_KEY`。表情包、普通生图和局部编辑三条分支因此遵循同一套全局模型配置原则。
+用户只需在 LazyMind 中配置模型，不需要为工作流额外配置环境变量。对话模型也不限定为 Doubao；工作流会沿用当前会话选择的可用模型身份，并由服务端从模型配置中解析凭据。
 
 ## 2. 问题背景
 
-历史 PR #7 引入了生图 V2 工作流，但普通生图和局部编辑通过工作流包内的 `baoyu.py` 固定调用 Seedream 5.0。实际使用中存在两个直接后果：
+PR #7 之后的实际运行暴露出以下问题：
 
-- 用户即使已经在 LazyMind 中配置了可用的图片模型，仍可能被要求额外设置火山方舟环境变量；
-- 工作流不能随全局媒体模型切换 Provider，与表情包分支及 LazyMind 的统一模型配置方式不一致。
+- 普通生图和局部编辑固定调用 Seedream 5.0，并要求工作流读取 `ARK_API_KEY`；
+- 后续“继续”或审批消息可能覆盖最初的用户需求；
+- 人工确认节点存在于 UI/声明中，但没有完整控制实际执行与修改重跑；
+- 表情包批次可能只处理部分状态，或等全部结束后才一次性显示；
+- 动态分支未指定数量时只计划 3 张，且单批上限与产品预期不一致；
+- 角色页重复展示嘴眼锚定图，图片制作页依赖横向滚动，最终结果区会遮挡部分产物；
+- 工作流完成后切回前序节点仍显示最终产物；
+- 面向用户暴露了 `failure_units`、整包审查提示和“展示源码”等内部信息；
+- 上传图在 binding、`/static-files/` URL 与宿主机路径之间存在解析边界；
+- 当前会话模型身份未稳定传入工作流，可能回退到不可用默认模型。
 
-此外，实际任务运行还暴露出一组会造成“进度停滞、部分结果被当成完成、源图解析失败或后续步骤拿不到产物”的稳定性边界：
+## 3. 执行链路修复
 
-- 上传图片在 Workflow binding、`/static-files/` URL 和宿主机路径之间解析不一致；
-- JPEG 元数据较大时，固定读取前 8 KiB 可能误判有效图片；
-- 静态表情包的渲染和字幕步骤可能在只处理第一项后提前结束；
-- 模型可直接写入部分关键 artifact slot，导致状态与真实媒体产物不完全一致；
-- 子工作流没有继承当前对话的推理深度；
-- 局部编辑默认输出为固定方图，不能可靠保留源图比例；
-- 用户在后续补充的比例要求，尤其“竖版、横版、方图”等自然语言比例，可能未覆盖初始要求。
+### 3.1 全局媒体模型适配
 
-## 3. 改动一：稳定生图 V2 的执行链路
+`workflows/image-workflow-v2/scripts/media.py` 通过请求作用域解析媒体角色：
 
-### 3.1 统一图片输入解析
+| 场景 | 使用角色 |
+| --- | --- |
+| 无参考图的普通生图 | `image_generator` |
+| 带参考图的普通生图 | `image_editor` |
+| 图片局部编辑 | `image_editor` |
+| 表情包图片/视频 | 既有全局图片与视频角色 |
+
+工作流不再指定 Provider、模型名或读取工作流专属 API Key。缺少所需角色时返回明确的 `MEDIA_CAPABILITY_DEPENDENCY_MISSING`，不会静默跨 Provider 回退，也不会生成占位结果。
+
+### 3.2 当前会话模型身份透传
+
+启动 Workflow 时只保存当前会话模型的非敏感身份（`source`、`model` 等）；实际执行时由 Core 按任务所有者重新读取模型配置和凭据。密钥不会写入任务参数或 artifact。
+
+同 Provider 约束避免把一个 Provider 的凭据误用于另一个 Provider。`thinking_depth` 与原有 `enable_tool_retrieval` 继续向子步骤透传。
+
+### 3.3 图片输入与比例边界
 
 - 优先解析带类型的 Workflow 图片/视频 binding，再进入通用宿主机路径解析；
-- 对绝对 `/static-files/` URL，优先映射回共享上传目录中的真实本地文件；
-- 局部编辑在调用模型前验证“最终解析并暂存的源图”，而不是只验证外层传输引用；
-- 图片探测改为在限定上限内增量读取，避免因为 JPEG 的 EXIF/ICC 等元数据较大而把有效图片判为无效。
+- `/static-files/` URL 映射回共享上传目录中的权威文件；
+- 局部编辑验证最终解析和暂存后的源图；
+- 图片探测采用有上限的增量读取，兼容较大的 EXIF/ICC 元数据；
+- 未指定比例时保留源图真实比例及 EXIF orientation；
+- 后续输入中的数值比例或“竖版/横版/方图”等自然语言比例优先于启动请求。
 
-这部分改动保证上传图从首页进入工作流后，普通参考生图、局部编辑和表情包分支看到的是同一份可读取源文件。
+自然语言映射为：竖版/portrait → `9:16`，横版/landscape → `16:9`，方图/square → `1:1`。
 
-### 3.2 关键状态改为确定性发布
+### 3.4 请求合并与失败重试
 
-工作流路由、普通生图准备结果和局部编辑契约由工作流包内的 publisher 工具原子发布；模型不再直接写这些受保护的 artifact slot。
+- 首次启动请求作为基础需求；
+- “继续、确认、下一步、重试”等控制消息不覆盖原需求；
+- 用户的真实修改意见作为 update 合并，并覆盖冲突的旧要求；
+- 模型或媒体服务的短暂失败按受控策略重试，不把部分成功误报为任务完成。
 
-这样可以保证：
+## 4. 人机确认与定向重跑
 
-- 路由结果与 `state.yml` / `workflow.yaml` 声明一致；
-- 局部编辑的 `requested_edit`、`edit_scope`、`preserve` 和 `do_not` 同步提交；
-- publisher 失败时不会留下“部分成功”的工作流状态；
-- 后续节点读取到的是完整、结构化且经过验证的输入。
+三条路线统一使用原有四阶段交互：
 
-### 3.3 防止静态表情包批次提前结束
+1. **方案**：确认路由、数量、文案与风格；
+2. **角色**：确认标准角色、身份提示词和嘴眼锚定网格；
+3. **图片制作**：确认普通图/编辑候选图，或表情包批量产物；
+4. **最终结果**：只读交付与下载。
 
-对 `render_static` 和 `caption_static` 增加批次完成约束：
+本次将确认点落实到工作流运行时：
 
-- 渲染步骤必须按顺序尝试 `static_plan` 中的全部状态；
-- 字幕步骤必须按顺序处理全部无字幕图片；
-- 单张图片成功只代表中间结果，不能提前结束当前步骤；
-- 所有条目处理完后才能一次性保存最终列表 artifact。
+- `rerun_when` 被编译、投影并用于审批后的重跑决策；
+- 到达声明的审批边界时 Host 停止自动推进；
+- “同意继续”只推进当前边界；
+- 用户提出修改时，按该阶段声明重新执行受影响步骤；
+- “此步骤不需审批”和“以后此工作流无需审批”仍按现有偏好机制生效。
 
-这直接修复了多状态表情包可能只产出一张、或第一张完成后工作流就进入下一步的问题。
+这样既保留原设计中的用户控制，也不会要求模型自行猜测是否需要停下。
 
-### 3.4 继承工作流推理配置
+## 5. 静态与动态表情包完整性
 
-`WorkflowClient` 现在将当前对话的有效 `thinking_depth` 传递给子步骤，同时保留原有 `enable_tool_retrieval` 行为。该变更只增加可选字段，不改变现有调用方的默认行为。
+### 5.1 逐项发布
 
-### 3.5 区分启动需求和继续指令
+静态渲染、静态字幕、动态关键帧、视频和 GIF 都改为每完成一项就保存一项。WorkflowPanel 因此能够逐张出现产物，用户不必等整批结束后才看到结果。
 
-新增统一的图片请求合并逻辑：
+### 5.2 数量与完成条件
 
-- 首次启动指令作为不可变的基础需求；
-- “继续、确认、下一步、重试”等控制消息不会覆盖原始图片需求；
-- 用户后续输入的真实需求变更会作为 update 合并，并覆盖冲突的初始要求。
+- 静态分支单批上限保持 12 张；
+- 动态分支单批上限调整为 6 张；
+- 动态任务未指定数量时由方案阶段提出数量并交由用户审批，不把示例中的 3 张当作硬编码完成条件；
+- 终止判断同时校验计划数量和输出基数；
+- 单项成功只是中间进度，不能满足整包完成条件；
+- 允许声明可选输出，但不会把缺失的必需产物视为成功。
 
-这避免了后续工作流步骤把“继续”误当成新的生图提示词，同时允许用户在运行中追加或修改比例等要求。
+## 6. WorkflowPanel 与最终交付
 
-## 4. 改动二：普通生图和局部编辑改用全局媒体模型
+### 6.1 角色页和图片制作页
 
-### 4.1 Provider 中立的媒体适配层
+- 角色页只保留标准角色、身份提示词和一张 2×2 嘴眼锚定网格；
+- 隐藏旧快照中的逐张锚定图列表，避免重复展示；
+- 图片制作页使用只读网格按顺序展示逐项产物，不出现添加控件和横向滚动条；
+- 产物到达一张就新增一张卡片。
 
-工作流脚本从 `scripts/baoyu.py` 重命名并重构为 `scripts/media.py`：
+### 6.2 最终结果页
 
-- 删除固定 Provider 和固定 Seedream 模型名称；
-- 删除对工作流级 `ARK_API_KEY` 的读取和校验；
-- 文本生图调用请求作用域中的 `image_generator`；
-- 带参考图的普通生图和局部编辑调用请求作用域中的 `image_editor`；
-- 继续复用 LazyMind 现有的模型角色解析、图片落盘、来源登记和签名 URL 逻辑。
+- 明确显示任务类型、产物数量和完成总结；
+- 以网格展示全部最终产物，区域可滚动，不遮挡第 5、6 张；
+- 每项支持单独下载；
+- 多项产物支持一键打包 ZIP 下载；
+- 完成后切回方案、角色、图片制作页时仍显示各自节点内容；
+- 仅对 `image-workflow-v2` 隐藏“展示源码”，其他工作流保持原行为；
+- 不展示 `pack_review`、`failure_units` 和“整包检查发现需调整项”等内部审查信息。
 
-具体由哪个供应商和模型执行，完全取决于用户在 LazyMind 中的全局模型配置，而不是工作流代码。
-
-### 4.2 缺少模型时显式失败
-
-工作流在媒体预检和实际调用阶段检查所需角色。如果用户没有配置对应模型，会返回清晰的 `MEDIA_CAPABILITY_DEPENDENCY_MISSING`，引导用户回到 LazyMind 模型设置，而不是提示配置某个 Provider 的环境变量，也不会静默切换模型或生成占位结果。
-
-### 4.3 三条分支的最终模型行为
-
-| 分支 | 使用的全局角色 | 说明 |
-| --- | --- | --- |
-| 普通文本生图 | `image_generator` | 没有参考图时生成新图片 |
-| 带参考图的普通生图 | `image_editor` | 将参考图作为输入，不绑定具体 Provider |
-| 图片局部编辑 | `image_editor` | 只对解析后的权威源图生成新图片，不覆盖原文件 |
-| 静态/动态表情包 | 原有全局媒体角色 | 保留现有图片、视频、字幕和 FFmpeg 工具链 |
-
-## 5. 局部编辑的比例规则
-
-局部编辑采用以下优先级：
-
-1. 用户后续更新中明确提出的比例；
-2. 启动请求中明确提出的比例；
-3. 没有明确要求时，保留权威源图的实际比例。
-
-支持显式数值比例 `1:1`、`16:9`、`9:16`、`4:3`、`3:4`、`3:2`、`2:3` 和 `21:9`，同时识别以下自然语言：
-
-- 竖版、竖向、纵向、portrait、vertical → `9:16`；
-- 横版、横向、宽屏、landscape、widescreen → `16:9`；
-- 方图、正方形、square → `1:1`。
-
-保留源图比例时会读取真实像素尺寸和 EXIF orientation，在媒体模型允许的边长范围内计算 Provider 中立的输出尺寸。若用户明确指定比例，则明确要求始终优先。
-
-## 6. 主要文件及评审入口
-
-本 PR 的代码和测试差异共 22 个文件，另包含本文档。建议按以下顺序评审：
+## 7. 评审入口
 
 | 模块 | 主要文件 | 评审重点 |
 | --- | --- | --- |
-| 媒体模型适配 | `workflows/image-workflow-v2/scripts/media.py` | 全局角色调用、失败语义、比例处理、可信产物发布 |
-| 工作流契约 | `workflows/image-workflow-v2/workflow.yaml`、`scenario/state.yml`、`scenario/scenario.md` | publisher-owned slots、步骤依赖与用户可见说明 |
-| 工作流工具 | `workflows/image-workflow-v2/scripts/tools.py` | 确定性路由、编辑契约、媒体预检及 artifact 读写 |
-| 请求合并 | `algorithm/lazymind/chat/workflow/image_request.py` | 启动需求、控制消息和后续更新的优先级 |
-| 文件解析 | `host_file_resolution.py`、`static_file_url.py`、`image_generation_support.py` | binding、本地源图和大元数据图片的兼容性 |
-| 子步骤执行 | `runner.py`、`workflow_manager.py`、`workflow_sdk/client.py` | 全批次约束和推理深度透传 |
-| 回归测试 | `tests/algorithm/...` | 全局媒体角色、失败无残留、比例、输入解析和工作流契约 |
+| 工作流执行 | `algorithm/lazymind/chat/workflow/workflow_manager.py`、`runner.py` | 审批边界、请求合并、逐项完成条件、模型身份 |
+| Workflow SDK | `algorithm/lazymind/workflow_sdk/client.py`、`workflow_toolkit.py` | artifact 增量写入与并发版本 |
+| Core 工作流 | `backend/core/workflow/...`、`backend/core/subagent/...` | `rerun_when`、审批推进、非敏感模型身份 |
+| V2 契约 | `workflows/image-workflow-v2/workflow.yaml`、`scenario/state.yml` | 节点依赖、审批声明、静态/动态数量 |
+| 媒体与工具 | `workflows/image-workflow-v2/scripts/media.py`、`tools.py` | 全局角色、比例、逐项发布、基数校验 |
+| 最终交付 UI | `WorkflowPanel/ImageWorkflowDelivery.tsx`、`index.tsx`、`WorkflowPanel.scss` | 节点隔离、网格、下载、隐藏内部信息 |
+| 回归测试 | `tests/algorithm/...`、`backend/core/..._test.go`、`WorkflowPanel/*test.tsx` | 三条路线和关键边界 |
 
-## 7. 合并前后的行为对比
+本地部署专用的 Compose 文件、端口配置、个人路径以及 `backend/core/realtime` 实验均未纳入差异。
 
-| 场景 | 合并前 | 合并后 |
-| --- | --- | --- |
-| 普通生图 | 固定 Seedream 5.0 | 使用全局 `image_generator` |
-| 带参考图生图 | 固定 Provider 适配层 | 使用全局 `image_editor` |
-| 局部编辑 | 固定 Seedream 5.0，依赖火山 Key | 使用全局 `image_editor` |
-| 模型凭据 | 可能要求额外设置环境变量 | 只使用 LazyMind 模型配置 |
-| 缺少媒体模型 | Provider/Key 相关错误 | 明确提示缺少全局媒体角色 |
-| 默认编辑比例 | 容易退化为 1:1 | 保留源图比例和 EXIF 方向 |
-| 后续自然语言比例 | 可能不生效 | 最新明确要求优先 |
-| 多状态静态表情包 | 可能部分完成即结束 | 全部状态处理后统一发布 |
-| 产物发布失败 | 可能留下部分状态 | publisher 原子发布，不伪造成功 |
+## 8. 现有评审意见说明
 
-## 8. 兼容性与风险边界
+### 8.1 “可选 output artifact key 是否合法”
 
-- 不包含数据库迁移；
-- 不改变公开 API schema；
-- 不修改前端业务组件；
-- 不替换或删除原有 `image-workflow`；
-- 不修改用户已经保存的全局模型配置；
-- 不引入新的 Provider SDK、前端依赖或 Python 依赖；
-- 缺少必需模型时保持失败，不做跨 Provider 静默回退；
-- Provider 仍可按自身约束规范化尺寸，因此 prompt 与尺寸提示同时保留比例意图；
-- 极端长宽比的源图若无法落入当前媒体模型的安全边长范围，会明确失败，而不是强制拉伸。
+这些 key 只是步骤允许发布的输出声明。对四个批量 V2 步骤，运行器不会因为写入第一项就停止；完成条件还会按计划校验输出基数。因此“可选声明”不会把一张产物当作整包完成，也不会绕过必需产物校验。
 
-需要重点关注的共享改动是文件解析和 Workflow SDK 的可选推理字段。两者均有独立回归测试，默认调用行为保持兼容。
+### 8.2 “host file resolution 是否影响 chat 主页面渲染”
 
-## 9. 本地 CI 结果
+该改动仅发生在后端把 Workflow binding/静态 URL 解析为可读本地文件的阶段，不改变聊天消息结构、前端路由或主页面渲染协议。WorkflowPanel 的展示变化在独立组件中按 `workflow_id === image-workflow-v2` 限定，并有前端回归测试覆盖。
 
-以下检查均针对最终 PR 分支执行并通过：
+## 9. 兼容性与风险边界
+
+- 无数据库迁移；
+- 无公开 API schema 变化，OpenAPI 生成客户端保持最新；
+- 无新增前端、Go 或 Python 运行时依赖；
+- 不删除旧 `image-workflow`；
+- 不修改用户已有模型配置；
+- 不把模型密钥写入 Workflow task 参数；
+- 不改变其他工作流的“展示源码”和 artifact 展示；
+- 不跨 Provider 静默复用凭据；
+- Provider 仍可按自身约束规范化尺寸，极端比例无法满足时明确失败。
+
+共享改动主要是审批运行时、Workflow SDK 增量 artifact 写入以及宿主机文件解析；三者均有独立回归测试。
+
+## 10. 本地验证结果
 
 | 检查项 | 结果 |
 | --- | --- |
-| 图片工作流、文件解析、静态 URL 和 Workflow SDK Python 测试 | `202 passed, 18 subtests passed` |
-| full-trust / approval-policy 测试 | `13 passed` |
+| 图片工作流、文件解析、Workflow SDK、路由与运行器 Python 测试 | `313 passed, 18 subtests passed` |
+| Python flake8 | `algorithm`、`backend`、`evo` 通过 |
 | 文档检查 | `2 passed` |
-| Python flake8 | `algorithm`、`backend`、`evo` 及变更工作流脚本全部通过 |
-| 仓库策略检查 | workflow naming、migration immutability、test locations 全部通过 |
-| Go | `go test ./workflow/graphengine` 通过 |
-| OpenAPI | auth、core、scan、channel-gateway 客户端均为最新 |
+| 仓库策略 | workflow naming、migration immutability、test locations 通过 |
+| Go 定向包 | `workflow/graphengine`、`workflow`、`subagent` 全部通过（Linux + CGO） |
 | 前端类型检查 | `pnpm typecheck` 通过 |
-| WorkflowPanel | `18 files, 156 tests passed` |
-| 前端生产构建 | `pnpm build` 通过，仅包含既有 Sass、动态导入和包体提示 |
-| Git 差异检查 | `git diff --check` 通过，无冲突标记 |
+| WorkflowPanel | `19 files, 165 tests passed` |
+| OpenAPI | auth、core、scan、channel-gateway 均为最新 |
+| 前端 ESLint | 通过 |
+| 前端生产构建 | 通过，仅有仓库既有的 Sass、动态导入和包体提示 |
+| Git 差异 | `git diff --check` 通过，无冲突标记 |
 
-本地环境版本：Python 3.11.17、Go 1.26.5、Node 22.23.1、pnpm 11.25.0。
+`backend/core` 全仓测试也在 Linux + CGO 下执行。本次涉及的全部包通过；全仓仍报告 4 组与本 PR 差异无关的基线/容器问题（错误目录登记、Windows checkout 的 CRLF golden fixture、容器 `file://` Git 限制、既有迁移断言），相关失败文件相对 `carlos/workflow_dev` 没有任何改动。本 PR 不扩大范围去修改这些无关模块。
 
-## 10. 实际运行验证
+## 11. 实际运行验证
 
-在 8093 部署上完成过以下真实链路验证：
+8093 本地部署已验证：
 
-- 普通生图通过全局 `image_generator` 完成，不需要工作流专属 API Key；
-- 局部编辑通过全局 `image_editor` 完成；当时全局配置的模型为 `doubao-seedream-4-0-250828`，但工作流代码没有绑定该模型；
-- 3:4 竖图源文件的比例预检得到 `888x1184`，不再固定输出为 `1024x1024`。
+- 普通生图使用全局 `image_generator`，无需工作流专属 Key；
+- 局部编辑使用全局 `image_editor`，并能保留源图比例；
+- 静态表情包经过人工确认节点后完成批量生成和最终交付；
+- 动态表情包完成图片、视频/GIF 链路；
+- 用户审批“继续”可以推进，修改意见会触发相应阶段重跑；
+- 最终结果有总结、完整网格、单项下载和整包下载。
 
-这些结果用于确认全局模型路由和源图比例路径可用；本地 CI 负责覆盖失败路径、批量状态、请求更新和文件解析等可重复回归场景。
+本地验证使用的具体 Provider/模型只是环境配置，工作流代码没有绑定这些名称。
 
-## 11. 不在本 PR 范围内
+## 12. 合并前检查清单
 
-- 新增或修改模型供应商配置页面；
-- 为用户自动创建 API Key 或环境变量；
-- 修改前端 WorkflowPanel 展示样式；
-- 改造视频生成 Provider；
-- 对所有第三方图片模型做真实在线矩阵测试；
-- 修改历史 PR #7 的说明文档。
+1. PR base 保持 `CarlosShaoting/LazyRAG:workflow_dev`，head 保持现有 PR #9 分支；
+2. 搜索确认 V2 工作流没有 `Seedream 5.0`、`seedream-5`、`ARK_API_KEY` 等硬编码；
+3. 确认普通生图/局部编辑只依赖对应全局媒体角色；
+4. 确认任务参数仅保留非敏感模型身份；
+5. 确认三个业务分支均在声明的阶段等待审批，并支持修改重跑；
+6. 确认静态与动态批次按计划数量完成，动态单批不超过 6；
+7. 确认最终交付只显示用户产物，不显示内部审查字段；
+8. 确认 CI 以 `workflow_dev` 为基线执行。
 
-## 12. 建议的合并检查
-
-1. 确认 PR base 为 `CarlosShaoting/LazyRAG:workflow_dev`；
-2. 确认 `baoyu.py` 到 `media.py` 被识别为重命名/重构，而不是保留两套 Provider 路径；
-3. 确认搜索不到 `Seedream 5.0`、`seedream-5`、`ARK_API_KEY` 等 V2 工作流硬编码；
-4. 确认普通生图和局部编辑分别只依赖所需的全局模型角色；
-5. 确认关键 artifact 只能由声明的 publisher 写入；
-6. 确认 CI 仍以 `workflow_dev` 为比较基线执行 migration 和差异检查。
-
-综合上述代码审查、专项回归和实际运行结果，本 PR 已具备提交合并评审的条件。
+完成上述检查后，建议继续更新现有 PR #9，而不是删除后新建；它本来就是 PR #7 的后续优化分支。
