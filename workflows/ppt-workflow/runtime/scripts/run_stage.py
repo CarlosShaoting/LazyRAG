@@ -441,6 +441,7 @@ def _build_brief_page_query(
     inherited_image: dict | None = None,
     inherited_image_size: dict | None = None,
     background_image: dict | None = None,
+    page_outline: dict | None = None,
 ) -> str:
     """Attach the authoritative deck style to an editable per-page brief."""
     lines = [
@@ -448,7 +449,8 @@ def _build_brief_page_query(
         "The page brief controls content and layout only.",
         "Apply the VISUAL DESIGN CONTRACT exactly. It is shared by every slide in the deck.",
         "Do not infer, select, or substitute a page-specific style, color tone, primary color, palette, or typography.",
-        "If the page brief contains conflicting visual wording, the VISUAL DESIGN CONTRACT wins.",
+        "Reuse the deck palette and typography, but vary composition by page purpose. "
+        "The editable brief's explicit layout takes precedence over older page hints and catalog compositions.",
         "",
         "PAGE BRIEF:",
         brief.strip(),
@@ -456,6 +458,14 @@ def _build_brief_page_query(
         "VISUAL DESIGN CONTRACT (JSON):",
         json.dumps(style, ensure_ascii=False, indent=2),
     ]
+    if page_outline:
+        lines.extend([
+            "",
+            "PAGE DESIGN GUIDANCE (JSON; internal instructions, never visible slide copy):",
+            json.dumps({key: page_outline[key] for key in ('page_no', 'page_kind', 'visual_hints')
+                        if page_outline.get(key)}, ensure_ascii=False, indent=2),
+            "Use these hints when compatible with the edited brief; do not restore superseded content or layouts.",
+        ])
     inherited_path = (inherited_image or {}).get('local_path')
     if inherited_path:
         lines.extend([
@@ -519,9 +529,8 @@ def _attach_style_rendering_recipe(data: dict) -> dict:
     """Attach deterministic art direction without weakening export rules.
 
     The catalog triple controls identity and colors.  This recipe adds the
-    missing composition/material/image guidance that a page generator needs to
-    produce visibly different styles.  It is static rather than model-authored,
-    so every page in a deck receives the same export-safe design language.
+    fallback composition/material/image guidance. Preserve the deck's authored
+    design decisions while keeping the export constraints owned by the runtime.
     """
     result = dict(data) if isinstance(data, dict) else {}
     recipes = _load_style_rendering_recipes()
@@ -560,6 +569,22 @@ def _attach_style_rendering_recipe(data: dict) -> dict:
                 art_direction[key] = {**art_direction[key], **value}
             else:
                 art_direction[key] = value
+    existing = result.get('art_direction')
+    if isinstance(existing, dict):
+        # Previously enriched decks carry recipe defaults. Do not mistake those
+        # for authored choices when the selected catalog style changes.
+        authored = (existing.get('authored_fields')
+                    if existing.get('source') == 'export-safe-style-recipe-v1' else existing)
+        if isinstance(authored, dict):
+            authored = {key: authored[key] for key in (
+                'concept', 'composition', 'background', 'surfaces', 'typography', 'decoration',
+            ) if isinstance(authored.get(key), (str, list)) and authored[key]}
+            if authored:
+                art_direction.update(authored)
+                art_direction['authored_fields'] = authored
+                art_direction['priority'] = (
+                    'Authored fields override generic catalog compositions and motifs. '
+                    'Explicit user constraints and export compatibility rules remain authoritative.')
     result["art_direction"] = art_direction
     if result.get('explicit_visual_constraints'):
         result['art_direction']['priority'] = (
@@ -2062,6 +2087,7 @@ def cmd_page_html_from_brief(
         inherited_image=inherited_image,
         inherited_image_size=inherited_image_size,
         background_image=background_image,
+        page_outline=page_outline,
     )
     return _write_page_html_from_query(
         deck,
@@ -2094,6 +2120,17 @@ def _write_page_html_from_query(
     rewritten_query = (rewritten_query or '').strip()
     if not rewritten_query:
         return _fail(f'page-html p{page_no}: empty query', page_no=page_no)
+
+    if not (background_image or {}).get('local_path') and not edit_instruction:
+        rewritten_query += (
+            '\n\nNO AI BACKGROUND IMAGE: No generated raster backdrop is supplied. '
+            'This does not disable visual design. Apply the deck art direction with editable '
+            'HTML/CSS or inline SVG: choose a content-led composition, clear type hierarchy, '
+            'and restrained structural shapes/lines rather than defaulting every page to equal cards. '
+            'One background layer per element still permits multiple explicit decorative elements. '
+            'Respect explicit plain/minimal backgrounds and whitespace; do not invent images, facts, '
+            'or filler cards. Treat these as design instructions, never visible slide copy.'
+        )
 
     current_path = deck / 'pages' / f'page_{page_no:03d}.html'
     current_html = current_path.read_text(encoding='utf-8') if edit_instruction and current_path.exists() else ''

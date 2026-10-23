@@ -21,6 +21,26 @@ import run_stage  # noqa: E402
 
 
 class StyleRenderingRecipeTest(unittest.TestCase):
+    def test_authored_design_survives_recipe_loading_and_style_changes(self) -> None:
+        style = {
+            'design_style': {'id': 1},
+            'art_direction': {
+                'concept': '用安装包分层结构表达依赖拆分',
+                'background': '象牙白底，右侧三层错位轮廓，橄榄绿细线',
+                'composition': ['封面用超大标题，数据页用左右对比'],
+                'forbidden_effects': [],
+            },
+        }
+        enriched = run_stage._attach_style_rendering_recipe(style)
+        self.assertEqual(enriched['art_direction']['background'], style['art_direction']['background'])
+        self.assertTrue(enriched['art_direction']['forbidden_effects'])
+        self.assertEqual(run_stage._attach_style_rendering_recipe(enriched), enriched)
+        legacy = run_stage._attach_style_rendering_recipe({'design_style': {'id': 1}})
+        legacy['design_style']['id'] = 19
+        switched = run_stage._attach_style_rendering_recipe(legacy)
+        self.assertEqual(switched['art_direction']['family'], 'editorial_business')
+        self.assertNotEqual(switched['art_direction']['background'], legacy['art_direction']['background'])
+
     def test_recipe_catalog_covers_every_declared_style_once(self) -> None:
         recipes = json.loads(
             run_stage._STYLE_RENDERING_RECIPES_PATH.read_text(encoding='utf-8')
@@ -78,7 +98,8 @@ class StyleRenderingRecipeTest(unittest.TestCase):
         )
 
         self.assertEqual(slide_count['choice_policy'], 'seed')
-        self.assertEqual(slide_count['choices'], ['3 页', '5 页', '8 页', '10 页'])
+        self.assertEqual(slide_count['choices'][:4], ['3 页', '5 页', '8 页', '10 页'])
+        self.assertIn('沿用模板全部页面（已上传模板时）', slide_count['choices'])
 
     def test_workflow_asks_for_explicit_ai_background_opt_in(self) -> None:
         workflow_path = Path(__file__).resolve().parents[3] / 'workflow.yaml'
@@ -310,6 +331,39 @@ class OutlineReferenceImageRepairTest(unittest.TestCase):
 
 
 class PagePromptModeTest(unittest.TestCase):
+    def test_editable_brief_retains_internal_page_design_without_restoring_old_copy(self) -> None:
+        html = ("<!DOCTYPE html><html><body><div class='wrapper'><div id='bg'></div>"
+                "<div id='ct'>完成</div></div></body></html>")
+        with tempfile.TemporaryDirectory() as temp:
+            deck = self._deck(Path(temp))
+            outline_path = deck / 'outline.json'
+            outline = json.loads(outline_path.read_text(encoding='utf-8'))
+            outline['pages'][0]['visual_hints'] = '左侧大数字，右侧两阶段折线；边缘采用细线轮廓'
+            outline_path.write_text(json.dumps(outline, ensure_ascii=False), encoding='utf-8')
+            with patch.object(run_stage, 'llm', return_value=html) as model:
+                self.assertEqual(run_stage.cmd_page_html_from_brief(deck, 1, '用户修改后的正文'), 0)
+            query = model.call_args.args[1]
+            self.assertIn(outline['pages'][0]['visual_hints'], query)
+            self.assertIn('用户修改后的正文', query)
+            self.assertNotIn('减少等待时间', query)
+            self.assertIn('NO AI BACKGROUND IMAGE', query)
+            self.assertEqual(model.call_count, 1)
+
+    def test_generated_background_does_not_receive_vector_replacement_instructions(self) -> None:
+        html = ("<!DOCTYPE html><html><head><style>"
+                "#bg{background-image:url('../images/page_001_background.png')}"
+                "</style></head><body><div class='wrapper'><div id='bg'></div>"
+                "<div id='ct'>完成</div></div></body></html>")
+        with tempfile.TemporaryDirectory() as temp:
+            deck = self._deck(Path(temp))
+            self._attach_background_image(deck)
+            with patch.object(run_stage, 'llm', return_value=html) as model:
+                self.assertEqual(run_stage.cmd_page_html_from_brief(deck, 1, '用户正文'), 0)
+            query = model.call_args.args[1]
+            self.assertIn('AI BACKGROUND IMAGE', query)
+            self.assertIn('../images/page_001_background.png', query)
+            self.assertNotIn('NO AI BACKGROUND IMAGE', query)
+
     def test_current_visual_edit_reaches_renderer_and_unchanged_output_fails(self):
         original = '<html><head></head><body><div id="ct">Original</div></body></html>'
         with tempfile.TemporaryDirectory() as temp:

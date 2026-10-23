@@ -37,7 +37,14 @@ Return JSON only, no markdown fences:
         "color_tone": {"id": 1, "name_zh": "深色/暗色系", "name_en": "Dark"},
         "primary_color": {"id": 3, "name_zh": "宝石蓝", "name_en": "Royal Blue", "hex": "#1976D2"},
         "palette": {"primary": "#1976D2", "accent": "#RRGGBB", "neutral": "#RRGGBB"},
-        "typography": {"heading_font": "Inter, Arial, sans-serif", "body_font": "Inter, Arial, sans-serif", "base_size_px": 16}
+        "typography": {"heading_font": "Inter, Arial, sans-serif", "body_font": "Inter, Arial, sans-serif", "base_size_px": 16},
+        "art_direction": {
+          "concept": "A topic-specific visual idea for this sample",
+          "composition": ["Cover layout", "Content layout", "Data layout"],
+          "background": "Base and editable structural motif",
+          "surfaces": "Grouping and hierarchy",
+          "decoration": "One motif, used sparingly"
+        }
       }
     }
   ]
@@ -55,3 +62,8 @@ Return JSON only, no markdown fences:
 7. Treat the topic as context, not as a literal color command. When the user did not name colors, use topic-specific imagery, materials, atmosphere, audience, and purpose; do not fall back to broad stereotypes such as "festival / celebration = red and gold" or "traditional Chinese = red".
 8. Every sample is a complete deck-wide contract: after one is selected, every slide must reuse it and must not select a separate page palette.
 9. JSON must be valid.
+10. Each sample needs its own concrete art_direction, not just different colors.
+    Describe focal elements and composition by page purpose. Disabling AI
+    backgrounds only disables generated raster backdrops; retain editable
+    HTML/CSS/SVG design, respecting explicit plain backgrounds and whitespace.
+    Keep effects export-safe and never invent images or KPI values.
