@@ -2147,8 +2147,9 @@ async def test_subagent_forwards_execution_scoped_operation_receipts(monkeypatch
 def test_attachment_registration_cannot_bypass_subagent_visibility(agent_type, params):
     config = {'files': {'1': ['paper.pdf']}, 'disabled_tools': ['find_user_attachment', 'string_replace']}
     configs = runner_mod._resolve_attachment_configs(config, agent_type, params)
-    assert [item.name for item in configs] == ['read_user_attachment']
-    config['disabled_tools'].append('read_user_attachment')
+    expected = ['pptx_analyzer', 'read_user_attachment', 'edit_presentation'] if agent_type == 'research' else ['read_user_attachment']
+    assert [item.name for item in configs] == expected
+    config['disabled_tools'].extend(expected)
     assert runner_mod._resolve_attachment_configs(config, agent_type, params) == []
 
 
@@ -2156,3 +2157,23 @@ def test_subagent_has_no_unscoped_knowledge_management_helper(monkeypatch):
     # Native retrieval being ready must not expose the old management API outside MCP.
     monkeypatch.setattr(runner_mod, 'tool_is_active', lambda _: True)
     assert runner_mod.subagent_tools.list_knowledge_bases not in runner_mod._build_subagent_tools([])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('tools_only,tools,enabled', [
+    (False, [], True),
+    (True, [], False),
+    (True, ['knowledge_management'], True),
+])
+async def test_restricted_subagent_only_enables_declared_knowledge_runtime(monkeypatch, tools_only, tools, enabled):
+    from lazymind.chat.service import knowledge_management
+    task = {**_DEFAULT_TASK, 'params': {**_DEFAULT_TASK['params'], 'tools_only': tools_only}}
+    _install_fake_db(monkeypatch, task)
+    _install_fake_lazyllm(monkeypatch)
+    _install_fake_translator(monkeypatch)
+    _install_fake_drive(monkeypatch, [])
+    build = MagicMock(return_value=None)
+    monkeypatch.setattr(knowledge_management, 'build_knowledge_runtime', build)
+    raw = await _collect(runner_mod.run_subagent_stream(_DEFAULT_TASK_ID, task_spec=task, tools=tools))
+    assert 'task_start' in raw
+    assert build.call_count == int(enabled)

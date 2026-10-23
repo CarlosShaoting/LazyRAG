@@ -220,7 +220,7 @@ func TestConversationFixedModelOverridesOnlyLLMAndNeverFallsBack(t *testing.T) {
 }
 
 func TestWorkflowConversationConfigReloadsSelectedModel(t *testing.T) {
-	db := newPromptTestDB(t).DB
+	db := newChatModelTestDB(t).DB
 	seedAvailableChatModel(t, db, "user-1", "provider-a", "group-a", "model-a", "OpenAI", "A", "gpt-default", "llm", true, "secret-a")
 	seedAvailableChatModel(t, db, "user-1", "provider-b", "group-b", "model-b", "DeepSeek", "B", "deepseek-chat", "llm", true, "secret-b")
 	seedSelectedChatModel(t, db, "user-1", "model-a", false)

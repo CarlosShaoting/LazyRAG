@@ -1402,7 +1402,9 @@ async def run_subagent_stream(
             include_artifact_writes=not _publisher_owns_outputs(ctx),
         )
         from lazymind.chat.service.knowledge_management import build_knowledge_runtime, BUILTIN_ID
-        knowledge_management = build_knowledge_runtime(agentic_config, cancel_check=make_cancel_stop_condition())
+        knowledge_management = None
+        if not ctx.params.get('tools_only') or 'knowledge_management' in (tools or []):
+            knowledge_management = build_knowledge_runtime(agentic_config, cancel_check=make_cancel_stop_condition())
         if knowledge_management is not None:
             from lazymind.chat.service.chat_service import _load_mcp_server_tools
             server = next(item for item in agentic_config.get('system_mcp_config') or []
