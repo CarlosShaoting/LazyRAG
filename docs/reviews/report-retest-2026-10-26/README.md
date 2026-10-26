@@ -1,6 +1,6 @@
 # 2026-10-26 report 补测证据
 
-结论见仓库根目录 report.md 最后一节。本目录为本次实测证据，不是新增 CI 测试套件。
+结论见 [开发报告](../../development/report.md) 最后一节。本目录为本次实测证据，不是新增 CI 测试套件。
 
 - `python.log` / `manager.log` / `proxy.log` / `core.log` / `frontend.log`：已有回归的本次结果。
 - `runner-current-head.log`：HEAD 更新为 582e7bce3 后重跑受影响范围。

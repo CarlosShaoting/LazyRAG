@@ -318,7 +318,7 @@ Python 使用仓库算法环境 `local/build/deps/python/algorithm/bin/python`�
 
 ### 测试结果与证据
 
-证据目录：[docs/reviews/report-retest-2026-10-26](docs/reviews/report-retest-2026-10-26/)。测试日志、诊断脚本、JSON 输出都保存在该目录；临时数据库、合成附件、测试 HTTP 服务已清理，未修改现有业务库或密码。
+证据目录：[docs/reviews/report-retest-2026-10-26](../reviews/report-retest-2026-10-26/)。测试日志、诊断脚本、JSON 输出都保存在该目录；临时数据库、合成附件、测试 HTTP 服务已清理，未修改现有业务库或密码。
 
 | 实际执行 | 结果 | 证据 |
 |---|---|---|
