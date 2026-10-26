@@ -294,3 +294,6 @@ Python 使用仓库算法环境 `local/build/deps/python/algorithm/bin/python`�
 - GLM supplier HTTP/下载层移除 catch-all、重复日志与 RuntimeError 包装，使用 raise_for_status 并直接向上抛出原始请求异常；不在 supplier 内重试或恢复。新增异常类型/对象保持一致、只发送一次请求的回归测试。
 - 视频生成拆为输入图片转换、模型输入约束、尺寸映射和轮询方法，保留协议行为，满足现有 C901 复杂度阈值 12，不增加忽略规则。
 - LazyLLM 合入上游 98ad0da5（微信滑动图片组功能），主仓库将引用包含双方修改的后代提交，解决与 upstream/main 的子模块指针冲突。
+- 合并后的全量 doc_check 暴露额外 4 处文档注册缺口（ImageGroup.validate_images、MilvusStore.rebuild、LocalFileSpanExporter、LocalConsumeBackend），已补中英文文档，不改业务实现或检查规则。
+- 最终验证：flake8 使用仓库 .flake8（max-complexity=12）通过；英文/中文完整 tests/doc_check 各 1476 passed、19 xpassed；GLM supplier 与图片调用回归 46 passed。
+- LazyMind 已合入 upstream/main 87a859b5d，子模块引用包含 98ad0da5 及 GLM 修复/文档的后代提交。原有本地 demo 改动已恢复并保留备份 stash，本轮未重启服务。
