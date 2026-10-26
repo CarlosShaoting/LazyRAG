@@ -5001,6 +5001,9 @@ def ppt_search_web_images(query: str, count: Union[int, str, None] = 3) -> dict:
     except Exception as exc:
         return _tool_error('ppt_search_web_images', f'search backends unavailable: {exc}')
 
+    from lazymind.chat.engine.tools.infra.image_workflow_support import require_image_search_configuration
+    require_image_search_configuration([TavilySearch(), BochaSearch()])
+
     # Tavily with include_images
     try:
         tavily = TavilySearch()

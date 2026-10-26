@@ -2240,3 +2240,47 @@ async def test_restricted_subagent_only_enables_declared_knowledge_runtime(monke
     raw = await _collect(runner_mod.run_subagent_stream(_DEFAULT_TASK_ID, task_spec=task, tools=tools))
     assert 'task_start' in raw
     assert build.call_count == int(enabled)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('page_count', [9, 10, 11])
+async def test_issue869_outline_count_does_not_trigger_model_verdict(monkeypatch, tmp_path, page_count):
+    model = MagicMock()
+    _raw, events = await _run_completion_review_scenario(
+        monkeypatch, tmp_path, model, agent_type='workflow_step',
+        params={'required_output_artifact_keys': ['slide_outline'],
+                'output_slot_types': {'slide_outline': 'text'}},
+        output_slots=['slide_outline'],
+        artifacts=[{'slot': 'slide_outline', 'content_type': 'text', 'seq': index + 1,
+                    'value': {'text': f'Page {index + 1} outline'}} for index in range(page_count)],
+        final=f'已发布 {page_count} 条 outline，全部通过，无失败项。',
+    )
+    assert _terminal(events)['status'] == 'succeeded'
+    model.share.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('missing_required', [False, True])
+async def test_issue869_material_collection_does_not_require_skip_marker(monkeypatch, tmp_path, missing_required):
+    import yaml
+    from pathlib import Path
+
+    state = yaml.safe_load((Path(__file__).parents[3] / 'workflows/ppt-workflow/scenario/state.yml').read_text())
+    outputs = state['steps']['analyze_requirements']['outputs']
+    required = [item['material'] for item in outputs if item.get('required', True)]
+    assert 'skip_material_collection' not in required
+    model = MagicMock()
+    _raw, events = await _run_completion_review_scenario(
+        monkeypatch, tmp_path, model, agent_type='workflow_step',
+        params={'required_output_artifact_keys': required,
+                'output_slot_types': {item['material']: 'text' for item in outputs}},
+        output_slots=[item['material'] for item in outputs],
+        artifacts=[{'slot': key, 'content_type': 'text', 'seq': index + 1, 'value': {'text': 'saved'}}
+                   for index, key in enumerate(required)
+                   if not (missing_required and key == 'requirement_analysis')],
+        final='' if missing_required else '需求分析完成，需要收集真实素材，未设置 skip_material_collection。',
+    )
+    assert _terminal(events)['status'] == ('failed' if missing_required else 'succeeded')
+    if missing_required:
+        assert _terminal(events)['current_phase'] == 'missing_required_artifacts'
+    model.share.assert_not_called()

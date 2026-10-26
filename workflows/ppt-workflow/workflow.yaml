@@ -98,6 +98,18 @@ runtime:
       explicit user request to regenerate/restructure the deck uses the ordinary completed-edit step routing.
   completed_edit_step: generate_ppt
   completed_edit_routing: |
+    For "only edit section N of the outline", read the selected deck_outline
+    and use patch_artifact_text with a unique exact section excerpt. For a
+    composite prompt, use its exact selected list handle. Stop after the patch;
+    do not rewind or advance downstream steps unless regeneration was requested.
+    Pure page moves/exchanges use reorder_artifact_pages directly without
+    advance_step/rewind. Include slide_outline, background_prompts,
+    background_images, preview_html and preview_notes; empty slots are skipped.
+    Deleting existing whole slides routes to generate_ppt, where linked page
+    materials must be changed together without a full rebuild.
+    An explicit page regeneration routes to generate_ppt with the requested
+    pages only. These scoped rules take precedence over deck-wide routing below.
+
     For an explicit request to revise a completed deck, infer the earliest
     affected Workflow stage from the user's requested change; do not ask the
     user to choose an internal step. When several rules match, choose the
@@ -608,6 +620,7 @@ ui:
       label: Background Prompts
       hide_when_material: skip_background_images
       layout: composite
+      page_group: presentation
       slot_scope: step
       composite_tab_position: left
       slots:
@@ -625,6 +638,7 @@ ui:
       label: Background Images
       hide_when_material: skip_background_images
       layout: composite
+      page_group: presentation
       slot_scope: step
       composite_tab_position: left
       slots:
@@ -648,6 +662,7 @@ ui:
       step_id: plan_page_prompts
       label: Page Prompts
       layout: composite
+      page_group: presentation
       slot_scope: step
       composite_tab_position: left
       slots:
@@ -664,6 +679,7 @@ ui:
       step_id: generate_ppt
       label: Slides
       layout: composite
+      page_group: presentation
       composite_tab_position: left
       actions:
         - id: export_presentation

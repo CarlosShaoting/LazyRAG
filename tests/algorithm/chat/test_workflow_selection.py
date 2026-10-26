@@ -8,6 +8,7 @@ import lazyllm
 import pytest
 from lazyllm.tools.agent.toolsManager import ModuleTool
 
+from lazymind.chat.workflow.file_adapter import InputResource
 from lazymind.chat.workflow.workflow_manager import (
     enforce_startup_clarification_policy,
     resolve_workflow_injection,
@@ -117,9 +118,8 @@ def test_dynamic_trigger_loads_pinned_remote_package_without_listing(json_encode
         'lazymind.chat.workflow.workflow_manager.HostWorkflowToolkit', return_value=toolkit,
     ), patch('lazymind.chat.workflow.workflow_manager._resolve_workflow_attachment', return_value=(
         '/safe/report.pdf', None,
-    )), patch('lazymind.chat.workflow.workflow_manager._import_attachment', return_value={
-        'resource_id': 'resource-1', 'revision': 1, 'content_hash': 'sha256:test',
-    }):
+    )), patch('lazymind.chat.workflow.file_adapter.LazyMindHostFileAdapter.import_attachment',
+              return_value=InputResource('resource-1', 'report.pdf', 'application/pdf', 42, 'sha256:test', 1)):
         client_factory.return_value.get_workflow.return_value.result = {
             'workflow_id': 'image-workflow', 'revision_id': 'revision-1',
         }
@@ -180,9 +180,10 @@ def test_dynamic_trigger_imports_scalar_binding_without_conversation_attachments
     }
     with patch('lazymind.chat.workflow.workflow_manager._client') as client_factory, patch(
         'lazymind.chat.workflow.workflow_manager.HostWorkflowToolkit', return_value=toolkit,
-    ), patch('lazymind.chat.workflow.workflow_manager._import_text_binding', return_value={
-        'resource_id': 'text-resource', 'revision': 1, 'content_hash': 'sha256:text',
-    }) as import_text:
+    ), patch(
+        'lazymind.chat.workflow.file_adapter.LazyMindHostFileAdapter.import_text',
+        return_value=InputResource('text-resource', 'target_length.txt', 'text/plain', 4, 'sha256:text', 1),
+    ) as import_text:
         client_factory.return_value.get_workflow.return_value.result = {
             'workflow_id': 'report', 'revision_id': 'revision-1',
             'compiled_graph': {
@@ -213,7 +214,7 @@ def test_dynamic_trigger_imports_scalar_binding_without_conversation_attachments
         arguments = tool._validate_input({'input_bindings': json.dumps(bindings) if json_encoded else bindings})
         result = trigger(**arguments)
 
-    import_text.assert_called_once_with('target_length', '3000')
+    import_text.assert_called_once_with('target_length.txt', '3000')
     assert result['session_id'] == 'session-1'
     toolkit.prepare_workflow.assert_called_once_with(
         'report', input_bindings={
@@ -1304,3 +1305,126 @@ def test_completed_actions_are_opt_in_and_domain_neutral():
         assert create.call_args.kwargs['params']['source_session'] == 'session-1'
         assert create.call_args.kwargs['tools'] == ['inspect_invoice', 'publish_invoice']
     assert 'source_session' not in policy['completed_actions'][0]['params']
+
+
+def test_local_markdown_patch_preserves_other_sections_and_draft_version():
+    from lazymind.chat.workflow.workflow_manager import _safe_session_tools
+    toolkit = MagicMock()
+    original = '## 第一节\n原内容\n\n## 第二节\n保持原样\n'
+    toolkit.list_artifacts.return_value = {'artifacts': [
+        {'artifact_id': 'outline-7', 'slot': 'deck_outline', 'revision': 7},
+    ]}
+    toolkit.read_artifact.return_value = {
+        'revision': 7, 'draft_version': 3, 'content_type': 'text',
+        'value': {'text': original, 'meta': {'title': 'Outline'}},
+    }
+    toolkit.patch_artifact.return_value = {'revision': 8}
+    tool = next(tool for tool in _safe_session_tools(toolkit, 'session')
+                if tool.__name__ == 'patch_artifact_text')
+    tool('deck_outline', '## 第一节\n原内容', '## 第一节\n新内容')
+    toolkit.patch_artifact.assert_called_once_with(
+        'outline-7', 7, {'text': original.replace('原内容', '新内容'), 'meta': {'title': 'Outline'}},
+        'text', '', base_draft_version=3,
+    )
+    toolkit.advance_step.assert_not_called()
+
+
+@pytest.mark.parametrize('excerpt', ['', 'missing', 'repeat'])
+def test_local_text_patch_rejects_non_unique_matches(excerpt):
+    from lazymind.chat.workflow.workflow_manager import _safe_session_tools
+    toolkit = MagicMock()
+    toolkit.list_artifacts.return_value = {'artifacts': [
+        {'artifact_id': 'brief-7', 'slot': 'brief', 'list_index': 8, 'revision': 7},
+    ]}
+    toolkit.read_artifact.return_value = {
+        'revision': 7, 'content_type': 'text', 'value': {'text': 'repeat repeat'},
+    }
+    tool = next(tool for tool in _safe_session_tools(toolkit, 'session')
+                if tool.__name__ == 'patch_artifact_text')
+    with pytest.raises(ValueError):
+        tool('brief[8]', excerpt, 'new')
+    toolkit.patch_artifact.assert_not_called()
+
+
+@pytest.mark.parametrize('selected', [False, True])
+def test_trigger_routes_ppt_clarification_answers_to_analysis_context(selected):
+    from pathlib import Path
+    import yaml
+    workflow_path = Path(__file__).parents[3] / 'workflows/ppt-workflow/workflow.yaml'
+    runtime = yaml.safe_load(workflow_path.read_text())['runtime']
+    toolkit = MagicMock()
+    toolkit.prepare_workflow.return_value = {'session_id': 'session-1', 'ready_steps': ['analyze_requirements']}
+    with patch('lazymind.chat.workflow.workflow_manager._client') as factory, patch(
+        'lazymind.chat.workflow.workflow_manager.HostWorkflowToolkit', return_value=toolkit,
+    ), patch('lazymind.chat.workflow.workflow_manager._import_text_binding') as importer:
+        factory.return_value.get_workflow.return_value.result = {
+            'runtime': runtime,
+            'compiled_graph': {'material_types': {'topic': 'text'},
+                               'material_producers': {'topic': {'kind': 'external'}}},
+        }
+        importer.return_value = {'resource_id': 'r1', 'revision': 1, 'content_hash': 'sha256:test'}
+        factory.return_value.get_state.return_value = {'projection': {'ready': ['analyze_requirements']}}
+        contribution = resolve_workflow_injection(
+            None, current_query='制作13页中国新年PPT',
+            allowed_workflow_refs=['builtin:ppt'] if selected else None,
+            workflow_catalog=[{'workflow_ref': 'builtin:ppt', 'workflow_id': 'ppt', 'revision_id': 'r1'}],
+            workflow_activations=[{'workflow_ref': 'builtin:ppt', 'workflow_id': 'ppt', 'revision_id': 'r1',
+                                   'tool_name': 'trigger_ppt_workflow', 'runtime': runtime}],
+        )
+        with pytest.raises(WorkflowClientError) as error:
+            _tool(contribution, 'trigger_ppt_workflow')(input_bindings={'undeclared': 'value'})
+        assert error.value.code == 'WORKFLOW_INPUT_NOT_EXPOSED'
+        result = _tool(contribution, 'trigger_ppt_workflow')(
+            input_bindings={'topic': '中国新年', 'target_customer': '小孩子', 'visual_style': '喜庆'},
+        )
+        assert result['session_id'] == 'session-1'
+        importer.assert_called_once_with('topic', '中国新年')
+        submitted = toolkit.prepare_workflow.call_args.kwargs
+        assert submitted['input_bindings'] == {'topic': importer.return_value}
+        assert '制作13页中国新年PPT' in submitted['request_context']
+        assert '小孩子' in submitted['request_context']
+        assert '喜庆' in submitted['request_context']
+
+
+def test_parallel_workflow_triggers_keep_conversation_sessions_separate():
+    from concurrent.futures import ThreadPoolExecutor
+    barrier = threading.Barrier(2)
+
+    def toolkit_for_conversation(*args, **kwargs):
+        toolkit = MagicMock()
+        session = 'session-' + kwargs['origin_ref']
+
+        def prepare(*args, **kwargs):
+            barrier.wait(timeout=5)
+            return {'session_id': session, 'ready_steps': ['analyze']}
+
+        toolkit.prepare_workflow.side_effect = prepare
+        return toolkit
+
+    def run(conversation):
+        with lazyllm.new_session('isolation-test-' + conversation):
+            lazyllm.globals['agentic_config'] = {'enable_workflow': True, 'conversation_id': conversation}
+            contribution = resolve_workflow_injection(
+                None, current_query=conversation, conversation_id=conversation,
+                workflow_catalog=[{'workflow_ref': 'builtin:image', 'workflow_id': 'image', 'revision_id': 'r1'}],
+                workflow_activations=[{'workflow_ref': 'builtin:image', 'workflow_id': 'image', 'revision_id': 'r1',
+                                       'tool_name': 'trigger_image_workflow'}],
+            )
+            trigger = _tool(contribution, 'trigger_image_workflow')
+            first = trigger()
+            second = trigger()
+            return first['session_id'], second['session_id'], lazyllm.globals['agentic_config']['conversation_id']
+
+    with patch('lazymind.chat.workflow.workflow_manager._client') as factory, patch(
+        'lazymind.chat.workflow.workflow_manager.HostWorkflowToolkit', side_effect=toolkit_for_conversation,
+    ):
+        factory.return_value.get_workflow.return_value.result = {'compiled_graph': {
+            'material_types': {}, 'material_producers': {},
+        }}
+        factory.return_value.get_state.side_effect = lambda session: {
+            'session_id': session, 'projection': {'ready': ['analyze']},
+        }
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(run, ['chat-a', 'chat-b']))
+    assert results == [('session-chat-a', 'session-chat-a', 'chat-a'),
+                       ('session-chat-b', 'session-chat-b', 'chat-b')]

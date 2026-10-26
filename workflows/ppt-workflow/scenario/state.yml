@@ -494,7 +494,11 @@ steps:
          a) Register KB image hits first via ppt_register_material_images with
             [{"local_path":..., "caption":..., "source":"kb"}, ...]
             (image_url also works if local_path is absent).
-         b) Call ppt_search_web_images only when a specific necessary slide visual
+         b) If ppt_search_web_images reports MEDIA_CAPABILITY_DEPENDENCY_MISSING,
+            stop and show its search-engine configuration link. Preserve existing artifacts;
+            after configuration retry collect_materials. Never silently skip explicitly
+            requested real web images or substitute AI-generated pictures.
+            Call ppt_search_web_images only when a specific necessary slide visual
             is still missing after reusing uploads and applicable KB images.
             No applicable KB alone is not a reason to search images. The uploaded-
             template visual gate above takes precedence.

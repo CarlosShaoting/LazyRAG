@@ -479,6 +479,8 @@ export interface TabDef {
   composite_layout?: CompositePanelNode | CompositeLayoutNode[];
   /** Composite mode: global tab-bar position. */
   composite_tab_position?: 'top' | 'bottom' | 'left' | 'right';
+  /** Tabs in a group share page focus and reorder their lists atomically. */
+  page_group?: string;
   /**
    * Generic composite display rules declared by the workflow.
    * WorkflowPanel must not special-case workflow IDs; it only executes these rules.
@@ -672,7 +674,7 @@ interface WorkflowStore {
     baseRevision?: number,
     baseDraftVersion?: number,
   ) => Promise<number | undefined>;
-  reorderSlotItems: (sessionId: string, slotId: string, newSortOrderSeq: number[], version: number) => Promise<void>;
+  reorderSlotItems: (sessionId: string, slotId: string, newSortOrderSeq: number[], version: number, linkedOrders?: { slot_id: string; order: number[]; version: number }[]) => Promise<void>;
   getSlotVersions: (sessionId: string, slotId: string, listIndex: number) => Promise<SlotVersionEntry[]>;
   rollbackSlotItem: (sessionId: string, slotId: string, listIndex: number, revision: number) => Promise<void>;
   createSlotItem: (sessionId: string, slotId: string, value: any, caption?: string, insertBefore?: number, contentType?: string) => Promise<void>;
@@ -978,8 +980,8 @@ export const useWorkflowStore = create<WorkflowStore>()((set, get) => ({
     return typeof revision === 'number' ? revision : undefined;
   },
 
-  reorderSlotItems: async (sessionId, slotId, newSortOrderSeq, version) => {
-    await WorkflowSessionApi().reorderSlotItems(sessionId, slotId, newSortOrderSeq, version);
+  reorderSlotItems: async (sessionId, slotId, newSortOrderSeq, version, linkedOrders) => {
+    await WorkflowSessionApi().reorderSlotItems(sessionId, slotId, newSortOrderSeq, version, undefined, linkedOrders);
   },
 
   getSlotVersions: async (sessionId, slotId, listIndex) => {

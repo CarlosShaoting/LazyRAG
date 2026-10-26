@@ -160,3 +160,130 @@ Chat 沿用源码 manager 的 `--host 0.0.0.0` 默认值；前端及代理入口
 - **Windows 原生启动未完成**：在 WSL 中 `make local-win-doctor` 通过；`make local-win-up` 调用 Windows Go 编译时，对 `\\wsl.localhost\Ubuntu\...\go.mod` 返回 `RLock ... Incorrect function`，没有进入服务启动。Windows C 盘剩余约 4.6 GiB，当前仓库约 16 GiB，无法在本机安全复制整仓到 NTFS 目录重跑。请在有足够空间的 Windows 本地盘检出该分支后执行 `make local-win-up`，再检查 `make local-win-status`、桌面登录、模型请求及文件读写链路。
 
 **仍需用户或上游处理**：#16 URL 拼接和 #32 SiliconFlow 动态 rerank 位于 LazyLLM 子模块，本分支未改动或提交子模块；需在 LazyLLM 上游修复并升级主仓库 pin。#11/#13/#18/#23/#24/#25/#29/#30/#33 的条件风险，及 Windows 安装、Excel 大文件、Milvus、真实模型、GUI/权限链路，仍需相应场景验证。以上 Docker 验证只能证明被测功能，不能代替完整 `docker compose up` 的跨服务测试。
+
+## 2026-10-26 `cst/ppt_template` 合并、主 Chat 工作流增强与 #869 修复
+
+本节为 macOS 当前源码验证，不能代替前文 Windows 实机结果。当前分支为 `cst/ppt_template`。
+
+### 合并记录
+
+- 已合入 `upstream/main` 的 `6423896b5`（PR #868），合并提交 `56dfff210`。
+- 已合入 `origin/cst/fix_1026` 的 `d63f7d34d`，合并提交 `6696a519b`。前一节的 Python 环境保护、SQLite 连接复用和分类 JSON 解析修复均已包含。
+- `runner.py` 冲突保留上游规则：工作流根据真实产物、包内后置检查和配置的人审判断完成，普通 SubAgent 保留模型完成审核。合并前本地修改已恢复，没有覆盖现有 demo/chat 修改。新增修复仍在工作区，尚未提交或推送。
+
+### 主 Chat 指令范围与 composite 联动
+
+- 增加 `patch_artifact_text`：根据具体产物引用和唯一原文片段局部替换，保留其余正文及元数据；携带 revision 和 draft version 防止覆盖并发修改。完整 Markdown 的“只修改第一节”可局部修改，composite 则定位具体列表项。禁止空匹配、不唯一匹配和 HTML 全文误编辑。
+- 主 Chat 和下发步骤的指令明确保留编辑范围，显式页码优先于当前焦点；仅修改大纲时停止，不自动重跑后续步骤。新增/插入/删除/重新生成按已有步骤执行，并传递页范围与关联素材要求；本次未新增通用的跨素材增删页事务，不将提示词约束描述为模型端到端保证。
+- PPT 的 composite 标签声明同一个 `page_group: presentation`，共享当前页。拖动/交换页序时将已生成的关联列表一次提交；空的可选列表跳过，非空但页数不一致则拒绝。
+- 后端要求完整有效的页序排列，并在一个事务中修改所有关联列表；任一版本冲突整体回滚，成功后通知界面刷新。主 Chat 可直接调用 `reorder_artifact_pages`，不用回退步骤。SDK 读取产物同样遵循保存后的视觉顺序，避免界面与工具按不同页码读取。
+- 页序使用稳定 `list_index` 与视觉顺序映射，不改写产物身份。已经导出的 PPTX 二进制不会因面板排序自动变化，仍须重新导出；磁盘中按页码命名的生成源文件与全部增删页场景尚需端到端验证。
+
+### Issue #869
+
+问题来源：[image_generator UNAVAILABLE、10 条 outline 失败、素材分析失败](https://github.com/LazyAGI/LazyMind/issues/869)。
+
+1. **GLM 图片生成调用路径已修复。** 旧适配器依赖 `zhipuai`，且将 `image_size`、`batch_size`、`priority` 等内部参数传入供应商 SDK。增加应用层 GLM 图片 HTTP 适配器，使用本次请求所选模型、base URL 和该角色密钥，只提交 `model/prompt/size`；多图按单图请求逐次执行，不自动重试生成请求。返回图片下载后沿用现有上传、签名及公开结果脱敏逻辑；批次失败清理已下载文件。其他供应商继续原有路径。
+2. **不通过降级 PyJWT 修复依赖。** [PyPI zhipuai 元数据](https://pypi.org/pypi/zhipuai/json)中的旧 SDK 要求 `pyjwt>=2.8,<2.9`，与当前 MCP 依赖冲突。此图片路径直接使用已有 `requests`，无需新增旧 SDK 或改变 PyJWT。接口参数参考[智谱 CogView-4 官方文档](https://docs.bigmodel.cn/cn/guide/models/image-generation/cogview-4)。
+3. **补齐失败日志。** 外部工具记录可用性、schema、执行及请求异常阶段；GLM 路径记录生成/下载阶段、HTTP 状态和异常类型。不记录密钥、提示词、供应商异常正文或图片 URL，前端继续使用安全的公开错误。
+4. **10 条 outline 的完成误判已随 #868 修复并补回归。** 新增 9/10/11 条真实产物的 runner 测试，最终摘要包含“全部通过，无失败项”仍成功，不调用额外模型裁判。没有发现或新增“最多 9 页”的限制。
+5. **素材收集分支补回归。** 测试读取当前 PPT 工作流的真实输出声明，全部必需产物存在、可选 `skip_material_collection` 缺失时成功；缺少必需 `requirement_analysis` 且无可提交正文时仍失败。不能用跳过素材收集来规避完成判定。
+6. **复现边界。** 当前源码中注入有效 `text2image` 后，`image_generator` 可用性检查可通过，未复现所有配置下都为 false。新增测试使用真实注册表、ToolManager、配置注入及图片结果处理，只在供应商 HTTP/下载边界模拟；没有调用用户付费模型，也没有在 Windows 0.4.0 安装包中实测。若实机仍不可用，新增阶段日志用于进一步定位，不能宣称所有 UNAVAILABLE 原因均已消除。
+
+### 本次验证
+
+Python 使用仓库算法环境 `local/build/deps/python/algorithm/bin/python`，并设置 `PYTHONPATH=algorithm:algorithm/lazyllm`，明确使用仓库锁定的 LazyLLM 源码。只使用 `PYTHONPATH=algorithm` 时本机安装版 LazyLLM 缺 `MCPToolNameError`，导致两个接口测试失败；改用仓库源码后通过，没有以跳过测试规避。
+
+- runner、外部工具、GLM 图片、按需媒体配置、SQLite proxy、任务分类器：**1332 passed**。其后补充静态 GLM 配置和下载失败清理用例。
+- GLM 图片（含补充用例）、工作流选择、SDK、Toolkit：**186 passed**。两组有重叠，不合并计算总数。
+- `frontend` 的 `vitest.workflow-panel.config.ts`：**22 文件 / 181 测试通过**。
+- `backend/core`：`go test ./workflow ./externalcapability ./modelconfig -count=1` 全部通过，包含关联排序事务/冲突以及外部模型配置传递测试。macOS Security API 存在既有弃用编译警告。
+- `local/local-runtime-manager`：`go test ./... -run 'TestAlgorithmPreparePython' -count=1` 通过，验证已有 Python 环境在依赖安装失败时保留；其他包的 no tests to run 不算功能覆盖。
+- 新增图片适配器、图片测试及外部工具文件 flake8 通过；改动的工作流面板、分组工具、store/request 的 ESLint 通过；`git diff --check` 通过。
+- runner 测试文件原有多处 lint 报错仍存在，新增回归部分没有增加这些错误。此前全量前端类型检查有其他文件错误；PPT 广义契约测试有既有 `exposed: false` 预期冲突；命名检查会命中现有未跟踪 demo 文件。未修改这些既有内容来取得全绿结果。
+- 尚未验证：Windows 原生运行、真实 GLM 出图、真实模型对主 Chat 中文指令的全流程执行、所有增删插入与重新导出 PPTX 场景，以及完整 CI 平台矩阵。
+
+### 2026-10-26 取消 PPT 导出页数上限
+
+- 移除 `/api/workflow/ppt/export` 对超过 30 页的固定拒绝逻辑；这是 HTML 转可编辑 PPTX 的导出限制，与 #869 的 10 页完成误判不同。
+- 新增 31 页、100 页回归，使用真实路由和临时文件，仅模拟导出服务边界，确认所有页面完整传给导出器并返回文件。没有实际渲染 100 页。
+- 使用仓库 LazyLLM 和本机 Pandoc 执行 `test_workflow_smoke_tools.py`：11 passed。文件内既有 E306 lint 问题未改动；新增部分无 lint 错误。
+
+## 2026-10-26 智谱模型目录与 LazyLLM supplier 补齐
+
+依据[智谱官方模型概览](https://docs.bigmodel.cn/cn/guide/start/model-overview)及对应 API 文档更新。本节替代前述 #869 中“应用层 GLM 图片 HTTP 适配器”的最终实现描述：图片适配已下沉到 LazyLLM，删除本次此前新增的临时 `glm_image_generation.py`，LazyMind 恢复通过统一 `AutoModel` 调用。按用户要求，**本轮没有重启服务**，运行中的进程尚未加载这些修改。
+
+### LazyLLM
+
+- 更新 GLM 模型清单和类型映射，识别 GLM-5.3/Flash/FlashX/Legal、5.2、5.1、5V-Turbo、4.6V、AutoGLM-Phone、GLM-Image、ASR-2512 等。将 CogVideoX/Vidu 从图片类型修正为视频类型。
+- 新增 `GLMTTS` 和 `GLMText2Video` supplier，沿用基类自动注册。TTS 使用 `/audio/speech` 返回编码音频文件；视频使用 `/videos/generations` 创建任务、`/async-result/{id}` 轮询并下载结果，覆盖 CogVideoX 与 Vidu 的文生视频、图生视频、首尾帧、参考图对应模型。
+- GLM 图片与 STT 改用已有 requests，不再依赖旧 zhipuai SDK/PyJWT。图片转换工具参数为供应商参数，多图逐次请求，内部调度字段不传入 API；STT 发送 multipart 并关闭文件句柄。
+- 动态角色继续使用请求所选模型、base URL、角色密钥；同一模型对象在后续请求换密钥/地址时重新读取配置。生成请求不自动重试，视频轮询有截止时间；失败信息与日志不包含供应商原始正文或密钥，下载生成文件不附带模型鉴权头。
+- 修正聊天、Embedding、Rerank 自定义 base URL 的路径保留；标准模型名称按 API 名称发送。新视觉模型可发送图片，远程图片 URL 不再被错误包装成 `data:None;base64,...`。
+- 图片生成结果在整批下载成功后才写临时文件，失败批次不会留下前几张图片的临时文件；后续上传签名仍由 LazyMind 负责。
+
+### LazyMind
+
+- GLM 目录新增 `glm-5.3-flashx-legal`、`cogvideox-3`、`cogvideox-flash`、`viduq1-text/image/start-end`、`vidu2-image/start-end/reference`；增加实际 API 名 `cogview-4-250304`，保留旧 `CogView-4` 条目和 supplier 别名，避免目录同步清掉现有 CogView 选择。
+- 按官方文档将直连 GLM-5.3-Flash/FlashX/Legal 上下文标为 1M，Embedding-2/3 上下文从原配置的 512/3072 修正为官方标注的 8K。不同供应商的同名托管模型参数不随此变更。
+- 动态 runtime_models 增加 `tts` 角色，使默认模型设置中的 TTS 能注入 supplier；不为用户自动选择付费模型或写入密钥。
+- 移除默认目录中误标为普通 TTS 的 `GLM-4-Voice` 和 `GLM-TTS-Clone`。它们与 Realtime、GLM-OCR 分别使用音频对话、音色管理、实时会话或 layout_parsing 接口；本次没有实现这些独立协议，也不将它们冒充已支持的普通模型角色。现有目录同步规则会在后续启动时清理已移出的内置默认条目及其默认选择；自定义模型不在此清理范围。
+
+### 验证与交付状态
+
+- 使用 `PYTHONPATH=algorithm:algorithm/lazyllm`：supplier、真实外部图片工具注册/配置注入、动态模型配置、运行角色、模型验证接口及工作流能力声明相关测试 **100 passed**。
+- 测试覆盖目录中所有 GLM 模型可实例化到对应 supplier；视频一次创建、多次轮询、失败、空结果、超时；STT 文件释放；TTS 音频返回；生成文件下载不泄漏鉴权；请求密钥/地址隔离；视觉图片消息与自定义 endpoint。只模拟 HTTP 边界，没有真实付费模型调用。
+- LazyLLM `tests/basic_tests/Models/test_online_chat_model_runtime.py`：**70 passed**。
+- Core `go test ./modelprovider ./modelconfig -count=1`：通过。
+- 新增 supplier 与 Python 测试 flake8 通过；主仓库及子模块 `git diff --check` 通过。
+- 本轮已修改 LazyLLM 子模块工作区（`supplier/glm.py`、`map_model_type.py`），尚未提交子模块、更新 gitlink 或推送。此前未跟踪的子模块文件保持原样。服务未重启，亦未验证 Windows 或真实 GLM 服务。
+
+接口依据：[GLM-TTS](https://docs.bigmodel.cn/cn/guide/models/sound-and-video/glm-tts)、[GLM-ASR-2512](https://docs.bigmodel.cn/cn/guide/models/sound-and-video/glm-asr-2512)、[视频异步生成](https://docs.bigmodel.cn/api-reference/模型-api/视频生成异步)、[Vidu Q1](https://docs.bigmodel.cn/cn/guide/models/video-generation/viduq1)、[Vidu 2](https://docs.bigmodel.cn/cn/guide/models/video-generation/vidu2)。
+
+## 2026-10-26：Workflow 启动输入绑定协议修复
+
+- 复查本机 Chat 日志，14:52:28 和 14:52:37 两次 `trigger_ppt_workflow` 均在创建 Session 前失败：`input_bindings["generate_background_images"]: unknown field "name"`。当时尚未进入 analyze，并非依赖工具检测提前执行。
+- PPT 的 `runtime.post_step_checks` 仍配置在 `analyze_requirements` 完成后调用 `check_ppt_workflow_capabilities`，按分析产物决定实际需要的能力，保持此机制。
+- 根因：upstream #868 的输入绑定解析严格限制字段为 `resource_id`、`revision`、`content_hash`，Chat 的文字及附件导入却通过 `asdict(InputResource)` 额外提交 `name`、`mime_type`、`size`，形成接口不兼容。
+- 修复 Chat 两条导入路径，仅提交固定资源引用；完整文件描述仍保留在资源存储，不放宽后端校验。
+- 回归测试不再直接模拟已裁剪的绑定，而让真实 Chat 导入转换接收完整 `InputResource`，覆盖文字/附件以及对象/JSON 字符串两种工具参数输入。
+- 验证：相关文件 flake8 和 git diff --check 通过；`test_workflow_selection.py`、`test_workflow_full_trust.py` 共 74 项通过，其中包括分析后能力检查的真实 PPT 脚本测试。未调用付费模型进行整套 PPT 生成。
+- 按本轮授权完成 `make local-down` 后重新 `make local-up`（使用宿主 Go skill-bundler，避免依赖未运行的 Docker）；15:09 本地启动成功，8090 HTTP 200，加载本轮修复及之前的 GLM supplier/模型目录修改。
+
+## 2026-10-26：统一输入预处理与澄清字段启动修复
+
+- 增加 SDK 统一输入预处理，Workflow preparation 和外部 Skill task 入口共用，Chat 的文字/附件转换也复用同一逻辑。完整资源描述转换为引用，支持多文件列表并保留顺序、重复引用与版本哈希，不修改调用者数据；仅移除已知展示元数据，未知字段和非法引用继续交给 Core 严格校验。
+- 15:17 日志确认另一处启动错误：`input must name an external material: target_customer`。发现模式把澄清字段提示为外部材料，模型提交后未按实际 package 分类。
+- 现在启动前读取真实包契约：外部材料导入为引用；已声明但不属于外部材料的澄清答案追加到请求上下文，交给 analyze 使用；未知字段在导入前拒绝。修正发现模式的工具描述，避免将澄清字段称作外部材料。
+- 新增 SDK HTTP 边界预处理测试，以及使用真实 PPT 澄清声明的发现/显式选择两种启动回归；验证原始请求和受众、风格答案均保留。
+- 验证：新增/修改 Python 文件 flake8、git diff --check 通过；SDK、预处理、Chat 选择与分析后检查共 170 项测试通过。15:18 重启 Chat 成功，运行状态 ready，8090 返回 HTTP 200；未做真实模型完整 PPT 生成验收。
+
+## 2026-10-26：多对话 Workflow 隔离检查
+
+- 用户澄清是在询问另开图片工作流是否会与运行中的 PPT 对话冲突，尚未报告图片工作流实际失败。检查日志确认 PPT 已通过启动与 analyze，正在生成页面。
+- 检查 Chat 每次请求绑定独立 LazyLLM SID（ContextVar）、每次 Workflow 工具注入创建独立 session_holder，后端步骤与产物按 session_id 查询。
+- 新增两个线程同时启动同一图片工作流的回归，使用 barrier 强制 preparation 重叠，验证各对话分别绑定自己的 session，重复 trigger 不会串到另一对话，agentic_config 也保持隔离。后端请求用现有客户端边界模拟，未进行真实双模型端到端并发验收。
+- 未修改运行时代码，未重启或打断正在生成的 PPT。
+
+## 2026-10-26：图片工作流素材排版
+
+- 截图中的材料摘要被挤在约 200px 的窄列内，右侧大片空白：网格 auto-fill 在空材料隐藏后仍保留空列。
+- 通用 Workflow 网格改为 auto-fit，空列自动折叠；文字/JSON 材料占满整行，图片材料继续网格显示。最小列宽受容器宽度约束，避免窄屏溢出；显式配置的网格列规则仍保留。
+- 仅修改前端布局，不改变工作流会话或生成逻辑。
+- 验证：WorkflowPanel ESLint、git diff --check 通过；按本地模式环境变量完成 Vite 构建，8090 HTTP 200。前端静态资源已更新，刷新生效，无需重启 Chat；尚未对用户当前会话刷新后做视觉验收。
+
+## 2026-10-26：真实图片搜索缺少配置的明确阻断
+
+- 图片工作流的 image_search_tool / image_search_and_validate 在实际需要搜索且没有配置任何支持的搜索引擎时，抛出既有结构化能力缺失标记，包含网络搜索设置链接、配置 Tavily/Bocha 后重试的提示。
+- PPT 的 ppt_search_web_images 使用相同检查（按它实际支持的 Tavily/Bocha 检查）。已有候选图片 URL 直接进入验证，不要求配置搜索；配置存在但没有图片结果仍返回 empty，和缺少配置区分。
+- 更新素材收集提示：缺配置必须停止并提示，不能静默跳过、用生成图片替代或将 Wikipedia 文本当成真实图片收集；配置后重试收集步骤并保留已有产物。
+- 新增测试覆盖图片旧/批量/PPT 三入口无配置阻断、配置存在但无结果、已有 URL 无需搜索。测试不访问真实网络或使用真实密钥。
+- 尚未重启/重新加载运行时，避免打断用户现有生成任务；新工作流包提示需在服务重新加载后使用新会话验证，旧会话固定版本不会自动替换。
+- 用户确认任务完成并授权重启后，16:04 已完成 local-down / local-up，加载本轮搜索检查与工作流包更新；服务启动成功。
+
+## 2026-10-26：智谱多模态与 GLM-Image 编辑能力复核（未重启）
+
+- 官方文档 https://docs.bigmodel.cn/cn/guide/models/vlm/glm-5.3-flash 明确 Flash/FlashX/Legal 接受图像、视频、文本、文件，输出文本；当前 catalog 已为三者保留 llm + vision=true，GLM-V 系列已有 vlm 类型。
+- 官方开源仓库 https://github.com/zai-org/GLM-Image 明确支持图像编辑、多图条件输入，并给出自部署 SGLang /v1/images/edits 示例。
+- 智谱托管模型页 https://docs.bigmodel.cn/cn/guide/models/image-generation/glm-image 仍注明文本输入；图像生成 API https://docs.bigmodel.cn/api-reference/模型-api/图像生成 只公开 images/generations，未找到托管编辑参数/接口。不能将开源模型能力直接作为当前供应商 API 能力。
+- 更新 catalog 中英供应商说明与模型注释，说明托管/开源区别；修正 LazyLLM 过于笼统的“不支持编辑”报错，明确是当前托管 API adapter 只接入文生图。未虚增不可调用的 image_editing 条目，未改正在运行的配置，未重启。
