@@ -223,3 +223,22 @@ def test_glm_embedding_and_rerank_keep_base_path_and_api_model(monkeypatch, name
         assert selected('query') == [0.1, 0.2]
     assert post.call_args.args == ('https://provider.example/api/paas/v4/' + endpoint,)
     assert post.call_args.kwargs['json']['model'] == name.lower()
+
+
+@pytest.mark.parametrize('download', [False, True])
+@pytest.mark.parametrize('failure', ['http', 'transport'])
+def test_glm_transport_errors_propagate_without_supplier_wrapping(transport, download, failure):
+    request, response, media_request = transport
+    error = glm.requests.HTTPError('provider failure') if failure == 'http' else glm.requests.Timeout('timeout')
+    selected_request = media_request if download else request
+    if failure == 'http':
+        selected_request.return_value.__enter__.return_value.raise_for_status.side_effect = error
+    else:
+        selected_request.side_effect = error
+    with pytest.raises(type(error)) as caught:
+        if download:
+            glm._glm_download('https://cdn.example/media', 'image')
+        else:
+            glm._glm_request('POST', 'https://provider.example', 'images/generations', {}, json={})
+    assert caught.value is error
+    assert selected_request.call_count == 1

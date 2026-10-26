@@ -287,3 +287,10 @@ Python 使用仓库算法环境 `local/build/deps/python/algorithm/bin/python`�
 - 官方开源仓库 https://github.com/zai-org/GLM-Image 明确支持图像编辑、多图条件输入，并给出自部署 SGLang /v1/images/edits 示例。
 - 智谱托管模型页 https://docs.bigmodel.cn/cn/guide/models/image-generation/glm-image 仍注明文本输入；图像生成 API https://docs.bigmodel.cn/api-reference/模型-api/图像生成 只公开 images/generations，未找到托管编辑参数/接口。不能将开源模型能力直接作为当前供应商 API 能力。
 - 更新 catalog 中英供应商说明与模型注释，说明托管/开源区别；修正 LazyLLM 过于笼统的“不支持编辑”报错，明确是当前托管 API adapter 只接入文生图。未虚增不可调用的 image_editing 条目，未改正在运行的配置，未重启。
+
+## 2026-10-26：LazyLLM CI 与子模块合并修复
+
+- 为 GLMTTS、GLMText2Video 补齐中英文 API 文档注册，修复 doc_check 无法生成构造函数文档。
+- GLM supplier HTTP/下载层移除 catch-all、重复日志与 RuntimeError 包装，使用 raise_for_status 并直接向上抛出原始请求异常；不在 supplier 内重试或恢复。新增异常类型/对象保持一致、只发送一次请求的回归测试。
+- 视频生成拆为输入图片转换、模型输入约束、尺寸映射和轮询方法，保留协议行为，满足现有 C901 复杂度阈值 12，不增加忽略规则。
+- LazyLLM 合入上游 98ad0da5（微信滑动图片组功能），主仓库将引用包含双方修改的后代提交，解决与 upstream/main 的子模块指针冲突。

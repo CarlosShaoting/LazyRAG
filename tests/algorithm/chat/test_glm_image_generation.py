@@ -63,10 +63,8 @@ def test_selected_glm_model_executes_through_real_external_registry(provider):
 @pytest.mark.parametrize('failure', ['status', 'empty', 'transport', 'download'])
 def test_glm_failure_has_sanitized_diagnostics(provider, caplog, failure, monkeypatch):
     request, response, download = provider
-    log = MagicMock()
-    monkeypatch.setattr(glm.lazyllm.LOG, 'error', log)
     if failure == 'status':
-        response.status_code = 401
+        response.raise_for_status.side_effect = glm.requests.HTTPError('provider rejected request')
     elif failure == 'empty':
         response.json.return_value = {'data': []}
     elif failure == 'download':
@@ -76,6 +74,6 @@ def test_glm_failure_has_sanitized_diagnostics(provider, caplog, failure, monkey
     with pytest.raises(RuntimeError):
         run_external_tools(payload(), execute=True)
     assert 'stage=execution' in caplog.text
-    diagnostic = caplog.text + str(log.call_args_list)
+    diagnostic = caplog.text
     assert 'secret-key-and-private-prompt' not in diagnostic
     assert 'test-image-key' not in diagnostic
