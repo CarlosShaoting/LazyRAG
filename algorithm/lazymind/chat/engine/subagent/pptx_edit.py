@@ -156,3 +156,23 @@ def publish_pptx_edit(source_sha256: str,
 
 def edit_tools():
     return [inspect_current_pptx, read_pptx_edit_material, publish_pptx_edit]
+
+
+def runtime_extension():
+    """Keep this editor's execution policy alongside its restricted tools."""
+    from .extensions import RuntimeExtension
+
+    return RuntimeExtension(
+        tools=edit_tools,
+        output_instruction=(
+            'publish_pptx_edit publishes the Workflow file revision and automatically '
+            'records the required pptx_edit_receipt. Inspect first, then publish once. '
+            'Do not call save_artifacts or produce a replacement file in chat. '
+            'Without a successful publication receipt the task cannot complete.'
+        ),
+        publisher_owned_outputs=True,
+        inherit_skills=False,
+        tool_failure_limits={tool.__name__: 2 for tool in edit_tools()},
+        tool_call_limits={'read_pptx_edit_material': 4, 'publish_pptx_edit': 3},
+        on_tool_results=enforce_failure_budget,
+    )

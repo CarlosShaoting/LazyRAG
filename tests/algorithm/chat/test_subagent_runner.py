@@ -1887,7 +1887,7 @@ def test_fastapi_subagent_launch_identity_reaches_runner_privately(monkeypatch, 
     _install_fake_db(monkeypatch, task)
     _install_fake_lazyllm(monkeypatch)
     _install_fake_translator(monkeypatch)
-    monkeypatch.setattr(runner_mod, '_resolve_runtime_tools', lambda *_: [])
+    monkeypatch.setattr(runner_mod, '_resolve_runtime_tools', lambda *_, **__: [])
     monkeypatch.setattr(runner_mod, '_build_subagent_tools', lambda *_, **__: [])
     configs, prompts = [], []
     runner_mod.lazyllm.globals.__setitem__.side_effect = lambda key, value: configs.append(value) if key == 'agentic_config' else None

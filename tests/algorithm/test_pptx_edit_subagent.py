@@ -115,3 +115,55 @@ def test_typography_batch_is_forwarded_without_dropping_false(context, monkeypat
     pptx_edit.publish_pptx_edit('hash', style_edits=styles)
     assert edit.call_args.kwargs['style_edits'] == styles
     assert len(context.local_artifacts()) == 1
+
+
+def test_editor_plan_uses_publisher_contract_without_generic_save_instructions(context):
+    from lazymind.chat.engine.subagent import runner
+
+    context.params.update({'tools_only': True, '_inherited_skills': ['unrelated/skill']})
+    runtime = runner._resolve_runtime_tools([], context.params, agent_type=context.agent_type)
+    plan = runner._build_subagent_plan(context, None, tools=runtime, tool_prompt_appendices={})
+    contract = next(s.content for s in plan.prompt.sections if s.section_id == 'subagent_output_contract')
+    assert 'records the required pptx_edit_receipt' in contract
+    assert 'Exact save_artifacts call shape' not in contract
+    assert plan.execution_options.skills is None
+    assert plan.execution_options.tool_failure_limits['publish_pptx_edit'] == 2
+    assert plan.execution_options.tool_call_limits['publish_pptx_edit'] == 3
+    assert runner._publisher_owns_outputs(context)
+
+
+def test_runner_consumes_extension_for_an_unrelated_agent_type(context, monkeypatch):
+    from lazymind.chat.engine.subagent import runner
+    from lazymind.chat.engine.subagent.extensions import RuntimeExtension
+
+    def publish_report():
+        return {'status': 'ok'}
+
+    context.agent_type = 'report_editor'
+    context.params = {'_inherited_skills': ['unrelated/skill']}
+    extension = RuntimeExtension(
+        tools=lambda: [publish_report], output_instruction='Publish the report using publish_report.',
+        publisher_owned_outputs=True, inherit_skills=False,
+        tool_failure_limits={'publish_report': 2}, tool_call_limits={'publish_report': 3},
+    )
+    monkeypatch.setattr(runner, 'resolve_runtime_extension', lambda *_: extension)
+    runtime = runner._resolve_runtime_tools([], context.params, agent_type=context.agent_type)
+    assert runtime == [publish_report]
+    plan = runner._build_subagent_plan(context, None, tools=runtime, tool_prompt_appendices={})
+    contract = next(s.content for s in plan.prompt.sections if s.section_id == 'subagent_output_contract')
+    assert 'Publish the report using publish_report.' in contract
+    assert 'Exact save_artifacts call shape' not in contract
+    assert plan.execution_options.skills is None
+    assert plan.execution_options.tool_call_limits['publish_report'] == 3
+
+
+def test_extension_preserves_editor_failure_budget():
+    from lazymind.chat.engine.subagent.extensions import resolve_runtime_extension
+
+    extension = resolve_runtime_extension('pptx_edit')
+    event = {'tool_results': [{'name': 'publish_pptx_edit', 'result': {'status': 'error'}}]}
+    state = {}
+    extension.on_tool_results(event, state)
+    with pytest.raises(ToolExecutionError, match='failed twice'):
+        extension.on_tool_results(event, state)
+    assert resolve_runtime_extension('research').on_tool_results is None
