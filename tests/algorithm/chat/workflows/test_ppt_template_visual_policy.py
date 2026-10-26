@@ -5,7 +5,7 @@ import yaml
 
 def test_template_collection_preserves_visuals_and_text_evidence():
     root = Path(__file__).resolve().parents[4]
-    state = yaml.safe_load((root / 'workflows/ppt-workflow/scenario/state.yml').read_text())
+    state = yaml.safe_load((root / 'workflows/ppt-workflow/scenario/state.yml').read_text(encoding='utf-8'))
     steps = state['steps']
     collect = steps['collect_materials']
     assert {'material': 'template_mode', 'required': False} in collect['inputs']
@@ -20,7 +20,7 @@ def test_template_collection_preserves_visuals_and_text_evidence():
 
 def test_template_is_read_before_material_collection():
     root = Path(__file__).resolve().parents[4]
-    state = yaml.safe_load((root / 'workflows/ppt-workflow/scenario/state.yml').read_text())
+    state = yaml.safe_load((root / 'workflows/ppt-workflow/scenario/state.yml').read_text(encoding='utf-8'))
     routes = state['transitions']['analyze_requirements']
     assert routes[0]['to'] == 'collect_materials'
     assert 'template_mode is upload' in routes[0]['when']
@@ -31,7 +31,7 @@ def test_template_is_read_before_material_collection():
     assert read['tools'] == ['pptx_analyzer']
     assert 'following next_page until null' in read['prompt']
     assert {'material': 'template_content_brief', 'required': False} in read['outputs']
-    workflow = yaml.safe_load((root / 'workflows/ppt-workflow/workflow.yaml').read_text())
+    workflow = yaml.safe_load((root / 'workflows/ppt-workflow/workflow.yaml').read_text(encoding='utf-8'))
     analysis = next(tab for tab in workflow['ui']['tabs'] if tab['id'] == 'analysis')
     assert {'id': 'template_content_brief'} in analysis['slots']
     for name in ('collect_materials', 'build_outline', 'generate_ppt'):
@@ -40,7 +40,7 @@ def test_template_is_read_before_material_collection():
 
 def test_template_ask_omits_visuals_but_allows_missing_page_count():
     root = Path(__file__).resolve().parents[4]
-    workflow = yaml.safe_load((root / 'workflows/ppt-workflow/workflow.yaml').read_text())
+    workflow = yaml.safe_load((root / 'workflows/ppt-workflow/workflow.yaml').read_text(encoding='utf-8'))
     fields = {field['id']: field for field in workflow['runtime']['clarification_fields']}
     assert 'never ask about style' in workflow['when_to_use']
     assert 'uploaded, selected or identified' in fields['visual_style']['ask_when']
@@ -53,7 +53,7 @@ def test_template_ask_omits_visuals_but_allows_missing_page_count():
 
 def test_native_pptx_is_a_final_result_not_a_separate_tab():
     root = Path(__file__).resolve().parents[4]
-    workflow = yaml.safe_load((root / 'workflows/ppt-workflow/workflow.yaml').read_text())
+    workflow = yaml.safe_load((root / 'workflows/ppt-workflow/workflow.yaml').read_text(encoding='utf-8'))
     tabs = workflow['ui']['tabs']
     assert tabs[0]['id'] == 'analysis'
     assert all(tab['id'] != 'native_pptx' for tab in tabs)
@@ -65,7 +65,7 @@ def test_native_pptx_is_a_final_result_not_a_separate_tab():
 
 def test_material_stage_only_displays_summary():
     root = Path(__file__).resolve().parents[4]
-    workflow = yaml.safe_load((root / 'workflows/ppt-workflow/workflow.yaml').read_text())
+    workflow = yaml.safe_load((root / 'workflows/ppt-workflow/workflow.yaml').read_text(encoding='utf-8'))
     tab = next(tab for tab in workflow['ui']['tabs'] if tab['id'] == 'materials')
     assert tab['slots'] == [{'id': 'material_summary'}]
     slots = {slot['id']: slot for slot in workflow['slots']}

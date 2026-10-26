@@ -183,7 +183,8 @@ def test_glm_dynamic_roles_use_request_model_endpoint_and_key(transport, role, n
 
 def test_glm_catalog_models_resolve_to_real_suppliers():
     import yaml
-    catalog = yaml.safe_load((Path(__file__).parents[2] / 'backend/core/config/model_catalog.yaml').read_text())
+    catalog_path = Path(__file__).parents[2] / 'backend/core/config/model_catalog.yaml'
+    catalog = yaml.safe_load(catalog_path.read_text(encoding='utf-8'))
     provider = next(item for item in catalog['model_providers']['suppliers'] if item['name'] == 'GLM')
     for item in provider['models']:
         selected = model(item['name'], type=item['type'])

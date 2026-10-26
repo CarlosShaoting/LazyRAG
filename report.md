@@ -297,3 +297,15 @@ Python 使用仓库算法环境 `local/build/deps/python/algorithm/bin/python`�
 - 合并后的全量 doc_check 暴露额外 4 处文档注册缺口（ImageGroup.validate_images、MilvusStore.rebuild、LocalFileSpanExporter、LocalConsumeBackend），已补中英文文档，不改业务实现或检查规则。
 - 最终验证：flake8 使用仓库 .flake8（max-complexity=12）通过；英文/中文完整 tests/doc_check 各 1476 passed、19 xpassed；GLM supplier 与图片调用回归 46 passed。
 - LazyMind 已合入 upstream/main 87a859b5d，子模块引用包含 98ad0da5 及 GLM 修复/文档的后代提交。原有本地 demo 改动已恢复并保留备份 stash，本轮未重启服务。
+
+## 2026-10-26 PR #826 CI 修复与子模块指针更新
+
+- 核对 GitHub Actions run `40293241240`：Linux/macOS 算法各 10 项失败，Windows 25 项失败；Core 缺少排序错误目录注册。LazyMind lint/doc_check 已通过。
+- 附件测试对齐已实现的原生 PPTX 按需入口 `pptx_analyzer`，验证原生文字、页数、分页结束、禁止 OCR 与原文件不变；上传不预处理及通用入口拒绝 PPTX 的约束保留。附件工具禁用测试覆盖每个工具单独启用及全部禁用。
+- 工作流测试对齐内部素材 `user_visible` / `exposed` 及素材页仅显示摘要的约定，不删测试、不跳过失败用例。
+- Windows 额外 15 项失败来自测试使用系统默认编码读取中文 YAML/JSON/源码，相关读取显式指定 UTF-8。
+- Core 注册 `order must be a complete permutation`，错误码 `2003173`、HTTP 400，并补中英文翻译及生成的前端错误文案。
+- LazyLLM gitlink 从 `d9887e1d` 更新到已推送的 `d14216a8`，本轮没有修改 LazyLLM；未改任何 doc_check 测试。
+- 本机验证：算法全量 **4685 passed、23 skipped、21 subtests passed**；LazyMind doc_check **2 passed**；跟踪源码 Python lint、Go 格式/状态后端边界、跟踪文件 workflow naming、migration immutability、test locations、错误翻译同步及 diff 检查通过。
+- Core 全包测试中，错误目录及 workflow 等包通过；本地文档目录测试需使用与 CI 一致的 UTC，Git 下载测试需系统 Git 并清除继承的 GIT_EXEC_PATH（本机自定义 Git 的动态库缺失）。对应失败包已复验通过。未在本机运行 Windows/Linux 新矩阵，交由 push 后 CI 复验。
+- 原有未提交的本地 PPT demo 改动保留且不入提交。完整工作区 lint 会扫描该未跟踪 demo 并报既有问题，因此另对跟踪文件验证。未重启服务。

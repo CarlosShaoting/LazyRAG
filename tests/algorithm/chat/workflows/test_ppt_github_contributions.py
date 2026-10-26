@@ -39,7 +39,7 @@ def test_filters_author_dates_branch_and_exposes_only_description(tmp_path):
     body = module.read_description(tmp_path, record['source_id'])
     assert body['description'] == 'Implemented a feature'
     assert 'diff' not in json.dumps(result)
-    assert 'Title is not contribution evidence' not in ''.join(p.read_text() for p in tmp_path.iterdir())
+    assert 'Title is not contribution evidence' not in ''.join(p.read_text(encoding='utf-8') for p in tmp_path.iterdir())
 
 
 def test_empty_filtered_page_still_paginates_and_base_filter_is_sent(tmp_path):
@@ -130,8 +130,8 @@ def test_connected_api_uses_current_session_credentials(monkeypatch):
 
 
 def test_workflow_declares_cloud_credentials_and_pr_tools_only_in_collection():
-    state = yaml.safe_load((ROOT / 'workflows/ppt-workflow/scenario/state.yml').read_text())
-    workflow = yaml.safe_load((ROOT / 'workflows/ppt-workflow/workflow.yaml').read_text())
+    state = yaml.safe_load((ROOT / 'workflows/ppt-workflow/scenario/state.yml').read_text(encoding='utf-8'))
+    workflow = yaml.safe_load((ROOT / 'workflows/ppt-workflow/workflow.yaml').read_text(encoding='utf-8'))
     tools = state['steps']['collect_materials']['tools']
     assert {'cloud_files', 'kb', 'ppt_source_connections', 'ppt_collect_github_prs',
             'ppt_read_pr_description'} <= set(tools)

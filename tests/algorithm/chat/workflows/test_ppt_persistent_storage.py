@@ -35,11 +35,11 @@ def test_restyle_pages_scope_and_persisted_global_instruction(monkeypatch, tmp_p
     result = tools.ppt_restyle_pages(str(tmp_path), '第2页留白少一点，不改文字', pages=[2])
     assert result['updated_pages'] == [2]
     assert calls[0]['edit_instruction'] == '第2页留白少一点，不改文字'
-    assert 'visual_revision_instructions' not in json.loads((tmp_path / 'style_spec.json').read_text())
+    assert 'visual_revision_instructions' not in json.loads((tmp_path / 'style_spec.json').read_text(encoding='utf-8'))
     result = tools.ppt_restyle_pages(str(tmp_path), '全部米白和橄榄绿，禁用蓝色')
     assert result['updated_pages'] == [1, 2]
     assert '全部米白和橄榄绿，禁用蓝色' in json.loads(
-        (tmp_path / 'style_spec.json').read_text())['visual_revision_instructions']
+        (tmp_path / 'style_spec.json').read_text(encoding='utf-8'))['visual_revision_instructions']
 
 
 def test_restyle_reports_partial_failure_without_claiming_global_success(monkeypatch, tmp_path):
@@ -60,7 +60,7 @@ def test_restyle_reports_partial_failure_without_claiming_global_success(monkeyp
     with pytest.raises(tools.ToolExecutionError, match=r'updated_pages=\[1\]'):
         tools.ppt_restyle_pages(str(tmp_path), '改成绿色')
     assert calls == [1, 2]
-    assert 'visual_revision_instructions' not in json.loads((tmp_path / 'style_spec.json').read_text())
+    assert 'visual_revision_instructions' not in json.loads((tmp_path / 'style_spec.json').read_text(encoding='utf-8'))
 
 
 def test_conversation_root_uses_durable_upload_storage(monkeypatch, tmp_path):

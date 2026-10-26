@@ -820,7 +820,7 @@ def test_active_workflow_forwards_current_edit_request_and_focus_to_step():
 def _ppt_completed_action_policy():
     from pathlib import Path
     import yaml
-    return yaml.safe_load(Path('workflows/ppt-workflow/workflow.yaml').read_text())['runtime']
+    return yaml.safe_load(Path('workflows/ppt-workflow/workflow.yaml').read_text(encoding='utf-8'))['runtime']
 
 
 def test_completed_native_deck_exposes_scoped_editor_despite_old_rerun_policy():
@@ -919,7 +919,7 @@ def test_async_workflow_initialization_allows_core_callback_and_preserves_sessio
     asyncio.run(scenario())
     # The production ASGI path must use the nonblocking adapter too.
     from pathlib import Path
-    source = Path('algorithm/lazymind/chat/service/chat_service.py').read_text()
+    source = Path('algorithm/lazymind/chat/service/chat_service.py').read_text(encoding='utf-8')
     assert 'workflow_contribution = await resolve_workflow_injection_async(' in source
 
 
@@ -1351,7 +1351,7 @@ def test_trigger_routes_ppt_clarification_answers_to_analysis_context(selected):
     from pathlib import Path
     import yaml
     workflow_path = Path(__file__).parents[3] / 'workflows/ppt-workflow/workflow.yaml'
-    runtime = yaml.safe_load(workflow_path.read_text())['runtime']
+    runtime = yaml.safe_load(workflow_path.read_text(encoding='utf-8'))['runtime']
     toolkit = MagicMock()
     toolkit.prepare_workflow.return_value = {'session_id': 'session-1', 'ready_steps': ['analyze_requirements']}
     with patch('lazymind.chat.workflow.workflow_manager._client') as factory, patch(

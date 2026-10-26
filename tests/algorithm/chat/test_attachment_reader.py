@@ -9,6 +9,7 @@ ar = import_module('lazymind.chat.engine.attachment_reader')
 def test_pptx_upload_is_not_preprocessed(monkeypatch, tmp_path):
     path = tmp_path / 'template.PPTX'
     path.write_bytes(b'not parsed on upload')
+
     def forbidden(*args, **kwargs):
         raise AssertionError('No parser or OCR should run on upload')
     monkeypatch.setattr(ar, 'parse_attachment_content', forbidden)
@@ -259,7 +260,7 @@ def test_pdf_reader_is_available_without_rag_runtime(monkeypatch, tmp_path):
     assert 'standalone reader' in ar.read_chat_document_text(str(path))
 
 
-def test_pptx_reader_is_available_without_rag_runtime(tmp_path):
+def test_pptx_reader_is_available_without_rag_runtime(monkeypatch, tmp_path):
     from pptx import Presentation
     from pptx.util import Inches
 
@@ -271,7 +272,13 @@ def test_pptx_reader_is_available_without_rag_runtime(tmp_path):
     presentation.save(path)
     ar._get_document_reader.cache_clear()
 
-    assert ar.read_chat_document_text(str(path)) == 'presentation content'
+    from lazymind.chat.engine.subagent import tools
+    monkeypatch.setenv('LAZYMIND_RAG_ENABLED', 'false')
+    monkeypatch.setattr(tools, '_resolve_attachment', lambda filename, turn: (str(path), None))
+    result = tools.pptx_analyzer(path.name)
+    assert any(slot['text'] == 'presentation content' for slot in result['slots'])
+    assert result['slide_count'] == 1
+    assert result['next_page'] is None
 
 
 def test_ocr_route_and_credentials_work_without_rag(monkeypatch):
@@ -332,10 +339,18 @@ def test_office_attachment_reader_routes_without_pdf_conversion(monkeypatch, tmp
     monkeypatch.setenv('LAZYMIND_RAG_ENABLED', 'false')
     try:
         inject_reader_config(ocr_config={'ocr_type': ocr_type, 'ocr_url': ocr_url})
-        body = ar.read_chat_document_text(str(path))
-        official_ppt = suffix == '.pptx' and ocr_type == 'mineru' and ocr_url in ('', 'https://mineru.net')
-        assert body == ('official presentation OCR' if official_ppt else 'native office text')
-        assert calls == ([str(path)] if official_ppt else [])
+        original = path.read_bytes()
+        if suffix == '.pptx':
+            from lazymind.chat.engine.subagent import tools
+            monkeypatch.setattr(tools, '_resolve_attachment', lambda filename, turn: (str(path), None))
+            result = tools.pptx_analyzer(path.name)
+            assert any(slot['text'] == 'native office text' for slot in result['slots'])
+            assert result['slide_count'] == 1
+            assert result['next_page'] is None
+        else:
+            assert ar.read_chat_document_text(str(path)) == 'native office text'
+        assert calls == []
+        assert path.read_bytes() == original
     finally:
         inject_reader_config(ocr_config={})
 

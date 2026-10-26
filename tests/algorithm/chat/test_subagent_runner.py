@@ -2265,7 +2265,8 @@ async def test_issue869_material_collection_does_not_require_skip_marker(monkeyp
     import yaml
     from pathlib import Path
 
-    state = yaml.safe_load((Path(__file__).parents[3] / 'workflows/ppt-workflow/scenario/state.yml').read_text())
+    state_path = Path(__file__).parents[3] / 'workflows/ppt-workflow/scenario/state.yml'
+    state = yaml.safe_load(state_path.read_text(encoding='utf-8'))
     outputs = state['steps']['analyze_requirements']['outputs']
     required = [item['material'] for item in outputs if item.get('required', True)]
     assert 'skip_material_collection' not in required
