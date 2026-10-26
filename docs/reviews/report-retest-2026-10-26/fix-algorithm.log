@@ -81,30 +81,30 @@ algorithm/lazymind/parsing/engine/transform/para_parser.py:124
     chunk_overlap: int = Field(
 
 algorithm/lazymind/review/api/skill_organize_routes.py:24
-  /Users/cuishaoting/Documents/LazyMind/algorithm/lazymind/review/api/skill_organize_routes.py:24: DeprecationWarning: 
+  /Users/cuishaoting/Documents/LazyMind/algorithm/lazymind/review/api/skill_organize_routes.py:24: DeprecationWarning:
           on_event is deprecated, use lifespan event handlers instead.
-  
+
           Read more about it in the
           [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
-          
+
     @router.on_event('shutdown')
 
 algorithm/lazymind/review/api/skill_review_routes.py:16
-  /Users/cuishaoting/Documents/LazyMind/algorithm/lazymind/review/api/skill_review_routes.py:16: DeprecationWarning: 
+  /Users/cuishaoting/Documents/LazyMind/algorithm/lazymind/review/api/skill_review_routes.py:16: DeprecationWarning:
           on_event is deprecated, use lifespan event handlers instead.
-  
+
           Read more about it in the
           [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
-          
+
     @router.on_event('shutdown')
 
 algorithm/lazymind/review/api/traj_to_skill_routes.py:16
-  /Users/cuishaoting/Documents/LazyMind/algorithm/lazymind/review/api/traj_to_skill_routes.py:16: DeprecationWarning: 
+  /Users/cuishaoting/Documents/LazyMind/algorithm/lazymind/review/api/traj_to_skill_routes.py:16: DeprecationWarning:
           on_event is deprecated, use lifespan event handlers instead.
-  
+
           Read more about it in the
           [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
-          
+
     @router.on_event('shutdown')
 
 tests/algorithm/chat/test_attachment_reader.py::test_pdf_reader_is_available_without_rag_runtime
