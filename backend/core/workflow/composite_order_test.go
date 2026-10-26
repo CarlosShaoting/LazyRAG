@@ -5,19 +5,22 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gorilla/mux"
-	"lazymind/core/common/orm"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/gorilla/mux"
+
+	"lazymind/core/common/orm"
 )
 
 func TestCompositeOrderAtomicPermutation(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	for _, id := range []string{"prompts", "slides"} {
-		if err := db.Create(&orm.WorkflowSlotOrder{SessionID: "linked", SlotID: id, OrderList: json.RawMessage(`[8,2,5]`), OrderVersion: 3}).Error; err != nil {
+		if err := db.Create(&orm.WorkflowSlotOrder{SessionID: "linked", SlotID: id, OrderList: json.RawMessage(`[8, 2, 5]`), OrderVersion: 3}).Error; err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -25,10 +28,8 @@ func TestCompositeOrderAtomicPermutation(t *testing.T) {
 	if err := ReorderSlots(ctx, db.DB, "linked", changes); !errors.Is(err, ErrConflict) {
 		t.Fatalf("stale update: %v", err)
 	}
-	first, _ := GetSlotOrder(ctx, db.DB, "linked", "prompts")
-	if string(first.OrderList) != "[8,2,5]" || first.OrderVersion != 3 {
-		t.Fatalf("partial commit: %+v", first)
-	}
+	first, err := GetSlotOrder(ctx, db.DB, "linked", "prompts")
+	assertCompositeSlotOrder(t, first, err, []int{8, 2, 5}, 3)
 	for _, order := range [][]int{{8, 8, 5}, {8, 2}, {8, 2, 99}} {
 		if err := ReorderSlot(ctx, db.DB, "linked", "prompts", order, 3); !errors.Is(err, ErrInvalidOrder) {
 			t.Fatalf("accepted invalid order %v: %v", order, err)
@@ -40,9 +41,7 @@ func TestCompositeOrderAtomicPermutation(t *testing.T) {
 	}
 	for _, id := range []string{"prompts", "slides"} {
 		row, err := GetSlotOrder(ctx, db.DB, "linked", id)
-		if err != nil || string(row.OrderList) != "[5,8,2]" || row.OrderVersion != 4 {
-			t.Fatalf("wrong linked order: %+v %v", row, err)
-		}
+		assertCompositeSlotOrder(t, row, err, []int{5, 8, 2}, 4)
 	}
 }
 
@@ -52,7 +51,7 @@ func TestCompositeOrderHTTPRejectsPartialCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, id := range []string{"prompts", "slides"} {
-		if err := db.Create(&orm.WorkflowSlotOrder{SessionID: "linked-http", SlotID: id, OrderList: json.RawMessage(`[8,2]`), OrderVersion: 3}).Error; err != nil {
+		if err := db.Create(&orm.WorkflowSlotOrder{SessionID: "linked-http", SlotID: id, OrderList: json.RawMessage(`[8, 2]`), OrderVersion: 3}).Error; err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -67,15 +66,29 @@ func TestCompositeOrderHTTPRejectsPartialCommit(t *testing.T) {
 		if response.Code != tc.status {
 			t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 		}
-		want := "[8,2]"
+		want, wantVersion := []int{8, 2}, 3
 		if tc.status == 200 {
-			want = "[2,8]"
+			want, wantVersion = []int{2, 8}, 4
 		}
 		for _, slot := range []string{"prompts", "slides"} {
 			row, err := GetSlotOrder(context.Background(), db.DB, "linked-http", slot)
-			if err != nil || string(row.OrderList) != want {
-				t.Fatalf("slot %s: %+v %v", slot, row, err)
-			}
+			assertCompositeSlotOrder(t, row, err, want, wantVersion)
 		}
+	}
+}
+
+func assertCompositeSlotOrder(t *testing.T, row *orm.WorkflowSlotOrder, err error, want []int, version int) {
+	t.Helper()
+	if err != nil || row == nil {
+		t.Fatalf("read slot order: row=%+v err=%v", row, err)
+	}
+	// PostgreSQL JSONB may add whitespace; compare ordered values, not JSON bytes.
+	var order []int
+	if err := json.Unmarshal(row.OrderList, &order); err != nil {
+		t.Fatalf("decode slot %s order: %v", row.SlotID, err)
+	}
+	if !slices.Equal(order, want) || row.OrderVersion != version {
+		t.Fatalf("slot %s: order=%v version=%d; want order=%v version=%d",
+			row.SlotID, order, row.OrderVersion, want, version)
 	}
 }
