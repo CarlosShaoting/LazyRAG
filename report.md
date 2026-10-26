@@ -309,3 +309,118 @@ Python 使用仓库算法环境 `local/build/deps/python/algorithm/bin/python`�
 - 本机验证：算法全量 **4685 passed、23 skipped、21 subtests passed**；LazyMind doc_check **2 passed**；跟踪源码 Python lint、Go 格式/状态后端边界、跟踪文件 workflow naming、migration immutability、test locations、错误翻译同步及 diff 检查通过。
 - Core 全包测试中，错误目录及 workflow 等包通过；本地文档目录测试需使用与 CI 一致的 UTC，Git 下载测试需系统 Git 并清除继承的 GIT_EXEC_PATH（本机自定义 Git 的动态库缺失）。对应失败包已复验通过。未在本机运行 Windows/Linux 新矩阵，交由 push 后 CI 复验。
 - 原有未提交的本地 PPT demo 改动保留且不入提交。完整工作区 lint 会扫描该未跟踪 demo 并报既有问题，因此另对跟踪文件验证。未重启服务。
+
+## 2026-10-26 非 Windows 项实际补测及 Windows 交接清单
+
+本节是新增实测结果，不把前文的“未复现”改写成“已修复”。按用户最新要求，暂停更新飞书，只在本地 report 记录。暂停前仅在飞书第 16 项追加了 URL 条件复测，保留原有“desktop nova 模型使用正常”备注；其余项目未写入飞书。
+
+环境：macOS arm64、本机算法 Python 3.11.15、Go 1.25.1。开始回归时主仓库 HEAD 为 `d88a02aec`，测试期间另一提交将 HEAD 更新为 `582e7bce3`（17:27，subagent 策略移动）；随后额外重跑受影响的 runner/PPT 编辑测试。LazyLLM 为 `d14216a8`。本次测试使用当前工作区，包含已有未提交 demo 改动，并非干净发布产物；没有重启服务，没有改供应商或业务实现，没有修改 doc_check 测试。新增的临时诊断测试执行后移出源码目录，作为证据保存。
+
+### 测试结果与证据
+
+证据目录：[docs/reviews/report-retest-2026-10-26](docs/reviews/report-retest-2026-10-26/)。测试日志、诊断脚本、JSON 输出都保存在该目录；临时数据库、合成附件、测试 HTTP 服务已清理，未修改现有业务库或密码。
+
+| 实际执行 | 结果 | 证据 |
+|---|---|---|
+| SQLite proxy/config/queue、Excel、附件读取、任务分类、动态模型、subagent runner 共 8 个算法测试文件 | 1394 passed，9 warnings | `python.log` |
+| HEAD 更新后：subagent runner 与 PPT 编辑回归 | 143 passed，1 warning | `runner-current-head.log` |
+| 原生 Office reader 与 Windows Milvus 补丁脚本测试（补丁逻辑在 macOS 上运行） | 18 passed，2 subtests passed | `office-patch.log` |
+| local-runtime-manager：`go test ./... -count=1` | 所有含测试包通过；主包 65.723 秒 | `manager.log` |
+| local-proxy：`go test ./... -count=1` | auth/config/server 包通过 | `proxy.log` |
+| Core：`go test ./localworkspace ./doc ./documentdirectory -count=1` | 三包通过 | `core.log` |
+| 前端 localSession / LocalWorkspaceControl | 53 passed | `frontend.log` |
+| 补充诊断：403 自动登录、无效 bootstrap 凭据、hoisted 元数据、活跃事务 TTL | 4 个诊断用例达到所述预期；部分预期是“错误仍会出现”，不表示已修复 | `remote-login.log`、`password.log`、`extra-go.log` |
+| 当前真实源码 URL/type 调用、进程崩溃软锁、依赖互转、动态参数注入、85.7 MB CSV、100 次 HTTP 请求及断连 | 详见下表，不做一概通过结论 | `probes.json`、`queue-crash.json`、`deps-catalog.json`、`extra.json`、`http.json` |
+| 实际 Office 转换函数：中文带空格路径、两份并发 DOCX→PDF | 显式配置字体与临时 libreoffice 命令别名后成功，每份 9930 字节，1.45 秒 | `office.json`、`office.log` |
+
+Go 执行使用 `TZ=UTC` 并清除宿主 `GIT_EXEC_PATH`，避开既有本机时区和自定义 Git helper 环境问题；没有据此修改生产逻辑或测试断言。Python 命令设置 `PYTHONPATH=algorithm:algorithm/lazyllm`；附件测试明确使用仓库现有 Pandoc。诊断测试只模拟外部 HTTP/认证响应，保留被测解析、连接、权限和状态实现。
+
+### 41 项对应结论
+
+| 编号 | 本次实际结果 / 未覆盖边界 |
+|---|---|
+| 1 | 本机 `git ls-remote upstream refs/heads/main` 成功，网络访问可用；不说明其他机器无需代理，也未新建完整 submodule checkout。 |
+| 2 | 当前 manager、proxy、Core 相关包实际编译并测试通过。没有复现默认 GOTMPDIR 配置导致构建失败；不测试用户手动设置无效目录的环境错误。 |
+| 3 | 当前 macOS 前端依赖可运行 53 项测试；Windows pnpm isolated/junction 安装链路交 Windows 测试，不能外推。 |
+| 4 | manager 全套包含 `TestAlgorithmPreparePythonKeepsExistingVenvAfterInstallFailure`，再次通过：已有 venv 安装失败不会被清空。不是原子升级；Windows PE 资源更新失败仍交 Windows 实机。 |
+| 5 | 当前 venv 实际 import faiss 1.15.0、Stemmer、fontTools 4.67.0 成功。仅验证本机已安装依赖，不证明 Windows 冷安装通过。 |
+| 6 | 本机 NumPy 1.26.4 / pyarrow 25.0.1 各一份分发记录；实际 NumPy→Arrow→NumPy 数据互转、结果校验成功。原机器重复 dist-info 状态未取得。 |
+| 7 | 真实 HTTP/1.1 回环服务，8 个线程在同一 Connection 提交 100 次请求，服务端只见 1 个客户端端口；服务端断开响应时抛错，失败请求只发送 1 次；下一次显式调用成功重连。另有 12 次顺序复用回归通过。未做长时间空闲、千连接负载或 Windows 端口耗尽压测。 |
+| 8 | manager 中 Windows 参数文件开关的跨平台环境构造测试通过。真实 Windows 超长 Relay 命令交 Windows 实机。 |
+| 9 | 从当前算法 venv 启动真实 Python 子进程，sys.prefix 与父进程一致，requests 可导入。完整 Relay/DSH/嵌入式 worker 未运行，不能证明所有 worker 环境。 |
+| 10 | manager 全套环境构造测试通过；本次未运行外部 DSH 启动链，不把源码环境检查记成 DSH 泄漏已解决。 |
+| 11 | **当前依赖下未复现遗留软锁阻塞**：filelock 3.32.6；测试进程真实获取 SQLiteQueue 锁后 `os._exit(0)` 留下锁文件，新进程无需手动清锁即可入队、出队。另测空遗留锁也自动恢复。此结论依赖当前 filelock 版本，不外推旧版本或远程文件系统；代码仍未提供显式有界等待。 |
+| 12 | 本机 8090 实际 HTTP 返回 200；不涉及报告指定的 Windows Caddy/Go 构建 panic，交 Windows 指定产物验证。 |
+| 13 | **条件问题仍可复现**：临时完整 vite 文件布局配 `nodeLinker: hoisted`、不含 runtime virtualStoreDir 的元数据，实际 `frontendNodeModulesReady` 返回未就绪及路径不匹配原因。只验证就绪判断，不等于所有 pnpm hoisted 元数据都失败；未更改现有依赖树。 |
+| 14 | 本机 Vite/Vitest 转换及测试成功；Windows TEMP 拒写属于 Windows 环境项，留交接步骤。 |
+| 15 | manager SQLite alias / 算法环境回归通过；未将用户现有 Docker .env 注入运行服务，也未认定任何用户配置必然无污染。 |
+| 16 | **仍有条件缺陷**：直接调用当前 `_get_chat_url`，`https://token.sensenova.cn/v1` 变成 `/chat/completions`，丢失 `/v1`；`/v1/` 与完整 `/v1/chat/completions` 保留路径。未向真实模型发送请求。与飞书“desktop nova 正常”不矛盾，输入条件不同。 |
+| 17 | 实际 proxy 测试验证 loopback 放行、LAN 默认拒绝、显式允许 LAN、伪造 forwarded-for 拒绝。没有部署公网穿透。 |
+| 18 | 补测 ensureLocalSession 收到 HTTP 403：抛错且只有 1 次 fetch，没有函数内部无限重试；已有会话竞争/刷新测试通过。**完整浏览器路由登录循环仍未验证**，需要远程入口与路由联调，不能标已解决。 |
+| 19 | proxy CORS 测试验证已允许 Origin / 预检放行、未知 Origin / 预检拒绝及无 Origin 情况，通过。公网具体域名仍需在部署配置中验证。 |
+| 20 | 模拟认证服务拒绝 bootstrap 凭据，真实 AdminSessionManager 返回失败，仅 1 次认证请求；原有刷新失败回退登录测试通过。**旧密码条件仍会失败**，没有自动修正配置。本次未修改任何真实密码。 |
+| 21 | GBK PowerShell / 中文配置是 Windows 项，本机不测试；交接含具体文件内容与键值比较方法。 |
+| 22 | 当前 DOCX/表格原生读取、PPTX 专用 analyzer 和 RAG 关闭场景测试通过，不能再写成“没有 office-convert 就都不能聊”。旧 DOC/PPT 或需转换成 PDF 的场景另算。 |
+| 23 | **默认配置问题可见**：当前 macOS 直接导入转换服务报 `no CJK translation font is installed`，默认候选路径面向 Linux；设置现有 Arial Unicode 字体并提供临时 libreoffice 命令包装后，真实转换成功。不是默认部署已通过；Windows 原生适配另测。 |
+| 24 | 当前可重定位 Python venv 调用真实转换函数成功（配置同 #23），所以“venv Python 必失败”不成立。未注入损坏的 PYTHONHOME，也未验证 Windows LibreOffice 环境继承。 |
+| 25 | 两份真实并发转换使用独立 profile、中文带空格来源路径，都产出有效非空 PDF。只覆盖成功并发；超时后进程树清理、残留 soffice 与 Windows 文件锁尚未验证。 |
+| 26 | Windows 文件夹选择 GUI 不在 macOS 测试；交接普通目录、盘符根目录、取消操作。 |
+| 27 | subagent runner、Core localworkspace 权限/宿主访问回归通过；trusted、工作区授权、workflow full trust 是不同控制条件，不能概括为 workflow 一律不能用 shell。 |
+| 28 | 实际合成小 XLSX 多 sheet 完整读取、201 行预览、RAG 关闭测试通过；原生读取无需 PDF/OCR。没有证明公式缓存、隐藏行、合并单元格语义已完整保留。 |
+| 29 | manager 当前平台全套通过，但 Windows PID 复用/taskkill 竞态不在本机执行；不得写成误杀风险已消除。 |
+| 30 | **部分链路实测通过**：85,656,011 字节合成 CSV 通过实际提取器，0.446 秒返回 6693 字符预览，inline=false、total_rows=-1（未读取全表维度）；SQLite executemany 分批及单行超限拒绝回归通过。仍不等于 81 MB XLSX→切块→45 分钟 embedding→入库全链路通过，后者缺隔离集成环境/模型调用条件。 |
+| 31 | Milvus Windows 补丁脚本测试在 macOS 通过，只能证明补丁转换逻辑；Windows 已安装 wheel、manifest 覆盖、普通源码安装是否打补丁仍需 Windows。 |
+| 32 | **缺陷仍存在**：真实 SiliconFlowRerank 实例的 type 为 EMBED；动态 `/v1` 与 `/v1/` 都生成 `/v1/embeddings`，显式 `/v1/rerank` 正常。本次不改 LazyLLM，仅记录可复现错误；未调用远程服务。 |
+| 33 | 补测实际 SQLite HTTP 事务：测试 TTL=500ms，每 100ms 查询一次，800ms 后提交成功，证明操作续期，不是固定总时限。既有遗弃事务到期释放测试通过。生产 5 分钟无 SQL 的长 embedding 风险仍在，没有将测试 TTL 改进生产设置。 |
+| 34 | Core doc/documentdirectory 测试通过，覆盖失败解析可重试、无活动任务的残留安装状态可删除、实际删除及引用清理。**未完成真正杀 worker / Core 后 WORKING、DELETING 状态恢复的全链路故障注入**，不能关闭该项，也不能拿空数据库当证据。 |
+| 35 | 当前任务分类回归通过，包括多 JSON 文本提取；已有 fix 合入记录仍成立。没有据此声称模型输出任何格式都可解析。 |
+| 36 | 调用真实 `_merge_dynamic_forward_kwargs` 并提供测试 bucket，返回结果包含动态 url 和 model；算法动态配置测试也通过。这里只替换配置来源，未替换被测注入方法；未进行真实供应商请求，#16 路径缺陷仍单列。 |
+| 37 | Core localworkspace 实际准备/决策认领失败恢复测试通过。preparing 本身不是可决策状态；长期 preparing 的具体现场仍需 run/operation 状态证据。 |
+| 38 | Windows token/ACL 完整性级别不在 macOS 测试，交 Windows 按普通桌面入口检查，不沿用管理员 shell 的结果。 |
+| 39 | 前端权限保存、Core 工作区授权/操作、算法 subagent 回归通过；未通过真实模型完成 allow_all 下整个文件写入流程，因此“实际 write 卡住”仍待集成验证。 |
+| 40 | 动态模型配置及 Core owner/workspace 隔离回归通过；未读取用户密钥或据此断言实际 embedding 角色已配置。需在隔离会话验证选定角色→embedding 请求→检索。 |
+| 41 | 实际解析当前 model_catalog.yaml，确认 deepseek-flash、deepseek-v4-pro、deepseek-v4-flash 均存在；未验证供应商实时型号可用性、权限和回答效果。 |
+
+### 交给 Windows 的测试步骤
+
+请在 **NTFS 本地盘**检出目标主仓库及 gitlink 指定子模块，记录两个 SHA、Windows 版本、安装方式（源码/桌面）与 Python/filelock 版本。源码与桌面分开测试；不要用 WSL 路径结果替代原生 NTFS。使用临时工作区与合成文件，不清空现有用户数据库。
+
+| 项目 | Windows 端操作 | 预期与需回传证据 |
+|---|---|---|
+| #3、#13、#14 前端依赖 | 在独立目录分别用 isolated、hoisted 安装；运行启动与页面访问。分别使用正常可写 TEMP、中文/空格 TEMP 路径。 | 依赖检测应与实际可启动状态一致；保存 .modules.yaml 的 nodeLinker/virtualStoreDir、缺失文件路径、esbuild 错误和 HTTP 状态。权限错误须与缺包分开。 |
+| #4、#5、#6 Python 安装 | 在一次性环境做冷安装和已有 venv 升级；复现 PE 安装失败时，比较失败前后解释器是否仍存在、是否可启动。检查重复 dist-info，并实际导入 NumPy/Arrow/faiss/Stemmer/fontTools。 | 失败不得清空原 venv；返回原始安装错误。回传 pip/uv check、分发版本、解释器路径和 PE 错误上下文。不得在用户主环境刻意制造破坏。 |
+| #8、#9、#10 worker | 从普通桌面及源码各启动一次 Relay/DSH；传超长参数（超过 Windows 命令行上限），检查参数文件与 worker 的 sys.executable/prefix、requests 导入、PYTHONPATH。 | 参数文件生效、worker 可加载所属环境依赖、没有旧 DSH 路径泄漏；回传脱敏路径/日志。 |
+| #12 Caddy | 使用报告实际报错的 Caddy 产物，记录 `caddy version` 与 Go build 信息；从普通桌面启动后多次请求首页及代理路由。 | 不 panic；若失败回传完整 panic 栈与可执行文件版本，不能只报“2.10.2”。 |
+| #21 编码 | 临时配置中插入中文注释，并在其后加可识别测试键；使用 Windows PowerShell 5.1（GBK 默认代码页）和项目实际启动入口读取。 | 注释后的键和值不丢失；回传文件编码、代码页、实际解析键列表（脱敏）。 |
+| #23、#24、#25 Office | 配好 Windows LibreOffice 与字体；普通源码 venv 和桌面环境分别转换中文/空格路径 DOCX/XLSX/PPTX；并发两次；隔离环境再做超时失败后重试。 | PDF 可打开、内容正确、独立 profile 无冲突；超时后无本次转换遗留进程占锁，不误杀用户 Office。记录命令、版本、返回码、PID。 |
+| #26 GUI | 普通桌面入口打开文件夹选择器，依次选普通目录、盘符根目录、中文目录并取消一次。 | 窗口可见且非阻塞；返回路径准确，取消不产生错误绑定。 |
+| #29 PID | 在一次性测试环境验证 registry 的 PID/StartID 不匹配时拒绝结束进程；再验证正常退出清理。 | 不杀身份不匹配进程；日志含身份比较与拒绝原因。不要通过随机杀实际用户进程制造 PID 复用。 |
+| #31 Milvus | 分别核对桌面包、普通源码 venv 中 manifest 写法；对临时 Milvus 数据做重复 manifest 更新并重启读取。 | 没有 WinError 183，已有目标可安全替换；记录 wheel 版本、补丁是否应用与调用栈。 |
+| #38 权限 | 普通桌面启动 Python 后检查进程完整性级别及临时工作区读写；与管理员 shell 单独比较。 | 不用管理员进程的 High token 代替普通启动结论；失败时回传 token/ACL 与实际拒绝路径，不直接修改 ACL 掩盖问题。 |
+
+另外，#18 公网路由、#30 慢 embedding 大表入库、#34 进程中断后的状态恢复、#39 真实模型写文件、#40/#41 真实模型角色与权限，属于**跨平台集成待测**，不应全部转交成 Windows 专属问题。当前只完成上表明确列出的局部验证，未具备隔离远程入口/真实模型故障注入条件，仍保留待测。
+
+
+## 2026-10-26 补测后修复与硅基流动真实接口验证（最新结论）
+
+本节更新前一节修复前的观测结果。飞书仍暂停更新；Windows 专属项目与尚未覆盖的集成场景维持原交接清单，不标为已修复。
+
+- **#16 已修复**：LazyLLM 聊天 URL 按 URL path 添加 `chat/completions`，无尾斜杠时不再丢失 `/v1` 或自定义代理路径，保留 query，完整 endpoint 不重复拼接。覆盖静态构造地址和运行时动态地址。
+- **#32 已修复**：在 rerank 基类统一返回 `RERANK`，SiliconFlow 等继承者不会再错误继承 EMBED；动态基础地址走 `/rerank`，完整重排地址保持不变，普通 embedding 仍走 `/embeddings`。供应商保持薄封装，没有额外吞错或请求重试。
+- **#13 已修复**：manager 解析 pnpm 元数据的 nodeLinker；hoisted 不再要求 isolated 专属 virtualStoreDir，但继续校验 Vite 可执行入口和模块文件。isolated 的路径校验保留；新增测试确认现有有效 hoisted runtime 目录不会被清空。
+- LazyLLM 修复提交：`abf630b8`（已推送 origin/codex/glm-supplier-1026）；本次 LazyMind 提交将 gitlink 同步到此提交。
+
+验证：新增请求级测试在修复前 17 项失败，修复后与既有在线运行时测试共 **92 passed**；manager 全套通过（主包 65.651 秒）；LazyMind 算法 **4688 passed、23 skipped、21 subtests passed**；LazyLLM 中英文 doc_check 分别 **1476 passed、19 xpassed**；按 LazyLLM 仓库配置执行 changed-file flake8 通过，LazyMind Go 格式及测试位置检查通过。没有修改 doc_check 测试或用放宽断言消除失败。
+
+用户提供 key 后新增真实 SiliconFlow 请求（key 未写入文件、日志、报告或 Git）：
+
+| 请求 | 模型与输入 | 实际结果 |
+|---|---|---|
+| 模型目录 | `/v1/models` | HTTP 200，确认本次模型在账号可见目录中 |
+| 重排：基础地址 `/v1` | BAAI/bge-reranker-v2-m3；查询“中国的首都是哪里？”；两条合成候选 | 实际 `/v1/rerank`，北京候选排名第一（约 0.9875），成功 |
+| 重排：基础地址 `/v1/` | 同上 | 实际 `/v1/rerank`，排序相同，成功 |
+| 重排：完整 `/v1/rerank` | 同上 | endpoint 保持不变，排序相同，成功 |
+| 聊天：无尾斜杠 `/v1` | Qwen/Qwen2.5-7B-Instruct；要求仅回答 OK | 实际 `/v1/chat/completions`，返回 `OK` |
+| Embedding：无尾斜杠 `/v1` | BAAI/bge-m3；合成中文句子 | 实际 `/v1/embeddings`，返回 1024 维向量 |
+
+证据位于 `docs/reviews/report-retest-2026-10-26/fix-*.log` 和 `siliconflow-live-*.json`。真实接口验证针对本次账号、模型及测试输入，不代表整个知识库入库/检索、Windows 桌面或所有供应商已端到端通过。
