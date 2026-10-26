@@ -1,10 +1,101 @@
 # LazyMind Windows 问题清单核查
 
+> **本机最新补测见文末“Windows 原生补测与配置编码修复”**：已切换至 `cst/ppt_template`。新增确认并修复 2 项主仓库问题：UTF-8 配置中文值解码、SQLite 认证迁移中断后的半完成状态；另移入已有 Windows doctor 诊断。历史表格不代表本轮 Windows 验证结果。
+
+## 当前结论：归因、已解决项与剩余待办（2026-10-26）
+
+本节及 41 项表的“当前归因与处理状态”列为汇总结论；后面的 upstream 初次复查、macOS 补测和 Windows 实测是不同时间、不同版本的证据，不能把历史“仍存在”当成当前未修复，也不能把单元测试通过当成整套部署通过。当前工作分支为 `cst/ppt_template`，基线 `7154e8451`，锁定 LazyLLM `abf630b8`；本轮新增修复、测试与报告随本次提交交付，未修改子模块指针。没有重新核对此后变化的 upstream main。
+
+### 哪些是我们的问题，哪些不能归到项目源码
+
+按本报告已经定位并实施修复的具体缺陷统计，**主仓库 6 项：原清单 #4、#7、#13、#21、#35，加本轮新增的认证库迁移中断问题；依赖 LazyLLM 2 项：#16、#32**。这不是“其余 36 项都没有问题”的结论：部分是设计行为，部分是环境问题，还有部分缺集成证据。原清单条目可能同时含代码与环境两个子问题，例如 #4 的破坏性重试已修，但 PE 安装错误不能一起记为已修。
+
+**目前确认由用户自行修改代码导致的故障为 0 项。** 尚未取得对应用户修改的完整 diff、实际运行版本及同输入对照复现，不能直接写成“都是用户改坏的”。以下只指出归因边界及优先排查方向：
+
+| 归因 | 对应问题 / 场景 | 判断与下一步 |
+|---|---|---|
+| 主仓库代码缺陷 | #4、#7、#13、#21、#35；新增认证迁移中断 | 已有具体源码和复现/回归证据，见下表；不能推给用户自改代码。 |
+| 上游依赖缺陷 | #16 URL、#32 rerank 类型 | 位于 LazyLLM；当前分支已有修复 pin，本轮未修改子模块。 |
+| 环境、依赖或部署配置 | #1 网络、#2 手动 GOTMPDIR、#5 安装、#6 重复分发信息、#14 TEMP、#15 混用配置、#20 改密未同步、#38 token/ACL；本轮内存耗尽及 WSL share 锁失败 | 不能直接认定业务代码 bug。结合实际环境、依赖版本、配置与原始日志排查；其中部分历史现象在本机未复现。 |
+| 可能与用户自改启动链有关，尚未证实 | #9 自定义 worker/嵌入环境、#10 DSH PYTHONPATH、#15 自定义 .env 加载、#21 清单中的 start-local.ps1 | 清单中的 DSH、盘符路径和部分脚本不属于已核对启动链。需对比用户 diff、启动命令和实际导入路径。#21 仓库自己的 UTF-8 读取缺陷另有证据且已修，不能混为用户问题。 |
+| 原描述过宽、已有实现或设计行为 | #3 isolated 必失败、#8 已有参数文件、#17 本机自动登录限制、#19 CORS 白名单、#22/#28 原生 Office/表格读取、#27 权限分工、#36 动态 URL 注入、#37 preparing 过滤、#40 会话隔离、#41 目录只剩旧型号 | 不能按原描述直接认定缺陷；仍须区分具体失败路径、模型权限和集成结果。 |
+| 条件风险 / 尚待定位 | #11 软锁、#12 指定 Caddy 构建、#18 远程登录、#23–#26 Office/GUI、#29 PID、#30/#33 大表与事务、#31 源码 Milvus、#34 状态恢复、#39 真实写文件 | 没有足够证据全部关闭，也没有证据全部归因用户。按待测表补齐复现后再决定是否改代码。 |
+
+若需确认“用户自改导致”，应固定主仓库和子模块 SHA，以相同配置、依赖和合成输入分别运行干净源码与用户修改版，逐步缩小 diff。仅用户修改版失败且可定位到具体改动时，才将该项改为“用户自改代码导致”；环境变量、安装包与源码版本不一致要单独记录。
+
+### 我们已经解决了什么
+
+| 问题 | 已做修复 / 当前交付状态 | 已验证范围与未覆盖边界 |
+|---|---|---|
+| #4 依赖安装失败清空旧 venv | 已合入当前分支：已有解释器时失败保留 venv | Windows manager 回归通过；不等于原子升级，也不代表 PE 安装错误消失。 |
+| #7 SQLite 每请求新建连接 | 已合入当前分支：每个 Connection 复用连接，失败不自动重试写请求 | Windows 原生服务 100 次 SELECT 使用 1 个客户端端口；端口耗尽与长期负载未验收。 |
+| #13 hoisted 被误判未就绪 | 当前分支已有修复：按 nodeLinker 检查，保留 isolated 校验 | Windows 目录判断/保留回归通过；真实 hoisted 冷安装启动仍待测。 |
+| #21 UTF-8 配置中文值读错 | 本轮新增修复：PowerShell 配置读取显式 UTF8 | PowerShell 5.1、代码页 936 真实复现及修复后回归；不是所有注释后的键都丢失。 |
+| #35 多 JSON 分类解析失败 | 已合入当前分支：提取第一个完整 JSON，保留 schema 校验及回退 | 分类回归通过；不承诺任意模型输出格式都可解析。 |
+| 新增：SQLite 认证迁移中断 | 本轮新增修复：结构和版本号放入显式 SQLite 事务 | Linux、Windows、Docker 实际中断/重启回归通过；认证测试 225 passed、27 subtests passed，PostgreSQL 真实升级 smoke 通过。不会自动修复已经半迁移的旧库。 |
+| #16/#32 LazyLLM URL / rerank | 当前分支锁定版本已含其他轮次提交的修复 | 报告已有真实 SiliconFlow chat/embed/rerank 结果；不能外推为所有供应商及知识库全流程通过。 |
+| Windows doctor 诊断补充 | 将 cst/fix_1026 已有修复移入当前分支 | NTFS module 读取通过，当前 WSL share 失败有明确提示；改善诊断，不是修复 Windows/WSL 文件系统锁实现。 |
+
+### SQL 与检索部署方向：优先 Docker + PostgreSQL + OpenSearch
+
+按用户要求，**面向大知识库和并发使用的后续部署及性能验收，优先采用 Docker：业务关系数据使用 PostgreSQL，分段存储/检索使用 OpenSearch，不把 SQLite/SQLite HTTP proxy 作为这条部署路线的业务数据库**。目标是改善并发吞吐与大数据量处理；本轮没有同负载性能对比，不能承诺具体提升倍数，也不能声称切换后所有卡顿都会消失。
+
+PostgreSQL 和 OpenSearch 分工不同，OpenSearch 不是 SQL 数据库的替代品。仓库 `docker-compose.yml` 已有 PostgreSQL db 服务及 Core/Auth 等连接配置，分段存储配置支持 `LAZYMIND_SEGMENT_STORE_TYPE=opensearch`、`LAZYMIND_SEGMENT_STORE_URI_OR_PATH`；OpenSearch 服务属于 `opensearch` profile，需要实际启用。向量库按工作流所需另行配置，不能将这两项当成全部依赖。
+
+| 范围 | 后续要求与验收 |
+|---|---|
+| Docker 实际配置 | 检查 compose 展开后的 Core、Auth、算法等有效数据库地址，确认业务 SQL 走 PostgreSQL；启用 OpenSearch profile 并检查分段存储实际地址，排除遗留 local 配置将服务指回 SQLiteStore。报告不存放连接密码。 |
+| 本地 SQLite 问题的边界 | #7 的连接、#30 的 SQLite 请求大小及 #33 的 SQLite proxy 空闲事务 TTL 需要在 SQLite 路线单独评价；业务 SQL 改走 PostgreSQL 后不能沿用这些限制解释新链路。但慢 embedding、任务恢复、超大切块仍要独立验收。#11 内部 SQLiteQueue 不保证随业务数据库切换而消失。 |
+| 已有数据 | 当前只是部署建议与待办，没有执行数据迁移、删除 SQLite 库或切换用户实例。后续如迁移，需验证业务记录、账号/权限、附件引用与检索索引的一致性，并保留可恢复的原数据。 |
+| 性能验证 | 在相同数据、模型、机器资源及并发条件下，记录入库耗时、检索吞吐、p95 延迟、失败率和内存占用。不能通过降低检索质量、减少处理数据或跳过失败样本宣称提速。 |
+| 本轮证据边界 | PostgreSQL 16 隔离迁移测试通过；此前 Docker 测试用过 SQLiteStore / Milvus Lite 替代部分依赖，**并未完成 PostgreSQL + OpenSearch 整套入库检索与性能验收**。该项列为优先待办。Docker 也消耗宿主内存，不能把本轮 OOM 当作更换存储即可解决。 |
+
+### 用户截图补充：#39 / #40 为使用阻塞，尚未解决（2026-10-26）
+
+用户截图报告：write/ls/stat/glob 在其环境不可用；kb_search 报 `No source is configured for dynamic embedding source`，语义召回不可用。这两项按**用户报告的使用阻塞、优先定位**保留，不能用现有局部测试通过或“设计行为”将故障关闭。截图不是本机重现记录，也不足以确认所有拟定根因，更不能归咎于用户修改代码。本轮没有修复这两条完整故障链。
+
+| 截图中的问题 | 当前代码核对 | 尚需定位 / 验收 |
+|---|---|---|
+| #39-1 前端 workspace_permission_mode 只在后台运行时传 | `ChatInput/index.tsx` 的相应发送分支确有 runInBackground 条件；但 `LocalWorkspaceControl.tsx` 另行保存用户权限，`backend/core/chat/conversation_logic.go` 创建会话时读取 UserPermission。因此“该字段没随普通消息发送”不能单独证明 allow_all 丢失。 | 对照普通聊天/后台任务、新会话/已有会话：界面选择、权限保存响应、服务端实际模式和版本、Chat 收到的权限上下文。确认丢失位置后修复，不盲目取消全部权限判断。 |
+| #39-2 prepare_host 要求 history_id/run_id | 算法侧 `workspace_authorization.py:prepare_host` 需要活动授权、用户/会话身份，并接受 history_id + run_id **或** task_id + generation；不是所有路线都只接受前一对。`chat_service.py` 已构造前台 execution identity，runner 为任务注入对应身份。 | 沿真实失败请求逐段核对 Core → Chat → 工具，确认缺失/错配字段及发生的请求路径。若正常链路漏传，这是应修的项目问题；身份校验本身不能直接删除。 |
+| #39-3 file 工具 ALLOW 路径卡死 | 用户报告尚未在本机复现。当前实现区分 allowed 决策、claim 后 executing 和工具执行；`wait()` 会轮询 pending/preparing，不能仅凭 UI 显示 ALLOW 确定阻塞位置。 | 保存脱敏 operation_id、状态/decision、expires_at、claim 请求及响应、工具开始/结束时间和取消日志。定位在授权等待、claim、文件 IO 还是结果返回；正常授权下 write/ls/stat/glob 均须真实完成，拒绝与取消也须正确结束。 |
+| #40 kb_search 动态 embedding 无 source | 当前 LazyLLM dynamic_router 在实际 embed 配置 bucket 取不到 source 时抛出截图错误。它证明**此次调用没有取得有效 source**，不证明全局一定没配置 embedding，也不是 PostgreSQL/SQLite 错误。 | 分别检查：角色确实未配置/未启用；配置存在但用户/工作区/模型角色选择不匹配；Core 到 Chat 的配置注入或并行/子任务上下文传播丢失。以不含密钥的角色标识、source 是否存在及调用阶段判断根因。用实际 kb_search 检索已入库合成文档并返回相关片段/引用；缺配置时应明确指向配置入口，不能卡住或假装召回成功。 |
+
+截图给出的临时绕过也仅按用户描述记录：#39 使用“新建任务 + shell + Python 写文件”；#40 使用 read_document 逐篇阅读 PDF。这些不是本轮完成的修复或保证，不应绕过工作区权限；逐篇读取不等价于知识库语义召回。
+
+**Docker + PostgreSQL + OpenSearch 不会自动解决这两项。** #39 的授权/执行身份链仍需正确；#40 的语义检索仍需有效 embedding 模型配置及请求上下文。推荐部署路线应把这两项加入端到端验收，而不是以数据库切换替代修复。
+
+### 尚未解决 / 尚未完成测试的交接清单
+
+“已阻塞”表示已经执行但没有通过；“待验证”表示证据不足，不等同于确认代码缺陷。下表覆盖本轮对话列出的未完成项；高优先级先验证推荐 Docker 路线，再继续 Windows 原生兼容性验证。
+
+| 优先级 | 问题 / 关联编号 | 当前状态及已有证据 | 剩余动作与通过标准 |
+|---|---|---|---|
+| P1 | Docker PostgreSQL + OpenSearch 完整链路 | 待验证；已有服务定义及 PostgreSQL 迁移 smoke | 实际启用所需 profiles，确认有效连接与索引后端；完成上传、入库、检索、重启及并发性能对比，保存结果。 |
+| P1 | Windows 完整启动、前端与 Chat | 已阻塞；Auth/Core/Proxy/SQLite 和自动登录曾返回 200，前端 3 GiB 堆仍耗尽，RAG pip MemoryError | 准备足够内存余量，分阶段安装与构建；完整启动、重启、页面登录、聊天及文件操作通过。现有健康结果不等于全栈通过。 |
+| P1 | 大 XLSX → 切块 → 慢 embedding → 入库 → 检索（#28/#30/#33/#40） | 待集成；大 CSV 预览、请求分批和事务续期已有局部验证 | 用合成大 XLSX 与受控慢响应验证完整链路，检查超大单行、失败重试及最终可检索性；推荐存储路线和 SQLite 路线分别记录。另核对公式缓存、隐藏行和合并单元格。 |
+| P1 | 文档 WORKING / DELETING 中断恢复（#34） | 待故障注入；已有局部重试与清理测试 | 在有实际任务的隔离库中中断 worker/Core，重启后能恢复、重试或清理，不长期卡状态、不误删有效数据。认证迁移中断测试不能替代此项。 |
+| P1 | 公网登录、Origin 与改密（#17–#20） | 待浏览器集成；403、CORS、认证失败边界已有测试 | 远程入口完成正常登录、退出、过期刷新和人工登录回退；明确不支持的自动登录路径；改密后同步配置并验证刷新/重登，不出现路由循环。 |
+| P1 | 真实模型文件写入与权限（#27/#37/#39） | 待集成；权限与准备状态回归通过 | 在隔离工作区用真实模型验证 allow_all、拒绝、审批与 execution identity，检查文件实际结果、权限边界和卡住时的 run/operation 状态。 |
+| P2 | Python 冷安装、升级与真实 PE 故障（#4–#6） | 部分通过；venv 已创建、失败保留有回归，RAG 未安装完成 | 冷安装与升级成功，pip/uv check 和 NumPy/Arrow 数据互转通过；实际导入 faiss/Stemmer/fontTools；真实 PE 安装失败后原解释器仍可用，无重复 dist-info。 |
+| P2 | Windows isolated/hoisted 与 TEMP（#3/#13/#14） | isolated 安装完成，hoisted 仅目录判断回归；构建 OOM | 独立目录分别安装两种布局，含中文/空格且可写的 TEMP，构建和页面访问成功；区分内存、权限和缺包错误。 |
+| P2 | Relay/DSH/嵌入 worker（#8–#10） | 仅参数文件与环境构造测试、普通子进程导入验证 | 实际超长参数调用，检查 worker executable/prefix/依赖与 PYTHONPATH；用用户自改版和干净版对照，排除旧路径泄漏。 |
+| P2 | 指定 Windows Caddy 构建（#12） | 待验证；不能以版本号或前端 OOM 推断 Caddy panic | 取得出错产物及 Go build 信息，普通桌面启动并重复访问首页/代理；保存 panic 栈或成功结果。 |
+| P2 | Windows Office 原生转换（#23–#25） | Windows 未完成；Docker/macOS 已有部分成功转换 | 配置 LibreOffice/字体，源码及桌面分别测试中文/空格路径 DOCX/XLSX/PPTX、并发、超时和重试；PDF 正确、无残留占锁，不误杀用户 Office。 |
+| P2 | GUI、token/ACL 与 PID（#26/#29/#38） | Windows 进程管理回归通过；GUI/真实身份竞态待测 | 普通桌面选择普通/根/中文目录及取消；检查实际进程完整性和读写；隔离环境验证身份不匹配时不杀进程，不能用管理员 shell 代替普通入口。 |
+| P2 | Windows Milvus（#31） | 补丁脚本 10 项通过；真实安装/数据未验收 | 核对桌面和源码 wheel、补丁是否实际应用；临时数据反复更新 manifest/索引并重启读取，不出现 WinError 183 或损坏索引。 |
+| P2 | SQLite 长时间运行与软锁（#7/#11/#33） | 连接复用和短时事务测试通过；部分 filelock 版本崩溃后可恢复 | 保留本地模式时，验证长时间空闲重连、并发/端口负载、不同 filelock 版本与异常退出、超过空闲 TTL 的业务行为；失败写请求不能被不安全重放。 |
+| P2 | 真实供应商与角色（#16/#32/#36/#40/#41） | 已有 SiliconFlow 小请求；不是全部供应商验收 | 核对实际选定账号/模型、动态 URL、自定义前缀、模型权限、embedding 角色到检索结果；补 SenseNova 对应请求及图片协议场景，不读取或发布用户密钥。 |
+| P2 | GLM 图片与 PPT 工作流 | 局部工具/排序/导出回归通过；真实模型全流程未完成 | 真实 GLM 出图、素材搜索配置异常恢复、主 Chat 限定范围编辑、增删插入/重排页、关联素材及重新导出 PPTX；检查内容、页序、文件与多会话隔离。 |
+| P2 | 已半迁移的认证库 | 新代码可防止后续中断半迁移；旧现场没有自动修复 | 对旧库另做备份和结构/版本核对，制定可验证的恢复方案；不得直接 stamp head 或删除用户库。本轮中断现场仍保留。 |
+
+已跳过或未覆盖的测试也不能记为通过：Windows manager 主包有 4 项 skip（外部发布包 opt-in、8090 占用、PATH 无 sleep、Unix chmod 专用），按对应平台与条件补测；本轮也没有完成完整 CI 平台矩阵。全部待办使用隔离数据和合成样本，并记录主仓库/子模块 SHA、实际安装方式、依赖版本、命令及脱敏日志。
+
 > **2026-10-26 upstream main 复查说明（北京时间）**：本次已执行 `git fetch upstream main`，核对主仓库 `04e5c4bef8e134483611ef48040418e690a2fd4b` 及该提交锁定的 LazyLLM 子模块 `fd4465ec8a6922d9cb1c88e509ec45650ac2e1ed`。复查阶段使用独立源码快照；后续按用户要求创建了 `cst/fix_1026` 分支并实施修复，见文末记录。LazyLLM 子模块没有改动或提交。工作区未找到 `question_list.md`，`test_LIST.md` 为空，因此以本报告已有的 41 项为复查输入，无法核对缺失清单中的额外细节。
 >
-> **阅读方式**：下表新增“复查”列是最新判断；其余四列及后续 Windows 部署记录保留为 **2026-10-22 历史报告**，其中“本机”“已复现”“健康检查”等不表示本次执行结果。此次运行环境是 Linux，采用源码追踪、离线最小复现和针对性的既有 Go 测试；没有启动 Windows 桌面、真实模型请求或大文件导入。源码位置均相对上述锁定版本；标注“子模块”的路径相对 `algorithm/lazyllm/lazyllm/`。
+> **初次复查阅读方式**：下表“初次复查”列是固定上游基线的历史判断；最新汇总见“当前归因与处理状态”列及文首，其余四列及后续 Windows 部署记录保留为 **2026-10-22 历史报告**，其中“本机”“已复现”“健康检查”等不表示本次执行结果。此次运行环境是 Linux，采用源码追踪、离线最小复现和针对性的既有 Go 测试；没有启动 Windows 桌面、真实模型请求或大文件导入。源码位置均相对上述锁定版本；标注“子模块”的路径相对 `algorithm/lazyllm/lazyllm/`。
 >
-> **优先结论**：#16 URL 丢路径、#32 动态 rerank 地址错误、#35 多 JSON 解析失败均仍存在；#7 不复用连接已复现，但耗尽未证明；#4 安装失败重建旧 venv 的代码风险仍在。特别纠正历史报告 #23：仓库存在 Office 转换服务源码；#30 的请求限制应区分客户端 15 MiB 与服务端 16 MiB。#35 有规则回退，不能等同于整个聊天崩溃。
+> **初次复查结论（修复前，非当前状态）**：#16 URL 丢路径、#32 动态 rerank 地址错误、#35 多 JSON 解析失败均仍存在；#7 不复用连接已复现，但耗尽未证明；#4 安装失败重建旧 venv 的代码风险仍在。特别纠正历史报告 #23：仓库存在 Office 转换服务源码；#30 的请求限制应区分客户端 15 MiB 与服务端 16 MiB。#35 有规则回退，不能等同于整个聊天崩溃。
 
 核查日期：2026-10-22（北京时间）。源码：`C:\Users\bujiadong.vendor\LazyMind`，主仓库 `7683f8ec`，LazyLLM 子模块 `655cb3ba`。对照用户提供的 41 项清单。
 
@@ -22,49 +113,49 @@
 
 ## 41 项逐项结果
 
-| 编号 | 清单问题 | 本项目结果 | 证据与适用边界 | 复查：upstream main（2026-10-26） |
-|---|---|---|---|---|
-| 1 | Git / submodule 必须代理 | 未发现当前故障 | 本次已成功获取主仓库和 LazyLLM 更新。GitHub 连通性属于环境条件，不能据此要求所有部署配置代理。Tutorial 保持禁用。 | **环境项，不能认定上游缺陷。** 本次 `git fetch upstream main` 成功；代理需求取决于网络。未做新的子模块网络下载。 |
-| 2 | GOTMPDIR 不存在导致 Go 构建失败 | 未复现所述故障 | 当前 `runtime_env.go` 使用宿主 GOCACHE/GOMODCACHE，不再看到清单描述的默认 `build/cache/go-tmp` 设置。本次源码 manager、Core、代理已编译。验证脚本使用独立 Go 临时目录。 | **未发现清单所述默认配置。** `local/local-runtime-manager/runtime_env.go:37` 设置宿主 Go 缓存，未设置 GOTMPDIR；上游快照的相关 Go 测试可编译运行。用户自行指定不存在目录仍属环境错误。 |
-| 3 | Windows pnpm isolated 必然缺依赖 | 未发现当前故障 | 本机实际为 isolated，frontend/node_modules 是指向 local/build 的 junction。Vite 启动、已有前端测试和转换均成功，不能把 junction 本身认定为根因。 | **“isolated 必然失败”不成立。** `local/local-runtime-manager/frontend.go:238` 按 pnpm 虚拟目录检查依赖；链接本身不证明缺包。本次未在 Windows 安装 pnpm，原机器的成功记录不作为本次结果。 |
-| 4 | Python 安装、缓存、并发问题 | **确认本机安装阻塞；部分机制已有保护** | uv 安装 LazyLLM 1.4.0 时 `Failed to update Windows PE resources`；官方失败回退随后清空并重建源码算法 venv，种子包安装再次失败。`acquireAlgorithmPythonLock` 已用锁串行化共享 venv 的算法安装。详见后文。 | **代码风险确认，PE 故障待 Windows 验证。** `local/local-runtime-manager/algorithm_service.go:280` 在任意安装错误后调用 `createVenv(..., true)`，仍可能破坏旧环境；同文件的共享安装锁已存在，不能再断言没有并发保护。 |
-| 5 | faiss / pystemmer / fonttools 安装坑 | 未复现所述特定错误 | 本次 pip 重建成功安装 pystemmer 3.1.0。faiss/fonttools 所述故障未复现，Milvus/RAG 可选组件未做完整部署；没有应用 `--no-deps` 或关闭隔离构建。 | **环境/依赖安装项，待验证。** 本次没有在 Windows 安装 faiss、pystemmer、fonttools，无法确认原特定错误，更不能凭旧机器的成功安装判定最新上游全部正常。 |
-| 6 | NumPy 与 pyarrow 冲突 | **确认环境异常，未确认清单中的 ABI 因果** | 启动前 uv pip check 报 `pyarrow-19.0.1.dist-info` 与 `pyarrow-26.0.0.dist-info` 同时存在；NumPy 分发为 1.26.4。重复分发信息不等于已证明实际加载 pyarrow 26，也没有复现原清单中的 NumPy ABI 崩溃。 | **环境项，未确认上游 ABI 缺陷。** 重复 dist-info 是原机器状态；本次未取得该 venv，也未复现 NumPy/pyarrow ABI 错误。 |
-| 7 | SQLite HTTP 连接耗尽 | **确认连接未复用；耗尽未压测** | 实际调用 `sqlite_proxy.Connection._call` 12 次，服务端看到 12 个客户端端口，Connection 均为 close。仍使用 urllib.urlopen；没有诱发本机 socket 耗尽或写操作重试。 | **连接不复用已复现；端口耗尽未证实。** `algorithm/lazymind/common/database/sqlite_proxy.py:342` 仍逐次 urlopen；本次 12 次真实 `_call` 对临时 HTTP 服务产生 12 个客户端端口，均为 Connection: close。 |
-| 8 | Relay 命令行超长 | 已有 Windows 处理 | `algorithm_service.go` 在 Windows 设置 `LAZYLLM_PASS_ARGS_BY_FILE=1`；Relay 支持参数文件。此处无需重复加同一开关。 | **已有处理。** `local/local-runtime-manager/algorithm_service.go:761` 为 Windows 设置参数文件开关；锁定子模块 `components/deploy/relay/base.py:16` 支持该开关。没有复现其他来源的命令行超长。 |
-| 9 | 源码 worker 缺 site-packages | 未复现；源码没有所述兜底 | 缺少组件 catalog 时，`pythonComponentSites` 返回 nil，environment 没有清单建议的 venv site-packages 回退。但 Relay 使用 sys.executable，实测源码 venv 的普通子进程保留同一 prefix 并可找到 requests。不能仅凭 catalog 缺失就断言 worker 一定丢包；完整 Relay/DSH 场景未测。 | **缺兜底代码仍在，但不足以认定 worker 缺包。** `local/local-runtime-manager/python_components.go:132` 无 catalog 返回 nil；Relay 使用 `sys.executable`（子模块 `components/deploy/relay/base.py:86`）。嵌入式/DSH 环境仍需专门验证。 |
-| 10 | DSH 的 PYTHONPATH 泄漏 | 本机未发现 | 当前会话无该 DSH PYTHONPATH。算法服务会显式构建 PYTHONPATH，网关还会清理继承的 PYTHONHOME/PYTHONPATH/VIRTUAL_ENV。没有 `D:\LazyLLM` 泄漏证据。 | **未证实 DSH 泄漏。** `local/local-runtime-manager/algorithm_service.go:620` 构建算法 PYTHONPATH；`channel_gateway_service.go:183` 清理继承的 Python 环境变量。外部 DSH 启动链不在本次复现范围。 |
-| 11 | SQLiteQueue 软锁死锁 | 条件风险，遗留锁行为已复现 | 仍用 SoftFileLock、共享 `.lazyllm_filesystem_queue.db`，没有 60 秒获取超时。临时样本中预存锁文件让 SoftFileLock 超时，FileLock 可获取未持有的同名文件锁；没有复现应用运行中的死锁。多个进程共享锁本身是正常同步。给数据库加 PID 后缀可能改变跨进程队列语义。 | **遗留软锁风险仍在，应用死锁未复现。** 锁定子模块 `common/queue.py:131` 仍使用共享 DB 和 SoftFileLock，未设置有界获取超时。本次 Python 环境没有 filelock，未重跑遗留锁实验；保留跨进程同步语义。 |
-| 12 | Caddy 2.10.2 panic | 未复现指定构建问题 | 源码默认仍为 2.10.2；本机已有 caddy 的 Go 构建信息为 go1.25.11，不是清单的 go1.27.2。本次源码前端由 Vite 运行，没有证据支持“版本号相同就会 panic”。 | **仅确认版本仍为 2.10.2。** `desktop/scripts/build-windows-x64.ps1` 固定该版本；版本号不能证明指定 Go 构建的 panic。本次未执行 Windows Caddy。 |
-| 13 | manager 不兼容 hoisted | 条件风险，当前未触发 | `prepareFrontendNodeModules` 仍建立链接；`frontendNodeModulesReady` 要求 .modules.yaml 和匹配的 virtualStoreDir。当前是可用的 isolated 环境；没有将其改成 hoisted。本次直接启动 Vite，避免为核查而重建现有依赖树。 | **布局兼容风险仍在。** `local/local-runtime-manager/frontend.go:238` 要求 `.modules.yaml` 含匹配的虚拟目录路径；不满足该条件的 hoisted 布局会被判未就绪。未复现完整 hoisted 启动失败；链接相关 Go 测试通过。 |
-| 14 | esbuild TEMP 写入被拒 | 未复现所述故障 | Vite 和现有前端测试可执行。源码验证使用独立 TEMP/TMP；uv 的 PE 更新错误另列 #4，不能等同于 esbuild 缓存权限错误。 | **环境项，待 Windows 验证。** 本次没有运行 Windows esbuild，无法将 TEMP 权限拒绝认定为上游通用缺陷。 |
-| 15 | Docker .env 污染本地模式 | 未发现当前污染 | local/config.env 使用 SQLiteStore、pipeline；算法环境由 manager 提供 SQLite proxy 和本机向量服务地址。没有把现有库删除或清空。 | **配置项，未确认上游必然污染。** manager 的 SQLite alias 环境相关 Go 测试通过；不代表用户现有 `.env` 无污染，需结合实际启动配置判断。 |
-| 16 | SenseNova base_url 拼接 | **确认 URL 问题** | 实际调用源码 `_get_chat_url`：`https://token.sensenova.cn/v1` 变成 `https://token.sensenova.cn/chat/completions`，加末尾斜杠后保留 /v1。图片协议分支需要具体供应商请求验证，本次未发送模型请求。 | **确认仍存在，离线复现。** 锁定子模块 `module/llms/onlinemodule/base/onlineChatModuleBase.py:78` 的 urljoin 将无尾斜杠的 `/v1` 丢弃；有尾斜杠正常。图片协议分支未验证。 |
-| 17 | 公网与本地自动登录冲突 | 设计边界，本机未触发 | auto-login 默认只允许 loopback；本机 LAN 自动登录开关为 false，验证通过本机前端和代理入口，没有部署公网穿透。Chat 的监听地址另见部署说明。 | **设计限制。** `local/local-proxy/internal/server/admin_session.go:23` 默认拒绝非 loopback 自动登录；公网使用不能假设继承本机自动登录，不等于鉴权缺陷。 |
-| 18 | 公网登录降级/循环 | 条件风险仍在 | localSession.ts 对非 2xx 统一抛错；local 模式 /login 直接重定向聊天，仍保留 localSessionInitialized。清单描述的远程场景有依据，但本次没有公网穿透部署，不能声称已复现完整循环。 | **远程登录降级风险仍在，循环未端到端复现。** `frontend/src/runtime/localSession.ts:81` 非 2xx 统一报错，`frontend/src/router/index.tsx:104` 在本地模式将 /login 重定向聊天。失败后的远程人工登录路径仍需验证。 |
-| 19 | 公网 Origin 被 CORS 拒绝 | 配置行为 | 默认白名单是 localhost / 127.0.0.1 / 配置的 LAN origin，没有用户清单中的公网域名。本次未部署该域名；拒绝未知 Origin 是当前配置预期。 | **预期配置行为。** `local/local-proxy/internal/config/config.go:101` 默认只允许本地 Origin；公网域名须显式配置，拒绝未知 Origin 本身不是 bug。 |
-| 20 | 改 admin 密码后自动登录失败 | 条件风险 | 代理仍读取 bootstrap 用户名/密码获取或刷新管理员会话。改密后若缓存会话无法续期、环境仍是旧密码，会失败。本次没有修改现有用户密码。 | **条件故障仍在。** `local/local-proxy/internal/auth/admin_session.go:58` 刷新失败后用配置密码重新登录；改密但未同步配置会使重新登录失败，缓存仍有效时不一定立即发生。 |
-| 21 | 中文注释 + GBK 吞配置 | 本机不适用 | 本机 .env、local/config.env、local-win.ps1 全部为 ASCII；系统默认代码页 936 下与 UTF-8 读取的配置键一致（21 / 123 项）。清单的 start-local.ps1 不在当前源码中。 | **待 Windows 配置实测。** 原报告的 ASCII 文件和代码页记录不能外推到最新部署；本次未用含中文注释的配置在 GBK PowerShell 下复现吞键。 |
-| 22 | 缺 office-convert 导致 DOCX/XLSX 不能聊 | **已改变，广泛结论不成立** | 本地聊天 DOCX/PPTX 可走原生读取；xls/xlsx 绕过 Office 转 PDF，使用 pandas。Office 转换服务仍不属于此源码基线，老格式或真正的 PDF 转换需求另行处理。 | **广泛结论不成立。** `algorithm/lazymind/chat/engine/document_extractor.py:37` 原生读 DOCX/PPTX，`chat_excel_extractor.py:66` 用 pandas 读表格；旧 `.doc` 和真实 PDF 转换需求仍有外部依赖。 |
-| 23 | office-convert Windows 五处适配 | 当前部署不适用 | 本仓库 compose 引用独立的 office-convert 镜像，当前没有该转换服务的本机 Python 实现可核对。不能把别处修改当成本项目已存在的源码。 | **原报告“无服务源码”需纠正；Windows 原生适配有风险。** 实际存在 `backend/office-convert-service/main.py`；`:53` 默认字体路径面向 Linux，`:538` 硬编码 libreoffice，`:553` 未传隔离环境。已使用 `Path.as_uri()` 和独立临时 profile；不能在缺原始清单时逐一确认所谓“五处”。Docker 路线不等于原生 Windows 路线。 |
-| 24 | relocatable Python 启 soffice 必失败 | 待验证 / 当前不适用 | 本机未发现 LibreOffice 安装，也没有启动转换服务。没有证据支持“venv Python 必失败”这一普遍结论。 | **继承环境风险存在，“必失败”未证实。** `backend/office-convert-service/main.py:553` subprocess.run 未传 env，可能继承宿主 Python 变量；是否影响 soffice 取决于实际安装与环境。本次未运行 LibreOffice。 |
-| 25 | soffice 残留占锁 | 本机未发现 | 未启动 soffice，也没有为本次检查杀任何其他 Office 程序。 | **未证实残留占锁；部分预防已存在。** `backend/office-convert-service/main.py:532` 每次转换使用独立 profile，并设子进程超时；未见同处显式清理整个进程树，超时后残留子进程仍需 Windows 验证。 |
-| 26 | 文件夹选择弹窗根目录失败 | 条件风险，未复现 GUI 故障 | picker 脚本仍没有显式 RootFolder/SelectedPath；已使用 powershell -STA。未弹出交互选择框。CREATE_NO_WINDOW 本身不等于已证明桌面隔离或无法调用 GUI。 | **代码形态仍在，GUI 故障待验证。** `local/local-proxy/internal/server/workspace_picker_windows.go:12` 未指定 RootFolder/初始 SelectedPath，但已经使用 -STA；仅凭这些不能确认弹窗根目录失败。 |
-| 27 | builtin shell 与 workflow 分工 | 设计行为，原描述需细化 | trusted_local_mode 默认 false；当前还有工作区绑定、逐操作授权和 workflow 条件控制。不能简化成“所有 workflow 都禁用 shell”或“只有 trusted 模式才可能有 shell”。 | **设计行为，原描述过宽。** `algorithm/lazymind/chat/engine/subagent/runner.py:416` 将 trusted、有效工作区权限和 workflow_full_trust 分别纳入宿主访问判断；工作区 workflow/host access 相关 Go 测试通过。 |
-| 28 | Excel 经 PDF/OCR 导致结构丢失 | **主要路径已修复，并通过合成样本** | Core 的 isSpreadsheetDocument/normalizeSpreadsheetDirectParse 保留原工作簿。实际调用聊天提取器：两张表共 3 行完整读取，205 行文件返回预览并要求从原文件用 Python 分析；没有经过 PDF/OCR。仍需注意公式缓存、隐藏行和合并单元格等语义。 | **主要路径已处理。** `backend/core/doc/task_convert.go:51` 表格绕过 PDF 转换；`algorithm/lazymind/chat/engine/chat_excel_extractor.py:66` 读原始各 sheet，超过内联阈值转预览。本次核对代码，未重做原报告 Excel 合成样本。 |
-| 29 | PID 复用误杀 | 已有部分防护，仍有边界 | 注册表持久化 StartID，枚举时会比较；installer 的 ForceKillTree 使用身份检查。但通用 forceKillProcessTree 仍按 PID 调 taskkill，pidFileRecords 会读取当前 StartID，不能据此宣称所有 PID 复用竞态都已消除。没有进行杀进程压力测试。 | **部分防护存在，仍有竞态边界。** `local/local-runtime-manager/process_registry.go:21` 保存 StartID；`:167` PID 文件路线取当前身份；`process_native_windows.go:47` 通用强杀仍直接 taskkill /PID。没有通过真实误杀实验确认发生概率。 |
-| 30 | 大 Excel 知识库切块失败链 | 条件风险 / 未做大数据压测 | 当前已能原始表格读取，SQLite executemany 也按请求大小分批；15 MiB 请求边界仍在，超大的单行不能靠分批解决。没有导入 81 MB 或真实患者数据，45 分钟 embedding 链路未复现。 | **完整故障链未证实，超大单行限制仍在。** `sqlite_proxy.py:17` 客户端 15 MiB，`local/local-runtime-manager/sqlite_server.go:26` 服务端 16 MiB；executemany 已按编码大小分批，单行过大仍报错。未做 81 MB 导入或慢 embedding 压测。 |
-| 31 | Milvus manifest os.rename | **源码部署条件下存在风险；覆盖语义已复现** | 检查前现有源码算法 venv 的 milvus_lite/storage/manifest.py 仍用 os.rename(tmp_path,target_path)；临时文件覆盖测试在本机返回 WinError 183。桌面打包流程已有 patch-windows-milvus.py，不能据此认为普通 pip 源码环境也自动打补丁。本次未启动可选 Milvus。 | **桌面打包已有补丁，普通源码安装待核实。** `desktop/scripts/build-windows-x64.ps1:582` 调用补丁；`patch-windows-milvus.py:49` 把 manifest rename 改为 replace。未安装最新源码环境的 Milvus，不能沿用旧机器结论断言当前 wheel 一定未修复。 |
-| 32 | SiliconFlowRerank 缺 type | **确认** | 该 supplier 未覆写 type，基类返回 EMBED。动态基础地址 /v1 被解析成 /v1/embeddings；显式 /v1/rerank 则不受影响。 | **确认仍存在，继承方法离线复现。** 锁定子模块 `supplier/siliconflow.py:118` 未覆盖 type，rerank 基类也未覆盖；继承 EMBED 导致动态 `/v1` 解析到 `/v1/embeddings`，显式 `/v1/rerank` 正常。 |
-| 33 | SQLite 事务 TTL 仅 5 分钟 | 条件风险，清单表述过宽 | 常量仍是 5 分钟，但 withExecutor 每次事务操作会 touch 并重置计时器，是空闲过期机制，不是每个活跃事务固定 5 分钟终止。慢 embedding 造成超过 5 分钟无数据库活动仍可能受影响。过期释放队列的现有用例通过。 | **空闲超时风险仍在，固定总时长说法不成立。** `local/local-runtime-manager/sqlite_server.go:25,418` 使用 5 分钟 TTL，并在每次事务请求重置；长时间无 SQL 可过期。本次过期事务释放等 SQLite Go 测试通过，不证明慢 embedding 全链路安全。 |
-| 34 | WORKING / DELETING 毒药状态 | 当前桌面数据未发现 | 只读检查桌面 app.db：documents、knowledge_bases、doc_parse_state、doc_service_tasks 均为 0 行。没有卡死任务或同名残留的本机证据，没有改状态或删库。 | **待恢复场景验证。** 原机器空表不能排除上游状态恢复缺陷；本次未制造进程崩溃/删除中断，也未检查用户数据，因此不能判定已修复或确认仍会卡死。 |
-| 35 | 任务分类 JSON 脆弱 | **确认，触发条件需修正** | 单个 JSON 后跟普通解释文本可以成功；后面再出现第二个花括号对象，会被 find/rfind 一并截入并产生 Extra data。详见源码最小复现。 | **解析缺陷确认，业务影响需收窄。** `algorithm/lazymind/chat/engine/prompts/task_profile.py:674` 多个未被单一代码块隔离的 JSON 对象触发 Extra data；单对象后普通说明正常。`:864` 会捕获异常并回退规则，不能直接写成整个聊天崩溃。 |
-| 36 | dynamic supplier 没绑定 URL | **不能按原根因认定** | 构造函数仍用 self._base_url，但 dynamic_router.forward 会调用 _merge_dynamic_forward_kwargs，把 bucket.url 传给供应商 forward；聊天 forward 使用 runtime_url。本次最小复现确认动态 URL 已传递。无末尾斜杠时仍受 #16 影响。 | **原根因不成立。** 锁定子模块 `module/llms/onlinemodule/dynamic_router.py:114` 将 bucket.url 注入 forward，聊天 forward 使用运行时 URL。无尾斜杠丢路径归 #16，不是没有绑定动态地址。 |
-| 37 | preparing 不显示审批 | **不能直接视为过滤 bug** | 后端 completePreparingOperation 正常会转成 pending/allowed；projectOperation 还故意将已被决策认领的 pending 投影为 preparing，避免重复审批。后端 Decide 本身拒绝非 pending。若长期 preparing，应查状态完成/索引/认领恢复，而不是直接让前端可审批。 | **过滤 preparing 本身不是 bug。** `backend/core/localworkspace/operations.go:184` 完成准备后转可决策状态；`approvals.go:289` 将已认领 pending 投影为 preparing。准备恢复相关 Go 测试通过，长期卡 preparing 仍需具体现场。 |
-| 38 | Python 低完整性级别 | 本次检查的进程未发现 | 检查当时 3 个源码 Python 进程 token，均为 S-1-16-12288（High），不是 Low。这些进程由本次排查启动，不能据此推断普通桌面启动的权限；没有修改任何目录完整性级别或 ACL。 | **Windows 进程环境项，待验证。** 本次在 Linux，未检查 Windows token/ACL；旧报告的 High 进程记录不能证明普通桌面启动总是正常。 |
-| 39 | write 的三个叠加 bug | **部分代码形态相同，完整结论未成立** | 见下文拆分。没有将“看到相同条件判断”直接等同于真实写入死锁。 | **不能确认“三个叠加 bug”。** `LocalWorkspaceControl.tsx:372` 保存权限；`backend/core/chat/conversation_logic.go:337` 读取服务端偏好；`algorithm/lazymind/chat/service/chat_service.py:1223` 构造 execution identity。授权前提不等于正常链路漏传；write 卡住未做真实模型复现。 |
-| 40 | 动态 embedding 未配置、绑定跟会话 | 当前桌面未发现未配置证据 / 绑定是设计行为 | 桌面库中有通过验证的 embed_main、embed_image、reranker 等角色各 1 条；不能认定本机缺 embedding。KB 和工作区绑定按会话及用户隔离符合当前实现。独立源码环境不继承桌面模型配置。 | **配置状态待验证；会话隔离是设计行为。** 本次没有用户模型库，不能沿用旧机器角色记录认定已配置；工作区 owner scope/resolve 相关 Go 测试通过，不能因会话绑定就认定缺陷。 |
-| 41 | DeepSeek 模型名称经验 | 内置目录已更新，服务端可用性未验证 | 当前 model_catalog.yaml 已有 deepseek-flash、deepseek-v4-pro、deepseek-v4-flash，清单所说内置只剩旧名称不适用于当前代码。具体供应商实时支持、权限及返回质量需其 API 验证，本次没有推断。 | **“内置仅旧模型名”不成立。** `backend/core/config/model_catalog.yaml:140,143,1049` 存在 deepseek-flash、deepseek-v4-pro、deepseek-v4-flash；只确认目录内容，未调用供应商验证名称、账号权限及效果。 |
+| 编号 | 清单问题 | 本项目结果 | 证据与适用边界 | 初次复查：upstream main（2026-10-26） | 当前归因与处理状态（汇总） |
+|---|---|---|---|---|---|
+| 1 | Git / submodule 必须代理 | 未发现当前故障 | 本次已成功获取主仓库和 LazyLLM 更新。GitHub 连通性属于环境条件，不能据此要求所有部署配置代理。Tutorial 保持禁用。 | **环境项，不能认定上游缺陷。** 本次 `git fetch upstream main` 成功；代理需求取决于网络。未做新的子模块网络下载。 | 环境/网络；未确认源码缺陷。 |
+| 2 | GOTMPDIR 不存在导致 Go 构建失败 | 未复现所述故障 | 当前 `runtime_env.go` 使用宿主 GOCACHE/GOMODCACHE，不再看到清单描述的默认 `build/cache/go-tmp` 设置。本次源码 manager、Core、代理已编译。验证脚本使用独立 Go 临时目录。 | **未发现清单所述默认配置。** `local/local-runtime-manager/runtime_env.go:37` 设置宿主 Go 缓存，未设置 GOTMPDIR；上游快照的相关 Go 测试可编译运行。用户自行指定不存在目录仍属环境错误。 | 未发现默认配置缺陷；手动变量/自改启动链需对照。 |
+| 3 | Windows pnpm isolated 必然缺依赖 | 未发现当前故障 | 本机实际为 isolated，frontend/node_modules 是指向 local/build 的 junction。Vite 启动、已有前端测试和转换均成功，不能把 junction 本身认定为根因。 | **“isolated 必然失败”不成立。** `local/local-runtime-manager/frontend.go:238` 按 pnpm 虚拟目录检查依赖；链接本身不证明缺包。本次未在 Windows 安装 pnpm，原机器的成功记录不作为本次结果。 | 原“必失败”不成立；Windows isolated 安装已做，构建受内存阻塞。 |
+| 4 | Python 安装、缓存、并发问题 | **确认本机安装阻塞；部分机制已有保护** | uv 安装 LazyLLM 1.4.0 时 `Failed to update Windows PE resources`；官方失败回退随后清空并重建源码算法 venv，种子包安装再次失败。`acquireAlgorithmPythonLock` 已用锁串行化共享 venv 的算法安装。详见后文。 | **代码风险确认，PE 故障待 Windows 验证。** `local/local-runtime-manager/algorithm_service.go:280` 在任意安装错误后调用 `createVenv(..., true)`，仍可能破坏旧环境；同文件的共享安装锁已存在，不能再断言没有并发保护。 | 主仓库破坏性重试已修；真实 PE 错误仍待验证。 |
+| 5 | faiss / pystemmer / fonttools 安装坑 | 未复现所述特定错误 | 本次 pip 重建成功安装 pystemmer 3.1.0。faiss/fonttools 所述故障未复现，Milvus/RAG 可选组件未做完整部署；没有应用 `--no-deps` 或关闭隔离构建。 | **环境/依赖安装项，待验证。** 本次没有在 Windows 安装 faiss、pystemmer、fonttools，无法确认原特定错误，更不能凭旧机器的成功安装判定最新上游全部正常。 | 环境/依赖待验；Windows RAG 安装因 MemoryError 未完成。 |
+| 6 | NumPy 与 pyarrow 冲突 | **确认环境异常，未确认清单中的 ABI 因果** | 启动前 uv pip check 报 `pyarrow-19.0.1.dist-info` 与 `pyarrow-26.0.0.dist-info` 同时存在；NumPy 分发为 1.26.4。重复分发信息不等于已证明实际加载 pyarrow 26，也没有复现原清单中的 NumPy ABI 崩溃。 | **环境项，未确认上游 ABI 缺陷。** 重复 dist-info 是原机器状态；本次未取得该 venv，也未复现 NumPy/pyarrow ABI 错误。 | 历史环境异常；未确认上游 ABI 缺陷，Windows 完整依赖待验。 |
+| 7 | SQLite HTTP 连接耗尽 | **确认连接未复用；耗尽未压测** | 实际调用 `sqlite_proxy.Connection._call` 12 次，服务端看到 12 个客户端端口，Connection 均为 close。仍使用 urllib.urlopen；没有诱发本机 socket 耗尽或写操作重试。 | **连接不复用已复现；端口耗尽未证实。** `algorithm/lazymind/common/database/sqlite_proxy.py:342` 仍逐次 urlopen；本次 12 次真实 `_call` 对临时 HTTP 服务产生 12 个客户端端口，均为 Connection: close。 | 主仓库连接不复用已修；耗尽及长期压测未完成。 |
+| 8 | Relay 命令行超长 | 已有 Windows 处理 | `algorithm_service.go` 在 Windows 设置 `LAZYLLM_PASS_ARGS_BY_FILE=1`；Relay 支持参数文件。此处无需重复加同一开关。 | **已有处理。** `local/local-runtime-manager/algorithm_service.go:761` 为 Windows 设置参数文件开关；锁定子模块 `components/deploy/relay/base.py:16` 支持该开关。没有复现其他来源的命令行超长。 | 已有参数文件机制；真实 Windows 超长 Relay 待验。 |
+| 9 | 源码 worker 缺 site-packages | 未复现；源码没有所述兜底 | 缺少组件 catalog 时，`pythonComponentSites` 返回 nil，environment 没有清单建议的 venv site-packages 回退。但 Relay 使用 sys.executable，实测源码 venv 的普通子进程保留同一 prefix 并可找到 requests。不能仅凭 catalog 缺失就断言 worker 一定丢包；完整 Relay/DSH 场景未测。 | **缺兜底代码仍在，但不足以认定 worker 缺包。** `local/local-runtime-manager/python_components.go:132` 无 catalog 返回 nil；Relay 使用 `sys.executable`（子模块 `components/deploy/relay/base.py:86`）。嵌入式/DSH 环境仍需专门验证。 | 未确认正常源码 worker 缺包；用户自改/嵌入链待对照。 |
+| 10 | DSH 的 PYTHONPATH 泄漏 | 本机未发现 | 当前会话无该 DSH PYTHONPATH。算法服务会显式构建 PYTHONPATH，网关还会清理继承的 PYTHONHOME/PYTHONPATH/VIRTUAL_ENV。没有 `D:\LazyLLM` 泄漏证据。 | **未证实 DSH 泄漏。** `local/local-runtime-manager/algorithm_service.go:620` 构建算法 PYTHONPATH；`channel_gateway_service.go:183` 清理继承的 Python 环境变量。外部 DSH 启动链不在本次复现范围。 | 未证实泄漏；DSH/用户启动链待对照。 |
+| 11 | SQLiteQueue 软锁死锁 | 条件风险，遗留锁行为已复现 | 仍用 SoftFileLock、共享 `.lazyllm_filesystem_queue.db`，没有 60 秒获取超时。临时样本中预存锁文件让 SoftFileLock 超时，FileLock 可获取未持有的同名文件锁；没有复现应用运行中的死锁。多个进程共享锁本身是正常同步。给数据库加 PID 后缀可能改变跨进程队列语义。 | **遗留软锁风险仍在，应用死锁未复现。** 锁定子模块 `common/queue.py:131` 仍使用共享 DB 和 SoftFileLock，未设置有界获取超时。本次 Python 环境没有 filelock，未重跑遗留锁实验；保留跨进程同步语义。 | 依赖/条件风险；新 filelock 局部可恢复，不等于所有版本无问题。 |
+| 12 | Caddy 2.10.2 panic | 未复现指定构建问题 | 源码默认仍为 2.10.2；本机已有 caddy 的 Go 构建信息为 go1.25.11，不是清单的 go1.27.2。本次源码前端由 Vite 运行，没有证据支持“版本号相同就会 panic”。 | **仅确认版本仍为 2.10.2。** `desktop/scripts/build-windows-x64.ps1` 固定该版本；版本号不能证明指定 Go 构建的 panic。本次未执行 Windows Caddy。 | 指定构建待验；不是确认的当前 Caddy 故障。 |
+| 13 | manager 不兼容 hoisted | 条件风险，当前未触发 | `prepareFrontendNodeModules` 仍建立链接；`frontendNodeModulesReady` 要求 .modules.yaml 和匹配的 virtualStoreDir。当前是可用的 isolated 环境；没有将其改成 hoisted。本次直接启动 Vite，避免为核查而重建现有依赖树。 | **布局兼容风险仍在。** `local/local-runtime-manager/frontend.go:238` 要求 `.modules.yaml` 含匹配的虚拟目录路径；不满足该条件的 hoisted 布局会被判未就绪。未复现完整 hoisted 启动失败；链接相关 Go 测试通过。 | 主仓库 hoisted 就绪判断已修；实际冷安装启动待验。 |
+| 14 | esbuild TEMP 写入被拒 | 未复现所述故障 | Vite 和现有前端测试可执行。源码验证使用独立 TEMP/TMP；uv 的 PE 更新错误另列 #4，不能等同于 esbuild 缓存权限错误。 | **环境项，待 Windows 验证。** 本次没有运行 Windows esbuild，无法将 TEMP 权限拒绝认定为上游通用缺陷。 | 历史 TEMP 拒写未复现；本轮构建失败有内存证据。 |
+| 15 | Docker .env 污染本地模式 | 未发现当前污染 | local/config.env 使用 SQLiteStore、pipeline；算法环境由 manager 提供 SQLite proxy 和本机向量服务地址。没有把现有库删除或清空。 | **配置项，未确认上游必然污染。** manager 的 SQLite alias 环境相关 Go 测试通过；不代表用户现有 `.env` 无污染，需结合实际启动配置判断。 | 配置/自改加载链待核对；未确认上游必然污染。 |
+| 16 | SenseNova base_url 拼接 | **确认 URL 问题** | 实际调用源码 `_get_chat_url`：`https://token.sensenova.cn/v1` 变成 `https://token.sensenova.cn/chat/completions`，加末尾斜杠后保留 /v1。图片协议分支需要具体供应商请求验证，本次未发送模型请求。 | **确认仍存在，离线复现。** 锁定子模块 `module/llms/onlinemodule/base/onlineChatModuleBase.py:78` 的 urljoin 将无尾斜杠的 `/v1` 丢弃；有尾斜杠正常。图片协议分支未验证。 | LazyLLM 缺陷已由当前 pin 修复；非本轮主仓库修改。 |
+| 17 | 公网与本地自动登录冲突 | 设计边界，本机未触发 | auto-login 默认只允许 loopback；本机 LAN 自动登录开关为 false，验证通过本机前端和代理入口，没有部署公网穿透。Chat 的监听地址另见部署说明。 | **设计限制。** `local/local-proxy/internal/server/admin_session.go:23` 默认拒绝非 loopback 自动登录；公网使用不能假设继承本机自动登录，不等于鉴权缺陷。 | 自动登录设计边界；公网整体验收待做。 |
+| 18 | 公网登录降级/循环 | 条件风险仍在 | localSession.ts 对非 2xx 统一抛错；local 模式 /login 直接重定向聊天，仍保留 localSessionInitialized。清单描述的远程场景有依据，但本次没有公网穿透部署，不能声称已复现完整循环。 | **远程登录降级风险仍在，循环未端到端复现。** `frontend/src/runtime/localSession.ts:81` 非 2xx 统一报错，`frontend/src/router/index.tsx:104` 在本地模式将 /login 重定向聊天。失败后的远程人工登录路径仍需验证。 | 条件风险；完整浏览器登录循环待定位。 |
+| 19 | 公网 Origin 被 CORS 拒绝 | 配置行为 | 默认白名单是 localhost / 127.0.0.1 / 配置的 LAN origin，没有用户清单中的公网域名。本次未部署该域名；拒绝未知 Origin 是当前配置预期。 | **预期配置行为。** `local/local-proxy/internal/config/config.go:101` 默认只允许本地 Origin；公网域名须显式配置，拒绝未知 Origin 本身不是 bug。 | 白名单配置行为；实际公网域名待验。 |
+| 20 | 改 admin 密码后自动登录失败 | 条件风险 | 代理仍读取 bootstrap 用户名/密码获取或刷新管理员会话。改密后若缓存会话无法续期、环境仍是旧密码，会失败。本次没有修改现有用户密码。 | **条件故障仍在。** `local/local-proxy/internal/auth/admin_session.go:58` 刷新失败后用配置密码重新登录；改密但未同步配置会使重新登录失败，缓存仍有效时不一定立即发生。 | 改密与 bootstrap 配置不同步的条件故障；未自动解决。 |
+| 21 | 中文注释 + GBK 吞配置 | 本机不适用 | 本机 .env、local/config.env、local-win.ps1 全部为 ASCII；系统默认代码页 936 下与 UTF-8 读取的配置键一致（21 / 123 项）。清单的 start-local.ps1 不在当前源码中。 | **待 Windows 配置实测。** 原报告的 ASCII 文件和代码页记录不能外推到最新部署；本次未用含中文注释的配置在 GBK PowerShell 下复现吞键。 | 主仓库 UTF-8 中文值解码已修（本轮提交）；非全部吞键。 |
+| 22 | 缺 office-convert 导致 DOCX/XLSX 不能聊 | **已改变，广泛结论不成立** | 本地聊天 DOCX/PPTX 可走原生读取；xls/xlsx 绕过 Office 转 PDF，使用 pandas。Office 转换服务仍不属于此源码基线，老格式或真正的 PDF 转换需求另行处理。 | **广泛结论不成立。** `algorithm/lazymind/chat/engine/document_extractor.py:37` 原生读 DOCX/PPTX，`chat_excel_extractor.py:66` 用 pandas 读表格；旧 `.doc` 和真实 PDF 转换需求仍有外部依赖。 | 广泛结论不成立；原生读取已有，旧格式/转换另验。 |
+| 23 | office-convert Windows 五处适配 | 当前部署不适用 | 本仓库 compose 引用独立的 office-convert 镜像，当前没有该转换服务的本机 Python 实现可核对。不能把别处修改当成本项目已存在的源码。 | **原报告“无服务源码”需纠正；Windows 原生适配有风险。** 实际存在 `backend/office-convert-service/main.py`；`:53` 默认字体路径面向 Linux，`:538` 硬编码 libreoffice，`:553` 未传隔离环境。已使用 `Path.as_uri()` 和独立临时 profile；不能在缺原始清单时逐一确认所谓“五处”。Docker 路线不等于原生 Windows 路线。 | 服务源码存在；Windows 原生适配仍待验证。 |
+| 24 | relocatable Python 启 soffice 必失败 | 待验证 / 当前不适用 | 本机未发现 LibreOffice 安装，也没有启动转换服务。没有证据支持“venv Python 必失败”这一普遍结论。 | **继承环境风险存在，“必失败”未证实。** `backend/office-convert-service/main.py:553` subprocess.run 未传 env，可能继承宿主 Python 变量；是否影响 soffice 取决于实际安装与环境。本次未运行 LibreOffice。 | “必失败”不成立；Windows 环境继承仍待验证。 |
+| 25 | soffice 残留占锁 | 本机未发现 | 未启动 soffice，也没有为本次检查杀任何其他 Office 程序。 | **未证实残留占锁；部分预防已存在。** `backend/office-convert-service/main.py:532` 每次转换使用独立 profile，并设子进程超时；未见同处显式清理整个进程树，超时后残留子进程仍需 Windows 验证。 | 成功并发有局部证据；Windows 超时后残留清理待验。 |
+| 26 | 文件夹选择弹窗根目录失败 | 条件风险，未复现 GUI 故障 | picker 脚本仍没有显式 RootFolder/SelectedPath；已使用 powershell -STA。未弹出交互选择框。CREATE_NO_WINDOW 本身不等于已证明桌面隔离或无法调用 GUI。 | **代码形态仍在，GUI 故障待验证。** `local/local-proxy/internal/server/workspace_picker_windows.go:12` 未指定 RootFolder/初始 SelectedPath，但已经使用 -STA；仅凭这些不能确认弹窗根目录失败。 | GUI 待验，不能仅凭代码形态认定故障。 |
+| 27 | builtin shell 与 workflow 分工 | 设计行为，原描述需细化 | trusted_local_mode 默认 false；当前还有工作区绑定、逐操作授权和 workflow 条件控制。不能简化成“所有 workflow 都禁用 shell”或“只有 trusted 模式才可能有 shell”。 | **设计行为，原描述过宽。** `algorithm/lazymind/chat/engine/subagent/runner.py:416` 将 trusted、有效工作区权限和 workflow_full_trust 分别纳入宿主访问判断；工作区 workflow/host access 相关 Go 测试通过。 | 权限设计行为；真实模型授权/写入集成待验。 |
+| 28 | Excel 经 PDF/OCR 导致结构丢失 | **主要路径已修复，并通过合成样本** | Core 的 isSpreadsheetDocument/normalizeSpreadsheetDirectParse 保留原工作簿。实际调用聊天提取器：两张表共 3 行完整读取，205 行文件返回预览并要求从原文件用 Python 分析；没有经过 PDF/OCR。仍需注意公式缓存、隐藏行和合并单元格等语义。 | **主要路径已处理。** `backend/core/doc/task_convert.go:51` 表格绕过 PDF 转换；`algorithm/lazymind/chat/engine/chat_excel_extractor.py:66` 读原始各 sheet，超过内联阈值转预览。本次核对代码，未重做原报告 Excel 合成样本。 | 原始表格主路径已处理；复杂 Excel 语义与大表链路待验。 |
+| 29 | PID 复用误杀 | 已有部分防护，仍有边界 | 注册表持久化 StartID，枚举时会比较；installer 的 ForceKillTree 使用身份检查。但通用 forceKillProcessTree 仍按 PID 调 taskkill，pidFileRecords 会读取当前 StartID，不能据此宣称所有 PID 复用竞态都已消除。没有进行杀进程压力测试。 | **部分防护存在，仍有竞态边界。** `local/local-runtime-manager/process_registry.go:21` 保存 StartID；`:167` PID 文件路线取当前身份；`process_native_windows.go:47` 通用强杀仍直接 taskkill /PID。没有通过真实误杀实验确认发生概率。 | 部分防护/Windows 测试通过；真实身份竞态待验。 |
+| 30 | 大 Excel 知识库切块失败链 | 条件风险 / 未做大数据压测 | 当前已能原始表格读取，SQLite executemany 也按请求大小分批；15 MiB 请求边界仍在，超大的单行不能靠分批解决。没有导入 81 MB 或真实患者数据，45 分钟 embedding 链路未复现。 | **完整故障链未证实，超大单行限制仍在。** `sqlite_proxy.py:17` 客户端 15 MiB，`local/local-runtime-manager/sqlite_server.go:26` 服务端 16 MiB；executemany 已按编码大小分批，单行过大仍报错。未做 81 MB 导入或慢 embedding 压测。 | 大表完整链路待验；优先 Docker PostgreSQL + OpenSearch。 |
+| 31 | Milvus manifest os.rename | **源码部署条件下存在风险；覆盖语义已复现** | 检查前现有源码算法 venv 的 milvus_lite/storage/manifest.py 仍用 os.rename(tmp_path,target_path)；临时文件覆盖测试在本机返回 WinError 183。桌面打包流程已有 patch-windows-milvus.py，不能据此认为普通 pip 源码环境也自动打补丁。本次未启动可选 Milvus。 | **桌面打包已有补丁，普通源码安装待核实。** `desktop/scripts/build-windows-x64.ps1:582` 调用补丁；`patch-windows-milvus.py:49` 把 manifest rename 改为 replace。未安装最新源码环境的 Milvus，不能沿用旧机器结论断言当前 wheel 一定未修复。 | 桌面补丁/脚本已有；普通源码安装与真实 Milvus 待验。 |
+| 32 | SiliconFlowRerank 缺 type | **确认** | 该 supplier 未覆写 type，基类返回 EMBED。动态基础地址 /v1 被解析成 /v1/embeddings；显式 /v1/rerank 则不受影响。 | **确认仍存在，继承方法离线复现。** 锁定子模块 `supplier/siliconflow.py:118` 未覆盖 type，rerank 基类也未覆盖；继承 EMBED 导致动态 `/v1` 解析到 `/v1/embeddings`，显式 `/v1/rerank` 正常。 | LazyLLM 缺陷已由当前 pin 修复，已有真实重排记录。 |
+| 33 | SQLite 事务 TTL 仅 5 分钟 | 条件风险，清单表述过宽 | 常量仍是 5 分钟，但 withExecutor 每次事务操作会 touch 并重置计时器，是空闲过期机制，不是每个活跃事务固定 5 分钟终止。慢 embedding 造成超过 5 分钟无数据库活动仍可能受影响。过期释放队列的现有用例通过。 | **空闲超时风险仍在，固定总时长说法不成立。** `local/local-runtime-manager/sqlite_server.go:25,418` 使用 5 分钟 TTL，并在每次事务请求重置；长时间无 SQL 可过期。本次过期事务释放等 SQLite Go 测试通过，不证明慢 embedding 全链路安全。 | SQLite 空闲 TTL 是条件风险，非固定总时限；慢链路待验。 |
+| 34 | WORKING / DELETING 毒药状态 | 当前桌面数据未发现 | 只读检查桌面 app.db：documents、knowledge_bases、doc_parse_state、doc_service_tasks 均为 0 行。没有卡死任务或同名残留的本机证据，没有改状态或删库。 | **待恢复场景验证。** 原机器空表不能排除上游状态恢复缺陷；本次未制造进程崩溃/删除中断，也未检查用户数据，因此不能判定已修复或确认仍会卡死。 | 真实任务中断恢复待验；认证迁移修复不能替代此项。 |
+| 35 | 任务分类 JSON 脆弱 | **确认，触发条件需修正** | 单个 JSON 后跟普通解释文本可以成功；后面再出现第二个花括号对象，会被 find/rfind 一并截入并产生 Extra data。详见源码最小复现。 | **解析缺陷确认，业务影响需收窄。** `algorithm/lazymind/chat/engine/prompts/task_profile.py:674` 多个未被单一代码块隔离的 JSON 对象触发 Extra data；单对象后普通说明正常。`:864` 会捕获异常并回退规则，不能直接写成整个聊天崩溃。 | 主仓库多 JSON 解析已修，保留规则回退。 |
+| 36 | dynamic supplier 没绑定 URL | **不能按原根因认定** | 构造函数仍用 self._base_url，但 dynamic_router.forward 会调用 _merge_dynamic_forward_kwargs，把 bucket.url 传给供应商 forward；聊天 forward 使用 runtime_url。本次最小复现确认动态 URL 已传递。无末尾斜杠时仍受 #16 影响。 | **原根因不成立。** 锁定子模块 `module/llms/onlinemodule/dynamic_router.py:114` 将 bucket.url 注入 forward，聊天 forward 使用运行时 URL。无尾斜杠丢路径归 #16，不是没有绑定动态地址。 | “动态 URL 未绑定”原根因不成立；相关路径问题归 #16。 |
+| 37 | preparing 不显示审批 | **不能直接视为过滤 bug** | 后端 completePreparingOperation 正常会转成 pending/allowed；projectOperation 还故意将已被决策认领的 pending 投影为 preparing，避免重复审批。后端 Decide 本身拒绝非 pending。若长期 preparing，应查状态完成/索引/认领恢复，而不是直接让前端可审批。 | **过滤 preparing 本身不是 bug。** `backend/core/localworkspace/operations.go:184` 完成准备后转可决策状态；`approvals.go:289` 将已认领 pending 投影为 preparing。准备恢复相关 Go 测试通过，长期卡 preparing 仍需具体现场。 | 过滤 preparing 是设计行为；长期卡住需运行现场。 |
+| 38 | Python 低完整性级别 | 本次检查的进程未发现 | 检查当时 3 个源码 Python 进程 token，均为 S-1-16-12288（High），不是 Low。这些进程由本次排查启动，不能据此推断普通桌面启动的权限；没有修改任何目录完整性级别或 ACL。 | **Windows 进程环境项，待验证。** 本次在 Linux，未检查 Windows token/ACL；旧报告的 High 进程记录不能证明普通桌面启动总是正常。 | 普通桌面 token/ACL 待验，不能沿用管理员 shell 结论。 |
+| 39 | write 的三个叠加 bug | **部分代码形态相同，完整结论未成立** | 见下文拆分。没有将“看到相同条件判断”直接等同于真实写入死锁。 | **不能确认“三个叠加 bug”。** `LocalWorkspaceControl.tsx:372` 保存权限；`backend/core/chat/conversation_logic.go:337` 读取服务端偏好；`algorithm/lazymind/chat/service/chat_service.py:1223` 构造 execution identity。授权前提不等于正常链路漏传；write 卡住未做真实模型复现。 | 用户报告文件工具阻塞，未解决；三个拟定根因须逐段定位。 |
+| 40 | 动态 embedding 未配置、绑定跟会话 | 当前桌面未发现未配置证据 / 绑定是设计行为 | 桌面库中有通过验证的 embed_main、embed_image、reranker 等角色各 1 条；不能认定本机缺 embedding。KB 和工作区绑定按会话及用户隔离符合当前实现。独立源码环境不继承桌面模型配置。 | **配置状态待验证；会话隔离是设计行为。** 本次没有用户模型库，不能沿用旧机器角色记录认定已配置；工作区 owner scope/resolve 相关 Go 测试通过，不能因会话绑定就认定缺陷。 | 用户报告 kb_search 缺 dynamic source，未解决；配置缺失/注入丢失待区分。 |
+| 41 | DeepSeek 模型名称经验 | 内置目录已更新，服务端可用性未验证 | 当前 model_catalog.yaml 已有 deepseek-flash、deepseek-v4-pro、deepseek-v4-flash，清单所说内置只剩旧名称不适用于当前代码。具体供应商实时支持、权限及返回质量需其 API 验证，本次没有推断。 | **“内置仅旧模型名”不成立。** `backend/core/config/model_catalog.yaml:140,143,1049` 存在 deepseek-flash、deepseek-v4-pro、deepseek-v4-flash；只确认目录内容，未调用供应商验证名称、账号权限及效果。 | 目录已有对应名称；供应商实时权限/效果待验。 |
 
 ## 需要优先处理的实际问题
 
@@ -424,3 +515,43 @@ Go 执行使用 `TZ=UTC` 并清除宿主 `GIT_EXEC_PATH`，避开既有本机时
 | Embedding：无尾斜杠 `/v1` | BAAI/bge-m3；合成中文句子 | 实际 `/v1/embeddings`，返回 1024 维向量 |
 
 证据位于 `docs/reviews/report-retest-2026-10-26/fix-*.log` 和 `siliconflow-live-*.json`。真实接口验证针对本次账号、模型及测试输入，不代表整个知识库入库/检索、Windows 桌面或所有供应商已端到端通过。
+
+
+## 2026-10-26 Windows 原生补测与配置编码修复（WSL 主机）
+
+已直接切换并拉取 `origin/cst/ppt_template`，主仓库基线 `7154e8451`；子模块只检出分支已有 gitlink `abf630b8`，没有修改或提交其指针。此前 macOS 记录保持原有环境边界。本节使用宿主 Windows PowerShell 5.1.26100.9711（默认代码页 936）及真实 Windows EXE，不以 Linux 测试替代 Windows 结果。
+
+| 项目 | 本次复查判断 | 证据与剩余边界 |
+|---|---|---|
+| #21 配置编码 | **确认中文配置值被错误解码，已修复。** | NTFS 临时 UTF-8 无 BOM 配置经过实际 Import-EnvFile：修复前中文值不相等、注释后的 ASCII 键正常；不能描述成全部键被吞。两个配置读取入口显式 UTF8 后通过，新增 Windows Go 回归调用真实 PowerShell 解析函数。旧 GBK 编码配置应转换为 UTF-8。 |
+| #4 原 venv 保护 | **Windows 平台回归通过。** | manager 原生测试验证安装失败保留旧解释器；模拟安装器，不等于真实 uv PE 错误已消除。 |
+| #13 hoisted | **Windows 平台回归通过。** | isolated/hoisted 就绪判断和保留已有 hoisted 目录测试通过；实际冷安装仍单列部署验证。 |
+| #8、#10 参数与环境 | **Windows 环境构造回归通过。** | 参数文件开关及 gateway Python 环境隔离通过；没有完整超长 Relay/外部 DSH 运行证据。 |
+| #29 进程管理 | **现有 Windows 测试通过，真实 PID 复用仍未证明。** | 包含子进程创建标志、Job 分配失败回退、进程树过滤；不得等同于所有身份竞态消除。 |
+| Windows 启动 doctor | **补入当前分支缺失的已有修复。** | 移入 cst/fix_1026 的 module 读取诊断：同一 go.mod 在 NTFS 临时目录通过；WSL share 锁失败给出本地盘/WSL 启动提示。 |
+
+manager 主包：WSL 交叉编译 Windows EXE 后由 Windows 执行，197 个顶层测试通过、4 个跳过、0 失败。跳过：外部网络发布包 opt-in、8090 已占用、PATH 无 sleep、Unix chmod 专用测试。不是完整 `go test ./...` 所有子包结果，也不是原生 Windows 冷构建结果。[验证说明](../reviews/report-windows-retest-2026-10-26/README.md)。
+
+空间核查纠正：C 盘仅约 3 GiB 可用，但 D 盘 NTFS 有约 235 GiB 可用，因此不能再用 C 盘不足作为本机无法原生部署的结论。已在 `D:\LazyMind-report-1026` 展开主仓库与锁定子模块的干净源码快照，再覆盖本次启动脚本修复；独立 runtime 数据目录 `D:\LazyMind-report-1026-data`，服务端口整体加 20000（前端优先 28090、实际避让至 28091，SQLite 39081）。已执行 Windows 原生启动，阶段结果及最终阻塞见下文，不记为整套通过。
+
+按用户授权清理 Docker：仅移除未被容器引用的镜像及超过 7 天未使用的构建缓存，分别报告回收 969.3 MB、83.2 GB。没有删除容器或数据卷；此数字为 Docker 报告，不等于宿主 VHD 文件已自动缩小。
+
+补充已完成：Windows 系统 Python 加载本次快照的实际 SQLite proxy，访问上述 Windows SQLite 服务，连续 100 次 SELECT 1 均正确且只使用 1 个客户端端口；不会据此声称 Windows 端口耗尽压测通过。Windows Python 在 NTFS 快照执行 `python -m unittest discover -s tests -p test_desktop_windows_milvus.py -v`，10 项通过（含中断后索引不发布、失败保留已有索引），验证补丁逻辑，不代表普通源码安装已自动应用补丁或真实 Milvus 数据导入完成。
+
+### 新定位：SQLite 认证库迁移中断后无法重启
+
+这是本轮停止首次启动时在**独立测试库**触发的中断恢复问题，不应误记成正常全新安装必然失败或 Windows 专属问题。现场版本号停在 c9d0d3d31d10，d8b8d6142f1a 的前 5 个新列已经存在，重新启动再次加列失败。原现场完整保留在 `D:\LazyMind-report-1026-data\data\stores\sqlite\auth-interrupted`；没有清理用户现有数据库。为继续新环境验证，测试实例另建认证库。
+
+根因是 Python sqlite3 的 legacy 事务模式不会为 DDL 自动发 BEGIN。修复仅调整 `backend/auth-service/alembic/env.py` 的 SQLite 在线执行：显式 BEGIN IMMEDIATE，把结构变更和迁移版本更新放进同一事务；不改历史迁移文件、版本号或业务表定义，PostgreSQL 路线保持原事务方式。**此改动预防后续半迁移，不会自动修复已经损坏的旧库**，旧现场应按具体已执行步骤处理，不能盲目推进版本号。
+
+新增回归实际执行迁移，并在目标 ALTER TABLE 前通过 `os._exit(71)` 终止进程；修复前留下 5 列而失败，修复后结构/版本均回到原状态，重启和重复 upgrade head 均成功。Linux、原生 Windows、隔离 Docker 三处通过；认证服务完整现有测试 225 passed、27 subtests passed，相关 flake8 通过。新测试位于认证服务现有 CI 收集目录。此前观察到的认证健康失败已恢复，Windows Auth/Core/Proxy/SQLite 与自动登录接口均返回 HTTP 200，尚不将前端/Chat 标为通过。
+
+### 原生部署与交接边界
+
+本轮确实执行了 NTFS 上的 `local/scripts/local-win.ps1 up`（即 make local-win-up 调用的入口），完成 Go 原生构建、Pandoc/Skill catalog、Python/venv 和 pnpm isolated 依赖准备。前端两次默认构建分别退出 0xc0000005、0xc0000409，后者明确报 `memory allocation ... failed`；单独限制 Node 堆至 2 GiB、Rust 并发至 2 后，报 JavaScript heap out of memory。RAG pip 同期在文件校验读取时报 MemoryError。Node 为 24.14.0，当时 Windows 可用虚拟内存约 2.6 GiB；无法据此认定 Windows TEMP 权限、pnpm isolated 缺包或 Caddy panic。
+
+已暂停此前 `lazymind-fix1026` Docker 测试栈并关闭 WSL 本地测试服务以释放资源，保留数据；原有其他 Docker 项目未停止。后续原生重跑需有足够内存余量并避免并行执行多个平台的整套部署。GUI、普通桌面 token/ACL、Office Windows 原生转换、真正 PID 复用、完整 RAG/慢 embedding/真实模型写文件仍维持交接，不能以本轮局部测试关闭。
+
+临时 PostgreSQL 16 容器还验证了真实 upgrade head、重复 upgrade head 与 head 读取，成功后已移除。最终 Windows 测试服务也执行 down 并确认 stopped，独立数据库、缓存及源码快照均保留。若重跑，先在 PowerShell 设置 `LOCALAPPDATA=D:\LazyMind-report-1026-cache\localappdata`、`GOCACHE=D:\LazyMind-report-1026-cache\go-build`、`GOMODCACHE=D:\LazyMind-report-1026-cache\go-mod`、`UV_CACHE_DIR=D:\LazyMind-report-1026-cache\uv`，再在 `D:\LazyMind-report-1026` 执行 `local/scripts/local-win.ps1 up`；不要将临时配置覆盖到用户生产实例。
+
+最后一次在测试服务全部停止后，独立设置 `NODE_OPTIONS=--max-old-space-size=3072`、`RAYON_NUM_THREADS=2` 构建：完成 9807 个模块转换后仍因 V8 堆内存耗尽退出 134。因此未继续启动全栈，不能标记前端或 Chat 已验收。一次与 down 重叠的构建受到停止流程干扰，未计为有效验证；最终结论采用停止完成后的独立重跑。尝试释放 WSL 文件缓存需要 sudo 密码，未实际执行，也没有调整系统 pagefile/内存设置。证据 `frontend-3gb-memory-failure.txt`。
