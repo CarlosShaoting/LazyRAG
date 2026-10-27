@@ -525,3 +525,14 @@ API 依据：[GitHub PR 列表接口](https://docs.github.com/en/rest/pulls/pull
 - 目标模板与源 PPTX 页数或语义结构完全不匹配时的自动增删页和内容重组。本轮以保留源页和源对象为优先，不重写科研内容来强行匹配模板。
 - 真实 Microsoft PowerPoint/WPS 打开、编辑、保存及跨平台字体视觉验收；当前仅有结构检查和保守溢出估算。
 - 科学写作 Workflow、论文知识库入口或其他 Workflow 向科研 PPT 的跨 Workflow 调用与材料交接。该项明确等待同事的科学写作合并后继续，不属于本轮完成范围。
+
+### 8.28 Workflow 产物完成判定与继续白名单（2026-10-27）
+
+- 补充白名单 `生成`、`继续生成`，同样仅在已有 Workflow 的有效审批点或暂停状态使用，strip 后完整匹配；`不要生成`、`不要继续生成`、带条件或疑问的表达仍交给 LLM。
+- 最终按用户确认的方案实施，覆盖上一轮尚未提交的“每个 step 做模型完成审核”方案。改动只在 `cst/sci_ppt`，不引入或修改 PR #9 分支。
+- Workflow step 不调用 SubAgent 完成审核模型；正常执行结束且必需产物均存在、类型和资源有效即通过。没有必需产物的 step 正常结束即通过。缺产物、类型错误、执行异常、取消及中断保护保留，Workflow 包自己的后置检查也保留。不验证 PPT 内容质量或排版。本轮不改变独立非 Workflow SubAgent 的既有完成审核机制，也不移除负责后续编排的 DriverAgent。
+- 继续意图白名单扩充为常用明确确认表达：中文包括继续/继续执行/继续吧/请继续/请继续执行/接着做/继续下一步/执行下一步/进入下一步/下一步、确认/确认继续/确认执行、同意/同意继续、批准/批准继续、通过/审核通过、好/好的/好，继续/好的，继续、可以/可以继续、没问题/没问题，继续；英文包括 continue、please continue、proceed、go ahead、go on、next、next step、ok/okay、yes、sure、confirm、approve/approved，常见大小写形式逐项显式列在 `backend/core/chat/workflow_continue.go`。只去首尾空白后完整相等；不做子串匹配、正则模糊匹配、标点移除或大小写归一化。`不要继续`、`继续。`、`cOnTiNuE`、带修改条件或先解释的请求均走原有 LLM 路径。回归覆盖每个白名单词的审批/恢复、首尾空白，以及追加条件、否定、疑问和内部空白不匹配。
+- 白名单只在交互式单模型 Chat、原生 Workflow 的有效审批点或暂停状态转换为 approve/resume，复用按钮的 Chat admission、权限和版本校验；不自动 retry/rewind，不改变未来审批偏好。多输入/附件引用、重新生成、外部执行器和非交互调用不走快捷授权。LLM 仍负责后续执行编排，白名单免去的是继续意图的模型判断，而非整个 Chat 的模型调用。
+- 非白名单补充模型完整语义约束：否定不得继续，附条件先满足条件，含糊时澄清。`image_request.py` 的图片需求控制消息过滤不是审批授权，不修改。
+- 验证：runner、模型 fallback、DriverAgent、Workflow selection 共 208 项 Python 定向测试通过；Go 白名单、真实 native admission 的权限/过期版本、现有 Chat recovery 和 realtime control 定向测试通过。不能将模拟模型测试当作真实语义授权验收。
+- 未完成：真实模型非白名单对话、真实科研论文端到端验收；科学写作跨 Workflow 调用仍待同事合并。未重启服务。
