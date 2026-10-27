@@ -59,7 +59,6 @@ from lazymind.chat.engine.subagent.tools import (
     string_replace,
     edit_presentation,
     pptx_analyzer,
-    scientific_presentation,
 )
 
 SystemPromptAppendix = dict[str, str | tuple[str, ...]]
@@ -715,46 +714,6 @@ PRESENTATION_EDIT_TOOL_CONFIG = ToolConfig(
     },
 )
 
-SCIENTIFIC_PRESENTATION_TOOL_CONFIG = ToolConfig(
-    name='scientific_presentation',
-    label='生成科研 PPTX',
-    description='在主 Chat 中基于已读取的论文、研究报告或阅读心得生成可编辑科研 PPTX，不启动工作流',
-    label_en='Create Scientific PPTX',
-    description_en=(
-        'Create an editable scientific PPTX from already-read papers, reports, or reading notes '
-        'directly in main Chat without starting a Workflow.'
-    ),
-    tool=scientific_presentation,
-    module='creation',
-    capability_id='scientific_presentation',
-    appendix_system_prompt={
-        'tool_policy': (
-            '# Direct scientific presentation rules\n'
-            '- Use `scientific_presentation` when the user asks main Chat to create a research report, '
-            'paper explanation, academic defense, lab-meeting, or reading-summary PPTX. Do not start '
-            'the PPT Workflow for this path.\n'
-            '- Before calling it, read all relevant supplied papers, reports, notes, and requested '
-            'figures. Never infer paper contents from filenames or abstracts when full source material '
-            'was supplied. Preserve per-slide source attribution and mark uncertainty or unavailable '
-            'evidence instead of inventing results, citations, formulas, or metrics.\n'
-            '- Build a coherent academic narrative: question/background, method, evidence/results, '
-            'limitations, and conclusion as supported by the source. Put page-specific explanations '
-            'and transitions in notes. Avoid copying long source passages.\n'
-            '- Each slide object must include a title and grounded bullets. Add `sources` for every '
-            'substantive content slide. Add exact uploaded image filenames only when the source image '
-            'is relevant. Equations are editable text, not native OMML; disclose that warning.\n'
-            '- The optional generation template must be an uploaded .pptx. The separate template '
-            'application operation supports PPTX source to PPTX template only. Never convert HTML, '
-            'PDF, PPT, or images and call that template application.\n'
-            '- Cross-Workflow handoff from scientific writing is not implemented yet. Do not claim '
-            'that a scientific-writing Workflow automatically transfers its materials until that '
-            'integration is delivered.'
-        ),
-    },
-)
-
-MAIN_CHAT_TOOL_CONFIGS = (SCIENTIFIC_PRESENTATION_TOOL_CONFIG,)
-
 def visible_attachment_configs(disabled: Collection[str] = ()) -> list[ToolConfig]:
     return [config for config in (*USER_ATTACHMENT_TOOL_CONFIGS, ATTACHMENT_EDIT_TOOL_CONFIG, PRESENTATION_EDIT_TOOL_CONFIG)
             if config.name not in disabled]
@@ -1122,7 +1081,7 @@ def normalize_tool_locale(locale: str | None) -> str:
 def get_all_tool_groups(locale: str | None = None, *, system_mcp_config: list[dict] | None = None) -> list[dict]:
     use_english = normalize_tool_locale(locale) == 'en-US'
     result = []
-    for cfg in (*DEFAULT_TOOLS, *MAIN_CHAT_TOOL_CONFIGS):
+    for cfg in DEFAULT_TOOLS:
         result.append({
             'name': cfg.name,
             'label': cfg.label_en or cfg.label if use_english else cfg.label,

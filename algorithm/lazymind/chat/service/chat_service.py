@@ -54,7 +54,6 @@ from lazymind.chat.service.component import (
     AgentEventFrameTranslator,
     ASK_USER_TOOL_CONFIG,
     DEFAULT_TOOLS,
-    MAIN_CHAT_TOOL_CONFIGS,
     USER_ATTACHMENT_TOOL_CONFIGS,
     collect_query_appendices,
     apply_tool_supersession,
@@ -1528,7 +1527,7 @@ async def _handle_chat_impl(
         allow_ask_user = False
     else:
         active_configs = [] if workflow_turn_is_bound else filter_tools(
-            [cfg for cfg in (*DEFAULT_TOOLS, *MAIN_CHAT_TOOL_CONFIGS) if cfg.name not in disabled],
+            [cfg for cfg in DEFAULT_TOOLS if cfg.name not in disabled],
             user_query=language_query,
             include_unready=configuration_runtime is not None,
         )

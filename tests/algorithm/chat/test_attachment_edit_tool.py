@@ -7,7 +7,6 @@ from lazyllm.tools.agent import ToolExecutionError
 import lazymind.chat.engine.subagent.tools as attachment_tools
 from lazymind.chat.engine.tools.file_resources import attachment_edit
 from lazymind.chat.service import chat_service
-from lazymind.chat.service.component import tool_registry
 
 
 def _attachment(monkeypatch, tmp_path, filename, content):
@@ -47,46 +46,6 @@ def test_attachment_registration_obeys_each_disabled_tool():
         tools = chat_service._build_user_attachment_tools(True, names - {enabled})
         assert [tool.__name__ for tool in tools] == [enabled]
     assert chat_service._build_user_attachment_tools(True, names) == []
-
-
-def test_scientific_presentation_is_main_chat_only():
-    assert [config.name for config in tool_registry.MAIN_CHAT_TOOL_CONFIGS] == ['scientific_presentation']
-    assert 'scientific_presentation' not in {config.name for config in tool_registry.DEFAULT_TOOLS}
-    assert any(group['name'] == 'scientific_presentation' for group in tool_registry.get_all_tool_groups())
-
-
-def test_scientific_presentation_publishes_directly_from_main_chat(monkeypatch, tmp_path):
-    import lazyllm
-    from pptx import Presentation
-    from lazymind.chat.engine.tools import chat_artifact, conversation_workspace
-
-    monkeypatch.setattr(lazyllm, 'globals', {
-        'agentic_config': {'user_id': 'user-1', 'conversation_id': 'conversation-1'},
-    })
-    monkeypatch.setattr(
-        conversation_workspace, 'chat_agent_workspace',
-        lambda user_id, conversation_id: str(tmp_path / 'workspace'),
-    )
-    published = {}
-
-    def fake_save(filename, path, caption=None, **kwargs):
-        published.update(filename=filename, content=Path(path).read_bytes(), caption=caption)
-        return {'artifact_id': 'artifact-1', 'filename': filename,
-                'file_markdown': f'[{filename}](file_id:artifact-1)'}
-
-    monkeypatch.setattr(chat_artifact, 'save_chat_file', fake_save)
-    result = attachment_tools.scientific_presentation([
-        {'title': 'Paper briefing', 'bullets': ['Question and scope']},
-        {'title': 'Evidence', 'bullets': ['Reported result'], 'sources': ['Paper A, Table 1']},
-    ], output_filename='paper-briefing.pptx')
-
-    assert result['status'] == 'ok'
-    assert result['slide_count'] == 2
-    assert result['artifact_id'] == 'artifact-1'
-    assert published['filename'] == 'paper-briefing.pptx'
-    deck = tmp_path / 'published.pptx'
-    deck.write_bytes(published['content'])
-    assert len(Presentation(deck).slides) == 2
 
 
 def test_string_replace_publishes_edited_copy_and_preserves_upload(monkeypatch, tmp_path):
