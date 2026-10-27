@@ -555,3 +555,9 @@ manager 主包：WSL 交叉编译 Windows EXE 后由 Windows 执行，197 个顶
 临时 PostgreSQL 16 容器还验证了真实 upgrade head、重复 upgrade head 与 head 读取，成功后已移除。最终 Windows 测试服务也执行 down 并确认 stopped，独立数据库、缓存及源码快照均保留。若重跑，先在 PowerShell 设置 `LOCALAPPDATA=D:\LazyMind-report-1026-cache\localappdata`、`GOCACHE=D:\LazyMind-report-1026-cache\go-build`、`GOMODCACHE=D:\LazyMind-report-1026-cache\go-mod`、`UV_CACHE_DIR=D:\LazyMind-report-1026-cache\uv`，再在 `D:\LazyMind-report-1026` 执行 `local/scripts/local-win.ps1 up`；不要将临时配置覆盖到用户生产实例。
 
 最后一次在测试服务全部停止后，独立设置 `NODE_OPTIONS=--max-old-space-size=3072`、`RAYON_NUM_THREADS=2` 构建：完成 9807 个模块转换后仍因 V8 堆内存耗尽退出 134。因此未继续启动全栈，不能标记前端或 Chat 已验收。一次与 down 重叠的构建受到停止流程干扰，未计为有效验证；最终结论采用停止完成后的独立重跑。尝试释放 WSL 文件缓存需要 sudo 密码，未实际执行，也没有调整系统 pagefile/内存设置。证据 `frontend-3gb-memory-failure.txt`。
+
+## 2026-10-27 合并 upstream main 并解决冲突
+
+先同步远端 `cst/ppt_template` 的 Windows 修复 `7ebf5a464`，再合入 upstream main `71a0e5a82`（包括 #872 工作流/聊天/子任务状态同步）。唯一文本冲突位于 `tests/algorithm/test_workflow_sdk.py`：保留本分支的联动排序、视觉页序测试，并保留上游的 trigger_history_id 传递测试，没有删除或放宽断言。LazyLLM 指针仍为 `abf630b8`。
+
+合并后验证：算法 4712 passed、23 skipped、21 subtests passed；前端 workflow-panel 22 文件、199 项通过；Core workflow/chat/localworkspace 三包通过；2359 项错误码翻译同步检查通过；无未解决的 Git 冲突，diff whitespace 检查通过。本地未提交 demo 改动单独备份，不纳入合并提交；服务未重启。

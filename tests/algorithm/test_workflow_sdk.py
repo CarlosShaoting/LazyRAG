@@ -594,3 +594,16 @@ def test_artifact_listing_follows_visual_order_after_move_and_delete():
     assert [item['artifact_id'] for item in result.result['artifacts']] == ['first', 'second']
     assert [item['sort_order'] for item in result.result['artifacts']] == [1, 2]
     assert [item['list_index'] for item in result.result['artifacts']] == [8, 2]
+
+
+@pytest.mark.parametrize('history_id', ['', 'foreground-history'])
+def test_prepare_preserves_explicit_host_chat_turn(history_id):
+    from lazymind.workflow_sdk import WorkflowClient
+
+    transport = MagicMock()
+    transport.post.return_value = httpx.Response(200, json={'result': {}})
+    client = WorkflowClient('http://core', 'user', transport=transport, trigger_history_id=history_id)
+    client.prepare_workflow('writer', fields={'conversation_id': 'chat'})
+    payload = transport.post.call_args.kwargs['json']
+    assert payload.get('trigger_history_id', '') == history_id
+    assert ('trigger_history_id' in payload) == bool(history_id)
