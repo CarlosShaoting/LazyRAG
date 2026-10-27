@@ -121,7 +121,6 @@ class TestAutoModelDynamic:
         import json
         import lazyllm
         import requests
-        from urllib3.response import HTTPResponse
         from lazyllm import AutoModel
         from lazyllm.components.prompter import ChatPrompter
         from lazyllm.module.llms.onlinemodule.dynamic_router import ConfigsDict
@@ -150,6 +149,7 @@ class TestAutoModelDynamic:
 
         class FakeResponse:
             status_code = 200
+            raw = SimpleNamespace(enforce_content_length=False)
             text = json.dumps({
                 'choices': [{
                     'message': {'content': 'ok'},
@@ -157,9 +157,6 @@ class TestAutoModelDynamic:
                 }],
                 'usage': {},
             })
-
-            def __init__(self):
-                self.raw = HTTPResponse()
 
             def __enter__(self):
                 return self

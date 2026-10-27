@@ -573,3 +573,13 @@ LazyLLM 从 `abf630b8` 更新至上游 main `7a07b4e6`，包含已合入的 GLM 
 本地 macOS 验证：算法全套 4712 passed、23 skipped、21 subtests passed；LazyLLM 接口路由、请求控制、请求审查与传输测试 150 passed；飞书相关测试 9 passed；前端类型检查及修改文件 ESLint 通过。LazyLLM 测试所需 trustme / PySocks 安装在临时目录，不改服务依赖。额外对算法测试文件执行 flake8，结果均为 HEAD 已有问题（未使用导入与空白格式），本次无新增；该目录不在主仓库 lint-python 范围内。
 
 按 CI 参数执行前端全套 `vitest run --maxWorkers=2 --minWorkers=1`：439 个文件、4071 项全部通过，耗时 402.13 秒（当前工作区含本地 demo 测试）。`git diff --check` 通过。以上为本地验证，推送后的远端 CI 结果另行确认。未重启服务，未修改飞书表格；本地 demo 改动不纳入此次提交。
+
+## 2026-10-27 再次同步 main：模型自动回退合并
+
+合入 upstream main `2ddbde274`（#841，聊天和子任务模型自动回退）。LazyLLM 最新 main 仍为 `7a07b4e6`，它包含上游 LazyMind 使用的 `ff44994c`，合并后保留较新的 `7a07b4e6` 指针。
+
+`subagent/runner.py` 的唯一文本冲突同时保留模型候选、当前候选与初始切换信息，以及本分支 PPT 编辑扩展的工具调用/失败限制。动态路由测试的 HTTP raw 模拟采用上游实现，去掉重复初始化。
+
+回归发现并修复两处语义兼容问题：上游子任务回退测试的工具边界 mock 补充接受本分支 `agent_type` 关键字参数；工作流等仅获取配置的调用不能确认聊天回退协议的模型切换，因此固定模型不可用时继续返回明确错误，避免静默换模型。保留原回归断言，没有改成容许错误行为。
+
+验证：算法全套 4876 passed、23 skipped、27 subtests passed；Go chat/modelconfig/subagent/workflow 四包通过；合并涉及的算法代码 flake8、前端类型检查、2359 项错误码翻译检查通过。前端按 CI 参数执行全套，439 个文件、4147 项通过，耗时 398.69 秒。无未解决的冲突，diff whitespace 检查通过。以上为本地验证；未重启服务、未修改飞书表格；本地 demo 工作单独备份，不纳入合并提交。
