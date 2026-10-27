@@ -561,3 +561,15 @@ manager 主包：WSL 交叉编译 Windows EXE 后由 Windows 执行，197 个顶
 先同步远端 `cst/ppt_template` 的 Windows 修复 `7ebf5a464`，再合入 upstream main `71a0e5a82`（包括 #872 工作流/聊天/子任务状态同步）。唯一文本冲突位于 `tests/algorithm/test_workflow_sdk.py`：保留本分支的联动排序、视觉页序测试，并保留上游的 trigger_history_id 传递测试，没有删除或放宽断言。LazyLLM 指针仍为 `abf630b8`。
 
 合并后验证：算法 4712 passed、23 skipped、21 subtests passed；前端 workflow-panel 22 文件、199 项通过；Core workflow/chat/localworkspace 三包通过；2359 项错误码翻译同步检查通过；无未解决的 Git 冲突，diff whitespace 检查通过。本地未提交 demo 改动单独备份，不纳入合并提交；服务未重启。
+
+## 2026-10-27 更新 LazyLLM 上游指针与 CI 异步测试修复
+
+LazyLLM 从 `abf630b8` 更新至上游 main `7a07b4e6`，包含已合入的 GLM #1447 和 prepared chat requests / per-call execution controls #1363。原 GLM、接口路由修复随上游提交保留。
+
+[CI 失败任务](https://github.com/LazyAGI/LazyMind/actions/runs/40438029391/job/121972127008?pr=826) 虽名为 Test Workflow Panel boundaries，实际执行前端完整测试。失败是 `FeishuReuse.test.tsx` 在账号详情异步加载完成前同步查找连接中提示。改为等待提示出现，继续验证连接中禁止重连、完成后显示断开按钮以及不调用 resume；未修改通知业务逻辑或删减断言。
+
+升级子模块时，算法动态模型路由测试的模拟 HTTP 响应缺少新版传输层使用的 `raw`，补齐 urllib3 HTTPResponse；保留实际共享模型调用与供应商、模型、URL、鉴权断言。不改 doc_check 测试或 LazyLLM 源码。
+
+本地 macOS 验证：算法全套 4712 passed、23 skipped、21 subtests passed；LazyLLM 接口路由、请求控制、请求审查与传输测试 150 passed；飞书相关测试 9 passed；前端类型检查及修改文件 ESLint 通过。LazyLLM 测试所需 trustme / PySocks 安装在临时目录，不改服务依赖。额外对算法测试文件执行 flake8，结果均为 HEAD 已有问题（未使用导入与空白格式），本次无新增；该目录不在主仓库 lint-python 范围内。
+
+按 CI 参数执行前端全套 `vitest run --maxWorkers=2 --minWorkers=1`：439 个文件、4071 项全部通过，耗时 402.13 秒（当前工作区含本地 demo 测试）。`git diff --check` 通过。以上为本地验证，推送后的远端 CI 结果另行确认。未重启服务，未修改飞书表格；本地 demo 改动不纳入此次提交。
