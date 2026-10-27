@@ -103,36 +103,6 @@ def _ppt_step_user_input(value: Any, workflow_id: Any) -> str:
     return text
 
 
-def _is_approval_only_continue(value: Any) -> bool:
-    """Return whether the current user turn only accepts a review checkpoint."""
-    text = re.sub(r'\s+', ' ', str(value or '').strip()).rstrip('。.!！').casefold()
-    if text in {
-        '继续', '继续执行', '同意', '同意继续', '同意继续执行',
-        '确认', '确认继续', '确认继续执行', '批准', '批准继续',
-        '批准继续执行', '批准并继续', '通过', '通过继续', '通过并继续',
-        'continue', 'continue execution', 'approve', 'approve and continue',
-        'confirm', 'confirm and continue',
-    }:
-        return True
-
-    # Approval is a side-effect boundary that can release paid media work.
-    # Accept longer natural-language variants only when the entire turn fits a
-    # deliberately small approval grammar.  Substring matching is unsafe here:
-    # messages such as “先别继续”, “还没确认”, or “继续，但把数量减到 2 张”
-    # contain an approval keyword while explicitly withholding or changing it.
-    subject = (
-        r'(?:当前|本次|这个|这些|上述|以上|全部|所有|方案|字幕|内容|结果|'
-        r'产物|步骤|图片|文案|角色|计划|设置|和|与|及|、|的|都)+'
-    )
-    continuation = r'(?:[，, ]*(?:请)?(?:继续|继续执行))?'
-    return bool(
-        re.fullmatch(rf'(?:请)?(?:批准|同意|确认|通过){subject}{continuation}', text)
-        or re.fullmatch(
-            rf'{subject}(?:批准|同意|确认|通过){continuation}', text,
-        )
-    )
-
-
 def _workflow_definition(workflow_id: str, revision_id: str = '') -> Dict[str, Any]:
     try:
         return _client().get_workflow(workflow_id, revision_id).result
@@ -208,18 +178,6 @@ def _handoff_tool(
         current_user_input = _ppt_step_user_input(
             current_user_input, cfg.get('workflow_id') or cfg.get('workflow_ref'),
         )
-        selected_workflow = str(
-            cfg.get('workflow_id') or cfg.get('workflow_ref') or '',
-        ).removeprefix('builtin:')
-        brief_approved = False
-        if selected_workflow == 'image-workflow-v2':
-            approval_toolkit = toolkit or HostWorkflowToolkit(_client)
-            brief_approved = _approve_image_v2_meme_brief(
-                approval_toolkit,
-                selected_session_id,
-                [step_id],
-                current_user_input,
-            )
         state_refreshed = False
         for attempt in range(2):
             frontier = client.get_ready_steps(selected_session_id)
@@ -228,13 +186,6 @@ def _handoff_tool(
             rewindable = set(frontier.get('rewindable_steps') or [])
             allowed.update(rewindable)
             allowed.update(frontier.get('continue_steps') or [])
-            if brief_approved and step_id not in allowed:
-                ready_after_approval = [
-                    str(value).strip() for value in (frontier.get('ready_steps') or [])
-                    if str(value).strip()
-                ]
-                if ready_after_approval == ['meme_preflight']:
-                    step_id = 'meme_preflight'
             if step_id not in allowed:
                 if state_refreshed:
                     return _result_text(_state_changed_result(frontier, [step_id]))
@@ -317,121 +268,6 @@ def _artifact_by_handle(toolkit: HostWorkflowToolkit, session_id: str,
             ]},
         )
     return matches[0]
-
-
-def _approve_image_v2_meme_brief(
-    toolkit: HostWorkflowToolkit,
-    session_id: str,
-    requested_steps: List[str],
-    user_input: str,
-) -> bool:
-    """Promote a reviewed Image V2 meme brief before media preflight.
-
-    ``meme_brief`` deliberately publishes a pending proposal so the user can
-    review the whole pack before any paid media call.  The native Workflow
-    approval button starts a normal chat turn, however, and previously left the
-    selected Artifact as ``pending``/``blocked``.  The following preflight then
-    rejected it (or the model rewound and regenerated the proposal).
-
-    Keep the bridge deterministic and narrow: only an approval-only turn aimed
-    at the brief/preflight boundary may update the selected brief, and only a
-    structurally complete, count-compliant proposal is promotable.  The patch
-    creates a normal immutable human revision and preserves every user-visible
-    field and caption verbatim.
-    """
-    if not _is_approval_only_continue(user_input):
-        return False
-    if not set(requested_steps).intersection({'meme_brief', 'meme_preflight'}):
-        return False
-    try:
-        artifact = _artifact_by_handle(toolkit, session_id, 'meme_brief_data')
-    except WorkflowClientError as exc:
-        if exc.code == 'ARTIFACT_NOT_SELECTED':
-            return False
-        raise
-
-    value = artifact.get('value')
-    if value is None:
-        artifact_id = str(artifact.get('artifact_id') or artifact.get('id') or '')
-        value = toolkit.read_artifact(artifact_id).get('value')
-    if isinstance(value, dict) and isinstance(value.get('data'), dict):
-        value = value['data']
-    if not isinstance(value, dict):
-        raise WorkflowClientError(
-            'MEME_BRIEF_NOT_APPROVABLE',
-            'The selected meme brief is not a JSON object.',
-        )
-
-    caption_status = str(value.get('caption_review_status') or '').strip().lower()
-    brief_status = str(value.get('brief_status') or '').strip().lower()
-    if caption_status == 'approved' and brief_status == 'approved':
-        return False
-    if caption_status != 'pending' or brief_status != 'blocked':
-        raise WorkflowClientError(
-            'MEME_BRIEF_NOT_APPROVABLE',
-            'Only the current pending meme proposal can be approved.',
-        )
-
-    states = value.get('states')
-    requested_count = value.get('requested_count')
-    planned_count = value.get('planned_count')
-    allowed_count = value.get('allowed_count')
-    complete_states = (
-        isinstance(states, list)
-        and bool(states)
-        and all(isinstance(state, dict) for state in states)
-    )
-    count_compliant = (
-        type(requested_count) is int
-        and type(planned_count) is int
-        and type(allowed_count) is int
-        and requested_count > 0
-        and requested_count == planned_count == len(states or [])
-        and requested_count <= allowed_count
-        and str(value.get('count_status') or '').strip().lower() == 'compliant'
-        and value.get('requires_count_decision') is False
-    )
-    caption_mode = str(value.get('caption_mode') or '').strip().lower()
-    captions = [str(state.get('caption') or '').strip() for state in (states or [])]
-    captions_valid = (
-        caption_mode == 'caption'
-        and all(captions)
-        and len(set(captions)) == len(captions)
-    ) or (caption_mode == 'no_text' and not any(captions))
-    if not complete_states or not count_compliant or not captions_valid:
-        raise WorkflowClientError(
-            'MEME_BRIEF_NOT_APPROVABLE',
-            'The meme proposal is incomplete or still requires a count/caption decision.',
-        )
-
-    approved = dict(value)
-    approved['caption_review_status'] = 'approved'
-    approved['brief_status'] = 'approved'
-    approved['states'] = []
-    for state in states:
-        approved_state = dict(state)
-        approved_state['caption_review_status'] = 'approved'
-        approved['states'].append(approved_state)
-
-    artifact_id = str(artifact.get('artifact_id') or artifact.get('id') or '')
-    revision = int(artifact.get('revision') or 0)
-    if not artifact_id or revision <= 0:
-        raise WorkflowClientError(
-            'MEME_BRIEF_NOT_APPROVABLE',
-            'The selected meme brief has no immutable revision identity.',
-        )
-    toolkit.patch_artifact(
-        artifact_id,
-        revision,
-        approved,
-        str(artifact.get('content_type') or 'json'),
-        str(artifact.get('caption') or ''),
-        base_draft_version=(
-            int(artifact['draft_version'])
-            if artifact.get('draft_version') is not None else None
-        ),
-    )
-    return True
 
 
 def _compact_model_frontier(result: Dict[str, Any]) -> Dict[str, Any]:
@@ -532,55 +368,6 @@ def _with_terminal_agent_control(
     }
 
 
-def _frontier_projection(frontier: Dict[str, Any]) -> Dict[str, Any]:
-    projection = frontier.get('projection')
-    if not isinstance(projection, dict):
-        projection = frontier.get('workflow_state')
-    if isinstance(projection, dict) and isinstance(projection.get('projection'), dict):
-        projection = projection['projection']
-    return projection if isinstance(projection, dict) else {}
-
-
-def _step_requires_approval(frontier: Dict[str, Any], step_id: str) -> bool:
-    approval = frontier.get('approval_by_step')
-    if isinstance(approval, dict) and step_id in approval:
-        return str(approval.get(step_id) or '').strip() == 'required'
-    projection = _frontier_projection(frontier)
-    nodes = projection.get('nodes') if isinstance(projection.get('nodes'), dict) else {}
-    node = nodes.get(step_id) if isinstance(nodes.get(step_id), dict) else {}
-    if 'requires_approval' in node:
-        return bool(node.get('requires_approval'))
-    return str(node.get('mode') or '').strip() == 'human'
-
-
-def _selected_artifact_data(
-    toolkit: HostWorkflowToolkit,
-    session_id: str,
-    slot_id: str,
-) -> Dict[str, Any]:
-    artifacts = toolkit.list_artifacts(session_id).get('artifacts') or []
-    candidates = [
-        item for item in artifacts
-        if isinstance(item, dict)
-        and str(item.get('slot_id') or item.get('slot') or '') == slot_id
-        and item.get('selected') is not False
-        and str(item.get('validity') or 'effective') == 'effective'
-        and not item.get('deleted')
-    ]
-    if not candidates:
-        return {}
-    selected = max(
-        candidates,
-        key=lambda item: (int(item.get('revision') or 0), str(item.get('created_at') or '')),
-    )
-    value = selected.get('value')
-    if value is None and selected.get('artifact_id'):
-        value = toolkit.read_artifact(str(selected['artifact_id'])).get('value')
-    if isinstance(value, dict) and isinstance(value.get('data'), dict):
-        value = value['data']
-    return value if isinstance(value, dict) else {}
-
-
 def _image_v2_completion_text(
     toolkit: HostWorkflowToolkit,
     session_id: str,
@@ -657,160 +444,6 @@ def _image_v2_completion_text(
     )
 
 
-def _select_image_v2_ready_step(
-    toolkit: HostWorkflowToolkit,
-    session_id: str,
-    ready: List[str],
-) -> str:
-    """Resolve only the two package-declared Image V2 choice frontiers."""
-    options = set(ready)
-    route_targets = {
-        'ordinary': 'ordinary_prepare',
-        'edit': 'edit_prepare',
-        'meme': 'meme_brief',
-    }
-    if options.issubset(set(route_targets.values())):
-        route = str(
-            _selected_artifact_data(toolkit, session_id, 'route_plan').get('route') or '',
-        ).strip()
-        target = route_targets.get(route, '')
-        return target if target in options else ''
-
-    delivery_targets = {
-        'static': 'plan_static',
-        'dynamic': 'plan_dynamic',
-    }
-    if options.issubset(set(delivery_targets.values())):
-        delivery_mode = str(
-            _selected_artifact_data(
-                toolkit, session_id, 'meme_brief_data',
-            ).get('delivery_mode') or '',
-        ).strip()
-        target = delivery_targets.get(delivery_mode, '')
-        return target if target in options else ''
-    return ''
-
-
-def _advance_image_v2_to_declared_boundary(
-    toolkit: HostWorkflowToolkit,
-    session_id: str,
-    frontier: Dict[str, Any],
-    step_id: str,
-    *,
-    user_input: str,
-    runtime_instruction: str = '',
-    retry_origin: str = 'automatic',
-) -> Dict[str, Any]:
-    """Run serial Image V2 auto steps until completion or a declared human result.
-
-    Image Workflow V2 has deterministic graph routing and declares every human
-    checkpoint in the package. Keeping this small loop in the bound Host tool
-    removes the model-dependent gaps between automatic steps while preserving
-    the Core post-result barrier for every ``mode: human`` node. Recovery
-    targets are executed only when explicitly selected by the current user;
-    the loop follows forward-ready targets only and never retries failures.
-    """
-    current = str(step_id or '').strip()
-    current_frontier = frontier
-    executed: List[str] = []
-    state_refreshed = False
-    for _ in range(32):
-        if not current:
-            break
-        requires_approval = _step_requires_approval(current_frontier, current)
-        for attempt in range(2):
-            try:
-                result = toolkit.advance_step(
-                    session_id, int(current_frontier.get('state_version') or 0),
-                    [StepCommandInput(
-                        step_id=current,
-                        user_input=user_input,
-                        runtime_instruction=runtime_instruction,
-                    )],
-                    retry_origin=retry_origin,
-                    # The Host owns forward progression for this package. Dynamic mode
-                    # prevents the generic LLM DriverAgent from racing this serial loop;
-                    # declared human nodes still hand off and stop in Core.
-                    workflow_mode='dynamic',
-                )
-                break
-            except WorkflowClientError as exc:
-                if exc.code != 'STATE_VERSION_CONFLICT' or attempt > 0:
-                    raise
-                # A just-completed step may publish its next frontier between
-                # our read and submit. Refresh once and retry only when the same
-                # exact target is still actionable; never turn a model/task
-                # failure into an implicit retry.
-                current_frontier = toolkit.get_ready_steps(session_id)
-                allowed = set(current_frontier.get('ready_steps') or [])
-                allowed.update(current_frontier.get('retryable_steps') or [])
-                allowed.update(current_frontier.get('rewindable_steps') or [])
-                allowed.update(current_frontier.get('continue_steps') or [])
-                if current not in allowed:
-                    return _state_changed_result(current_frontier, [current])
-                requires_approval = _step_requires_approval(current_frontier, current)
-                state_refreshed = True
-        executed.append(current)
-        compact = _compact_model_frontier(_with_terminal_agent_control(
-            result,
-            _image_v2_completion_text(toolkit, session_id),
-        ))
-        if state_refreshed:
-            compact = {**compact, **_state_refresh_notice()}
-        compact['host_executed_steps'] = list(executed)
-        status = str(compact.get('status') or '').strip()
-        outcome = str(compact.get('outcome') or '').strip()
-        if (
-            status in {'failed', 'cancelled', 'interrupted'}
-            or outcome in {'step_failed', 'cancelled', 'interrupted'}
-        ):
-            # A human checkpoint is reviewable only after its step succeeds.
-            # Preserve terminal failures and their retry guidance instead of
-            # presenting them as successfully generated approval artifacts.
-            return compact
-        if requires_approval:
-            # A final human node can make the graph projection terminal as soon
-            # as its artifact exists. Interaction semantics still require one
-            # review turn before we present that result as accepted completion.
-            return {
-                **compact,
-                'status': 'waiting',
-                'outcome': 'approval_required',
-                'approval_step': current,
-                '_agent_control': {
-                    'stop': True,
-                    'reason': 'approval_required',
-                    'final_text': '当前步骤的产物已生成，请确认或提出修改意见。',
-                },
-            }
-        if status == 'completed':
-            return compact
-        current_frontier = toolkit.get_ready_steps(session_id)
-        ready = [
-            str(value.get('step_id') if isinstance(value, dict) else value or '').strip()
-            for value in (current_frontier.get('ready_steps') or [])
-        ]
-        ready = [value for value in ready if value]
-        if not ready:
-            return compact
-        if len(ready) != 1:
-            selected = _select_image_v2_ready_step(toolkit, session_id, ready)
-            if not selected:
-                return {
-                    **compact,
-                    'status': 'waiting',
-                    'outcome': 'ambiguous_ready_frontier',
-                    'ready_steps': ready,
-                }
-            current = selected
-        else:
-            current = ready[0]
-    raise WorkflowClientError(
-        'WORKFLOW_AUTO_ADVANCE_LIMIT',
-        'Image Workflow V2 exceeded its serial automatic-step limit.',
-    )
-
-
 def _relayed_session_id(selected: str) -> str:
     relay = _agentic_config().get('product_stage_relay') or {}
     if isinstance(relay, dict) and relay.get('source_session_id') == selected:
@@ -877,14 +510,6 @@ def _safe_session_tools(
         selected_workflow = str(
             cfg.get('workflow_id') or cfg.get('workflow_ref') or '',
         ).removeprefix('builtin:')
-        brief_approved = False
-        if selected_workflow == 'image-workflow-v2':
-            brief_approved = _approve_image_v2_meme_brief(
-                toolkit,
-                selected_session_id,
-                requested,
-                current_user_input,
-            )
         state_refreshed = False
         for attempt in range(2):
             frontier = toolkit.get_ready_steps(selected_session_id)
@@ -893,16 +518,6 @@ def _safe_session_tools(
             rewindable = set(frontier.get('rewindable_steps') or [])
             allowed.update(rewindable)
             allowed.update(frontier.get('continue_steps') or [])
-            if brief_approved and any(value not in allowed for value in requested):
-                # A model may echo the just-reviewed human step. Approval has
-                # already changed the graph frontier, so continue with the only
-                # valid post-approval target instead of regenerating the brief.
-                ready_after_approval = [
-                    str(value).strip() for value in (frontier.get('ready_steps') or [])
-                    if str(value).strip()
-                ]
-                if ready_after_approval == ['meme_preflight']:
-                    requested = ready_after_approval
             if not requested or any(value not in allowed for value in requested):
                 if state_refreshed:
                     return _state_changed_result(frontier, requested)
@@ -935,35 +550,28 @@ def _safe_session_tools(
                     'user' if bool(cfg.get('user_authorized_workflow_retry'))
                     else 'automatic'
                 )
-                if selected_workflow == 'image-workflow-v2' and len(requested) == 1:
-                    result = _advance_image_v2_to_declared_boundary(
-                        toolkit,
-                        selected_session_id,
-                        frontier,
-                        requested[0],
-                        user_input=current_user_input,
-                        runtime_instruction=' '.join(focus_hints),
-                        retry_origin=retry_origin,
-                    )
-                else:
-                    result = toolkit.advance_step(
-                        selected_session_id, int(frontier.get('state_version') or 0),
-                        [
-                            StepCommandInput(
-                                step_id=value,
-                                user_input=current_user_input,
-                                runtime_instruction=' '.join(focus_hints),
-                            )
-                            for value in requested
-                        ],
-                        retry_origin=retry_origin,
-                        workflow_mode=(
-                            'auto' if cfg.get('workflow_mode') == 'auto' else 'dynamic'
-                        ),
-                    )
+                result = toolkit.advance_step(
+                    selected_session_id, int(frontier.get('state_version') or 0),
+                    [
+                        StepCommandInput(
+                            step_id=value,
+                            user_input=current_user_input,
+                            runtime_instruction=' '.join(focus_hints),
+                        )
+                        for value in requested
+                    ],
+                    retry_origin=retry_origin,
+                    workflow_mode=(
+                        'auto' if cfg.get('workflow_mode') == 'auto' else 'dynamic'
+                    ),
+                )
                 if state_refreshed:
                     result = {**result, **_state_refresh_notice()}
-                result = _with_terminal_agent_control(result)
+                result = _with_terminal_agent_control(
+                    result,
+                    _image_v2_completion_text(toolkit, selected_session_id)
+                    if selected_workflow == 'image-workflow-v2' else '',
+                )
                 if any(value in rewindable for value in requested):
                     result = _compact_transition_result(result)
                 return _compact_model_frontier(result)
@@ -1862,15 +1470,10 @@ def _workflow_trigger_tools(
                     allowed_workflow_ids=[bound_id],
                     origin_ref=conversation_id,
                 )
-                # Image Workflow V2 advances its deterministic forward path in
-                # this bound Host tool. Keep the Runtime in dynamic mode so the
-                # generic LLM DriverAgent cannot race that serial loop; Core still
-                # enforces every package-declared human post-result barrier.
-                effective_workflow_mode = workflow_mode
                 prepared = toolkit.prepare_workflow(
                     bound_id, input_bindings=resolved_bindings,
                     request_context=effective_context,
-                    workflow_mode=effective_workflow_mode,
+                    workflow_mode=workflow_mode,
                 )
                 session_id = str(prepared.get('session_id') or '')
                 if not session_id:
@@ -1927,35 +1530,6 @@ def _workflow_trigger_tools(
                     'input_bindings': resolved_bindings,
                     'session_id': session_id,
                 }
-                if bound_id == 'image-workflow-v2' and len(ready_steps) == 1:
-                    initial_frontier = {
-                        **prepared,
-                        **trigger_metadata,
-                        'state_version': int(
-                            state.get('state_version') or prepared.get('state_version') or 0
-                        ),
-                        # WorkflowClient.get_ready_steps uses the full state in
-                        # this field; _frontier_projection unwraps it uniformly.
-                        'projection': state,
-                        'ready_steps': ready_steps,
-                        'reachable_steps': reachable_steps,
-                        'blocked_steps': blocked_steps,
-                        'retryable_steps': retryable_steps,
-                        'rewindable_steps': rewindable_steps,
-                        'continue_steps': continue_steps,
-                    }
-                    execution = _advance_image_v2_to_declared_boundary(
-                        toolkit,
-                        session_id,
-                        initial_frontier,
-                        ready_steps[0],
-                        user_input=effective_context,
-                    )
-                    return {
-                        **prepared,
-                        **trigger_metadata,
-                        **execution,
-                    }
                 return {
                     **prepared,
                     'status': 'prepared',
@@ -2332,7 +1906,10 @@ def resolve_workflow_injection(
             + 'means execute with advance_step and continue. Never ask whether to execute a Ready '
             + 'step merely because it requires approval; the approval checkpoint belongs to its result. '
             + 'When the Session is waiting after a succeeded approval step, interpret the current user '
-            + 'message before advancing. An explicit approval such as continue/accept/looks good may '
+            + 'message before advancing. Judge the whole current user message semantically; the mere '
+            + 'presence of approval words is never sufficient. Messages such as "do not continue", '
+            + 'unanswered questions, conditional approval, or approval combined with requested edits '
+            + 'must not be treated as approval. An unambiguous approval such as continue/accept/looks good may '
             + 'advance to the next Ready step. A rejection or correction must not advance downstream: '
             + 'use current_step together with projection.nodes[step_id].rerun_when to select the earliest '
             + 'matching exact rewindable_steps target, then call advance_step for that target so the '

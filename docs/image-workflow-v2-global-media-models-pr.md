@@ -90,7 +90,8 @@ PR #7 之后的实际运行暴露出以下问题：
 
 - `rerun_when` 被编译、投影并用于审批后的重跑决策；
 - 到达声明的审批边界时 Host 停止自动推进；
-- “同意继续”只推进当前边界；
+- 每个 step 只执行模型明确选择的当前目标；动态模式把结果交回当前 ChatAgent，自动模式沿用 DriverAgent 审核后再触发 ChatAgent，不再由图片 Workflow 的 Host 循环连续推进多个 step；
+- 用户后续消息由 ChatAgent 结合完整语义和当前 Workflow 投影判断。“同意继续”可推进当前边界，“不要继续”、疑问、附条件同意或夹带修改要求不会因包含“继续”而被自动批准；
 - 用户提出修改时，按该阶段声明重新执行受影响步骤；
 - “此步骤不需审批”和“以后此工作流无需审批”仍按现有偏好机制生效。
 
@@ -174,10 +175,10 @@ PR #7 之后的实际运行暴露出以下问题：
 
 ### 8.6 2026-10-27 review 阻塞项修复
 
-开发侧复现了三个新增边界，本次已按最小范围修复并加入负向回归：
+开发侧复现了三个新增边界，本次已按最小范围修复并加入回归：
 
-- 审批文本不再做关键词子串匹配。纯批准短句使用严格白名单，较长描述必须整句匹配受限批准语法；“先别继续”“还没确认”“先解释一下再继续”“do not continue”和带数量修改的条件批准均不会写入 approved；
-- 人工节点的 `failed`、`cancelled`、`interrupted` 及 `step_failed` 结果先于审批边界返回，保留原错误和恢复提示，不再伪装成“产物已生成”；
+- 删除图片 Workflow 的审批文本白名单、正则匹配和 Host 侧 `approved` 自动改写。审批与修改意图由 ChatAgent 按完整消息语义判断，原话不被 Host 截断或归类；
+- 删除图片 Workflow 连跑多个 step 的 Host 专用循环。一次工具调用只执行模型明确选择的 step，结果中的成功、失败、取消、中断和审批边界均原样返回给 ChatAgent；自动模式继续使用通用 DriverAgent 对每个终态 step 做质量审核；
 - `render_static`、`render_keyframes`、`render_dynamic`、`caption_dynamic`、`caption_static` 的专用提示，以及渐进步骤移除 `save_artifacts` 终止条件的行为，统一限定到规范化后的 `image-workflow-v2`；其他工作流的同名步骤保持自身声明；
 - 渐进步骤的通用保存说明与专用逐项保存契约保持一致，不再同时要求“一项一存”和“合并一次保存”；
 - 绝对 `/static-files/` URL 只允许 localhost/loopback、`host.docker.internal` 或 `LAZYMIND_PUBLIC_URL` / `LAZYMIND_SERVER_URL` 配置的 origin 映射成本地上传文件；其他站点继续作为远程 URL 处理。
