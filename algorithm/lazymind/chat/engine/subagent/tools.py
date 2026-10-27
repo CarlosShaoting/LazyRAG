@@ -1743,10 +1743,85 @@ def pptx_analyzer(filename: str, page: int = 1, turn: Optional[int] = None) -> D
 
 
 @fc_register(host_file='NONE')
+def scientific_presentation(
+    slides: List[Dict[str, Any]],
+    output_filename: str = 'scientific-presentation.pptx',
+    template_filename: Optional[str] = None,
+    template_turn: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Create an editable scientific PPTX directly in the main Chat.
+
+    Read and ground all source material before calling. Each slide object accepts
+    title, bullets, notes, sources, equations, and images. `sources` should contain
+    human-readable paper/citation labels used for that slide. `images` must contain
+    exact uploaded attachment filenames. Equations remain editable text and are not
+    represented as native PowerPoint OMML. An optional template must be an uploaded
+    `.pptx`; its theme, masters, layouts, and page size are reused without modifying
+    the upload. This tool does not start or call a Workflow.
+    """
+    from pathlib import Path
+    import lazyllm
+    from lazymind.chat.engine.tools.chat_artifact import save_chat_file
+    from lazymind.chat.engine.tools.conversation_workspace import chat_agent_workspace
+    from lazymind.chat.engine.tools.file_resources.scientific_presentation import build_scientific_pptx
+
+    name = str(output_filename or '').strip()
+    if (not name or '/' in name or '\\' in name or Path(name).name != name
+            or Path(name).suffix.lower() != '.pptx'):
+        raise ToolExecutionError('output_filename must be a plain .pptx filename')
+    template = None
+    if template_filename:
+        matched, err = _resolve_attachment(template_filename, template_turn)
+        if err:
+            raise ToolExecutionError(f'Template attachment not found: {err}')
+        matched = _materialize_local_path(matched)
+        if not os.path.isfile(matched) or Path(matched).suffix.lower() != '.pptx':
+            raise ToolExecutionError('scientific_presentation only accepts a .pptx template')
+        template = Path(matched)
+
+    image_names = []
+    for slide in slides if isinstance(slides, list) else []:
+        if isinstance(slide, Mapping) and isinstance(slide.get('images'), (list, tuple)):
+            image_names.extend(str(item) for item in slide['images'])
+    images = {}
+    for image_name in dict.fromkeys(image_names):
+        matched, err = _resolve_attachment(image_name, None)
+        if err:
+            raise ToolExecutionError(f'Image attachment not found: {err}')
+        matched = _materialize_local_path(matched)
+        if not os.path.isfile(matched):
+            raise ToolExecutionError(f'Image attachment {image_name!r} is unavailable')
+        images[image_name] = Path(matched)
+
+    cfg = lazyllm.globals.get('agentic_config') or {}
+    user_id = str(cfg.get('user_id') or '0')
+    conversation_id = str(cfg.get('conversation_id') or '').strip()
+    if not conversation_id:
+        raise ToolExecutionError('conversation_id is required to create a presentation')
+    workspace = Path(chat_agent_workspace(user_id, conversation_id))
+    digest = hashlib.sha256(json.dumps(slides, ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:16]
+    output = workspace / 'scientific-presentations' / digest / name
+    try:
+        stats = build_scientific_pptx(slides, output, template=template, image_paths=images)
+        artifact = save_chat_file(
+            name, str(output), 'Editable scientific presentation created in main Chat',
+            change_summary='Created an editable scientific PPTX from grounded source material.',
+            logical_key='scientific-presentation',
+        )
+    except (OSError, ValueError) as exc:
+        raise ToolExecutionError(str(exc)) from exc
+    return {
+        'status': 'ok', **stats, **artifact,
+        'message': 'Scientific PPTX created and published in main Chat. No Workflow was started.',
+    }
+
+
+@fc_register(host_file='NONE')
 def edit_presentation(
     filename: str,
     action: Literal[
-        'inspect', 'replace_fonts', 'replace_palette', 'inspect_content', 'edit_content', 'prepare_font', 'format_text'
+        'inspect', 'replace_fonts', 'replace_palette', 'apply_template',
+        'inspect_content', 'edit_content', 'prepare_font', 'format_text'
     ],
     source_font: Optional[str] = None,
     target_font: Optional[str] = None,
@@ -1762,6 +1837,8 @@ def edit_presentation(
     slot_ids: Optional[List[str]] = None,
     allow_font_download: bool = False,
     style_edits: Optional[List[Dict[str, Any]]] = None,
+    template_filename: Optional[str] = None,
+    template_turn: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Inspect or directly edit an uploaded PPTX without starting a Workflow.
 
@@ -1790,6 +1867,10 @@ def edit_presentation(
     bold, italic, underline (true/false), text_color (#RRGGBB), allow_download.
     Example: [{"pages":[1],"text_scope":"titles","font_size_pt":28,"bold":true}].
     Omit properties to preserve them. Multiple scopes publish atomically once.
+    apply_template accepts a second uploaded `.pptx` in template_filename and
+    applies its theme, fonts, palette, safe backgrounds, and compatible title/body
+    placeholder geometry to the source PPTX. Both inputs must be native PPTX files;
+    the operation stays in main Chat and never starts a Workflow.
     """
     if action == 'prepare_font':
         from lazymind.chat.engine.tools.file_resources.font_library import ensure_font
@@ -1826,6 +1907,36 @@ def edit_presentation(
     if native_artifact is not None:
         effective = matched  # The selected immutable revision is authoritative.
     normalized_action = str(action or '').strip().lower()
+    if normalized_action == 'apply_template':
+        if native_artifact is not None:
+            raise ToolExecutionError('apply_template supports uploaded PPTX files in main Chat only')
+        if not template_filename:
+            raise ToolExecutionError('template_filename is required for apply_template')
+        template_path, err = _resolve_attachment(template_filename, template_turn)
+        if err:
+            raise ToolExecutionError(f'Template attachment not found: {err}')
+        template_path = _materialize_local_path(template_path)
+        from pathlib import Path
+        if (not os.path.isfile(template_path) or Path(template_path).suffix.lower() != '.pptx'
+                or Path(effective).suffix.lower() != '.pptx'):
+            raise ToolExecutionError('apply_template only supports PPTX source and PPTX template files')
+        os.makedirs(draft.root, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix='template-', dir=draft.root) as temporary:
+            candidate = Path(temporary) / draft.filename
+            try:
+                from lazymind.chat.engine.tools.file_resources.pptx_template_apply import apply_pptx_template
+                stats = apply_pptx_template(Path(effective), Path(template_path), candidate)
+            except (OSError, ValueError) as exc:
+                raise ToolExecutionError(str(exc)) from exc
+            os.replace(candidate, draft.draft_path)
+        artifact = _publish_attachment_edit(draft, source_tool='edit_presentation')
+        return {
+            'status': 'ok', 'action': normalized_action,
+            'source_filename': os.path.basename(matched),
+            'template_filename': os.path.basename(template_path),
+            **stats, **artifact,
+            'message': 'Applied the PPTX template and published a new editable copy in main Chat.',
+        }
     if normalized_action in ('inspect_content', 'edit_content', 'format_text') or (
             normalized_action == 'replace_fonts' and (native_artifact is not None or slot_ids is not None)):
         from pathlib import Path

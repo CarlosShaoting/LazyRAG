@@ -30,6 +30,9 @@ when_to_use: >
   launch additional parent-chat inspection, academic analysis or rendering.
   A reported visual-validation limitation is a disclosure, not a new task.
   Do not trigger for simple one-off explanations, ordinary image generation,
+  scientific/research report, paper explanation, academic defense, lab-meeting,
+  or reading-summary PPTX requests that can be completed directly by main Chat's
+  scientific_presentation tool (unless the user explicitly asks to use this Workflow),
   edits to dates/text or adding speaker notes on an already generated native PPTX
   (use edit_presentation inspect_content/edit_content on native_pptx directly),
   ordinary long-form writing, or requests that only ask to preview an uploaded
