@@ -326,7 +326,10 @@ func StartWorkflowSession(w http.ResponseWriter, r *http.Request) {
 	if req.TaskID == "" {
 		req.TaskID = uuid.NewString()
 	}
-	handOff := req.HandOff
+	// Human approval is a package/runtime invariant, not a best-effort choice made
+	// by ChatAgent. A stored approval preference has already been applied to this
+	// projection, so forcing hand-off here still honors explicit user opt-outs.
+	handOff := req.HandOff || node.RequiresApproval || req.WorkflowMode == "auto"
 	nodeDef := graph.Nodes[req.TargetStepID]
 	params := WorkflowStepParams{WorkflowID: req.WorkflowID, WorkflowRef: req.WorkflowRef, RevisionID: req.WorkflowRevisionID, RevisionNo: req.WorkflowRevisionNo, TreeHash: req.WorkflowTreeHash, RemoteRoot: req.WorkflowRemoteRoot, StepID: req.TargetStepID, UserInput: req.UserInput, IsColdStart: true, HandOff: &handOff, PreflightID: req.PreflightID, ChatSessionID: req.ChatSessionID, TraceID: req.TraceID, ParentSpanID: req.ParentSpanID, WorkflowMode: req.WorkflowMode, UserID: req.UserID, HistoryFilesPerTurn: req.HistoryFilesPerTurn, Filters: req.Filters, ParentAgenticConfig: req.ParentAgenticConfig, RequiredOutputs: nodeDef.RequiredOutputs, Capabilities: nodeDef.Capabilities, LegacyTools: nodeDef.LegacyTools, TerminalTools: nodeDef.TerminalTools, ToolsOnly: nodeDef.ToolsOnly, TerminalToolsOnly: nodeDef.TerminalToolsOnly, StreamHeartbeat: nodeDef.StreamHeartbeat, Runtime: graph.Runtime}
 	inputKeys := graphengine.Materials(nodeDef.Input)
@@ -370,6 +373,9 @@ func StartWorkflowSession(w http.ResponseWriter, r *http.Request) {
 		}
 		var attempt orm.WorkflowSessionStep
 		if err := tx.Where("task_id = ?", taskID).First(&attempt).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&attempt).Update("review_required", node.RequiresApproval).Error; err != nil {
 			return err
 		}
 		witnesses := mergeAttemptWitnesses(
@@ -746,7 +752,10 @@ func applyWorkflowTransition(ctx context.Context, tx *gorm.DB, sessionID string,
 		now := time.Now().UTC()
 		responseTasks := make([]transitionTaskResponse, 0, len(targets))
 		for _, target := range targets {
-			handOff := req.HandOff
+			// Enforce post-step approval at the execution boundary. The model may
+			// select the ordinary advance tool, but a human node must return
+			// ownership to the user unless their saved preference disables it.
+			handOff := req.HandOff || projection.Nodes[target.TargetStepID].RequiresApproval || req.WorkflowMode == "auto"
 			nodeDef := graph.Nodes[target.TargetStepID]
 			taskID := target.TaskID
 			// Tool-dependent steps run inside LazyMind; the session controller stays unchanged.
@@ -802,10 +811,8 @@ func applyWorkflowTransition(ctx context.Context, tx *gorm.DB, sessionID string,
 				return err
 			}
 
-			if controlstore.Controlled(session) {
-				if err := tx.Model(&attempt).Update("review_required", projection.Nodes[target.TargetStepID].RequiresApproval).Error; err != nil {
-					return err
-				}
+			if err := tx.Model(&attempt).Update("review_required", projection.Nodes[target.TargetStepID].RequiresApproval).Error; err != nil {
+				return err
 			}
 			inheritedWorkspace := ""
 			productPublication, err := productstate.PublicationEnabled(tx, session)

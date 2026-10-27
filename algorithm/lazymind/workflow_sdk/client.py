@@ -129,7 +129,9 @@ class WorkflowClient:
                  host: str = '', timeout: float = 15.0, read_retries: int = 2,
                  execution_timeout: float = 7200.0, transport: Any = httpx,
                  trace_context: Optional[Callable[[], Any]] = None,
-                 enable_tool_retrieval: Optional[bool] = None):
+                 enable_tool_retrieval: Optional[bool] = None,
+                 thinking_depth: Optional[str] = None,
+                 llm_config: Optional[Dict[str, Any]] = None):
         connection = ConnectionInfo(_connection_url(base_url), 'argument') if base_url else discover_connection()
         self.connection = connection
         self.base_url = connection.base_url
@@ -144,6 +146,8 @@ class WorkflowClient:
         self.transport = transport
         self.trace_context = trace_context
         self.enable_tool_retrieval = enable_tool_retrieval
+        self.thinking_depth = thinking_depth
+        self.llm_config = dict(llm_config) if isinstance(llm_config, dict) else {}
 
     def _headers(self, command_id: str = '') -> Dict[str, str]:
         headers = {'Workflow-Contract-Version': CONTRACT_VERSION}
@@ -166,6 +170,17 @@ class WorkflowClient:
                 body.get('ok') is False or body.get('code', 0) not in (0, '0', None))):
             error = body.get('error', {}) if isinstance(body, dict) else {}
             error = error if isinstance(error, dict) else {}
+            # Public Workflow transition conflicts use the contract envelope
+            # ``{ok: true, result: {accepted: false, error: {...}}}`` while the
+            # HTTP status is still 409. Preserve that structured error instead
+            # of collapsing it to WORKFLOW_REQUEST_FAILED, otherwise callers
+            # cannot distinguish a refreshable state-version race from a real
+            # transition failure.
+            result = body.get('result', {}) if isinstance(body, dict) else {}
+            result = result if isinstance(result, dict) else {}
+            result_error = result.get('error', {})
+            if not error and isinstance(result_error, dict):
+                error = result_error
             data = body.get('data', {}) if isinstance(body, dict) else {}
             data = data if isinstance(data, dict) else {}
             raise WorkflowClientError(
@@ -405,12 +420,15 @@ class WorkflowClient:
 
     def patch_artifact(self, artifact_id: str, base_revision: int, value: Any,
                        content_type: str = 'json', caption: str = '',
-                       command_id: str = '') -> WorkflowResponse:
+                       command_id: str = '',
+                       base_draft_version: Optional[int] = None) -> WorkflowResponse:
         command_id = command_id or str(uuid.uuid4())
         payload: Dict[str, Any] = {
             'base_revision': base_revision, 'value': value,
             'content_type': content_type, 'command_id': command_id,
         }
+        if base_draft_version is not None:
+            payload['base_draft_version'] = base_draft_version
         if caption:
             payload['caption'] = caption
         return self._decode(self.transport.patch(
@@ -445,8 +463,20 @@ class WorkflowClient:
                    'workflow_mode': request.workflow_mode,
                    'retry_origin': request.retry_origin,
                    'steps': [asdict(step) for step in request.steps]}
+        parent_agentic_config: Dict[str, Any] = {}
         if self.enable_tool_retrieval is not None:
-            payload['parent_agentic_config'] = {'enable_tool_retrieval': self.enable_tool_retrieval}
+            parent_agentic_config['enable_tool_retrieval'] = self.enable_tool_retrieval
+        if self.thinking_depth in {'low', 'medium', 'high', 'max'}:
+            parent_agentic_config['thinking_depth'] = self.thinking_depth
+            payload['_thinking_depth'] = self.thinking_depth
+        if parent_agentic_config:
+            payload['parent_agentic_config'] = parent_agentic_config
+        # Workflow steps are part of the active conversation and must inherit
+        # that turn's selected role models. Without this snapshot Core falls
+        # back to the user's account default, so a V3 chat can unexpectedly run
+        # every SubAgent on R1 and become slow or provider-fragile.
+        if self.llm_config:
+            payload['llm_config'] = self.llm_config
         if self.trace_context is not None:
             context = self.trace_context()
             if context.trace_id and context.parent_span_id:

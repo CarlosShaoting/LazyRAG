@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Drawer } from 'antd';
 import { useTranslation } from 'react-i18next';
 import './ArtifactSourceButton.scss';
+
+export const ArtifactSourceVisibilityContext = createContext(true);
 
 /** Inspect the displayed value without unmounting an editor or changing its draft. */
 export function ArtifactSourceButton({ value, sourceUrl, fileRecord = false, overlay = false }: {
@@ -10,6 +12,7 @@ export function ArtifactSourceButton({ value, sourceUrl, fileRecord = false, ove
   fileRecord?: boolean;
   overlay?: boolean;
 }) {
+  const sourceVisible = useContext(ArtifactSourceVisibilityContext);
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [loaded, setLoaded] = useState<{ url: string; text: string }>();
@@ -34,6 +37,7 @@ export function ArtifactSourceButton({ value, sourceUrl, fileRecord = false, ove
     ? typeof value === 'string' ? value : JSON.stringify(value, null, 2) ?? ''
     : '', [open, value]);
 
+  if (!sourceVisible) return null;
   return <>
     <button type='button'
       className={`artifact-source-button${overlay ? ' artifact-source-button--overlay' : ''}`}

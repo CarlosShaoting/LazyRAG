@@ -6,6 +6,11 @@ import lazyllm
 import pytest
 
 from lazymind.chat.workflow.workflow_manager import (
+    _approve_image_v2_meme_brief,
+    _advance_image_v2_to_declared_boundary,
+    _image_v2_completion_text,
+    _is_approval_only_continue,
+    _with_terminal_agent_control,
     enforce_startup_clarification_policy,
     resolve_workflow_injection,
     workflow_startup_clarification_already_asked,
@@ -79,6 +84,606 @@ def test_mentioned_workflow_is_injected_as_authoritative_selection():
     assert 'prepare_workflow' not in _tool_names(contribution)
     assert 'list_workflow_attachments' not in _tool_names(contribution)
     assert 'bind_workflow_input' not in _tool_names(contribution)
+
+
+def test_image_workflow_v2_host_advances_to_declared_human_boundary():
+    toolkit = MagicMock()
+    toolkit.prepare_workflow.return_value = {
+        'session_id': 'session-v2', 'state_version': 1, 'ready_steps': ['classify_request'],
+    }
+    toolkit.advance_step.side_effect = [
+        {
+            'status': 'active', 'state_version': 2,
+            'projection': {
+                'ready': ['meme_brief'],
+                'nodes': {'meme_brief': {'mode': 'human', 'requires_approval': True}},
+            },
+        },
+        {
+            # A human node may also be the graph's final node. The Host must
+            # still surface its review boundary before accepted completion.
+            'status': 'completed', 'state_version': 3,
+            'projection': {
+                'completed': True, 'ready': [],
+            },
+        },
+    ]
+    toolkit.get_ready_steps.return_value = {
+        'session_id': 'session-v2', 'state_version': 2,
+        'ready_steps': ['ordinary_prepare', 'edit_prepare', 'meme_brief'],
+        'approval_by_step': {
+            'ordinary_prepare': 'not_required',
+            'edit_prepare': 'not_required',
+            'meme_brief': 'required',
+        },
+        'projection': {
+            'nodes': {
+                'ordinary_prepare': {'mode': 'auto', 'requires_approval': False},
+                'edit_prepare': {'mode': 'auto', 'requires_approval': False},
+                'meme_brief': {'mode': 'human', 'requires_approval': True},
+            },
+        },
+    }
+    toolkit.list_artifacts.return_value = {'artifacts': [{
+        'artifact_id': 'route-1', 'slot_id': 'route_plan', 'selected': True,
+        'validity': 'effective', 'revision': 1,
+        'value': {'data': {'route': 'meme'}},
+    }]}
+    with patch('lazymind.chat.workflow.workflow_manager._client') as client_factory, patch(
+        'lazymind.chat.workflow.workflow_manager.HostWorkflowToolkit', return_value=toolkit,
+    ):
+        client_factory.return_value.get_workflow.return_value.result = {
+            'workflow_id': 'image-workflow-v2', 'revision_id': 'revision-v2',
+        }
+        client_factory.return_value.get_state.return_value = {
+            'session_id': 'session-v2', 'state_version': 1,
+            'projection': {
+                'reachable': ['classify_request'], 'ready': ['classify_request'], 'blocked': [],
+            },
+        }
+        contribution = resolve_workflow_injection(
+            None,
+            current_query='生成一个蓝色圆形图标',
+            workflow_catalog=[{
+                'workflow_ref': 'builtin:image-workflow-v2',
+                'workflow_id': 'image-workflow-v2',
+                'revision_id': 'revision-v2',
+            }],
+            allowed_workflow_refs=['builtin:image-workflow-v2'],
+            workflow_activations=[{
+                'workflow_ref': 'builtin:image-workflow-v2',
+                'workflow_id': 'image-workflow-v2',
+                'revision_id': 'revision-v2',
+                'tool_name': 'trigger_image_workflow_v2_workflow',
+            }],
+        )
+
+        result = _tool(contribution, 'trigger_image_workflow_v2_workflow')()
+
+    toolkit.prepare_workflow.assert_called_once_with(
+        'image-workflow-v2', input_bindings={}, request_context='生成一个蓝色圆形图标',
+        workflow_mode='dynamic',
+    )
+    assert [
+        call.args[2][0].step_id for call in toolkit.advance_step.call_args_list
+    ] == ['classify_request', 'meme_brief']
+    assert all(
+        call.kwargs['workflow_mode'] == 'dynamic'
+        for call in toolkit.advance_step.call_args_list
+    )
+    assert result['status'] == 'waiting'
+    assert result['outcome'] == 'approval_required'
+    assert result['approval_step'] == 'meme_brief'
+    assert result['host_executed_steps'] == ['classify_request', 'meme_brief']
+    assert result['_agent_control']['stop'] is True
+
+
+def test_image_workflow_v2_host_refreshes_once_when_auto_advance_conflicts():
+    toolkit = MagicMock()
+    toolkit.advance_step.side_effect = [
+        WorkflowClientError('STATE_VERSION_CONFLICT', 'stale'),
+        {
+            'status': 'completed', 'state_version': 3,
+            'projection': {'completed': True, 'ready': []},
+        },
+    ]
+    toolkit.get_ready_steps.return_value = {
+        'session_id': 'session-v2', 'state_version': 2,
+        'ready_steps': ['ordinary_generate'],
+        'projection': {
+            'nodes': {
+                'ordinary_generate': {'mode': 'auto', 'requires_approval': False},
+            },
+        },
+    }
+
+    result = _advance_image_v2_to_declared_boundary(
+        toolkit,
+        'session-v2',
+        {
+            'session_id': 'session-v2', 'state_version': 1,
+            'ready_steps': ['ordinary_generate'],
+            'projection': {
+                'nodes': {
+                    'ordinary_generate': {'mode': 'auto', 'requires_approval': False},
+                },
+            },
+        },
+        'ordinary_generate',
+        user_input='生成蓝色圆形图标',
+    )
+
+    assert [call.args[1] for call in toolkit.advance_step.call_args_list] == [1, 2]
+    assert result['status'] == 'completed'
+    assert result['host_executed_steps'] == ['ordinary_generate']
+    assert result['state_version_refreshed'] is True
+
+
+@pytest.mark.parametrize(
+    ('status', 'outcome'),
+    [
+        ('failed', 'step_failed'),
+        ('cancelled', 'cancelled'),
+        ('interrupted', 'interrupted'),
+    ],
+)
+def test_image_workflow_v2_human_step_preserves_terminal_failure(status, outcome):
+    toolkit = MagicMock()
+    toolkit.advance_step.return_value = {
+        'status': status,
+        'outcome': outcome,
+        'error': {'message': 'simulated media failure'},
+    }
+    frontier = {
+        'session_id': 'session-v2',
+        'state_version': 1,
+        'ready_steps': ['render_keyframes'],
+        'projection': {
+            'nodes': {
+                'render_keyframes': {'mode': 'human', 'requires_approval': True},
+            },
+        },
+    }
+
+    with patch(
+        'lazymind.chat.workflow.workflow_manager._image_v2_completion_text',
+        return_value='',
+    ):
+        result = _advance_image_v2_to_declared_boundary(
+            toolkit,
+            'session-v2',
+            frontier,
+            'render_keyframes',
+            user_input='',
+        )
+
+    assert result['status'] == status
+    assert result['outcome'] == outcome
+    assert result['error']['message'] == 'simulated media failure'
+    assert 'approval_step' not in result
+    assert result.get('_agent_control', {}).get('reason') != 'approval_required'
+
+
+def test_image_workflow_v2_continue_approves_pending_meme_brief_atomically():
+    toolkit = MagicMock()
+    pending = {
+        'delivery_mode': 'static',
+        'caption_mode': 'caption',
+        'caption_source': 'proposed',
+        'caption_review_status': 'pending',
+        'requested_count': 2,
+        'planned_count': 2,
+        'count_status': 'compliant',
+        'allowed_count': 12,
+        'requires_count_decision': False,
+        'brief_status': 'blocked',
+        'states': [
+            {'state_id': 'hello', 'caption': '你好呀', 'caption_review_status': 'pending'},
+            {'state_id': 'thanks', 'caption': '谢谢你', 'caption_review_status': 'pending'},
+        ],
+    }
+    toolkit.list_artifacts.return_value = {'artifacts': [{
+        'artifact_id': 'brief-1', 'slot_id': 'meme_brief_data', 'selected': True,
+        'validity': 'effective', 'revision': 4, 'draft_version': 7,
+        'content_type': 'json',
+        'value': {'data': pending},
+    }]}
+
+    assert _approve_image_v2_meme_brief(
+        toolkit, 'session-v2', ['meme_preflight'], '继续执行',
+    ) is True
+
+    args = toolkit.patch_artifact.call_args.args
+    assert args[:2] == ('brief-1', 4)
+    assert toolkit.patch_artifact.call_args.kwargs['base_draft_version'] == 7
+    approved = args[2]
+    assert approved['caption_review_status'] == 'approved'
+    assert approved['brief_status'] == 'approved'
+    assert [state['caption_review_status'] for state in approved['states']] == [
+        'approved', 'approved',
+    ]
+    assert [state['caption'] for state in approved['states']] == ['你好呀', '谢谢你']
+    assert pending['caption_review_status'] == 'pending'
+    assert pending['states'][0]['caption_review_status'] == 'pending'
+
+
+def test_image_workflow_v2_accepts_descriptive_approval_but_not_revision_text():
+    assert _is_approval_only_continue('批准当前方案和全部字幕，继续执行。')
+    assert _is_approval_only_continue('这些都通过，请继续')
+    assert not _is_approval_only_continue('继续，但请修改第二张图片')
+    assert not _is_approval_only_continue('不同意，重新调整方案')
+
+
+@pytest.mark.parametrize(
+    'user_input',
+    [
+        '先别继续',
+        '还没确认',
+        '先解释一下再继续',
+        'do not continue',
+        '继续，但把数量减到2张',
+    ],
+)
+def test_image_workflow_v2_negative_or_conditional_text_does_not_approve(user_input):
+    toolkit = MagicMock()
+
+    assert _approve_image_v2_meme_brief(
+        toolkit,
+        'session-v2',
+        ['meme_preflight'],
+        user_input,
+    ) is False
+    toolkit.list_artifacts.assert_not_called()
+    toolkit.patch_artifact.assert_not_called()
+
+
+def test_image_workflow_v2_continue_does_not_approve_unresolved_count_decision():
+    toolkit = MagicMock()
+    toolkit.list_artifacts.return_value = {'artifacts': [{
+        'artifact_id': 'brief-1', 'slot': 'meme_brief_data', 'selected': True,
+        'revision': 1, 'content_type': 'json',
+        'value': {'data': {
+            'caption_mode': 'caption',
+            'caption_review_status': 'pending',
+            'brief_status': 'blocked',
+            'requested_count': 13,
+            'planned_count': 12,
+            'allowed_count': 12,
+            'count_status': 'over_limit',
+            'requires_count_decision': True,
+            'states': [
+                {'state_id': str(index), 'caption': f'文案{index}'}
+                for index in range(13)
+            ],
+        }},
+    }]}
+
+    with pytest.raises(WorkflowClientError) as exc_info:
+        _approve_image_v2_meme_brief(
+            toolkit, 'session-v2', ['meme_preflight'], '继续',
+        )
+
+    assert exc_info.value.code == 'MEME_BRIEF_NOT_APPROVABLE'
+    toolkit.patch_artifact.assert_not_called()
+
+
+def test_image_workflow_v2_continue_redirects_stale_brief_rerun_to_preflight():
+    toolkit = MagicMock()
+    toolkit.list_artifacts.return_value = {'artifacts': [{
+        'artifact_id': 'brief-1', 'slot_id': 'meme_brief_data', 'selected': True,
+        'revision': 2, 'draft_version': 3, 'content_type': 'json',
+        'value': {'data': {
+            'caption_mode': 'caption',
+            'caption_review_status': 'pending',
+            'brief_status': 'blocked',
+            'requested_count': 1,
+            'planned_count': 1,
+            'allowed_count': 12,
+            'count_status': 'compliant',
+            'requires_count_decision': False,
+            'states': [{
+                'state_id': 'hello', 'caption': '你好呀',
+                'caption_review_status': 'pending',
+            }],
+        }},
+    }]}
+    toolkit.get_ready_steps.return_value = {
+        'session_id': 'session-v2', 'state_version': 11,
+        'ready_steps': ['meme_preflight'], 'retryable_steps': [],
+        'rewindable_steps': [], 'continue_steps': [],
+        'projection': {
+            'nodes': {
+                'meme_preflight': {'mode': 'auto', 'requires_approval': False},
+            },
+        },
+    }
+    toolkit.advance_step.return_value = {
+        'status': 'failed', 'state_version': 12,
+        'projection': {'completed': False, 'ready': []},
+    }
+    with patch('lazymind.chat.workflow.workflow_manager.HostWorkflowToolkit',
+               return_value=toolkit), patch(
+        'lazymind.chat.workflow.workflow_manager._client',
+    ) as client_factory:
+        client_factory.return_value.get_state.return_value = {
+            'status': 'waiting', 'state_version': 10,
+            'projection': {'ready': [], 'blocked': ['meme_preflight']},
+        }
+        contribution = resolve_workflow_injection(
+            {
+                'session_id': 'session-v2',
+                'workflow_id': 'image-workflow-v2',
+                'workflow_ref': 'builtin:image-workflow-v2',
+            },
+            current_query='继续',
+            conversation_id='conversation-1',
+        )
+        lazyllm.globals['agentic_config'].update(contribution.agentic_config_patch)
+        result = _tool(contribution, 'advance_step')(['meme_brief'])
+
+    toolkit.patch_artifact.assert_called_once()
+    command = toolkit.advance_step.call_args.args[2][0]
+    assert command.step_id == 'meme_preflight'
+    assert result['host_executed_steps'] == ['meme_preflight']
+
+
+def test_image_workflow_v2_handoff_continue_approves_and_launches_preflight():
+    toolkit = MagicMock()
+    toolkit.list_artifacts.return_value = {'artifacts': [{
+        'artifact_id': 'brief-1', 'slot_id': 'meme_brief_data', 'selected': True,
+        'revision': 5, 'draft_version': 8, 'content_type': 'json',
+        'value': {'data': {
+            'caption_mode': 'caption',
+            'caption_review_status': 'pending',
+            'brief_status': 'blocked',
+            'requested_count': 1,
+            'planned_count': 1,
+            'allowed_count': 12,
+            'count_status': 'compliant',
+            'requires_count_decision': False,
+            'states': [{
+                'state_id': 'hello', 'caption': '你好呀',
+                'caption_review_status': 'pending',
+            }],
+        }},
+    }]}
+    frontier = {
+        'session_id': 'session-v2', 'state_version': 21,
+        'ready_steps': ['meme_preflight'], 'retryable_steps': [],
+        'rewindable_steps': [], 'continue_steps': [],
+    }
+    with patch('lazymind.chat.workflow.workflow_manager.HostWorkflowToolkit',
+               return_value=toolkit), patch(
+        'lazymind.chat.workflow.workflow_manager._client',
+    ) as client_factory:
+        client = client_factory.return_value
+        client.get_state.return_value = {
+            'status': 'waiting', 'state_version': 20,
+            'projection': {'ready': [], 'blocked': ['meme_preflight']},
+        }
+        client.get_ready_steps.return_value = frontier
+        client.advance.return_value.result = {
+            'status': 'active', 'state_version': 22,
+            'host_executed_steps': ['meme_preflight'],
+        }
+        contribution = resolve_workflow_injection(
+            {
+                'session_id': 'session-v2',
+                'workflow_id': 'image-workflow-v2',
+                'workflow_ref': 'builtin:image-workflow-v2',
+            },
+            current_query='继续执行',
+            conversation_id='conversation-1',
+        )
+        lazyllm.globals['agentic_config'].update(contribution.agentic_config_patch)
+        result = json.loads(
+            _tool(contribution, 'advance_step_and_hand_off')('meme_brief'),
+        )
+
+    assert result['host_executed_steps'] == ['meme_preflight']
+    toolkit.patch_artifact.assert_called_once()
+    assert toolkit.patch_artifact.call_args.kwargs['base_draft_version'] == 8
+    request = client.advance.call_args.args[0]
+    assert request.steps[0].step_id == 'meme_preflight'
+    assert request.steps[0].user_input == '继续执行'
+    assert request.handoff is True
+
+
+def test_image_workflow_v2_auto_binds_the_sole_current_turn_image():
+    old_image = '/safe/older.png'
+    current_image = '/safe/current.jpg'
+    lazyllm.globals['agentic_config'].update({
+        'files': [old_image, current_image],
+        'history_files_per_turn': {'1': [old_image], '3': [current_image]},
+        'current_turn_seq': 3,
+    })
+    toolkit = MagicMock()
+    toolkit.prepare_workflow.return_value = {
+        'session_id': 'session-v2', 'state_version': 1, 'ready_steps': [],
+    }
+    imported = {
+        'resource_id': 'source-resource', 'revision': 1,
+        'content_hash': 'sha256:source',
+    }
+    with patch('lazymind.chat.workflow.workflow_manager._client') as client_factory, patch(
+        'lazymind.chat.workflow.workflow_manager.HostWorkflowToolkit', return_value=toolkit,
+    ), patch(
+        'lazymind.chat.workflow.workflow_manager._resolve_workflow_attachment',
+        return_value=(current_image, None),
+    ) as resolve_attachment, patch(
+        'lazymind.chat.workflow.workflow_manager._import_attachment', return_value=imported,
+    ) as import_attachment:
+        client_factory.return_value.get_workflow.return_value.result = {
+            'workflow_id': 'image-workflow-v2', 'revision_id': 'revision-v2',
+            'compiled_graph': {
+                'material_types': {'source_image': 'image'},
+                'material_producers': {'source_image': {'kind': 'external'}},
+            },
+        }
+        client_factory.return_value.get_state.return_value = {
+            'session_id': 'session-v2', 'state_version': 1,
+            'projection': {'reachable': [], 'ready': [], 'blocked': []},
+        }
+        contribution = resolve_workflow_injection(
+            None,
+            current_query='只把照片背景改成浅蓝色',
+            workflow_catalog=[{
+                'workflow_ref': 'builtin:image-workflow-v2',
+                'workflow_id': 'image-workflow-v2',
+                'revision_id': 'revision-v2',
+            }],
+            allowed_workflow_refs=['builtin:image-workflow-v2'],
+            workflow_activations=[{
+                'workflow_ref': 'builtin:image-workflow-v2',
+                'workflow_id': 'image-workflow-v2',
+                'revision_id': 'revision-v2',
+                'tool_name': 'trigger_image_workflow_v2_workflow',
+            }],
+        )
+
+        result = _tool(contribution, 'trigger_image_workflow_v2_workflow')()
+
+    resolve_attachment.assert_called_once_with(current_image)
+    import_attachment.assert_called_once_with(current_image)
+    toolkit.prepare_workflow.assert_called_once_with(
+        'image-workflow-v2', input_bindings={'source_image': imported},
+        request_context='只把照片背景改成浅蓝色', workflow_mode='dynamic',
+    )
+    assert result['input_bindings'] == {'source_image': imported}
+
+
+@pytest.mark.parametrize(('delivery_mode', 'expected'), [
+    ('static', 'plan_static'),
+    ('dynamic', 'plan_dynamic'),
+])
+def test_image_workflow_v2_delivery_choice_uses_validated_brief(delivery_mode, expected):
+    from lazymind.chat.workflow.workflow_manager import _select_image_v2_ready_step
+
+    toolkit = MagicMock()
+    toolkit.list_artifacts.return_value = {'artifacts': [{
+        'artifact_id': 'brief-1', 'slot_id': 'meme_brief_data', 'selected': True,
+        'validity': 'effective', 'revision': 1,
+        'value': {'data': {'delivery_mode': delivery_mode}},
+    }]}
+
+    assert _select_image_v2_ready_step(
+        toolkit, 'session-v2', ['plan_static', 'plan_dynamic'],
+    ) == expected
+
+
+def test_image_workflow_v2_completion_text_is_deterministic_and_counts_final_artifacts():
+    toolkit = MagicMock()
+    toolkit.list_artifacts.return_value = {'artifacts': [
+        {
+            'artifact_id': 'route-1', 'slot_id': 'route_plan', 'selected': True,
+            'validity': 'effective', 'revision': 1,
+            'value': {'data': {'route': 'meme'}},
+        },
+        {
+            'artifact_id': 'brief-1', 'slot_id': 'meme_brief_data', 'selected': True,
+            'validity': 'effective', 'revision': 1,
+            'value': {'data': {'delivery_mode': 'static'}},
+        },
+        {
+            'artifact_id': 'image-1', 'slot_id': 'static_final', 'selected': True,
+            'validity': 'effective', 'revision': 2, 'value': {'path': 'one.png'},
+        },
+        {
+            'artifact_id': 'image-2', 'slot_id': 'static_final', 'selected': True,
+            'validity': 'effective', 'revision': 1, 'value': {'path': 'two.png'},
+        },
+        {
+            'artifact_id': 'old-image', 'slot_id': 'static_final', 'selected': False,
+            'validity': 'effective', 'revision': 1, 'value': {'path': 'old.png'},
+        },
+        {
+            'artifact_id': 'review-1', 'slot_id': 'pack_review', 'selected': True,
+            'validity': 'effective', 'revision': 1,
+            'value': {'data': {'overall_status': 'approved'}},
+        },
+    ]}
+
+    text = _image_v2_completion_text(toolkit, 'session-v2')
+
+    assert '静态表情包工作流已完成' in text
+    assert '已生成 2 个当前有效的最终产物' in text
+    assert '整包检查' not in text
+    assert '一键下载全部' in text
+
+
+def test_terminal_completion_does_not_override_a_human_approval_handoff():
+    result = {
+        'status': 'waiting',
+        'outcome': 'approval_required',
+        'projection': {'completed': True},
+        '_agent_control': {
+            'stop': True,
+            'reason': 'approval_required',
+            'final_text': '请确认当前产物。',
+        },
+    }
+
+    assert _with_terminal_agent_control(result, '不应覆盖') == result
+
+
+def test_image_workflow_v2_completion_summary_failure_never_breaks_completion():
+    toolkit = MagicMock()
+    toolkit.list_artifacts.side_effect = RuntimeError('temporary artifact read failure')
+
+    text = _image_v2_completion_text(toolkit, 'session-v2')
+
+    assert '图片任务工作流已完成' in text
+    assert '未找到可下载的最终产物' in text
+
+
+def test_image_workflow_v2_correction_reruns_human_step_and_stops_again():
+    toolkit = MagicMock()
+    toolkit.get_ready_steps.return_value = {
+        'session_id': 'session-v2', 'state_version': 8,
+        'ready_steps': [], 'retryable_steps': [],
+        'rewindable_steps': ['edit_candidate'],
+        'approval_by_step': {'edit_candidate': 'required'},
+        'projection': {
+            'nodes': {
+                'edit_candidate': {'mode': 'human', 'requires_approval': True},
+            },
+        },
+    }
+    toolkit.advance_step.return_value = {
+        'status': 'completed', 'state_version': 9,
+        'projection': {'completed': True, 'ready': []},
+    }
+    with patch('lazymind.chat.workflow.workflow_manager.HostWorkflowToolkit',
+               return_value=toolkit), patch(
+        'lazymind.chat.workflow.workflow_manager._client',
+    ) as client_factory:
+        client_factory.return_value.get_state.return_value = {
+            'status': 'completed', 'state_version': 8,
+            'projection': {'completed': True},
+        }
+        contribution = resolve_workflow_injection(
+            {
+                'session_id': 'session-v2',
+                'workflow_id': 'image-workflow-v2',
+                'workflow_ref': 'builtin:image-workflow-v2',
+            },
+            current_query='背景不要浅蓝色，改成浅灰色，其余保持不变。',
+            conversation_id='conversation-1',
+        )
+        # ChatService applies this patch before tool execution.
+        lazyllm.globals['agentic_config'].update(contribution.agentic_config_patch)
+        result = _tool(contribution, 'advance_step')(['edit_candidate'])
+
+    assert toolkit.advance_step.call_count == 1
+    command = toolkit.advance_step.call_args.args[2][0]
+    assert command.step_id == 'edit_candidate'
+    assert command.user_input == '背景不要浅蓝色，改成浅灰色，其余保持不变。'
+    assert toolkit.advance_step.call_args.kwargs['retry_origin'] == 'automatic'
+    assert toolkit.advance_step.call_args.kwargs['workflow_mode'] == 'dynamic'
+    assert result['status'] == 'waiting'
+    assert result['outcome'] == 'approval_required'
+    assert result['approval_step'] == 'edit_candidate'
+    assert result['host_executed_steps'] == ['edit_candidate']
 
 
 def test_dynamic_trigger_loads_pinned_remote_package_without_listing():

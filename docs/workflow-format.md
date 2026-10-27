@@ -157,7 +157,7 @@ transitions:
 steps:
   step_one:
     label: Step One               # 步骤显示名称（可与 workflow.yaml 保持一致）
-    mode: auto                    # 即将支持。auto（DriverAgent 自动推进）| human（等待用户确认）
+    mode: auto                    # auto（DriverAgent 自动推进）| human（步骤产出后等待用户确认）
     prompt: |
       You are an expert for this task.
 
@@ -207,7 +207,7 @@ steps:
 | `transitions[src][].to` | 是 | 目标状态 |
 | `transitions[src][].when` | 否 | 自然语言路由提示，不参与 Go 素材求值，也不要求无条件 fallback |
 | `steps[step_id].label` | 否 | 步骤显示名称 |
-| `steps[step_id].mode` | 否 | `auto`（DriverAgent 推进）/ `human`（等用户）；**即将支持，当前不生效** |
+| `steps[step_id].mode` | 否 | `auto`（DriverAgent 推进）/ `human`（步骤产出后强制等待用户确认；用户可继续、提出修改并重跑，或使用审批偏好跳过） |
 | `steps[step_id].prompt` | 是 | SubAgent 执行指令，支持 `{{...}}` 占位符 |
 | `steps[step_id].tools` | 否 | 自定义工具名列表（框架工具自动注入，无需写）|
 | `steps[step_id].inputs` | 否 | 有序输入列表；每项通过 `required` 区分必须/可选，必须输入可声明一层 `alternatives` |

@@ -86,6 +86,50 @@ def test_static_file_url_from_any_signs_local_absolute_upload_path(tmp_path, mon
     assert str(upload_root).lstrip('/') not in signed
 
 
+def test_local_path_resolves_absolute_localhost_static_url(tmp_path, monkeypatch):
+    upload_root = tmp_path / 'uploads'
+    image = upload_root / 'ai_generated' / 'puppy.png'
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b'png')
+    _mock_upload_root(monkeypatch, upload_root)
+
+    local = local_path_from_static_file_url(
+        'http://localhost:8093/static-files/ai_generated/puppy.png?expires=123&sig=test'
+    )
+
+    assert local == str(image.resolve())
+
+
+def test_local_path_rejects_foreign_absolute_static_url(tmp_path, monkeypatch):
+    upload_root = tmp_path / 'uploads'
+    image = upload_root / 'ai_generated' / 'puppy.png'
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b'png')
+    _mock_upload_root(monkeypatch, upload_root)
+    monkeypatch.delenv('LAZYMIND_PUBLIC_URL', raising=False)
+    monkeypatch.delenv('LAZYMIND_SERVER_URL', raising=False)
+
+    raw = 'https://foreign.example/static-files/ai_generated/puppy.png'
+
+    assert local_path_from_static_file_url(raw) == ''
+    assert resolve_local_image_path(raw) == raw
+
+
+def test_local_path_accepts_configured_public_static_origin(tmp_path, monkeypatch):
+    upload_root = tmp_path / 'uploads'
+    image = upload_root / 'ai_generated' / 'puppy.png'
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b'png')
+    _mock_upload_root(monkeypatch, upload_root)
+    monkeypatch.setenv('LAZYMIND_PUBLIC_URL', 'https://demo.lazymind.example:9443/app')
+
+    local = local_path_from_static_file_url(
+        'https://demo.lazymind.example:9443/static-files/ai_generated/puppy.png'
+    )
+
+    assert local == str(image.resolve())
+
+
 def test_basename_from_path_handles_urls_and_paths():
     assert basename_from_path('https://example.test/assets/chart.png?token=1') == 'chart.png'
     assert basename_from_path('/tmp/chart.png') == 'chart.png'

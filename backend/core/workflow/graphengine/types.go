@@ -56,6 +56,7 @@ type CompiledNode struct {
 	RequiredOutputs   []string          `json:"required_outputs,omitempty"`
 	SkipIf            *Expression       `json:"skip_if,omitempty"`
 	Prompt            string            `json:"prompt,omitempty"`
+	RerunWhen         string            `json:"rerun_when,omitempty"`
 	Acceptance        []string          `json:"acceptance_criteria,omitempty"`
 	Capabilities      []string          `json:"capabilities,omitempty"`
 	LegacyTools       []string          `json:"legacy_tools,omitempty"`
@@ -191,6 +192,7 @@ type RuntimeSnapshot struct {
 type NodeProjection struct {
 	ID               string     `json:"id"`
 	Mode             string     `json:"mode,omitempty"`
+	RerunWhen        string     `json:"rerun_when,omitempty"`
 	RequiresApproval bool       `json:"requires_approval"`
 	Execution        string     `json:"execution"`
 	Validity         string     `json:"validity"`

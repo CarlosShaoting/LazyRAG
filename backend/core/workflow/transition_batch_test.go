@@ -235,6 +235,122 @@ func TestTransitionUsesWorkflowModeLockedAtSessionCreation(t *testing.T) {
 	if params["workflow_mode"] != "auto" {
 		t.Fatalf("workflow_mode=%v, want immutable session mode auto", params["workflow_mode"])
 	}
+	if params["hand_off"] != true {
+		t.Fatalf("hand_off=%v, want true so auto mode is resumed by the runtime", params["hand_off"])
+	}
+}
+
+func TestNativeTransitionEnforcesDeclaredHumanApproval(t *testing.T) {
+	for _, test := range []struct {
+		name            string
+		stepID          string
+		disableApproval bool
+		wantReview      bool
+		wantHandOff     bool
+	}{
+		{name: "ordinary auto step", stepID: "branch_c"},
+		{name: "human step", stepID: "branch_b", wantReview: true, wantHandOff: true},
+		{name: "human step with saved opt out", stepID: "branch_b", disableApproval: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db, graphHash := setupBatchTransitionSession(t)
+			var revision orm.WorkflowRevision
+			if err := db.First(&revision, "id = ?", "batch-revision").Error; err != nil {
+				t.Fatal(err)
+			}
+			var graph graphengine.CompiledStateGraph
+			if err := json.Unmarshal(revision.CompiledGraph, &graph); err != nil {
+				t.Fatal(err)
+			}
+			human := graph.Nodes["branch_b"]
+			human.Mode = "human"
+			human.RerunWhen = "The user requests a correction to this result."
+			graph.Nodes["branch_b"] = human
+			if err := db.Model(&revision).Update("compiled_graph", graph.JSON()).Error; err != nil {
+				t.Fatal(err)
+			}
+			if test.disableApproval {
+				now := time.Now().UTC()
+				if err := db.Create(&orm.WorkflowApprovalPreference{
+					UserID: "batch-user", WorkflowID: "batch-plugin", StepID: "branch_b",
+					ApprovalRequired: false, CreatedAt: now, UpdatedAt: now,
+				}).Error; err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			taskID := "native-approval-" + strings.ReplaceAll(test.name, " ", "-")
+			w, data := runBatchTransition(t, db, graphHash, "execute", []map[string]any{{
+				"target_step_id": test.stepID, "task_id": taskID,
+				"objective": "run the selected branch", "user_input": "initial request",
+			}})
+			if w.Code != http.StatusOK || data["accepted"] != true {
+				t.Fatalf("transition rejected: status=%d body=%s", w.Code, w.Body.String())
+			}
+			var attempt orm.WorkflowSessionStep
+			if err := db.Where("task_id = ?", taskID).First(&attempt).Error; err != nil {
+				t.Fatal(err)
+			}
+			if attempt.ReviewRequired != test.wantReview {
+				t.Fatalf("review_required=%v want=%v", attempt.ReviewRequired, test.wantReview)
+			}
+			var task orm.SubAgentTask
+			if err := db.First(&task, "id = ?", taskID).Error; err != nil {
+				t.Fatal(err)
+			}
+			var params map[string]any
+			if err := json.Unmarshal(task.Params, &params); err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := params["hand_off"].(bool); got != test.wantHandOff {
+				t.Fatalf("hand_off=%v want=%v params=%v", got, test.wantHandOff, params)
+			}
+		})
+	}
+}
+
+func TestNativeRewindCarriesUserCorrectionIntoReplacementAttempt(t *testing.T) {
+	db, graphHash := setupBatchTransitionSession(t)
+	previous, err := CreateSessionStep(context.Background(), db.DB, "batch-session", "branch_b", "old-branch-b", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(previous).Update("status", StepStatusSucceeded).Error; err != nil {
+		t.Fatal(err)
+	}
+	correction := "把第三个方案的文案改成‘收到’，其余已经确认的内容保持不变"
+	w, data := runBatchTransition(t, db, graphHash, "rewind", []map[string]any{{
+		"target_step_id": "branch_b", "task_id": "revised-branch-b",
+		"objective": "revise the rejected result", "user_input": correction,
+	}})
+	if w.Code != http.StatusOK || data["accepted"] != true {
+		t.Fatalf("rewind rejected: status=%d body=%s", w.Code, w.Body.String())
+	}
+	var old orm.WorkflowSessionStep
+	if err := db.First(&old, "id = ?", previous.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if old.Validity == "effective" {
+		t.Fatalf("replaced attempt remained effective: %+v", old)
+	}
+	var replacement orm.WorkflowSessionStep
+	if err := db.Where("task_id = ?", "revised-branch-b").First(&replacement).Error; err != nil {
+		t.Fatal(err)
+	}
+	if replacement.Attempt != 2 || replacement.Validity != "effective" {
+		t.Fatalf("unexpected replacement attempt: %+v", replacement)
+	}
+	var task orm.SubAgentTask
+	if err := db.First(&task, "id = ?", "revised-branch-b").Error; err != nil {
+		t.Fatal(err)
+	}
+	var params map[string]any
+	if err := json.Unmarshal(task.Params, &params); err != nil {
+		t.Fatal(err)
+	}
+	if params["user_input"] != correction {
+		t.Fatalf("replacement lost user correction: %v", params["user_input"])
+	}
 }
 
 func TestExternalControllerTransitionQueuesHostedAttemptForBoundConversation(t *testing.T) {

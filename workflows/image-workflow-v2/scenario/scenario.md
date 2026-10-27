@@ -13,10 +13,11 @@ This workflow follows the final deliverable. It has exactly three top-level
 routes: ordinary generation, authoritative-source local editing, and meme or
 reaction-sticker production. A meme deliverable always uses the meme route,
 even when its character begins as an upload, web image, or generated image.
-Ordinary generation and authoritative local editing use this workflow's
-`baoyu_image_generator` and `baoyu_image_editor` adapters, pinned to Seedream
-5.0 without external skill folders or runtime package downloads. Meme production
-continues to use its existing native media tools with the optimized planning,
+Ordinary generation and authoritative local editing use the request-scoped
+`image_generator` and `image_editor` model roles configured in LazyMind. Model
+credentials are supplied by LazyMind's normal model configuration and do not
+require workflow-specific environment variables. Meme production uses the same
+native media tools with the optimized planning,
 identity-lock, review, caption, and delivery stages defined by this package.
 The classification step saves exactly one supported route in `route_plan`, exits
 cleanly, and lets the workflow engine select the sole matching transition. The
