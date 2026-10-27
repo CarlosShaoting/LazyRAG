@@ -219,6 +219,51 @@ def test_image_workflow_v2_host_refreshes_once_when_auto_advance_conflicts():
     assert result['state_version_refreshed'] is True
 
 
+@pytest.mark.parametrize(
+    ('status', 'outcome'),
+    [
+        ('failed', 'step_failed'),
+        ('cancelled', 'cancelled'),
+        ('interrupted', 'interrupted'),
+    ],
+)
+def test_image_workflow_v2_human_step_preserves_terminal_failure(status, outcome):
+    toolkit = MagicMock()
+    toolkit.advance_step.return_value = {
+        'status': status,
+        'outcome': outcome,
+        'error': {'message': 'simulated media failure'},
+    }
+    frontier = {
+        'session_id': 'session-v2',
+        'state_version': 1,
+        'ready_steps': ['render_keyframes'],
+        'projection': {
+            'nodes': {
+                'render_keyframes': {'mode': 'human', 'requires_approval': True},
+            },
+        },
+    }
+
+    with patch(
+        'lazymind.chat.workflow.workflow_manager._image_v2_completion_text',
+        return_value='',
+    ):
+        result = _advance_image_v2_to_declared_boundary(
+            toolkit,
+            'session-v2',
+            frontier,
+            'render_keyframes',
+            user_input='',
+        )
+
+    assert result['status'] == status
+    assert result['outcome'] == outcome
+    assert result['error']['message'] == 'simulated media failure'
+    assert 'approval_step' not in result
+    assert result.get('_agent_control', {}).get('reason') != 'approval_required'
+
+
 def test_image_workflow_v2_continue_approves_pending_meme_brief_atomically():
     toolkit = MagicMock()
     pending = {
@@ -267,6 +312,29 @@ def test_image_workflow_v2_accepts_descriptive_approval_but_not_revision_text():
     assert _is_approval_only_continue('这些都通过，请继续')
     assert not _is_approval_only_continue('继续，但请修改第二张图片')
     assert not _is_approval_only_continue('不同意，重新调整方案')
+
+
+@pytest.mark.parametrize(
+    'user_input',
+    [
+        '先别继续',
+        '还没确认',
+        '先解释一下再继续',
+        'do not continue',
+        '继续，但把数量减到2张',
+    ],
+)
+def test_image_workflow_v2_negative_or_conditional_text_does_not_approve(user_input):
+    toolkit = MagicMock()
+
+    assert _approve_image_v2_meme_brief(
+        toolkit,
+        'session-v2',
+        ['meme_preflight'],
+        user_input,
+    ) is False
+    toolkit.list_artifacts.assert_not_called()
+    toolkit.patch_artifact.assert_not_called()
 
 
 def test_image_workflow_v2_continue_does_not_approve_unresolved_count_decision():

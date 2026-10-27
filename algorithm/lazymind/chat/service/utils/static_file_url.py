@@ -95,6 +95,28 @@ def _resolve_upload_relative_path(root: Path, rel: str) -> str:
     return str(candidate)
 
 
+def _trusted_static_file_origin(path_or_url: str) -> bool:
+    """Return whether an absolute static-file URL names this LazyMind instance."""
+    parsed = urlsplit(path_or_url)
+    hostname = str(parsed.hostname or '').casefold()
+    if hostname in {'localhost', '127.0.0.1', '::1', 'host.docker.internal'}:
+        return True
+
+    origin = (str(parsed.scheme or '').casefold(), str(parsed.netloc or '').casefold())
+    for name in ('LAZYMIND_PUBLIC_URL', 'LAZYMIND_SERVER_URL'):
+        configured = (os.environ.get(name) or '').strip()
+        if not configured:
+            continue
+        configured_url = urlsplit(configured)
+        configured_origin = (
+            str(configured_url.scheme or '').casefold(),
+            str(configured_url.netloc or '').casefold(),
+        )
+        if all(configured_origin) and origin == configured_origin:
+            return True
+    return False
+
+
 def local_path_from_static_file_url(path_or_url: str) -> str:
     raw = (path_or_url or '').strip()
     if not raw:
@@ -102,7 +124,10 @@ def local_path_from_static_file_url(path_or_url: str) -> str:
     root = Path(_upload_root()).resolve()
     if raw.startswith(('http://', 'https://')):
         url_path = urlsplit(raw).path
-        if url_path.startswith('/static-files/'):
+        if (
+            url_path.startswith('/static-files/')
+            and _trusted_static_file_origin(raw)
+        ):
             raw = url_path
     if raw.startswith('/static-files/'):
         path_only = raw.split('?', 1)[0]

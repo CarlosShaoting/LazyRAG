@@ -412,6 +412,7 @@ def test_render_static_plan_requires_each_image_to_be_saved_progressively(tmp_pa
         agent_type='workflow_step',
         objective='render every planned meme state',
         params={
+            'workflow_id': 'image-workflow-v2',
             'step_id': 'render_static',
             'required_output_artifact_keys': ['hero_no_text'],
         },
@@ -438,6 +439,110 @@ def test_render_static_plan_requires_each_image_to_be_saved_progressively(tmp_pa
     assert 'Do not wait for the remaining images before saving' in output_contract
     assert 'finish only after every planned state has been attempted' in output_contract
     assert 'Only then call save_artifacts once' not in output_contract
+
+
+@pytest.mark.parametrize(
+    'step_id',
+    [
+        'render_static',
+        'render_keyframes',
+        'render_dynamic',
+        'caption_dynamic',
+        'caption_static',
+    ],
+)
+def test_image_v2_step_rules_do_not_leak_into_other_workflows(tmp_path, step_id):
+    from lazymind.chat.engine.subagent.context import SubAgentContext
+
+    def save_artifacts():
+        pass
+
+    ctx = SubAgentContext(
+        task_id=f'task-unrelated-{step_id}',
+        conversation_id='conv-unrelated',
+        agent_type='workflow_step',
+        objective='produce a custom unrelated result',
+        params={
+            'workflow_id': 'custom-unrelated-workflow',
+            'step_id': step_id,
+            'terminal_tools': ['save_artifacts'],
+            'required_output_artifact_keys': ['custom_result'],
+        },
+        workspace_path=str(tmp_path),
+        input_slots=[],
+        output_slots=['custom_result'],
+        db=None,
+        emit=lambda _event: None,
+    )
+
+    plan = runner_mod._build_subagent_plan(
+        ctx,
+        None,
+        tools=[save_artifacts],
+        tool_prompt_appendices={},
+    )
+    output_contract = next(
+        section.content for section in plan.prompt.sections
+        if section.section_id == 'subagent_output_contract'
+    )
+
+    assert plan.stop_tools == ['save_artifacts']
+    assert 'Mandatory progressive' not in output_contract
+    assert 'Mandatory all-image caption batch' not in output_contract
+    assert 'For render_static, save each successful hero_no_text image' not in output_contract
+
+
+@pytest.mark.parametrize(
+    ('step_id', 'output_key'),
+    [
+        ('render_static', 'hero_no_text'),
+        ('render_keyframes', 'master_keyframes'),
+        ('render_dynamic', 'remaining_videos'),
+        ('caption_dynamic', 'gif_output'),
+    ],
+)
+def test_image_v2_progressive_steps_receive_consistent_save_contract(
+    tmp_path, step_id, output_key,
+):
+    from lazymind.chat.engine.subagent.context import SubAgentContext
+
+    def save_artifacts():
+        pass
+
+    ctx = SubAgentContext(
+        task_id=f'task-image-v2-{step_id}',
+        conversation_id='conv-image-v2',
+        agent_type='workflow_step',
+        objective='produce every planned image workflow item',
+        params={
+            'workflow_id': 'builtin:image-workflow-v2',
+            'step_id': step_id,
+            'terminal_tools': ['save_artifacts'],
+            'required_output_artifact_keys': [output_key],
+        },
+        workspace_path=str(tmp_path),
+        input_slots=[],
+        output_slots=[output_key],
+        db=None,
+        emit=lambda _event: None,
+    )
+
+    plan = runner_mod._build_subagent_plan(
+        ctx,
+        None,
+        tools=[save_artifacts],
+        tool_prompt_appendices={},
+    )
+    output_contract = next(
+        section.content for section in plan.prompt.sections
+        if section.section_id == 'subagent_output_contract'
+    )
+
+    assert plan.stop_tools == []
+    assert 'For the progressive contract above' in output_contract
+    assert 'When there are multiple outputs, put them in the same artifacts array' not in (
+        output_contract
+    )
 
 
 def test_subagent_plan_uses_200_rounds_in_max_mode(tmp_path):

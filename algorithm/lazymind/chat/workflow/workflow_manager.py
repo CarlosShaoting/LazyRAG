@@ -107,17 +107,30 @@ def _is_approval_only_continue(value: Any) -> bool:
     """Return whether the current user turn only accepts a review checkpoint."""
     text = re.sub(r'\s+', ' ', str(value or '').strip()).rstrip('。.!！').casefold()
     if text in {
-        '继续', '继续执行', '同意', '同意继续', '确认', '确认继续',
+        '继续', '继续执行', '同意', '同意继续', '同意继续执行',
+        '确认', '确认继续', '确认继续执行', '批准', '批准继续',
+        '批准继续执行', '批准并继续', '通过', '通过继续', '通过并继续',
         'continue', 'continue execution', 'approve', 'approve and continue',
+        'confirm', 'confirm and continue',
     }:
         return True
-    # Native approval buttons and users often include the reviewed subject in
-    # the same short sentence (for example “批准当前方案和全部字幕，继续执行”).
-    # Accept those approval-only variants, but never consume a turn that also
-    # asks for a correction or contains an explicit rejection.
-    if re.search(r'(?:修改|调整|重做|替换|不要|不同意|拒绝|不通过|revise|change|reject)', text):
-        return False
-    return bool(re.search(r'(?:继续|同意|确认|批准|通过|continue|approve|confirm)', text))
+
+    # Approval is a side-effect boundary that can release paid media work.
+    # Accept longer natural-language variants only when the entire turn fits a
+    # deliberately small approval grammar.  Substring matching is unsafe here:
+    # messages such as “先别继续”, “还没确认”, or “继续，但把数量减到 2 张”
+    # contain an approval keyword while explicitly withholding or changing it.
+    subject = (
+        r'(?:当前|本次|这个|这些|上述|以上|全部|所有|方案|字幕|内容|结果|'
+        r'产物|步骤|图片|文案|角色|计划|设置|和|与|及|、|的|都)+'
+    )
+    continuation = r'(?:[，, ]*(?:请)?(?:继续|继续执行))?'
+    return bool(
+        re.fullmatch(rf'(?:请)?(?:批准|同意|确认|通过){subject}{continuation}', text)
+        or re.fullmatch(
+            rf'{subject}(?:批准|同意|确认|通过){continuation}', text,
+        )
+    )
 
 
 def _workflow_definition(workflow_id: str, revision_id: str = '') -> Dict[str, Any]:
@@ -745,6 +758,16 @@ def _advance_image_v2_to_declared_boundary(
         if state_refreshed:
             compact = {**compact, **_state_refresh_notice()}
         compact['host_executed_steps'] = list(executed)
+        status = str(compact.get('status') or '').strip()
+        outcome = str(compact.get('outcome') or '').strip()
+        if (
+            status in {'failed', 'cancelled', 'interrupted'}
+            or outcome in {'step_failed', 'cancelled', 'interrupted'}
+        ):
+            # A human checkpoint is reviewable only after its step succeeds.
+            # Preserve terminal failures and their retry guidance instead of
+            # presenting them as successfully generated approval artifacts.
+            return compact
         if requires_approval:
             # A final human node can make the graph projection terminal as soon
             # as its artifact exists. Interaction semantics still require one
@@ -760,8 +783,7 @@ def _advance_image_v2_to_declared_boundary(
                     'final_text': '当前步骤的产物已生成，请确认或提出修改意见。',
                 },
             }
-        status = str(compact.get('status') or '').strip()
-        if status in {'completed', 'failed', 'cancelled', 'interrupted'}:
+        if status == 'completed':
             return compact
         current_frontier = toolkit.get_ready_steps(session_id)
         ready = [

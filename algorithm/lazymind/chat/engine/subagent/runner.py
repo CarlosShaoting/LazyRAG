@@ -842,6 +842,16 @@ def _build_subagent_plan(
             )
     publisher_owned_outputs = _publisher_owns_outputs(ctx)
     workflow_step_id = str(ctx.params.get('step_id') or '').strip()
+    workflow_id = str(
+        ctx.params.get('workflow_id') or ctx.params.get('workflow_ref') or '',
+    ).removeprefix('builtin:')
+    is_image_v2_step = workflow_id == 'image-workflow-v2'
+    progressive_save_steps = {
+        'render_static', 'render_keyframes', 'render_dynamic', 'caption_dynamic',
+    }
+    uses_progressive_save = (
+        is_image_v2_step and workflow_step_id in progressive_save_steps
+    )
     if ctx.params.get('required_output_artifact_keys') is not None:
         required_keys = _coerce_str_list(ctx.params.get('required_output_artifact_keys'))
     elif str(ctx.agent_type or '') == 'workflow_step':
@@ -860,7 +870,7 @@ def _build_subagent_plan(
         save_strategy = (
             ' For render_static, save each successful hero_no_text image immediately '
             'using the incremental contract below.'
-            if workflow_step_id == 'render_static'
+            if is_image_v2_step and workflow_step_id == 'render_static'
             else ' When there are multiple outputs, use one save_artifacts call containing '
             'every output entry.'
         )
@@ -880,7 +890,11 @@ def _build_subagent_plan(
         output_lines.append(
             'Optional output artifact keys: ' + ', '.join(optional_keys)
         )
-    if not publisher_owned_outputs and workflow_step_id == 'render_static':
+    if (
+        is_image_v2_step
+        and not publisher_owned_outputs
+        and workflow_step_id == 'render_static'
+    ):
         output_lines.append(
             '## Mandatory progressive all-state render\n'
             'Read the complete static_plan list before the first media call. Attempt every '
@@ -892,7 +906,11 @@ def _build_subagent_plan(
             'continue with the next unattempted state until no planned state remains. A partial '
             'save never ends the step; finish only after every planned state has been attempted.'
         )
-    elif not publisher_owned_outputs and workflow_step_id == 'render_keyframes':
+    elif (
+        is_image_v2_step
+        and not publisher_owned_outputs
+        and workflow_step_id == 'render_keyframes'
+    ):
         output_lines.append(
             '## Mandatory progressive key-frame render\n'
             'Read the complete dynamic_plan before the first media call. Generate every state '
@@ -900,7 +918,11 @@ def _build_subagent_plan(
             'save_artifacts with exactly one master_keyframes entry, then continue with the '
             'next state. A save is intermediate and never ends the step.'
         )
-    elif not publisher_owned_outputs and workflow_step_id == 'render_dynamic':
+    elif (
+        is_image_v2_step
+        and not publisher_owned_outputs
+        and workflow_step_id == 'render_dynamic'
+    ):
         output_lines.append(
             '## Mandatory progressive video render\n'
             'Generate every non-canary state in dynamic_plan. After each successful '
@@ -908,14 +930,22 @@ def _build_subagent_plan(
             'remaining_videos entry, then continue. A save is intermediate and never ends '
             'the step. For a one-state pack, generate nothing and finish normally.'
         )
-    elif not publisher_owned_outputs and workflow_step_id == 'caption_dynamic':
+    elif (
+        is_image_v2_step
+        and not publisher_owned_outputs
+        and workflow_step_id == 'caption_dynamic'
+    ):
         output_lines.append(
             '## Mandatory progressive GIF delivery\n'
             'Convert every approved video in state order. After each successful '
             'meme_video_to_captioned_gif result, immediately call save_artifacts with exactly '
             'one gif_output entry, then continue. A save is intermediate and never ends the step.'
         )
-    elif not publisher_owned_outputs and workflow_step_id == 'caption_static':
+    elif (
+        is_image_v2_step
+        and not publisher_owned_outputs
+        and workflow_step_id == 'caption_static'
+    ):
         output_lines.append(
             '## Mandatory all-image caption batch\n'
             'Read the complete hero_no_text list before inspecting the first image. Process '
@@ -933,9 +963,13 @@ def _build_subagent_plan(
             '"content_type":"text","caption":"<optional label>"}]}\n'
             'The payload field MUST be named value. Never use content, data, body, or text '
             'as a replacement for value. key and value are required inside EVERY artifacts item.\n'
-            'Except for the render_static progressive contract above, put multiple outputs in '
-            'the same artifacts array. Do not make a small test/placeholder save before saving '
-            'the real output.'
+            + (
+                'For the progressive contract above, keep each successful item in its own '
+                'save_artifacts call and continue until every planned item is attempted. '
+                if uses_progressive_save else
+                'When there are multiple outputs, put them in the same artifacts array. '
+            )
+            + 'Do not make a small test/placeholder save before saving the real output.'
         )
         output_lines.append(
             '## Overwrite vs. Append for list slots\n'
@@ -995,11 +1029,8 @@ def _build_subagent_plan(
     # Public runner extension point, but product-only: None preserves the
     # upstream round, retry, tool-discovery and tool-limit path exactly.
     product_policy = policy_for(ctx.params)
-    progressive_save_steps = {
-        'render_static', 'render_keyframes', 'render_dynamic', 'caption_dynamic',
-    }
     stop_tools = terminal_tool_names & available_tool_names
-    if workflow_step_id in progressive_save_steps:
+    if uses_progressive_save:
         # These steps deliberately publish one list item at a time. Treating
         # save_artifacts as terminal would stop after the first image, video, or
         # GIF and incorrectly satisfy the key-only completeness check.

@@ -1,6 +1,6 @@
 # 生图 V2：全局模型适配、交互补全与交付体验修复说明
 
-> 文档状态：PR #9 提交前合并审查版
+> 文档状态：PR #9 review 修复版
 >
 > 目标仓库/分支：`CarlosShaoting/LazyRAG:workflow_dev`
 >
@@ -8,7 +8,7 @@
 >
 > 关联历史 PR：`CarlosShaoting/LazyRAG#7`
 >
-> 审查日期：2026-10-23
+> 审查日期：2026-10-27
 
 ## 1. 一分钟结论
 
@@ -172,6 +172,16 @@ PR #7 之后的实际运行暴露出以下问题：
 
 字段是可选且有白名单的：仅 `low`、`medium`、`high`、`max` 被发送；调用方未设置时不改变原 payload。它不选择 Provider、模型或凭据。独立 SDK 测试覆盖未设置、关闭工具检索及不同推理强度组合。如维护者希望进一步拆分，该改动可单独摘出，但保留在本 PR 能保证修复后的工作流沿用发起会话的完整执行配置。
 
+### 8.6 2026-10-27 review 阻塞项修复
+
+开发侧复现了三个新增边界，本次已按最小范围修复并加入负向回归：
+
+- 审批文本不再做关键词子串匹配。纯批准短句使用严格白名单，较长描述必须整句匹配受限批准语法；“先别继续”“还没确认”“先解释一下再继续”“do not continue”和带数量修改的条件批准均不会写入 approved；
+- 人工节点的 `failed`、`cancelled`、`interrupted` 及 `step_failed` 结果先于审批边界返回，保留原错误和恢复提示，不再伪装成“产物已生成”；
+- `render_static`、`render_keyframes`、`render_dynamic`、`caption_dynamic`、`caption_static` 的专用提示，以及渐进步骤移除 `save_artifacts` 终止条件的行为，统一限定到规范化后的 `image-workflow-v2`；其他工作流的同名步骤保持自身声明；
+- 渐进步骤的通用保存说明与专用逐项保存契约保持一致，不再同时要求“一项一存”和“合并一次保存”；
+- 绝对 `/static-files/` URL 只允许 localhost/loopback、`host.docker.internal` 或 `LAZYMIND_PUBLIC_URL` / `LAZYMIND_SERVER_URL` 配置的 origin 映射成本地上传文件；其他站点继续作为远程 URL 处理。
+
 ## 9. 兼容性与风险边界
 
 - 无数据库迁移；
@@ -190,7 +200,7 @@ PR #7 之后的实际运行暴露出以下问题：
 
 | 检查项 | 结果 |
 | --- | --- |
-| 图片工作流、文件解析、Workflow SDK、路由与运行器 Python 测试 | `313 passed, 18 subtests passed` |
+| 图片工作流、文件解析、Workflow SDK、路由与运行器 Python 测试 | `319 passed, 18 subtests passed` |
 | Python flake8 | `algorithm`、`backend`、`evo` 通过 |
 | 文档检查 | `2 passed` |
 | 仓库策略 | workflow naming、migration immutability、test locations 通过 |
