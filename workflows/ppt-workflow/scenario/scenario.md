@@ -22,7 +22,8 @@ collection. This step reads every original page and additionally saves
 Collection and outline planning follow those sections. Template sample text is
 not user evidence. Outline style preparation is preserved without a separate
 A/B/C style-preview step.
-Material collection and academic analysis run internally without a Materials tab.
+Material collection and academic analysis share a conditional Materials tab;
+effective executed steps remain visible even when a skip marker exists.
 Template paths skip both background stages;
 final generation revalidates and fills the original PPTX, not HTML.
 

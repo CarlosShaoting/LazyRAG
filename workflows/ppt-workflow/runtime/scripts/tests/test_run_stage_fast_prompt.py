@@ -128,6 +128,10 @@ class StyleRenderingRecipeTest(unittest.TestCase):
         self.assertEqual(state['steps']['generate_backgrounds']['mode'], 'auto')
         self.assertEqual(state['steps']['generate_ppt']['mode'], 'auto')
         self.assertEqual(state['steps']['analyze_academic_sources']['mode'], 'auto')
+        self.assertEqual(state['steps']['analyze_academic_sources']['skip_if'],
+                         {'material': 'skip_academic_sources'})
+        collection_inputs = {item['material']: item for item in state['steps']['collect_materials']['inputs']}
+        self.assertTrue(collection_inputs['presentation_scenario']['required'])
 
     def test_background_prompt_and_generation_steps_support_skip_and_targeted_rerun(self) -> None:
         workflow_path = Path(__file__).resolve().parents[3] / 'workflow.yaml'
@@ -146,10 +150,14 @@ class StyleRenderingRecipeTest(unittest.TestCase):
         self.assertIn('重新生成底图 1、2', state['steps']['generate_backgrounds']['prompt'])
         self.assertIn('visually consistent', state['steps']['plan_background_prompts']['prompt'])
         slots = {slot['id']: slot for slot in workflow['slots']}
-        self.assertFalse(slots['material_summary']['user_visible'])
+        self.assertTrue(slots['material_summary']['user_visible'])
         self.assertNotIn('style_previews', slots)
         self.assertNotIn('style_selection', slots)
-        self.assertFalse({'style', 'materials'} & {tab['id'] for tab in workflow['ui']['tabs']})
+        self.assertNotIn('style', {tab['id'] for tab in workflow['ui']['tabs']})
+        materials = next(tab for tab in workflow['ui']['tabs'] if tab['id'] == 'materials')
+        self.assertEqual(materials['hide_when_material'], 'skip_material_collection')
+        self.assertEqual(materials['status_step_ids'], ['collect_materials', 'analyze_academic_sources'])
+        self.assertEqual([slot['id'] for slot in materials['slots']], ['material_summary'])
         self.assertNotIn('choose_style', {step['id'] for step in workflow['steps']})
         self.assertEqual(slots['background_prompts']['cardinality'], 'list')
         self.assertIn('background_prompts', workflow['runtime']['publisher_owned_slots'])

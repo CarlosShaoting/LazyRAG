@@ -369,6 +369,12 @@ slots:
     type: text
     cardinality: single
     summary_max_chars: 2000
+  - id: skip_academic_sources
+    user_visible: false
+    exposed: false
+    label: Skip Academic Analysis
+    type: text
+    cardinality: single
   - id: requirement_analysis
     user_visible: true
     label: Requirement Analysis
@@ -469,7 +475,7 @@ slots:
     allow_manual_add: true
 
   - id: material_summary
-    user_visible: false
+    user_visible: true
     label: Material Summary
     type: text
     cardinality: single
@@ -536,6 +542,8 @@ ui:
   slots:
     requirement_analysis:
       widgetType: text-markdown
+    material_summary:
+      widgetType: text-markdown
     background_prompts:
       widgetType: text-markdown
       maxHeight: 420
@@ -562,6 +570,15 @@ ui:
       slots:
         - id: requirement_analysis
         - id: template_content_brief
+
+    - id: materials
+      step_id: collect_materials
+      status_step_ids: [collect_materials, analyze_academic_sources]
+      label: Materials
+      hide_when_material: skip_material_collection
+      layout: list
+      slots:
+        - id: material_summary
 
     - id: background_prompts
       step_id: plan_background_prompts
@@ -672,7 +689,6 @@ i18n:
     tabs:
       analysis: {label: 分析}
       materials: {label: 素材}
-      style: {label: 风格}
       outline: {label: 大纲}
       page_prompts: {label: 每页提示词}
       background_prompts: {label: 底图提示词}

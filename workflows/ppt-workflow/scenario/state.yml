@@ -146,6 +146,11 @@ steps:
         paper_review, thesis_defense, or reading_notes according to the user's
         intent. Academic scenarios MUST enter collect_materials even in quick
         mode; never save skip_material_collection for these scenarios.
+        Educational introductions for children, holidays, culture and everyday
+        topics are general unless the user explicitly requests academic research.
+        When presentation_scenario is general, also save
+        save_artifact(key='skip_academic_sources', content_type='text', value='skip').
+        Never save skip_academic_sources for the four academic scenarios.
       - Requests to summarize personal contributions, GitHub PRs, connected Feishu
         work records or knowledge-base internship evidence MUST enter collect_materials,
         including quick mode. Never save skip_material_collection for these requests.
@@ -266,6 +271,8 @@ steps:
       - material: template_content_brief
         required: false
       - material: presentation_scenario
+      - material: skip_academic_sources
+        required: false
       - material: requirement_analysis
       - material: ppt_capability_requirements
       - material: style_flow
@@ -308,6 +315,13 @@ steps:
 
       Template mode:
       {{template_mode}}
+
+      Presentation scenario (authoritative routing input):
+      {{presentation_scenario}}
+      For general, do not enter analyze_academic_sources. Continue to
+      plan_background_prompts when AI backgrounds are enabled, otherwise build_outline.
+      Only research_report, paper_review, thesis_defense and reading_notes require
+      analyze_academic_sources. Material collection alone does not imply research.
 
       Template content requirements (when uploaded):
       {{template_content_brief}}
@@ -555,6 +569,8 @@ steps:
       - ppt_register_material_images
       - ppt_generate_material_images
     inputs:
+      - material: presentation_scenario
+        required: true
       - material: requirement_analysis
         required: true
       - material: uploaded_materials
@@ -581,6 +597,7 @@ steps:
   analyze_academic_sources:
     label: 科研内容分析
     mode: auto
+    skip_if: {material: skip_academic_sources}
     route: choice
     prompt: |
       Analyze the supplied academic sources for this presentation.
