@@ -123,7 +123,7 @@ class StyleRenderingRecipeTest(unittest.TestCase):
 
         self.assertEqual(state['steps']['plan_background_prompts']['mode'], 'auto')
         self.assertEqual(state['steps']['build_outline']['mode'], 'auto')
-        self.assertEqual(state['steps']['choose_style']['mode'], 'auto')
+        self.assertNotIn('choose_style', state['steps'])
         self.assertEqual(state['steps']['plan_page_prompts']['mode'], 'auto')
         self.assertEqual(state['steps']['generate_backgrounds']['mode'], 'auto')
         self.assertEqual(state['steps']['generate_ppt']['mode'], 'auto')
@@ -146,14 +146,19 @@ class StyleRenderingRecipeTest(unittest.TestCase):
         self.assertIn('重新生成底图 1、2', state['steps']['generate_backgrounds']['prompt'])
         self.assertIn('visually consistent', state['steps']['plan_background_prompts']['prompt'])
         slots = {slot['id']: slot for slot in workflow['slots']}
+        self.assertFalse(slots['material_summary']['user_visible'])
+        self.assertNotIn('style_previews', slots)
+        self.assertNotIn('style_selection', slots)
+        self.assertFalse({'style', 'materials'} & {tab['id'] for tab in workflow['ui']['tabs']})
+        self.assertNotIn('choose_style', {step['id'] for step in workflow['steps']})
         self.assertEqual(slots['background_prompts']['cardinality'], 'list')
         self.assertIn('background_prompts', workflow['runtime']['publisher_owned_slots'])
         self.assertEqual(
             [edge['to'] for edge in state['transitions']['collect_materials']],
-            ['analyze_academic_sources', 'choose_style', 'plan_background_prompts', 'build_outline'],
+            ['analyze_academic_sources', 'plan_background_prompts', 'build_outline'],
         )
         self.assertEqual(
-            [edge['to'] for edge in state['transitions']['choose_style']],
+            [edge['to'] for edge in state['transitions']['analyze_academic_sources']],
             ['plan_background_prompts', 'build_outline'],
         )
         self.assertEqual(state['steps']['analyze_requirements']['route'], 'choice')
@@ -161,7 +166,7 @@ class StyleRenderingRecipeTest(unittest.TestCase):
         self.assertNotIn('skip_if', state['steps']['collect_materials'])
         self.assertEqual(
             [edge['to'] for edge in state['transitions']['analyze_requirements']],
-            ['collect_materials', 'choose_style', 'plan_background_prompts', 'build_outline'],
+            ['collect_materials', 'plan_background_prompts', 'build_outline'],
         )
         self.assertEqual(
             state['transitions']['generate_backgrounds'],
