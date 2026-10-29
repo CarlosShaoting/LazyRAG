@@ -887,6 +887,7 @@ def enforce_startup_clarification_policy(
     if not governed_fields:
         return questions
 
+    satisfied = set((runtime_policy or {}).get('_host_satisfied_fields') or [])
     governed: List[Any] = []
     for raw_question in questions:
         if not isinstance(raw_question, dict):
@@ -916,6 +917,8 @@ def enforce_startup_clarification_policy(
                 matched = field
                 break
         if matched is not None:
+            if matched['id'] in satisfied:
+                continue
             if matched.get('choice_policy') == 'fixed':
                 question['type'] = matched['type']
                 question['choices'] = list(matched['choices'])
@@ -923,6 +926,9 @@ def enforce_startup_clarification_policy(
             if matched.get('attachment'):
                 question['attachment'] = dict(matched['attachment'])
         governed.append(question)
+    if questions and not governed:
+        raise WorkflowClientError('WORKFLOW_INPUT_ALREADY_SUPPLIED',
+                                  'Selected paper sources are already bound; do not request another upload.')
     return governed
 
 
@@ -1068,7 +1074,9 @@ def _is_explicit_merged_request_context(value: Any) -> bool:
 
 
 def _startup_clarification_guidance(runtime_policy: Any) -> str:
-    fields = _runtime_clarification_fields(runtime_policy)
+    policy = runtime_policy if isinstance(runtime_policy, dict) else {}
+    fields = [field for field in _runtime_clarification_fields(policy)
+              if field['id'] not in set(policy.get('_host_satisfied_fields') or [])]
     if not fields:
         return ''
     return (
@@ -1344,6 +1352,11 @@ def _workflow_trigger_tools(
                 input_types = _trigger_input_types(package)
                 runtime = (package.get('runtime') or (package.get('compiled_graph') or {}).get('runtime')
                            or bound_runtime)
+                if isinstance(runtime, dict) and runtime.get('paper_handoff'):
+                    from lazymind.chat.workflow.paper_handoff import resolve_paper_handoff
+                    trusted_bindings, _ = resolve_paper_handoff(client, conversation_id, runtime)
+                    input_bindings.pop(runtime['paper_handoff'].get('input'), None)
+                    input_bindings.update(trusted_bindings)
                 clarification_ids = {str(field['id']) for field in _runtime_clarification_fields(runtime)}
                 clarification_answers = {
                     key: value for key, value in input_bindings.items()
@@ -1601,6 +1614,10 @@ def resolve_workflow_injection(
         str(value).strip() for value in (allowed_workflow_refs or []) if str(value).strip()
     }
     runtime_policy = _selected_runtime_policy(context, catalog, allowed_refs)
+    if not session_id and allowed_refs and runtime_policy.get('paper_handoff'):
+        from lazymind.chat.workflow.paper_handoff import resolve_paper_handoff
+        _, satisfied = resolve_paper_handoff(_client(), conversation_id, runtime_policy)
+        runtime_policy = {**runtime_policy, '_host_satisfied_fields': satisfied}
     allowed_items = [
         item for item in catalog
         if str(item.get('workflow_ref') or '') in allowed_refs
