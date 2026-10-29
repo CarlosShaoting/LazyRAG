@@ -1357,6 +1357,12 @@ def _workflow_trigger_tools(
                     trusted_bindings, _ = resolve_paper_handoff(client, conversation_id, runtime)
                     input_bindings.pop(runtime['paper_handoff'].get('input'), None)
                     input_bindings.update(trusted_bindings)
+                if isinstance(runtime, dict) and runtime.get('paper_attachments'):
+                    from lazymind.chat.workflow.paper_handoff import paper_attachment_context
+                    upload_context, _ = paper_attachment_context(_agentic_config(), runtime)
+                    effective_context += upload_context
+                    if session_holder is not None:
+                        session_holder['request_context'] = effective_context
                 clarification_ids = {str(field['id']) for field in _runtime_clarification_fields(runtime)}
                 clarification_answers = {
                     key: value for key, value in input_bindings.items()
@@ -1618,6 +1624,12 @@ def resolve_workflow_injection(
         from lazymind.chat.workflow.paper_handoff import resolve_paper_handoff
         _, satisfied = resolve_paper_handoff(_client(), conversation_id, runtime_policy)
         runtime_policy = {**runtime_policy, '_host_satisfied_fields': satisfied}
+    if not session_id and allowed_refs and runtime_policy.get('paper_attachments'):
+        from lazymind.chat.workflow.paper_handoff import paper_attachment_context
+        _, satisfied = paper_attachment_context(cfg, runtime_policy)
+        runtime_policy = {**runtime_policy, '_host_satisfied_fields': [
+            *(runtime_policy.get('_host_satisfied_fields') or []), *satisfied,
+        ]}
     allowed_items = [
         item for item in catalog
         if str(item.get('workflow_ref') or '') in allowed_refs

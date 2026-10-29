@@ -135,6 +135,15 @@ steps:
       Record existing reflection_markdown from the tool as saved user material;
       do not overwrite it or substitute it for the original papers.
 
+      Direct paper uploads plus a written request are an equally valid academic
+      entry, including a single paper or multiple papers for a student group
+      meeting. When the user asks to present/review the attached papers, classify
+      as research_report/paper_review as appropriate; a library handoff is NOT
+      required. Preserve the complete written requirements and every selected
+      attachment filename/turn from launch context. Do not call library tools
+      when task_context is absent; use the attachment cache in collect_materials.
+      A PDF extension alone does not make an ordinary business report academic.
+
       Uploaded source reading:
       - For academic tasks, record source filenames and user-provided notes here;
         defer paper parsing to collect_materials and its cached reader tool.
@@ -449,7 +458,10 @@ steps:
       Uploaded file parsing:
       - For academic scenarios, call ppt_cache_academic_sources with ALL relevant
         exact attachment filenames from the original request, conversation and
-        uploaded_materials. This tool parses each file to EOF and persists reader
+        uploaded_materials. When the launch source manifest is provided, pass its
+        turns (including null for files-only uploads) in the same order as filenames; keep repeated filenames across different
+        turns. Intra-turn duplicates use the resolver's aliases (paper-1.pdf).
+        This tool parses each file to EOF and persists reader
         chunks by content hash. Use ppt_read_academic_source for needed chunks.
         Do not separately call read_user_attachment for those papers. Preserve
         each filename/source_id in material_summary, list every failure, and

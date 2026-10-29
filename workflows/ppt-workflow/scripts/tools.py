@@ -864,23 +864,38 @@ def ppt_cache_library_papers() -> dict[str, Any]:
             'complete': all(source['status'] == 'ok' for source in sources)}
 
 
-def ppt_cache_academic_sources(filenames: list[str]) -> dict[str, Any]:
+def ppt_cache_academic_sources(
+    filenames: list[str], turns: Optional[list[Optional[int]]] = None,
+) -> dict[str, Any]:
     """Read each conversation paper through the shared reader; cache complete pages by SHA256.
 
     Returns compact per-source manifests, not all full texts. Failed sources
     remain explicit and never invalidate successful sources. Repeating the
     call reuses completed files and retries only failures/changed uploads.
+    Pass the upload manifest's aligned turns (including null) for exact aliases;
+    this preserves same-named papers across turns and within a single turn.
     """
     from lazymind.chat.engine.tools.file_resources.tools import read_file_resource
 
     if not isinstance(filenames, list) or not filenames or any(not isinstance(n, str) or not n.strip() for n in filenames):
         raise ValueError('filenames must be a non-empty list of exact attachment names')
+    if turns is not None and (not isinstance(turns, list) or len(turns) != len(filenames) or any(
+        turn is not None and (isinstance(turn, bool) or not isinstance(turn, int) or turn < 1) for turn in turns
+    )):
+        raise ValueError('turns must match filenames and contain positive turn numbers or null')
     root = _conversation_root() / 'academic_sources'
     root.mkdir(parents=True, exist_ok=True)
     results = []
-    for filename in dict.fromkeys(filenames):
+    for filename, turn in dict.fromkeys(zip(filenames, turns or [None] * len(filenames))):
         try:
-            found = find_user_attachment(filename)
+            if turns is not None:
+                from lazymind.chat.engine.tools.file_resources.resolver import resolve_attachment_path
+                resolved, error = resolve_attachment_path(filename, turn=turn)
+                if error or not resolved:
+                    raise ValueError(error or 'Attachment not found')
+                found = {'path': resolved}
+            else:
+                found = find_user_attachment(filename)
             path = Path(_coerce_str(found.get('path'))).expanduser()
             if not path.is_file():
                 raise ValueError('Attachment is not available as a local file for content hashing')
@@ -911,11 +926,11 @@ def ppt_cache_academic_sources(filenames: list[str]) -> dict[str, Any]:
                 temporary = cache.with_name(f'{digest}.{uuid.uuid4().hex}.tmp')
                 temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
                 os.replace(temporary, cache)
-            results.append({'filename': filename, 'source_id': digest, 'status': 'ok',
+            results.append({'filename': filename, 'turn': turn, 'source_id': digest, 'status': 'ok',
                             'cached': cached, 'chunk_count': len(payload['chunks']),
                             'excerpt': payload['chunks'][0]['text'][:1200]})
         except Exception as exc:
-            results.append({'filename': filename, 'status': 'error', 'error': str(exc)})
+            results.append({'filename': filename, 'turn': turn, 'status': 'error', 'error': str(exc)})
     manifest = {'sources': results, 'success_count': sum(r['status'] == 'ok' for r in results)}
     temporary = root / f'manifest.{uuid.uuid4().hex}.tmp'
     temporary.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')

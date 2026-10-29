@@ -204,3 +204,50 @@ def test_reflection_publisher_rejects_empty_and_preserves_original_papers(tools,
     assert published[0][0] == ('reflection_markdown', prose)
     assert published[0][1]['internal_publish'] is True
     assert [paper['paper_id'] for paper in frozen['input']['papers']] == ['a', 'b']
+
+
+@pytest.mark.parametrize('layout', ['files_only', 'same_turn', 'across_turns'])
+def test_direct_upload_manifest_resolves_and_caches_every_same_named_paper(tools, tmp_path, monkeypatch, layout):
+    from lazymind.chat.workflow.paper_handoff import paper_attachment_context
+    from lazymind.chat.engine.tools.file_resources import resolver
+
+    paths = []
+    for index in range(2):
+        directory = tmp_path / str(index)
+        directory.mkdir()
+        path = directory / 'paper.pdf'
+        path.write_text(f'Complete paper {index}')
+        paths.append(str(path))
+    cfg = {'files': paths}
+    if layout == 'same_turn':
+        cfg['history_files_per_turn'] = {'3': paths}
+    elif layout == 'across_turns':
+        cfg['history_files_per_turn'] = {'2': paths[:1], '3': paths[1:]}
+    runtime = yaml.safe_load((ROOT / 'workflows/ppt-workflow/workflow.yaml').read_text())['runtime']
+    context, satisfied = paper_attachment_context(cfg, runtime)
+    sources = json.loads(context.splitlines()[3])
+    assert len(sources) == 2
+    assert satisfied == ['academic_materials']
+    monkeypatch.setattr(resolver, '_agentic_config', lambda: cfg)
+    reader = types.ModuleType('lazymind.chat.engine.tools.file_resources.tools')
+    reader.read_file_resource = mock.Mock(side_effect=lambda path, **kwargs: {
+        'text': Path(path).read_text(), 'eof': True,
+    })
+    monkeypatch.setitem(sys.modules, reader.__name__, reader)
+    monkeypatch.setattr(tools, '_conversation_root', lambda: tmp_path)
+    result = tools.ppt_cache_academic_sources(
+        [item['filename'] for item in sources], [item['turn'] for item in sources],
+    )
+    assert result['success_count'] == 2, result
+    assert len({item['source_id'] for item in result['sources']}) == 2
+    assert {item['excerpt'] for item in result['sources']} == {'Complete paper 0', 'Complete paper 1'}
+    assert {call.args[0] for call in reader.read_file_resource.call_args_list} == set(paths)
+
+
+def test_nonpaper_or_unavailable_uploads_do_not_satisfy_paper_question(tmp_path):
+    from lazymind.chat.workflow.paper_handoff import paper_attachment_context
+    paths = [tmp_path / name for name in ('image.png', 'template.pptx', 'missing.pdf')]
+    for path in paths[:2]:
+        path.write_text('not a paper')
+    runtime = yaml.safe_load((ROOT / 'workflows/ppt-workflow/workflow.yaml').read_text())['runtime']
+    assert paper_attachment_context({'files': list(map(str, paths))}, runtime) == ('', [])

@@ -40,6 +40,9 @@ when_to_use: >
 
 runtime:
   trigger_inputs: [task_context, template_pptx, uploaded_materials]
+  paper_attachments:
+    accept: [.pdf, .doc, .docx, .txt, .md]
+    satisfies: [academic_materials]
   paper_handoff:
     kind: ppt
     input: task_context
