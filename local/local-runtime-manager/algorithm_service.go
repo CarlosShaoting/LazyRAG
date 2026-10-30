@@ -801,7 +801,7 @@ func ensureEditablePPTNodeModulesLink(exportSrc, exportDeps string) error {
 		return err
 	}
 	if current, ok := directoryLinkTarget(link); ok {
-		if filepath.Clean(current) == filepath.Clean(target) {
+		if sameExporterDirectory(current, target) {
 			return nil
 		}
 		_ = os.Remove(link)
@@ -1053,4 +1053,13 @@ func tcpOK(ctx context.Context, host string, port int, timeout time.Duration) bo
 	}
 	_ = conn.Close()
 	return true
+}
+
+func sameExporterDirectory(left, right string) bool {
+	a, err := os.Stat(left)
+	if err != nil {
+		return false
+	}
+	b, err := os.Stat(right)
+	return err == nil && os.SameFile(a, b)
 }

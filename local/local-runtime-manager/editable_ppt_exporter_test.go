@@ -41,7 +41,7 @@ func TestDesktopExporterEnvironmentKeepsSignedSourceUnchanged(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(source, "node_modules")); !os.IsNotExist(err) {
 		t.Fatalf("desktop startup modified sealed application resources: %v", err)
 	}
-	if target, ok := directoryLinkTarget(filepath.Join(filepath.Dir(cli), "node_modules")); !ok || filepath.Clean(target) != filepath.Join(deps, "node_modules") {
+	if target, ok := directoryLinkTarget(filepath.Join(filepath.Dir(cli), "node_modules")); !ok || !sameExporterDirectory(target, filepath.Join(deps, "node_modules")) {
 		t.Fatalf("staged exporter dependencies not linked: %s, %v", target, ok)
 	}
 	data, err := os.ReadFile(filepath.Join(filepath.Dir(cli), "lib", "helper.mjs"))
@@ -87,7 +87,7 @@ func TestDesktopExporterStagingFailureNeverFallsBackToWritingApp(t *testing.T) {
 func TestLocalExporterKeepsSourceDependencyLink(t *testing.T) {
 	paths, source, deps := exporterFixture(t)
 	algorithmServiceEnv(RuntimeConfig{Profile: "local"}, paths, chatProcessName)
-	if target, ok := directoryLinkTarget(filepath.Join(source, "node_modules")); !ok || filepath.Clean(target) != filepath.Join(deps, "node_modules") {
+	if target, ok := directoryLinkTarget(filepath.Join(source, "node_modules")); !ok || !sameExporterDirectory(target, filepath.Join(deps, "node_modules")) {
 		t.Fatalf("local source dependency link changed: %s, %v", target, ok)
 	}
 }

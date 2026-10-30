@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import path from 'node:path';
 const { verifyMacosPrivacyIdentity } = createRequire(import.meta.url)('./verify-macos-privacy-identity.cjs');
 
 const team = 'ABCDE12345';
 const app = '/fixture/LazyMind.app';
-const helper = `${app}/Contents/Resources/recording-helper/LazyMind Recorder.app`;
+const helper = path.join(app, 'Contents/Resources/recording-helper/LazyMind Recorder.app');
 function signed(identifier, overrides = {}) {
   return {
     identifier, team, authority: 'Developer ID Application: LazyMind',
