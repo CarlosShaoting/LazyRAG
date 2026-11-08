@@ -16,6 +16,11 @@ import (
 type Handler struct{ Service *Service }
 
 func reply(w http.ResponseWriter, status int, result any, err *ToolError) {
+	if err != nil && err.Recovery == "" {
+		copy := *err
+		copy.Recovery = controlstore.RecoveryFor(copy.Code)
+		err = &copy
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(struct {
@@ -31,9 +36,9 @@ func serviceError(w http.ResponseWriter, err error) {
 	var tool *ToolError
 	switch {
 	case errors.As(err, &controlled):
-		reply(w, controlled.HTTPStatus(), nil, &ToolError{Code: controlled.Code, Message: controlled.Message})
+		reply(w, controlled.HTTPStatus(), nil, &ToolError{Code: controlled.Code, Message: controlled.Message, Retryable: controlled.Retryable, Details: controlled.Details, Recovery: controlled.Recovery})
 	case errors.As(err, &tool):
-		reply(w, http.StatusConflict, nil, tool)
+		reply(w, tool.HTTPStatus(), nil, tool)
 	case errors.Is(err, workflowstore.ErrPermissionDenied):
 		reply(w, http.StatusForbidden, nil, &ToolError{Code: "PERMISSION_DENIED", Message: "Workflow belongs to another owner"})
 	case errors.Is(err, workflowstore.ErrNotFound), errors.Is(err, gorm.ErrRecordNotFound):
@@ -53,7 +58,7 @@ func decode(w http.ResponseWriter, r *http.Request, value any) (string, bool) {
 		reply(w, http.StatusUnprocessableEntity, nil, &ToolError{Code: "CONTRACT_VERSION_UNSUPPORTED", Message: "Supported version is workflow.v1"})
 		return "", false
 	}
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<20))
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxResultBytes))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(value); err != nil {
 		reply(w, http.StatusUnprocessableEntity, nil, &ToolError{Code: "INVALID_TOOL_CALL", Message: "Invalid tool request"})
@@ -80,7 +85,7 @@ func (h Handler) List(w http.ResponseWriter, r *http.Request) {
 		serviceError(w, err)
 		return
 	}
-	reply(w, http.StatusOK, map[string]any{"tools": result}, nil)
+	reply(w, http.StatusOK, result, nil)
 }
 
 func (h Handler) Call(w http.ResponseWriter, r *http.Request) {
@@ -97,7 +102,7 @@ func (h Handler) Call(w http.ResponseWriter, r *http.Request) {
 	}
 	// Failed capability calls are persisted as receipts, but remain MCP errors.
 	if result.Error != nil {
-		reply(w, http.StatusConflict, nil, result.Error)
+		reply(w, result.Error.HTTPStatus(), nil, result.Error)
 		return
 	}
 	reply(w, http.StatusOK, result, nil)

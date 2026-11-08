@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"lazymind/core/common/orm"
-	"lazymind/core/workflow/graphengine"
 )
 
 func TestGlobalToolGatewayUsesPersistedAgentAndNoModelConfiguration(t *testing.T) {
@@ -42,20 +41,7 @@ func TestGlobalToolGatewayUsesPersistedAgentAndNoModelConfiguration(t *testing.T
 	if service.DB.Migrator().HasTable(&orm.UserSelectedModel{}) {
 		t.Fatal("fixture unexpectedly has model configuration")
 	}
-	var revision orm.WorkflowRevision
-	if err := service.DB.First(&revision, "id = ?", "pinned-revision").Error; err != nil {
-		t.Fatal(err)
-	}
-	var graph graphengine.CompiledStateGraph
-	if err := json.Unmarshal(revision.CompiledGraph, &graph); err != nil {
-		t.Fatal(err)
-	}
-	node := graph.Nodes["write"]
-	node.ExternalExecution.Tools = []graphengine.ExternalTool{{Name: "builtin:url_fetch", Source: "global"}}
-	graph.Nodes["write"] = node
-	if err := service.DB.Model(&revision).Update("compiled_graph", graph.JSON()).Error; err != nil {
-		t.Fatal(err)
-	}
+
 	if err := service.DB.Model(&orm.WorkflowSession{}).Where("id = ?", "run").Update("control_binding_json", `{"provider":"codex","driver_session_id":"bound-native-thread"}`).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +51,7 @@ func TestGlobalToolGatewayUsesPersistedAgentAndNoModelConfiguration(t *testing.T
 		t.Fatal(err)
 	}
 	listed, err := service.List(t.Context(), "owner", "run", "attempt", "lease")
-	if err != nil || len(listed) != 1 || !listed[0].Available || listed[0].Name != "builtin:url_fetch" {
+	if err != nil || len(listed.Tools) != 1 || !listed.Tools[0].Available || listed.Tools[0].Name != "builtin:url_fetch" {
 		t.Fatalf("global catalog failed: %+v %v", listed, err)
 	}
 	input.ToolName, input.Arguments = "builtin:url_fetch", map[string]any{"url": "https://example.com"}

@@ -29,7 +29,18 @@ type Error struct {
 	Code       string
 	Message    string
 	Retryable  bool
+	// Public server diagnostics are retained verbatim for forward-compatible adapters.
+	Fields map[string]any
+	Result json.RawMessage
 }
+
+// RequestNotSentError marks a failure before the Core request reached the
+// transport. Callers can preserve the repair target without suggesting that a
+// mutation may have committed. Transport and response failures are not marked.
+type RequestNotSentError struct{ Err error }
+
+func (e *RequestNotSentError) Error() string { return e.Err.Error() }
+func (e *RequestNotSentError) Unwrap() error { return e.Err }
 
 func (e *Error) Error() string {
 	if e.Code == "" {
@@ -86,21 +97,21 @@ func (c *Client) DoJSON(ctx context.Context, method, path string, input, output 
 func (c *Client) DoJSONHeaders(ctx context.Context, method, path string, input, output any, headers http.Header) error {
 	server, err := c.ServerURL(ctx)
 	if err != nil {
-		return err
+		return &RequestNotSentError{Err: err}
 	}
 	var body []byte
 	if input != nil {
 		body, err = json.Marshal(input)
 		if err != nil {
-			return fmt.Errorf("encode LazyMind request: %w", err)
+			return &RequestNotSentError{Err: fmt.Errorf("encode LazyMind request: %w", err)}
 		}
 		if len(body) > maxRequestBytes {
-			return errors.New("LazyMind request exceeds 32 MiB")
+			return &RequestNotSentError{Err: errors.New("LazyMind request exceeds 32 MiB")}
 		}
 	}
 	request, err := http.NewRequestWithContext(ctx, method, server+"/api/core"+path, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return &RequestNotSentError{Err: err}
 	}
 	request.Header.Set("Workflow-Contract-Version", "workflow.v1")
 	for name, values := range headers {
@@ -136,13 +147,9 @@ func (c *Client) DoJSONHeaders(ctx context.Context, method, path string, input, 
 
 func unwrap(status int, body []byte) (json.RawMessage, error) {
 	var value struct {
-		OK     *bool           `json:"ok"`
-		Result json.RawMessage `json:"result"`
-		Error  *struct {
-			Code      string `json:"code"`
-			Message   string `json:"message"`
-			Retryable bool   `json:"retryable"`
-		} `json:"error"`
+		OK      *bool           `json:"ok"`
+		Result  json.RawMessage `json:"result"`
+		Error   map[string]any  `json:"error"`
 		Code    *int            `json:"code"`
 		Message string          `json:"message"`
 		Data    json.RawMessage `json:"data"`
@@ -153,7 +160,10 @@ func unwrap(status int, body []byte) (json.RawMessage, error) {
 	if value.OK != nil {
 		if !*value.OK || status < 200 || status >= 300 {
 			if value.Error != nil {
-				return nil, &Error{StatusCode: status, Code: value.Error.Code, Message: value.Error.Message, Retryable: value.Error.Retryable}
+				code, _ := value.Error["code"].(string)
+				message, _ := value.Error["message"].(string)
+				retryable, _ := value.Error["retryable"].(bool)
+				return nil, &Error{StatusCode: status, Code: code, Message: message, Retryable: retryable, Fields: value.Error, Result: value.Result}
 			}
 			return nil, &Error{StatusCode: status, Message: http.StatusText(status)}
 		}
@@ -177,16 +187,24 @@ type authenticatedTransport struct {
 }
 
 func (t *authenticatedTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	preflightError := func(err error) error {
+		// A redirected request already has a server response. A local failure
+		// on this hop cannot prove that the original write was never sent.
+		if request.Response != nil {
+			return err
+		}
+		return &RequestNotSentError{Err: err}
+	}
 	body, err := readRequestBody(request)
 	if err != nil {
-		return nil, err
+		return nil, preflightError(err)
 	}
 	token, err := t.credentials.AccessToken(request.Context())
 	if err != nil {
-		return nil, err
+		return nil, preflightError(err)
 	}
 	if err := t.validateEndpoint(request); err != nil {
-		return nil, err
+		return nil, preflightError(err)
 	}
 	response, err := t.base.RoundTrip(cloneRequest(request, body, token))
 	if err != nil || response.StatusCode != http.StatusUnauthorized {
