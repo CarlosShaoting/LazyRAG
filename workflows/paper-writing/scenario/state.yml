@@ -326,7 +326,7 @@ steps:
       - {material: data_analysis_pool, required: false, transport: path}
       - {material: data_analysis_document, required: false, transport: path}
       - {material: write_outline_pool, required: false, transport: path}
-      - {material: write_outline_document, required: true, transport: path}
+      - {material: write_outline_document, required: false, transport: path}
     outputs:
       - {material: write_document_pool, required: true}
       - {material: write_document_document, required: true}
