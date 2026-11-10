@@ -46,6 +46,12 @@ func TestPaperGraphAllForwardScenarios(t *testing.T) {
 	for _, path := range paths {
 		t.Run(strings.Join(path, "-"), func(t *testing.T) {
 			snapshot := RuntimeSnapshot{Materials: []MaterialValue{{MaterialID: "paper_input", RevisionID: "input-1", Valid: true}}}
+			if slices.Contains(path, "write_document") && !slices.Contains(path, "write_outline") {
+				// Direct drafting reuses an outline already supplied and confirmed.
+				snapshot.Materials = append(snapshot.Materials, MaterialValue{
+					MaterialID: "write_outline_document", RevisionID: "outline-1", Valid: true,
+				})
+			}
 			steps := append([]string{}, path...)
 			steps = append(steps, "finish")
 			previous := "__start__"
@@ -108,20 +114,27 @@ func TestRecoveryPolicyValidationAndLegacyHash(t *testing.T) {
 	}
 }
 
-func TestPaperWritingRequiresAnInputSource(t *testing.T) {
+func TestPaperWritingRequiresAnOutline(t *testing.T) {
 	graph := paperGraph(t, nil)
-	for _, source := range []string{"", "paper_topic", "paper_input", "seed_pool", "literature_review_pool", "data_analysis_pool", "manuscript_text", "manuscript_file", "write_outline_pool", "write_outline_document"} {
+	for _, source := range []string{"", "paper_topic", "paper_input", "seed_pool", "research_topic_pool", "research_topic_document", "literature_review_pool", "literature_review_document", "data_analysis_pool", "manuscript_text", "manuscript_file", "write_outline_pool", "write_outline_document"} {
 		t.Run(source, func(t *testing.T) {
 			snapshot := RuntimeSnapshot{}
 			if source != "" {
 				snapshot.Materials = []MaterialValue{{MaterialID: source, RevisionID: "input-1", Valid: true}}
 			}
 			node := Project(graph, snapshot).Nodes["write_document"]
-			wantReady := source != "" && source != "paper_topic"
+			wantReady := source == "write_outline_document"
 			if (node.Readiness == "ready") != wantReady {
 				t.Fatalf("source %q: %+v", source, node)
 			}
 		})
+	}
+	snapshot := RuntimeSnapshot{Materials: []MaterialValue{
+		{MaterialID: "literature_review_pool", RevisionID: "review-1", Valid: true},
+		{MaterialID: "write_outline_document", RevisionID: "outline-1", Valid: false},
+	}}
+	if node := Project(graph, snapshot).Nodes["write_document"]; node.Readiness == "ready" {
+		t.Fatalf("stale outline allowed drafting: %+v", node)
 	}
 }
 
