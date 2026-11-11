@@ -1,12 +1,16 @@
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import css from './WorkflowPanel.scss?inline';
+import runCss from '@/modules/chat/pages/workflowRun/index.scss?inline';
 
 beforeAll(() => {
   const style = document.createElement('style');
-  style.textContent = css;
+  style.textContent = css + runCss;
   document.head.appendChild(style);
 });
-afterEach(() => { document.body.replaceChildren(); });
+afterEach(() => {
+  document.body.replaceChildren();
+  document.documentElement.classList.remove('workflow-run-embed');
+});
 
 function renderLongTab(layout: string, expanded = false) {
   const panel = document.createElement('section');
@@ -34,6 +38,21 @@ function renderLongTab(layout: string, expanded = false) {
 }
 
 describe('workflow material scrolling contract', () => {
+  it.each([false, true])('bounds hosted tabs within the iframe viewport with embedded=%s', embedded => {
+    document.documentElement.classList.toggle('workflow-run-embed', embedded);
+    const panel = renderLongTab('list');
+    panel.classList.add('workflow-panel--embedded');
+    const run = document.createElement('main');
+    run.className = 'workflow-run workflow-run--embedded';
+    document.body.appendChild(run);
+    run.appendChild(panel);
+    const body = getComputedStyle(panel.querySelector('.workflow-panel__body')!);
+    const tab = getComputedStyle(panel.querySelector('[role="tabpanel"]')!);
+    expect(body.overflow).toBe(embedded ? 'hidden' : 'auto');
+    expect(tab.overflow).toBe(embedded ? 'hidden' : 'auto');
+    expect(tab.flexShrink).toBe(embedded ? '1' : '0');
+  });
+
   it.each(['vertical', 'list', 'horizontal', 'grid'])('gives compact %s tabs a bounded scroll viewport instead of clipping long material', layout => {
     const panel = renderLongTab(layout);
     const viewport = panel.querySelector<HTMLElement>('.workflow-panel__tab-content')!;
