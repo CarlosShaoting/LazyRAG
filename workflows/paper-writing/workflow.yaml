@@ -75,6 +75,7 @@ when_to_use: >
 runtime:
   execution:
     version: '1'
+    model_executor: codex
     skills:
     - scenario/execution.md
     constraints:

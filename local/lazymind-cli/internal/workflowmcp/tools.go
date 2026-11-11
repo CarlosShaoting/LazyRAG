@@ -20,6 +20,7 @@ import (
 const maxLocalArtifactBytes = 20 << 20
 
 var ToolNames = []string{
+	"workflow.generation.claim", "workflow.generation.respond",
 	"workflow.action.get", "workflow.action.respond", "workflow.action.cancel", "workflow.edit.context", "workflow.edit.commit",
 	"workflow.list",
 	"workflow.get",
@@ -113,6 +114,7 @@ func Register(server *mcp.Server, client *Client) {
 	readOnly, write := annotations(true), annotations(false)
 	registerExecutionTools(server, client)
 	registerActionTools(server, client)
+	registerGenerationTools(server, client)
 	registerEditTools(server, client)
 	registerInputAnswer(server, client)
 	mcp.AddTool(server, &mcp.Tool{Name: "workflow.list", Title: "List LazyMind Workflows",

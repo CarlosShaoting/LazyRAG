@@ -834,7 +834,11 @@ func applyWorkflowTransition(ctx context.Context, tx *gorm.DB, sessionID string,
 			// Tool-dependent steps run inside LazyMind; the session controller stays unchanged.
 			executorHost := session.ControllerHost
 			if controlstore.Controlled(session) {
-				executorHost = executorHostForStep(session.ControllerHost, nodeDef, graph.Runtime)
+				binding, err := controlstore.DecodeBinding(session)
+				if err != nil {
+					return err
+				}
+				executorHost = executorHostForStep(session.ControllerHost, binding.Provider, nodeDef, graph.Runtime)
 			}
 			if executorHost == "external-agent" {
 				if err := queueHostAttempt(ctx, tx, session, target, nodeDef, now); err != nil {

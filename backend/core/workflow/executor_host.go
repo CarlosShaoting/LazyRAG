@@ -4,9 +4,12 @@ import "lazymind/core/workflow/graphengine"
 
 // Versioned external steps retain external execution even when the native
 // implementation declares tools/checks. Older revisions keep their routing.
-func executorHostForStep(controllerHost string, node graphengine.CompiledNode, runtime graphengine.RuntimePolicy) string {
+func executorHostForStep(controllerHost, provider string, node graphengine.CompiledNode, runtime graphengine.RuntimePolicy) string {
 	if controllerHost != "external-agent" {
 		return controllerHost
+	}
+	if provider == "codex" && runtime.Execution != nil && runtime.Execution.ModelExecutor == "codex" {
+		return "lazymind"
 	}
 	if node.ExternalExecution.Supported() {
 		return controllerHost

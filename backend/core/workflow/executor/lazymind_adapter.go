@@ -46,6 +46,7 @@ func (loader DBContextLoader) LoadAttemptContext(ctx context.Context, id string)
 	if value.Metadata == nil {
 		value.Metadata = map[string]string{}
 	}
+	delete(value.Metadata, "model_executor")
 	value.Metadata["controller_host"] = session.ControllerHost
 	value.Metadata["control_protocol"] = session.ControlProtocol
 	value.Metadata["origin_host"] = session.OriginHost
@@ -58,6 +59,13 @@ func (loader DBContextLoader) LoadAttemptContext(ctx context.Context, id string)
 		if err := loader.DB.WithContext(ctx).Where("id = ?", session.WorkflowRevisionID).First(&revision).Error; err == nil {
 			var graph graphengine.CompiledStateGraph
 			if json.Unmarshal(revision.CompiledGraph, &graph) == nil {
+				binding, err := controlstore.DecodeBinding(session)
+				if err != nil {
+					return AttemptContext{}, err
+				}
+				if controlstore.Controlled(session) && binding.Provider == "codex" && graph.Runtime.Execution != nil && graph.Runtime.Execution.ModelExecutor == "codex" {
+					value.Metadata["model_executor"] = "codex"
+				}
 				for materialID, cardinality := range graph.MaterialCardinalities {
 					listMaterials[materialID] = cardinality == "list"
 				}

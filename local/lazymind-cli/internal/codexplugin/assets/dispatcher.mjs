@@ -29,8 +29,9 @@ function isHostAuthorizationError(error) {
 }
 var HostBridge = class {
 	base;
-	constructor(url, pairing) {
+	constructor(url, pairing, actionHeaders) {
 		this.pairing = pairing;
+		this.actionHeaders = actionHeaders;
 		const parsed = new URL(url);
 		if (!["http:", "https:"].includes(parsed.protocol) || ![
 			"localhost",
@@ -39,11 +40,12 @@ var HostBridge = class {
 		].includes(parsed.hostname) || parsed.username || parsed.password || parsed.search || parsed.hash) throw new Error("Workflow Bridge must be a loopback URL without credentials");
 		this.base = parsed.href.replace(/\/$/, "") + "/v1/workflow-host";
 	}
-	async request(path, signal, body) {
+	async request(path, signal, body, headers) {
 		const response = await fetch(this.base + path, {
 			method: body === void 0 ? "GET" : "POST",
 			signal: AbortSignal.any([signal, AbortSignal.timeout(15e3)]),
 			headers: {
+				...headers,
 				Authorization: `Bearer ${this.pairing.token}`,
 				"X-LazyMind-Connector-Id": this.pairing.connector_id,
 				...body === void 0 ? {} : { "content-type": "application/json" }
@@ -68,7 +70,7 @@ var HostBridge = class {
 		return (await this.request(`/runs/${encodeURIComponent(runId)}/control`, signal)).control;
 	}
 	async actions(after, signal) {
-		return this.request(`/actions${after ? `?after=${encodeURIComponent(after)}` : ""}`, signal);
+		return this.request(`/actions${after ? `?after=${encodeURIComponent(after)}` : ""}`, signal, void 0, await this.actionHeaders?.(signal));
 	}
 	async action(id, signal) {
 		return this.request(`/actions/${encodeURIComponent(id)}`, signal);
@@ -195,6 +197,7 @@ function delay(ms, signal) {
 	});
 }
 function continuationMessage(action) {
+	if (action.kind === "model_generate") return `LazyMind model request: session_id=${action.session_id}, job_id=${action.execution_id}. Call workflow.generation.claim with a stable command_id. Only with status=running, execute the exact generation_request as a model worker. LazyMind has reserved one of at most two workers for this Workflow session. Claim ready_job_ids too and run up to two native model workers concurrently when available. Keep worker_token in the controller. Use the supplied messages, tool definitions and response format. Generate an OpenAI assistant message with content or tool_calls. LazyMind runs the tools, business logic, validation and publication. After the worker ends, return its message with workflow.generation.respond and unchanged worker_token and request_hash. For cancel_requested, acknowledge cancelled=true without generating. For already_claimed or terminal status, END this turn. Do not begin or complete Workflow steps, publish artifacts, approve reviews, or call a LazyMind model. Wait for the next notification.`;
 	if (action.kind === "artifact_edit") return `LazyMind artifact edit: session_id=${action.session_id}, job_id=${action.execution_id}. Call workflow.action.get. When status=waiting_agent, execute the returned generation_request using a native subagent when available, or the current external agent otherwise. Use its exact LazyMind system_prompt and user_prompt; do not substitute your own business Skill. Submit only the external answer with workflow.action.respond using the unchanged version and request_hash. Repeat only if another generation_request is returned. When ready or cancelled, END this turn: the user confirms the preview in LazyMind. Do not begin, rewind or rerun workflow steps, and do not commit the preview yourself.`;
 	const request = action.execution_id ? `When applicable, call workflow.step.claim with execution_id=${action.execution_id}. For a completed internal execution, inspect its result and the current state instead of executing it again.` : "When control.continuation=continue and admission.can_begin=true, call workflow.step.begin for a ready step.";
 	return `LazyMind workflow ${action.session_id} has a control notification. Call workflow.state first; the notification may be delayed. ${request} Execute only a granted external step_contract and publish/submit using its execution_handle. If executor_host is lazymind, let Core execute it. After submission, use the returned state to continue. Yield when awaiting_user, awaiting_executor, draining, stopped, binding_required, completed, or failed; do not poll while waiting. When control.input_request is present, show its exact questions and wait for the user; submit their actual answers with workflow.input.answer against that artifact revision. An input answer does not itself approve a separate result review. A human step requires review AFTER execution. Do not assume this notification means a review was approved. Do not create a new workflow.`;
@@ -332,7 +335,7 @@ var CodexAdapter = class {
 		const claim = this.claims.get(input.actionId);
 		this.claims.delete(input.actionId);
 		if (!claim) throw new AdmissionRejected("Workflow notification has not been claimed");
-		const kind = claim.action.kind === "artifact_edit" ? "artifact_edit" : "continue";
+		const kind = claim.action.kind === "model_generate" ? "model_generate" : claim.action.kind === "artifact_edit" ? "artifact_edit" : "continue";
 		this.validate(thread, claim, kind);
 		if (await this.receipts.read(input.actionId)) throw new Error("Message was already attempted; do not resend");
 		const before = await this.native.read(thread, signal);
@@ -674,7 +677,7 @@ function installTailFollow(scroller, content, panel, initiallyFollowing, bottomB
 //#region src/presentation-view.ts
 /** Presentation identity comes from the committed main-chat view, never binds a run. */
 function readCodexView() {
-	const scrollers = Array.from(document.querySelectorAll("[data-app-action-timeline-scroll]")).filter((element) => element.getBoundingClientRect().width > 0);
+	const scrollers = Array.from(document.querySelectorAll("[data-app-action-timeline-scroll]")).filter((element) => element.getBoundingClientRect().width > 0 && !element.closest("[data-app-shell-tab-panel-controller]"));
 	if (scrollers.length !== 1) return null;
 	const scroller = scrollers[0];
 	const fiberKey = Object.keys(scroller).find((key) => key.startsWith("__reactFiber$"));
@@ -707,7 +710,7 @@ function readCodexView() {
 function readPresentationSession(readView = readCodexView) {
 	const host = window;
 	const key = "__lazymindCodexPresentationSession";
-	const version = "codex-view-v1";
+	const version = "codex-view-v2";
 	if (host[key]?.version !== version) host[key]?.dispose();
 	if (!host[key]) {
 		let view = readView(), epoch = crypto.randomUUID(), queued = false;

@@ -155,6 +155,7 @@ type BeginInput struct {
 	StepID             string `json:"step_id" jsonschema:"required,One Runtime-returned ready, retryable or rewindable step"`
 	CommandID          string `json:"command_id,omitempty" jsonschema:"Stable retry key; generated when omitted"`
 	Objective          string `json:"objective,omitempty" jsonschema:"Optional runtime refinement which cannot replace the Workflow prompt"`
+	UserInput          string `json:"user_input,omitempty" jsonschema:"The user's actual current request for this step or explicit edit. Omit for automatic continuation; never invent a new request"`
 	RuntimeInstruction string `json:"runtime_instruction,omitempty" jsonschema:"Optional retry or execution note"`
 }
 
@@ -649,6 +650,7 @@ func (c *Client) Begin(ctx context.Context, input BeginInput) (BeginResult, erro
 		if err := c.api.DoJSON(ctx, http.MethodPost, "/workflow-sessions/"+url.PathEscape(input.SessionID)+"/executions:begin", map[string]any{
 			"command_id": input.CommandID, "step_id": input.StepID, "expected_state_version": state.StateVersion,
 			"objective": input.Objective, "runtime_instruction": input.RuntimeInstruction, "retry_origin": input.RetryOrigin,
+			"user_input": input.UserInput,
 		}, &grant); err != nil {
 			return BeginResult{}, err
 		}
@@ -658,7 +660,7 @@ func (c *Client) Begin(ctx context.Context, input BeginInput) (BeginResult, erro
 		"contract_version": contractVersion, "command_id": input.CommandID,
 		"tool": "advance_step_and_hand_off", "session_id": input.SessionID,
 		"expected_state_version": state.StateVersion, "retry_origin": input.RetryOrigin,
-		"steps": []map[string]any{{"step_id": input.StepID, "objective": input.Objective, "runtime_instruction": input.RuntimeInstruction}},
+		"steps": []map[string]any{{"step_id": input.StepID, "objective": input.Objective, "user_input": input.UserInput, "runtime_instruction": input.RuntimeInstruction}},
 	}
 	var advanced struct {
 		TaskID string `json:"task_id"`
