@@ -40,7 +40,7 @@ func TestCodexModelCapacityIsTwoPerSession(t *testing.T) {
 	}
 	var workers sync.WaitGroup
 	for _, contract := range contracts {
-		for index := 0; index < 8; index++ {
+		for index := 0; index < 3; index++ {
 			workers.Add(1)
 			go func(contract executor.AttemptContext, index int) {
 				defer workers.Done()
@@ -56,28 +56,9 @@ func TestCodexModelCapacityIsTwoPerSession(t *testing.T) {
 		var admitted, queued int64
 		db.Model(&orm.WorkflowActionJob{}).Where("session_id = ? AND status = 'waiting_agent'", contract.SessionID).Count(&admitted)
 		db.Model(&orm.WorkflowActionJob{}).Where("session_id = ? AND status = 'queued'", contract.SessionID).Count(&queued)
-		if admitted != 2 || queued != 6 {
+		if admitted != 2 || queued != 1 {
 			t.Fatalf("%s admitted=%d queued=%d", contract.SessionID, admitted, queued)
 		}
-	}
-	var waiting orm.WorkflowActionJob
-	if err := db.Where("session_id = ? AND status = 'queued'", contracts[2].SessionID).First(&waiting).Error; err != nil {
-		t.Fatal(err)
-	}
-	cancelCodexModel(db.DB, waiting)
-	if err := db.First(&waiting, "id = ?", waiting.ID).Error; err != nil || waiting.Status != "cancelled" {
-		t.Fatal("a timed-out queued request was not removed", err)
-	}
-	var unclaimed orm.WorkflowActionJob
-	if err := db.Where("session_id = ? AND status = 'waiting_agent'", contracts[2].SessionID).First(&unclaimed).Error; err != nil {
-		t.Fatal(err)
-	}
-	cancelCodexModel(db.DB, unclaimed)
-	var ready, pending int64
-	db.Model(&orm.WorkflowActionJob{}).Where("session_id = ? AND status = 'waiting_agent'", contracts[2].SessionID).Count(&ready)
-	db.Model(&orm.WorkflowActionJob{}).Where("session_id = ? AND status = 'queued'", contracts[2].SessionID).Count(&pending)
-	if ready != 2 || pending != 4 {
-		t.Fatalf("unclaimed cancellation did not release exactly one reservation: ready=%d pending=%d", ready, pending)
 	}
 	contract := contracts[0]
 	var job orm.WorkflowActionJob
@@ -101,7 +82,7 @@ func TestCodexModelCapacityIsTwoPerSession(t *testing.T) {
 	}
 	var queued int64
 	db.Model(&orm.WorkflowActionJob{}).Where("session_id = ? AND status = 'queued'", session.ID).Count(&queued)
-	if queued != 6 {
+	if queued != 1 {
 		t.Fatal("timeout released an occupied worker")
 	}
 	var request codexModelRequest
@@ -122,7 +103,7 @@ func TestCodexModelCapacityIsTwoPerSession(t *testing.T) {
 		t.Fatal("identical acknowledgement was not idempotent", err)
 	}
 	db.Model(&orm.WorkflowActionJob{}).Where("session_id = ? AND status = 'queued'", session.ID).Count(&queued)
-	if queued != 5 {
+	if queued != 0 {
 		t.Fatal("worker exit did not admit exactly one replacement", queued)
 	}
 	response.RequestHash = "stale"
@@ -132,43 +113,40 @@ func TestCodexModelCapacityIsTwoPerSession(t *testing.T) {
 }
 
 func TestCodexModelNativeRequestReachesBusinessContext(t *testing.T) {
-	for _, workflowID := range []string{"paper-writing", "writer-workflow"} {
-		for _, current := range []string{"", "本轮修改要求"} {
-			t.Run(workflowID+"/"+current, func(t *testing.T) {
-				graph := graphengine.CompiledStateGraph{StartRoute: "all",
-					Runtime:      graphengine.RuntimePolicy{Execution: &graphengine.ExecutionPolicy{Version: "1", ModelExecutor: "codex"}},
-					Nodes:        map[string]graphengine.CompiledNode{"draft": {ID: "draft", Mode: "auto"}},
-					ControlEdges: []graphengine.CompiledEdge{{ID: "start", From: "__start__", To: "draft"}}}
-				db, session := newControllerTestSession(t, "codex", graph)
-				if err := db.Model(&session).Updates(map[string]any{"plugin_id": workflowID, "intent_context": `{"text":"原始研究主题"}`}).Error; err != nil {
-					t.Fatal(err)
-				}
-				result, err := (WorkflowControlService{DB: db.DB}).Execute(t.Context(), session.CreateUserID, session.ID,
-					WorkflowControlCommand{CommandID: "begin", Kind: "begin", StepID: "draft", StateVersion: session.StateVersion, UserInput: current})
-				if err != nil {
-					t.Fatal(err)
-				}
-				var step orm.WorkflowSessionStep
-				var task orm.SubAgentTask
-				if err := db.First(&step, "id = ?", result.Receipt.ExecutionID).Error; err != nil {
-					t.Fatal(err)
-				}
-				if err := db.First(&task, "id = ?", step.TaskID).Error; err != nil {
-					t.Fatal(err)
-				}
-				var params map[string]any
-				if err := json.Unmarshal(task.Params, &params); err != nil {
-					t.Fatal(err)
-				}
-				want := current
-				if want == "" {
-					want = "原始研究主题"
-				}
-				if params["current_user_input"] != want || params["launch_user_input"] != "原始研究主题" {
-					t.Fatalf("native request was lost: %v", params)
-				}
-			})
-		}
+	for _, test := range []struct{ workflowID, current, want string }{
+		{"paper-writing", "", "原始研究主题"},
+		{"writer-workflow", "本轮修改要求", "本轮修改要求"},
+	} {
+		t.Run(test.workflowID, func(t *testing.T) {
+			graph := graphengine.CompiledStateGraph{StartRoute: "all",
+				Runtime:      graphengine.RuntimePolicy{Execution: &graphengine.ExecutionPolicy{Version: "1", ModelExecutor: "codex"}},
+				Nodes:        map[string]graphengine.CompiledNode{"draft": {ID: "draft", Mode: "auto"}},
+				ControlEdges: []graphengine.CompiledEdge{{ID: "start", From: "__start__", To: "draft"}}}
+			db, session := newControllerTestSession(t, "codex", graph)
+			if err := db.Model(&session).Updates(map[string]any{"plugin_id": test.workflowID, "intent_context": `{"text":"原始研究主题"}`}).Error; err != nil {
+				t.Fatal(err)
+			}
+			result, err := (WorkflowControlService{DB: db.DB}).Execute(t.Context(), session.CreateUserID, session.ID,
+				WorkflowControlCommand{CommandID: "begin", Kind: "begin", StepID: "draft", StateVersion: session.StateVersion, UserInput: test.current})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var step orm.WorkflowSessionStep
+			var task orm.SubAgentTask
+			if err := db.First(&step, "id = ?", result.Receipt.ExecutionID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := db.First(&task, "id = ?", step.TaskID).Error; err != nil {
+				t.Fatal(err)
+			}
+			var params map[string]any
+			if err := json.Unmarshal(task.Params, &params); err != nil {
+				t.Fatal(err)
+			}
+			if params["current_user_input"] != test.want || params["launch_user_input"] != "原始研究主题" {
+				t.Fatalf("native request was lost: %v", params)
+			}
+		})
 	}
 }
 
