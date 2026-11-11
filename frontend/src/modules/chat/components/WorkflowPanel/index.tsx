@@ -185,6 +185,7 @@ function IntentPopover({
 
 export interface WorkflowPanelControlAdapter {
   execute(intent: WorkflowPanelActionIntent): Promise<void>;
+  continuationStep?(): string | undefined;
 }
 
 interface WorkflowPanelProps {
@@ -2119,8 +2120,8 @@ export function WorkflowPanel({
   const stopping = stopSubmitting || display?.reason === 'pausing';
   const displayStatus = display?.status === 'running' ? 'active'
     : display?.status === 'paused' ? 'stopped' : display?.status ?? 'loading';
-  // Every surface uses the same projection and button rules. The adapter only
-  // transports the selected action; host delivery is not workflow execution.
+  // The shared projection owns approval and execution. A host may also expose
+  // Core's continuation after delivery of a completed execution notification.
   const sessionBusy = displayStatus === 'active' || displayStatus === 'loading';
   const approvalStepId = display?.status === 'waiting' ? display.approval_step_id : undefined;
   const displayStatusKey = workflowDisplayLabel(display?.status, display?.reason);
@@ -2134,7 +2135,7 @@ export function WorkflowPanel({
     session,
     tabs[visibleActiveTabIdx],
   );
-  const continueAction = resolveWorkflowContinueAction(session, displayStatus, tabs[visibleActiveTabIdx]);
+  const continueAction = resolveWorkflowContinueAction(session, displayStatus, tabs[visibleActiveTabIdx], controlAdapter?.continuationStep?.());
   const showContinue = Boolean(continueAction);
   const showStepRollback =
     (session.status === 'completed' || session.status === 'failed')
@@ -2159,7 +2160,7 @@ export function WorkflowPanel({
     && all.findIndex((candidate) => candidate.step_id === step.step_id && candidate.validity !== 'stale') === index) : [];
   const stepLabel = (stepId: string) => tabs.find(tab => getTabStepId(tab) === stepId)?.label
     ?? tabs.find(tab => tab.status_step_ids?.includes(stepId))?.label ?? stepId;
-  const continueDisabled = buttonsDisabled || currentStepStatus === 'failed';
+  const continueDisabled = (continueAction?.kind === 'advance' ? chatBusy || actionPending : buttonsDisabled) || currentStepStatus === 'failed';
 
   async function refreshBeforeAction() {
     if (controlAdapter) {
@@ -2221,7 +2222,7 @@ export function WorkflowPanel({
             : continueAction?.kind === 'regenerate'
               ? { session_id: sessionId, kind: 'continue', expected_state_version: latest?.state_version ?? 0 } : undefined);
       } catch (error) { antdMessage.error(getLocalizedErrorMessage(error)); }
-    });
+    }, undefined, true, continueAction?.kind === 'advance');
   }
 
   // Saving edits is asynchronous: execution may have advanced since the click.
@@ -2237,7 +2238,7 @@ export function WorkflowPanel({
     if (!session || attempts(latest) !== attempts(session)) return false;
     const latestDisplay = latest.projection?.display?.status;
     const action = resolveWorkflowContinueAction(latest,
-      latestDisplay === 'paused' ? 'stopped' : latestDisplay === 'running' ? 'active' : latestDisplay ?? 'loading', tabs[visibleActiveTabIdx]);
+      latestDisplay === 'paused' ? 'stopped' : latestDisplay === 'running' ? 'active' : latestDisplay ?? 'loading', tabs[visibleActiveTabIdx], controlAdapter?.continuationStep?.());
     return action?.kind === continueAction.kind && action.stepId === continueAction.stepId;
   }
 
@@ -2312,6 +2313,8 @@ export function WorkflowPanel({
 
   const continueLabel = approvalStepId
     ? t('chat.workflowContinueExecution')
+    : continueAction?.kind === 'advance'
+      ? t('chat.workflowContinue')
     : continueAction?.kind === 'regenerate'
       ? t('chat.workflowRegenerate')
     : continueAction?.kind === 'resume'
@@ -2674,7 +2677,7 @@ export function WorkflowPanel({
                   ? t('chat.workflowContinueDisabledFailed')
                   : actionPending
                     ? t('chat.workflowSavingBeforeAction')
-                    : buttonsDisabled
+                    : continueDisabled
                       ? t('chat.workflowBtnDisabledHint')
                       : anySlotEditing
                         ? t('chat.workflowContinueFlushHint')
