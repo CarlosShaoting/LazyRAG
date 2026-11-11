@@ -63,8 +63,8 @@ func (loader DBContextLoader) LoadAttemptContext(ctx context.Context, id string)
 				if err != nil {
 					return AttemptContext{}, err
 				}
-				if controlstore.Controlled(session) && binding.Provider == "codex" && graph.Runtime.Execution != nil && graph.Runtime.Execution.ModelExecutor == "codex" {
-					value.Metadata["model_executor"] = "codex"
+				if controlstore.Controlled(session) && binding.Provider != "" && graph.Runtime.Execution.UsesExternalModels() {
+					value.Metadata["model_executor"] = graphengine.ExternalModelExecutor
 				}
 				for materialID, cardinality := range graph.MaterialCardinalities {
 					listMaterials[materialID] = cardinality == "list"

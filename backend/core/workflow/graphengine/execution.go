@@ -18,6 +18,13 @@ type ExecutionPolicy struct {
 	Steps         map[string]StepExecution `json:"steps" yaml:"steps"`
 }
 
+const ExternalModelExecutor = "external-agent"
+
+// UsesExternalModels also accepts the executor value stored by earlier revisions.
+func (policy *ExecutionPolicy) UsesExternalModels() bool {
+	return policy != nil && (policy.ModelExecutor == ExternalModelExecutor || policy.ModelExecutor == "codex")
+}
+
 type StepExecution struct {
 	Version     string         `json:"version,omitempty" yaml:"-"`
 	Skills      []string       `json:"skills,omitempty" yaml:"skills,omitempty"`
@@ -55,8 +62,8 @@ func compileExecution(graph *CompiledStateGraph) []Diagnostic {
 	if policy.Version != "1" {
 		invalid(".version", "execution version must be 1")
 	}
-	if policy.ModelExecutor != "" && policy.ModelExecutor != "codex" {
-		invalid(".model_executor", "model_executor must be codex when specified")
+	if policy.ModelExecutor != "" && !policy.UsesExternalModels() {
+		invalid(".model_executor", "model_executor must be external-agent when specified")
 	}
 	for stepID := range policy.Steps {
 		if _, exists := graph.Nodes[stepID]; !exists {

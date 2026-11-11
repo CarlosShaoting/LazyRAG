@@ -92,7 +92,7 @@ func InternalGetExecutionSpec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var config map[string]any
-	if !usesCodexModels(task.ID, r.Header.Get("X-Workflow-Lease-Token")) {
+	if !usesExternalModels(task.ID, r.Header.Get("X-Workflow-Lease-Token")) {
 		config, err = modelconfig.LoadConversationLLMConfig(r.Context(), store.DB(), task.CreateUserID, task.ConversationID)
 	}
 	if err != nil {
@@ -151,7 +151,7 @@ func InternalGetExecutionSpec(w http.ResponseWriter, r *http.Request) {
 
 // The task and its immutable package determine routing. An executor-supplied
 // header or model configuration cannot bypass the native model configuration.
-func usesCodexModels(taskID, lease string) bool {
+func usesExternalModels(taskID, lease string) bool {
 	if lease == "" {
 		return false
 	}
@@ -167,11 +167,11 @@ func usesCodexModels(taskID, lease string) bool {
 	var revision orm.WorkflowRevision
 	var graph graphengine.CompiledStateGraph
 	binding, err := controlstore.DecodeBinding(session)
-	if err != nil || binding.Provider != "codex" {
+	if err != nil || binding.Provider == "" {
 		return false
 	}
 	return store.DB().First(&revision, "id = ?", session.WorkflowRevisionID).Error == nil &&
-		json.Unmarshal(revision.CompiledGraph, &graph) == nil && graph.Runtime.Execution != nil && graph.Runtime.Execution.ModelExecutor == "codex"
+		json.Unmarshal(revision.CompiledGraph, &graph) == nil && graph.Runtime.Execution.UsesExternalModels()
 }
 
 func workflowToolConfigCapabilities(capabilities, legacyTools []string) []string {

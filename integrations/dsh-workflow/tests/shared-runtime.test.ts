@@ -291,6 +291,54 @@ describe('shared coordination contract with an SDK-free host', () => {
     expect(await f.turn()).toBe(false)
   })
 
+  it.each([false, true])('runs a model job and yields after its response with synchronization failure=%s', async failSync => {
+    const f = fixture()
+    await f.start()
+    f.updateControl({ continuation: 'awaiting_executor', admission: { can_begin: false },
+      binding: { bound: true, driver_session_id: f.root.id, connector_id: 'connector' },
+      active_execution_ids: ['native-step'], native_execution_ids: ['native-step'] })
+    f.updateAction({ kind: 'model_generate', execution_id: 'model-job', connector_id: 'connector', status: 'accepted' })
+    expect(await f.coordinator.beforeTurn({ agent: f.root, turn: 2,
+      messages: [{ user: true, requestId: f.action().id }], signal: f.lifetime.signal })).toBe(true)
+    const claim = await f.coordinator.afterResult({ structuredContent: {
+      session_id: 'run-1', job_id: 'model-job', status: 'running' } }, f.call('generation_claim'))
+    expect(f.coordinator.shouldConclude(f.root, claim)).toBe(false)
+    expect(f.coordinator.ensure(f.root).grants.size).toBe(0)
+    expect(await f.turn(f.child)).toBe(true)
+    if (failSync) vi.mocked(f.bridge.state).mockRejectedValueOnce(new Error('offline after submission'))
+    const response = await f.coordinator.afterResult({ structuredContent: {
+      session_id: 'run-1', job_id: 'model-job', status: 'succeeded', accepted: true } }, f.call('generation_respond'))
+    expect(f.coordinator.ensure(f.root).modelJobs.size).toBe(0)
+    expect(f.coordinator.shouldConclude(f.root, response)).toBe(true)
+    expect(await f.turn()).toBe(false)
+  })
+
+  it.each(['consumed', 'foreign-connector'])('handles a %s model notification during a native step', async kind => {
+    const f = fixture()
+    await f.start()
+    f.updateControl({ continuation: 'awaiting_executor', admission: { can_begin: false },
+      binding: { bound: true, driver_session_id: f.root.id, connector_id: 'connector' } })
+    f.updateAction({ kind: 'model_generate', execution_id: 'model-job', status: 'accepted',
+      connector_id: kind === 'foreign-connector' ? 'other' : 'connector', consumed_at: kind === 'consumed' ? 'now' : undefined })
+    expect(await f.coordinator.beforeTurn({ agent: f.root, turn: 2,
+      messages: [{ user: true, requestId: f.action().id }], signal: f.lifetime.signal })).toBe(kind === 'consumed' ? 'skip' : false)
+  })
+
+  it.each(['root', 'child'] as const)('restores a claimed model job for %s and honors its completed response', async owner => {
+    const f = fixture()
+    const agent = f[owner]
+    f.updateControl({ continuation: 'awaiting_executor', admission: { can_begin: false } })
+    const run = { runId: 'run-1', hostSessionId: f.root.id, url: 'http://localhost:8090/workflow-runs/run-1', modelJobId: 'model-job' }
+    agent.events.push({ seq: 1, time: 1, user: false, run: { ...run, operation: 'generation_claim', modelJobStatus: 'running' } })
+    const restored = createCoordinator(f.runtime, f.bridge, 'http://localhost:8090', f.lifetime.signal)
+    expect(await restored.beforeTurn({ agent, turn: 1, messages: [], signal: f.lifetime.signal })).toBe(true)
+    await restored.afterResult({ structuredContent: { session_id: 'run-1', job_id: 'model-job', status: 'succeeded', accepted: true } }, f.call('generation_respond', agent))
+    expect(await restored.beforeTurn({ agent, turn: 2, messages: [], signal: f.lifetime.signal })).toBe(false)
+    agent.events.push({ seq: 2, time: 2, user: false, run: { ...run, operation: 'generation_respond', modelJobStatus: 'succeeded' } })
+    const completed = createCoordinator(f.runtime, f.bridge, 'http://localhost:8090', f.lifetime.signal)
+    expect(await completed.beforeTurn({ agent, turn: 1, messages: [], signal: f.lifetime.signal })).toBe(false)
+  })
+
   it('repairs binding from a persisted start receipt, but not a historical state read', async () => {
     const f = fixture()
     f.root.events.push({ seq: 1, time: 1, user: false, run: { runId: 'run-1', hostSessionId: f.root.id, operation: 'start', url: 'http://localhost:8090/workflow-runs/run-1' } })

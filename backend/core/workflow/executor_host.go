@@ -8,7 +8,7 @@ func executorHostForStep(controllerHost, provider string, node graphengine.Compi
 	if controllerHost != "external-agent" {
 		return controllerHost
 	}
-	if provider == "codex" && runtime.Execution != nil && runtime.Execution.ModelExecutor == "codex" {
+	if provider != "" && runtime.Execution.UsesExternalModels() {
 		return "lazymind"
 	}
 	if node.ExternalExecution.Supported() {

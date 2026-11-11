@@ -1,5 +1,5 @@
 /** Data owned by LazyMind, carried by the host's standard tool-result event. */
-export interface RunLink { runId: string; url: string; hostSessionId?: string; operation?: string; executionId?: string }
+export interface RunLink { runId: string; url: string; hostSessionId?: string; operation?: string; executionId?: string; modelJobId?: string; modelJobStatus?: string }
 
 export interface WorkflowControl {
   protocol: 'workflow.control.v1'
@@ -18,7 +18,8 @@ export interface WorkflowControl {
 // decode their transport's tool-name spelling before using this registry.
 const WORKFLOW_OPERATIONS = new Set(['list', 'get', 'input_import', 'input_get', 'input_answer',
   'start', 'state', 'session_list', 'session_stop', 'session_resume', 'step_begin', 'step_claim',
-  'step_resume', 'step_complete', 'artifact_publish', 'artifact_list', 'artifact_get', 'tool_list', 'tool_call'])
+  'step_resume', 'step_complete', 'artifact_publish', 'artifact_list', 'artifact_get', 'tool_list', 'tool_call',
+  'generation_claim', 'generation_respond'])
 
 export function workflowOperationName(value: string): string | null {
   return WORKFLOW_OPERATIONS.has(value) ? value : null
