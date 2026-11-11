@@ -327,6 +327,13 @@ func keepHostGetFiles(pkg map[string]any) {
 		producers, _ := graph["material_producers"].(map[string]any)
 		types, _ := graph["material_types"].(map[string]any)
 		cardinalities, _ := graph["material_cardinalities"].(map[string]any)
+		expressions, hasExpressions := graph["input_expressions"].(map[string]any)
+		required := map[string]bool{}
+		for _, expression := range expressions {
+			collectStartupRequiredInputs(expression, required)
+		}
+		runtime, _ := graph["runtime"].(map[string]any)
+		contracts, _ := runtime["input_contracts"].(map[string]any)
 		ids := make([]string, 0, len(producers))
 		for id, raw := range producers {
 			if producer, ok := raw.(map[string]any); ok && producer["kind"] == "external" {
@@ -338,13 +345,23 @@ func keepHostGetFiles(pkg map[string]any) {
 		for _, id := range ids {
 			producer := producers[id].(map[string]any)
 			optional, _ := producer["optional"].(bool)
-			materials = append(materials, map[string]any{
-				"material_id": id, "type": types[id], "cardinality": cardinalities[id], "required": !optional,
-			})
+			material := map[string]any{
+				"material_id": id, "type": types[id], "cardinality": cardinalities[id], "required": !optional && (!hasExpressions || required[id]),
+			}
+			metadata, _ := contracts[id].(map[string]any)
+			for _, key := range []string{"description", "schema"} {
+				if value, exists := metadata[key]; exists {
+					material[key] = value
+				}
+			}
+			materials = append(materials, material)
 		}
 		contract := map[string]any{"revision_id": pkg["revision_id"], "input_materials": materials}
-		if runtime, ok := graph["runtime"].(map[string]any); ok {
+		if runtime != nil {
 			contract["clarification_fields"] = runtime["clarification_fields"]
+		}
+		if len(expressions) > 0 {
+			contract["input_requirements"] = expressions
 		}
 		pkg["startup_contract"] = contract
 	}
@@ -352,6 +369,18 @@ func keepHostGetFiles(pkg map[string]any) {
 	// Runtime implementation stays on LazyMind. The execution grant delivers
 	// the pinned Skills and constraints for the current step, not every script.
 	delete(pkg, "files")
+}
+
+// Match Core preparation: all operands are required, any operands are alternatives.
+func collectStartupRequiredInputs(raw any, required map[string]bool) {
+	expression, _ := raw.(map[string]any)
+	if material, _ := expression["material"].(string); material != "" {
+		required[material] = true
+	}
+	all, _ := expression["all"].([]any)
+	for _, nested := range all {
+		collectStartupRequiredInputs(nested, required)
+	}
 }
 
 func (c *Client) State(ctx context.Context, sessionID string) (Projection, error) {

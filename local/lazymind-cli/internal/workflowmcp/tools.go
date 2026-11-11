@@ -125,7 +125,7 @@ func Register(server *mcp.Server, client *Client) {
 			return nil, value, err
 		})
 	mcp.AddTool(server, &mcp.Tool{Name: "workflow.get", Title: "Get a LazyMind Workflow",
-		Description: "Read one published Workflow revision: identifiers and startup_contract. startup_contract.input_materials lists exact material_id values, types and cardinalities for workflow.start inputs; use these IDs instead of guessing input keys. startup_contract.clarification_fields declares startup answers. Omits implementation source and compiled graph to keep host context compact; step execution uses the contract returned by workflow.step.begin.", Annotations: readOnly},
+		Description: "Read one published Workflow revision: identifiers and startup_contract. startup_contract.input_materials lists exact material_id values, types, cardinalities, required flags and package-declared JSON schemas for workflow.start inputs. Follow these schemas when supplying structured files. Bind optional materials as needed for the user's selected entry; keep free-form requirements in request_context. input_requirements preserves per-step all/any source alternatives. startup_contract.clarification_fields declares startup answers. Omits implementation source and compiled graph to keep host context compact; step execution uses the contract returned by workflow.step.begin.", Annotations: readOnly},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input GetInput) (*mcp.CallToolResult, map[string]any, error) {
 			value, err := client.Get(ctx, input.WorkflowID, input.RevisionID)
 			return nil, value, err
