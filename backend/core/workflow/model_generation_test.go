@@ -3,6 +3,7 @@ package workflow
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -172,6 +173,35 @@ func TestModelGenerationKeepsNativeExecutionAndAssistantMessages(t *testing.T) {
 		}
 		if streaming && (!strings.Contains(recorder.Body.String(), `"index":0`) || !strings.Contains(recorder.Body.String(), "data: [DONE]")) {
 			t.Fatal("incomplete native tool-call stream")
+		}
+	}
+}
+
+func TestModelGenerationErrorPreservesWorkerDetails(t *testing.T) {
+	for _, streaming := range []bool{false, true} {
+		for _, status := range []string{"failed", "cancelled"} {
+			recorder := httptest.NewRecorder()
+			message := "图件生成失败\n\"finding_ids\" missing"
+			writeModelGenerationError(recorder, status, message, streaming)
+			body := recorder.Body.String()
+			if streaming {
+				body = strings.SplitN(strings.TrimPrefix(body, "data: "), "\n\n", 2)[0]
+				if !strings.HasSuffix(recorder.Body.String(), "data: [DONE]\n\n") {
+					t.Fatal("unterminated failure stream")
+				}
+			} else if recorder.Code != http.StatusBadGateway {
+				t.Fatalf("failure status = %d", recorder.Code)
+			}
+			var result struct {
+				Error struct{ Code, Message string }
+			}
+			if err := json.Unmarshal([]byte(body), &result); err != nil || result.Error.Message != message {
+				t.Fatalf("worker error lost: %s (%v)", body, err)
+			}
+			if status == "cancelled" && result.Error.Code != "EXTERNAL_MODEL_GENERATION_CANCELLED" ||
+				status == "failed" && result.Error.Code != "EXTERNAL_MODEL_GENERATION_FAILED" {
+				t.Fatalf("wrong failure classification: %s", result.Error.Code)
+			}
 		}
 	}
 }

@@ -140,6 +140,20 @@ describe('shared delivery contract with an SDK-free host', () => {
     expect(f.runtime.cancel).not.toHaveBeenCalled()
   })
 
+  it.each(['continue', 'awaiting_user', 'stopped', 'failed'])('routes failed execution notifications through Core retry admission with %s', async continuation => {
+    const f = fixture()
+    f.updateAction({ execution_id: 'failed-execution' })
+    f.updateControl({ continuation, admission: { can_begin: continuation === 'continue' }, automatic_retry_steps: ['data_analysis'] })
+    await f.dispatcher.deliver(f.action())
+    const message = vi.mocked(f.runtime.prompt).mock.calls[0][1].message
+    if (continuation === 'continue') {
+      expect(message).toContain('workflow.step.begin')
+      expect(message).toContain('["data_analysis"]')
+      expect(message).toContain('retry_origin=automatic')
+    } else expect(message).not.toContain('retry_origin=automatic')
+    expect(f.runtime.cancel).not.toHaveBeenCalled()
+  })
+
   it('records a definitely missing host as failed before any send', async () => {
     const f = fixture()
     f.updateAction({ native_session_id: 'missing' })

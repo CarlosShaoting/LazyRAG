@@ -230,18 +230,34 @@ func ModelCompletion(w http.ResponseWriter, r *http.Request) {
 			var result modelGenerationResult
 			_ = json.Unmarshal([]byte(job.ResultJSON), &result)
 			if job.Status != "succeeded" {
-				if streaming {
-					_, _ = fmt.Fprint(w, "data: {\"error\":{\"message\":\"External model generation ended without a result\"}}\n\ndata: [DONE]\n\n")
-					http.NewResponseController(w).Flush()
-				} else {
-					http.Error(w, "external model generation ended without a result", http.StatusBadGateway)
-				}
+				writeModelGenerationError(w, job.Status, result.Error, streaming)
 				return
 			}
 			writeModelGenerationResult(w, job.ID, result.Message, streaming)
 			return
 		}
 	}
+}
+
+func writeModelGenerationError(w http.ResponseWriter, status, message string, streaming bool) {
+	code := "EXTERNAL_MODEL_GENERATION_FAILED"
+	if status == "cancelled" {
+		code = "EXTERNAL_MODEL_GENERATION_CANCELLED"
+	}
+	if strings.TrimSpace(message) == "" {
+		message = "External model generation " + status
+	}
+	encoded, _ := json.Marshal(map[string]any{"error": map[string]any{
+		"code": code, "type": "external_model_error", "message": message,
+	}})
+	if streaming {
+		_, _ = fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", encoded)
+		http.NewResponseController(w).Flush()
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadGateway)
+	_, _ = w.Write(encoded)
 }
 
 func writeModelGenerationResult(w http.ResponseWriter, id string, raw json.RawMessage, streaming bool) {

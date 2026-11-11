@@ -35,6 +35,10 @@ func registerGenerationTools(server *mcp.Server, client *Client) {
 			}
 		}
 		result, err := client.generation(ctx, input.SessionID, input.JobID, "claim", map[string]any{"command_id": input.CommandID})
+		if request, ok := result["generation_request"].(map[string]any); err == nil && ok {
+			messages, _ := request["messages"].([]any)
+			result["generation_request_instructions"] = fmt.Sprintf("Read all %d messages in their original order, including earlier guidance, schemas and data. The last message may contain only task parameters or a repair error. Execute this job as a fresh model call using the complete request and its current response format. Use an independent native model worker when available. Generate a response for each current request and repair request. Return actual generation failures to LazyMind, then follow workflow.state and Core's retry admission.", len(messages))
+		}
 		if err == nil && input.ResultDirectory != "" && result["generation_request"] != nil {
 			file, fileErr := saveJSONValue(input.ResultDirectory, result["generation_request"])
 			if fileErr != nil {
