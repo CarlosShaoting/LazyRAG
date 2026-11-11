@@ -247,11 +247,6 @@ func (s WorkflowControlService) execute(ctx context.Context, owner, sessionID st
 				return controlstore.Reject("RECOVERY_REJECTED", "recovery did not create one execution")
 			}
 			*session = updated
-			if err := tx.Model(&orm.WorkflowReviewCheckpoint{}).Where("session_id = ? AND status = ? AND attempt_id IN (?)", session.ID, "pending",
-				tx.Model(&orm.WorkflowSessionStep{}).Select("id").Where("session_id = ? AND validity <> ?", session.ID, "effective")).
-				Updates(map[string]any{"status": "superseded", "decision_command_id": command.CommandID, "updated_at": time.Now().UTC()}).Error; err != nil {
-				return err
-			}
 			var execution orm.WorkflowSessionStep
 			if err := tx.Select("id").Where("task_id = ?", tasks[0]).First(&execution).Error; err != nil {
 				return err

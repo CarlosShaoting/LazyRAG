@@ -17,7 +17,7 @@ func TestBeginLeavesStepAdmissionToCore(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/core/workflow-sessions/run/projection":
-			_, _ = w.Write([]byte(`{"session_id":"run","state_version":7,"projection":{"ready":[]},"control":{"protocol":"workflow.control.v1"}}`))
+			_, _ = w.Write([]byte(`{"session_id":"run","state_version":7,"projection":{"ready":[],"rewindable":["step"]},"control":{"protocol":"workflow.control.v1","continuation":"awaiting_user","admission":{"can_begin":false,"reason":"review_pending"}}}`))
 		case "/api/core/workflow-sessions/run/executions:begin":
 			submitted = true
 			var input map[string]any
