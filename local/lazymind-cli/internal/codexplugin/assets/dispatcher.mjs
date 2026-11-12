@@ -1623,9 +1623,14 @@ var CodexNative = class {
 	}
 	async probe(signal) {
 		const windows = await codexTargets(this.port, signal);
+		const results = await Promise.allSettled(windows.map((window$1) => this.evaluate(window$1.id, { kind: "probe" }, signal)));
+		const ready = results.some((result) => result.status === "fulfilled" && result.value?.ready === true);
+		const reachable = results.some((result) => result.status === "fulfilled" && result.value?.ready === false);
+		const issue = ready ? "" : !windows.length ? "control_window_unavailable" : reachable ? "capability_unavailable" : "cdp_unavailable";
 		return {
-			ready: (await Promise.allSettled(windows.map((window$1) => this.evaluate(window$1.id, { kind: "probe" }, signal)))).some((result) => result.status === "fulfilled" && result.value?.ready === true),
-			window_count: windows.length
+			ready,
+			window_count: windows.length,
+			issue
 		};
 	}
 	async locate(threadId, signal) {
@@ -1992,8 +1997,9 @@ async function main() {
 		while (!signal.aborted) {
 			let ready = false, issue = "host_unavailable";
 			try {
-				ready = (await native.probe(signal)).ready === true;
-				issue = ready ? "" : "capability_unavailable";
+				const probe = await native.probe(signal);
+				ready = probe.ready;
+				issue = probe.issue;
 			} catch {
 				issue = "cdp_unavailable";
 			}

@@ -155,7 +155,7 @@ func TestModelGenerationNativeRequestReachesBusinessContext(t *testing.T) {
 
 func TestModelGenerationKeepsNativeExecutionAndAssistantMessages(t *testing.T) {
 	policy := graphengine.RuntimePolicy{Execution: &graphengine.ExecutionPolicy{Version: "1", ModelExecutor: graphengine.ExternalModelExecutor}}
-	node := graphengine.CompiledNode{ExternalExecution: &graphengine.ExternalStepExecution{Version: "1", ValidationOwner: "external-agent", Prompt: "native business task"}}
+	node := graphengine.CompiledNode{Execution: &graphengine.StepExecution{Version: "1"}, LegacyTools: []string{"native_generator"}}
 	for _, provider := range []string{"codex", "workbuddy", "deepseek-harness"} {
 		if executorHostForStep("external-agent", provider, node, policy) != "lazymind" {
 			t.Fatalf("%s business execution escaped the native runtime", provider)
