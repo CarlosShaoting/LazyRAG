@@ -9,5 +9,5 @@ def model_config(context, base_url, attempt_id, lease, current=None):
     endpoint = (base_url.rstrip('/') + '/internal/workflow-attempts/'
                 + quote(attempt_id, safe='') + '/model/v1')
     return {role: {'source': 'openai', 'type': 'llm', 'model': 'external-agent',
-                   'api_key': lease, 'base_url': endpoint}
+                   'api_key': lease, 'base_url': endpoint, 'timeout': (15, 600)}
             for role in ('llm', 'vlm', 'evo_llm')}

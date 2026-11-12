@@ -10,6 +10,7 @@ def test_external_transport_uses_attempt_lease_and_preserves_other_config():
         assert set(config) == {'llm', 'vlm', 'evo_llm'}
         for role in config.values():
             assert role['model'] == 'external-agent'
+            assert role['timeout'] == (15, 600)
             assert role['api_key'] == 'lease'
             assert role['base_url'] == 'http://core/internal/workflow-attempts/attempt/model/v1'
     assert original == {'llm': {'model': 'existing'}}
