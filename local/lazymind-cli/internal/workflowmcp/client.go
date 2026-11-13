@@ -54,6 +54,7 @@ func (c *Client) executionContext(ctx context.Context) (context.Context, error) 
 }
 
 type Projection struct {
+	WebURL           string         `json:"web_url,omitempty"`
 	AgentInstruction string         `json:"agent_instruction,omitempty"`
 	Control          map[string]any `json:"control,omitempty"`
 	SessionID        string         `json:"session_id"`
@@ -369,6 +370,9 @@ func (c *Client) State(ctx context.Context, sessionID string) (Projection, error
 		} else if continuation == "awaiting_executor" || continuation == "draining" || continuation == "binding_required" {
 			state.AgentInstruction = "END this turn. Do not continue Workflow execution or poll while waiting. Resume only on a new notification or explicit user input, and read workflow.state first."
 		}
+	}
+	if base := strings.TrimRight(connectorconfig.Value("LAZYMIND_WEB_URL"), "/"); base != "" {
+		state.WebURL = base + "/workflow-runs/" + url.PathEscape(sessionID)
 	}
 	return state, nil
 }

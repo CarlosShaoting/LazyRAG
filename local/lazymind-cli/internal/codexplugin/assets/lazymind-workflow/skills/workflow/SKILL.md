@@ -14,3 +14,7 @@ When Core reports awaiting_user, tell the user to review in the panel and END th
 On awaiting_executor, stopped, completed, or binding_required, also end this turn. For completed, deliver the artifact links.
 When a queued continuation arrives, read the latest Core state first. The notification is not execution authorization.
 Stop is handled by Core and the host connector. Do not replace user Panel actions with your own approvals.
+
+If the embedded panel cannot render or the user reports it missing, read workflow.state
+and present its web_url as a clickable link for browser review and export.
+Use only the returned URL.
